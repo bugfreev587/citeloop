@@ -1,0 +1,154 @@
+package agents
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/crawl"
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/google/uuid"
+)
+
+// Insight is the cognition agent (PRD §5.1): crawl within bounds, then extract a
+// versioned Product Profile and per-article Content Inventory with evidence.
+type Insight struct {
+	Deps
+	Log *slog.Logger
+}
+
+func NewInsight(d Deps, log *slog.Logger) *Insight {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Insight{Deps: d, Log: log}
+}
+
+// Run crawls landingURL and writes a new active profile + inventory rows.
+// A new profile version is created each run; old versions are retained and
+// deactivated (one_active_profile_per_project, §5.1 acceptance).
+func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (*Profile, int, error) {
+	cr := crawl.New(crawlCfg, a.Log)
+	res, err := cr.Run(ctx, landingURL)
+	if err != nil {
+		return nil, 0, fmt.Errorf("crawl: %w", err)
+	}
+
+	// 1) Product Profile from landing + article corpus.
+	profile, resp, err := a.extractProfile(ctx, res)
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL}, profile, resp, err)
+	if err != nil {
+		return nil, 0, fmt.Errorf("profile extraction: %w", err)
+	}
+
+	// 2) Persist profile as a new active version.
+	if err := a.Q.DeactivateProfiles(ctx, projectID); err != nil {
+		return nil, 0, err
+	}
+	ver, err := a.Q.NextProfileVersion(ctx, projectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	srcURLs := []string{landingURL}
+	for _, p := range res.Articles {
+		srcURLs = append(srcURLs, p.URL)
+	}
+	saved, err := a.Q.InsertProfile(ctx, db.InsertProfileParams{
+		ProjectID:  projectID,
+		SourceUrls: toJSON(srcURLs),
+		Profile:    toJSON(profile),
+		Version:    int32(ver),
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 3) Per-article inventory with evidence snippets (skip failures, §5.1).
+	count := 0
+	for _, page := range res.Articles {
+		item, iresp, ierr := a.extractInventory(ctx, page)
+		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "inventory", "url": page.URL}, item, iresp, ierr)
+		if ierr != nil {
+			a.Log.Warn("inventory extraction failed", "url", page.URL, "err", ierr)
+			continue
+		}
+		item.URL = page.URL
+		if _, err := a.Q.UpsertInventory(ctx, db.UpsertInventoryParams{
+			ProjectID:        projectID,
+			Url:              page.URL,
+			Title:            ptr(item.Title),
+			TargetKeyword:    ptr(item.TargetKeyword),
+			Topics:           toJSON(item.Topics),
+			Summary:          ptr(item.Summary),
+			EvidenceSnippets: toJSON(item.EvidenceSnippets),
+			Source:           "existing",
+		}); err != nil {
+			a.Log.Warn("inventory upsert failed", "url", page.URL, "err", err)
+			continue
+		}
+		count++
+	}
+	a.Log.Info("insight complete", "version", saved.Version, "articles", count, "truncated", res.Truncated)
+	return profile, count, nil
+}
+
+func (a *Insight) extractProfile(ctx context.Context, res *crawl.Result) (*Profile, llm.CompletionResp, error) {
+	corpus := ""
+	if res.Landing != nil {
+		corpus = clip(res.Landing.Title+"\n"+res.Landing.Text, 6000)
+	}
+	for i, p := range res.Articles {
+		if i >= 8 {
+			break
+		}
+		corpus += "\n\n---\n" + clip(p.Title+"\n"+p.Text, 1500)
+	}
+	prompt := fmt.Sprintf(`[[INSIGHT_PROFILE]] Extract a structured product profile from this site content.
+Return JSON: {positioning, value_props[], features[], icp[], tone, key_terms[], competitors[], differentiators[]}.
+Only use facts present in the content.
+
+CONTENT:
+%s`, corpus)
+	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
+		System: "You are a product analyst extracting verifiable product facts.",
+		Prompt: prompt, JSON: true, MaxTokens: 2000,
+	})
+	if err != nil {
+		return nil, resp, err
+	}
+	var p Profile
+	if err := extractJSON(resp.Text, &p); err != nil {
+		return nil, resp, fmt.Errorf("parse profile: %w", err)
+	}
+	return &p, resp, nil
+}
+
+func (a *Insight) extractInventory(ctx context.Context, page *crawl.Page) (*InventoryItem, llm.CompletionResp, error) {
+	prompt := fmt.Sprintf(`[[INSIGHT_INVENTORY]] Summarize this article for a content inventory.
+Return JSON: {title, target_keyword, topics[], summary, evidence_snippets[]}.
+evidence_snippets must be verbatim factual sentences about the product, usable as QA evidence.
+
+ARTICLE (%s):
+%s`, page.URL, clip(page.Title+"\n"+page.Text, 6000))
+	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
+		System: "You extract structured content inventory with verbatim evidence.",
+		Prompt: prompt, JSON: true, MaxTokens: 1500,
+	})
+	if err != nil {
+		return nil, resp, err
+	}
+	var item InventoryItem
+	if err := extractJSON(resp.Text, &item); err != nil {
+		return nil, resp, fmt.Errorf("parse inventory: %w", err)
+	}
+	return &item, resp, nil
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
