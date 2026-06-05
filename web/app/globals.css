@@ -4,8 +4,33 @@
 
 :root {
   color-scheme: light;
+  --citeloop-accent: #d93820;
+  --citeloop-accent-end: #f4503b;
 }
 
 body {
-  @apply bg-neutral-50 text-neutral-900;
+  @apply bg-stone-100 text-slate-950 antialiased;
+  font-family: Inter, "Inter Fallback", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 500;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(203 213 225) transparent;
+}
+
+::selection {
+  background: rgba(217, 56, 32, 0.14);
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  outline-color: var(--citeloop-accent);
+}
+
+.content-font {
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }

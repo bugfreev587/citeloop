@@ -32,7 +32,7 @@ landing URL
 | `internal/publisher` | §5.6/§8 | BlogPublisher (MDX auto-commit) + SemiManual (gated) |
 | `internal/api` | §5.5 | Chi HTTP API incl. review queue |
 | `cmd/api` | — | entrypoint: migrate → seed → wire providers → cron → serve |
-| `web` | §5.5 | Next.js review-queue UI |
+| `web` | §5.5 | Next.js dashboard UI |
 
 ## Run locally
 
@@ -48,6 +48,27 @@ NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev   # UI on :3000
 Without API keys the service uses **mock** LLM/search providers and the
 BlogPublisher runs in **dry-run** (logs + computes URL, no commit), so the whole
 pipeline runs end-to-end offline.
+
+## Deploy frontend to Vercel
+
+Deploy `web/` as the Vercel project root directory. The frontend only needs one
+production environment variable:
+
+```bash
+NEXT_PUBLIC_API_URL=https://<railway-api-domain>
+```
+
+Recommended CLI flow after logging in to Vercel:
+
+```bash
+vercel link --cwd web
+vercel deploy --cwd web
+vercel deploy --cwd web --prod
+```
+
+For Git integration, set the Vercel Project Root Directory to `web`, Framework
+Preset to Next.js, Build Command to `npm run build`, and Install Command to
+`npm install`.
 
 ## Providers (decisions baked in)
 

@@ -1,289 +1,286 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { api, Article, DistributeItem, ReviewGroup, Topic } from "../../lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
+import { api, Article, DistributeItem, Project, ReviewGroup, Topic } from "../../lib/api";
+import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
 
-function num(n: any): string {
-  // pgtype.Numeric serializes as an object; show a short form when present.
-  if (n == null) return "–";
-  if (typeof n === "number") return n.toFixed(2);
-  if (n.Valid === false) return "–";
-  return "set";
+type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
+
+function articleTitle(article: Article) {
+  return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
 }
 
-function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: string }) {
-  const tones: Record<string, string> = {
-    neutral: "bg-neutral-100 text-neutral-700",
-    green: "bg-green-100 text-green-700",
-    red: "bg-red-100 text-red-700",
-    amber: "bg-amber-100 text-amber-800",
-    blue: "bg-blue-100 text-blue-700",
-  };
-  return <span className={`rounded px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>{children}</span>;
+function topicLabel(topic: Topic) {
+  return topic.title || "Untitled topic";
 }
 
 export function Workspace({ projectId }: { projectId: string }) {
   const [landing, setLanding] = useState("");
+  const [project, setProject] = useState<Project | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [review, setReview] = useState<ReviewGroup[]>([]);
   const [published, setPublished] = useState<Article[]>([]);
+  const [approved, setApproved] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<Message>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [t, r, p, d] = await Promise.all([
-      api.listTopics(projectId).catch(() => []),
-      api.listReview(projectId).catch(() => []),
-      api.listArticles(projectId, "published").catch(() => []),
-      api.listDistribute(projectId).catch(() => []),
-    ]);
-    setTopics(t);
-    setReview(r);
-    setPublished(p);
-    setReady(d);
+    setApiError(null);
+    try {
+      const [p, t, r, pub, app, dist] = await Promise.all([
+        api.getProject(projectId),
+        api.listTopics(projectId),
+        api.listReview(projectId),
+        api.listArticles(projectId, "published"),
+        api.listArticles(projectId, "approved"),
+        api.listDistribute(projectId),
+      ]);
+      setProject(p);
+      setTopics(t);
+      setReview(r);
+      setPublished(pub);
+      setApproved(app);
+      setReady(dist);
+    } catch (e: any) {
+      setApiError(e.message);
+    }
   }, [projectId]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const run = async (label: string, fn: () => Promise<any>) => {
+  const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
     setBusy(label);
-    setMsg(null);
+    setMessage(null);
     try {
       await fn();
       await refresh();
-      setMsg(`${label} ✓`);
+      setMessage({ tone: "green", title: success });
     } catch (e: any) {
-      setMsg(`${label} failed: ${e.message}`);
+      setMessage({ tone: "red", title: `${label} failed`, detail: e.message });
     } finally {
       setBusy(null);
     }
   };
 
-  return (
-    <div className="space-y-8">
-      {msg && <div className="rounded border bg-white px-4 py-2 text-sm">{msg}</div>}
+  const reviewArticles = review.flatMap((group) => group.articles);
+  const scheduledRows = useMemo(() => {
+    const articleRows = approved
+      .filter((article) => article.kind === "canonical")
+      .map((article) => ({
+        id: article.id,
+        time: article.scheduled_at,
+        title: articleTitle(article),
+        status: article.status,
+        type: "canonical",
+      }));
+    const topicRows = topics
+      .filter((topic) => topic.scheduled_at)
+      .slice(0, 3)
+      .map((topic) => ({
+        id: topic.id,
+        time: topic.scheduled_at,
+        title: topicLabel(topic),
+        status: topic.status,
+        type: topic.channel,
+      }));
+    const rows = [...articleRows, ...topicRows].sort((a, b) => String(a.time).localeCompare(String(b.time)));
+    if (rows.length > 0) return rows.slice(0, 5);
 
-      {/* Pipeline controls */}
-      <section className="rounded-lg border bg-white p-5">
-        <h2 className="mb-3 font-semibold">Pipeline</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={landing}
-            onChange={(e) => setLanding(e.target.value)}
-            placeholder="https://landing-page-url/"
-            className="w-72 rounded border px-3 py-1.5 text-sm"
-          />
-          <button
-            disabled={!!busy || !landing}
-            onClick={() => run("Insight", () => api.runInsight(projectId, landing))}
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
-          >
-            Run Insight (crawl + profile)
-          </button>
-          <button
-            disabled={!!busy}
-            onClick={() => run("Strategist", () => api.runStrategist(projectId))}
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
-          >
-            Run Strategist (topics)
-          </button>
-          <button
-            disabled={!!busy}
-            onClick={() => run("Generate tick", () => api.tickGenerate(projectId))}
-            className="rounded border px-3 py-1.5 text-sm"
-          >
-            Generate tick
-          </button>
-          <button
-            disabled={!!busy}
-            onClick={() => run("Publish tick", () => api.tickPublish(projectId))}
-            className="rounded border px-3 py-1.5 text-sm"
-          >
-            Publish tick
-          </button>
-        </div>
-      </section>
+    const cadence = project?.config?.cadence_per_week ?? 3;
+    return Array.from({ length: Math.min(cadence, 4) }, (_, index) => ({
+      id: `empty-${index}`,
+      time: null,
+      title: "Open content slot",
+      status: "empty",
+      type: "slot",
+    }));
+  }, [approved, project?.config?.cadence_per_week, topics]);
 
-      {/* Topic backlog */}
-      <section className="rounded-lg border bg-white p-5">
-        <h2 className="mb-3 font-semibold">Topic backlog ({topics.length})</h2>
-        <div className="space-y-1.5">
-          {topics.map((t) => (
-            <div key={t.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-              <div className="flex items-center gap-2">
-                <Badge tone="blue">{t.channel}</Badge>
-                <span>{t.title}</span>
-                <Badge>{t.status}</Badge>
-              </div>
-              <button
-                disabled={!!busy}
-                onClick={() => run("Generate", () => api.generateTopic(projectId, t.id))}
-                className="rounded border px-2 py-1 text-xs"
-              >
-                Generate
-              </button>
-            </div>
-          ))}
-          {topics.length === 0 && <div className="text-sm text-neutral-500">No topics. Run Strategist.</div>}
-        </div>
-      </section>
-
-      {/* Review queue — the only human gate */}
-      <section className="rounded-lg border bg-white p-5">
-        <h2 className="mb-3 font-semibold">Review queue ({review.length} topics)</h2>
-        <p className="mb-3 text-xs text-neutral-500">
-          The only human gate. Articles with blocking evidence issues must be resolved before approval.
-        </p>
-        <div className="space-y-4">
-          {review.map((g) => (
-            <div key={g.topic_id} className="rounded border p-3">
-              {g.articles.map((a) => (
-                <ArticleCard key={a.id} a={a} busy={!!busy} onAction={run} />
-              ))}
-            </div>
-          ))}
-          {review.length === 0 && <div className="text-sm text-neutral-500">Nothing pending review.</div>}
-        </div>
-      </section>
-
-      {/* Published + distribution */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <section className="rounded-lg border bg-white p-5">
-          <h2 className="mb-3 font-semibold">Published ({published.length})</h2>
-          {published.map((a) => (
-            <div key={a.id} className="border-b py-2 text-sm last:border-0">
-              <div>{a.seo_meta?.title || a.kind}</div>
-              <a href={a.canonical_url || "#"} className="text-xs text-blue-600 underline">
-                {a.canonical_url}
-              </a>
-            </div>
-          ))}
-          {published.length === 0 && <div className="text-sm text-neutral-500">None yet.</div>}
-        </section>
-
-        <section className="rounded-lg border bg-white p-5">
-          <h2 className="mb-3 font-semibold">Ready to distribute ({ready.length})</h2>
-          <p className="mb-2 text-xs text-neutral-500">
-            Variants unlock only after the canonical is published (§5.6).
-          </p>
-          {ready.map(({ article: a, compose_url, supports_canonical }) => (
-            <div key={a.id} className="border-b py-2 text-sm last:border-0">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Badge tone="amber">{a.platform}</Badge>
-                  <span className="text-xs text-neutral-500">
-                    {supports_canonical ? "canonical tag" : "source link in body"}
-                  </span>
-                </div>
-                <button
-                  onClick={() => run("Distributed", () => api.distributed(a.id))}
-                  className="rounded border px-2 py-1 text-xs"
-                >
-                  Mark distributed
-                </button>
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <button
-                  onClick={() => navigator.clipboard?.writeText(a.content_md)}
-                  className="rounded border px-2 py-1 text-xs"
-                >
-                  Copy variant
-                </button>
-                {compose_url && (
-                  <a
-                    href={compose_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded border px-2 py-1 text-xs text-blue-700"
-                  >
-                    Open {a.platform} compose page ↗
-                  </a>
-                )}
-                <span className="text-xs text-neutral-400">canonical: {a.canonical_url}</span>
-              </div>
-            </div>
-          ))}
-          {ready.length === 0 && <div className="text-sm text-neutral-500">None ready.</div>}
-        </section>
-      </div>
-    </div>
+  const waitingVariants = approved.filter(
+    (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
   );
-}
 
-function ArticleCard({
-  a,
-  busy,
-  onAction,
-}: {
-  a: Article;
-  busy: boolean;
-  onAction: (label: string, fn: () => Promise<any>) => Promise<void>;
-}) {
-  const [content, setContent] = useState(a.content_md);
-  const [open, setOpen] = useState(false);
   return (
-    <div className="border-b py-3 last:border-0">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge tone={a.kind === "canonical" ? "green" : "neutral"}>
-            {a.kind}
-            {a.platform ? `:${a.platform}` : ""}
-          </Badge>
-          {a.qa_blocking && <Badge tone="red">qa blocking</Badge>}
-          <span className="text-xs text-neutral-500">
-            geo {num(a.geo_score)} · seo {num(a.seo_score)}
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setOpen((o) => !o)} className="rounded border px-2 py-1 text-xs">
-            {open ? "Hide" : "Edit"}
-          </button>
-          <button
-            disabled={busy || a.qa_blocking}
-            onClick={() => onAction("Approve", () => api.approve(a.id))}
-            className="rounded bg-green-600 px-2 py-1 text-xs text-white disabled:opacity-40"
-          >
-            Approve
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => onAction("Reject", () => api.reject(a.id))}
-            className="rounded border border-red-300 px-2 py-1 text-xs text-red-700"
-          >
-            Reject
-          </button>
-        </div>
-      </div>
-      {a.qa_issues && a.qa_issues.length > 0 && (
-        <ul className="mt-2 list-disc pl-5 text-xs text-red-600">
-          {a.qa_issues.map((i, idx) => (
-            <li key={idx}>{i}</li>
-          ))}
-        </ul>
+    <div className="space-y-7">
+      <button className="flex h-9 w-full items-center justify-between rounded-lg text-left text-sm font-semibold text-slate-400 transition-colors hover:text-slate-600">
+        Show learning resources
+        <ChevronRight size={16} />
+      </button>
+
+      {apiError && (
+        <Notice
+          title="API server unavailable"
+          detail={`Dashboard data could not be loaded (${apiError}). The frontend shell still renders for Vercel verification.`}
+          tone="amber"
+        />
       )}
-      {open && (
-        <div className="mt-2 space-y-2">
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            className="h-48 w-full rounded border p-2 font-mono text-xs"
-          />
-          <div className="flex items-center gap-3">
-            <button
-              disabled={busy}
-              onClick={() => onAction("Save", () => api.edit(a.id, { content_md: content }))}
-              className="rounded bg-neutral-900 px-3 py-1 text-xs text-white"
+      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+
+      <section>
+        <SectionHeader
+          title="Pipeline"
+          action={
+            <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          }
+        />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="grid gap-2 lg:grid-cols-[1fr_auto_auto_auto]">
+            <TextInput
+              value={landing}
+              onChange={(event) => setLanding(event.target.value)}
+              placeholder="https://landing-page-url/"
+              className="w-full"
+            />
+            <Button
+              disabled={!!busy || !landing}
+              variant="primary"
+              onClick={() => run("Insight", () => api.runInsight(projectId, landing), "Insight completed")}
             >
-              Save content
-            </button>
-            <span className="text-xs text-neutral-500">
-              Saving re-runs QA; blocking clears only if claims now map to evidence.
-            </span>
+              <Wand2 size={16} />
+              Run Insight
+            </Button>
+            <Button disabled={!!busy} onClick={() => run("Strategist", () => api.runStrategist(projectId))}>
+              Run Strategist
+            </Button>
+            <Button disabled={!!busy} onClick={() => run("Publish tick", () => api.tickPublish(projectId))}>
+              Publish tick
+            </Button>
           </div>
         </div>
+      </section>
+
+      <section>
+        <SectionHeader title="Next scheduled" eyebrow={project?.name ?? "Project"} />
+        <div className="grid gap-2">
+          {scheduledRows.map((row) => (
+            <div
+              key={row.id}
+              className="flex min-h-[38px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-slate-800">{row.title}</div>
+                <div className="text-[13px] font-semibold text-slate-400">{formatDate(row.time)}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge tone={row.status === "empty" ? "neutral" : "blue"}>{row.type}</Badge>
+                <Badge tone={row.status === "empty" ? "amber" : "green"}>{row.status}</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader title="Needs review" action={<Badge tone={reviewArticles.length ? "amber" : "neutral"}>{reviewArticles.length}</Badge>} />
+        {reviewArticles.length === 0 ? (
+          <EmptyState title="Nothing pending review" detail="Generated drafts that need the human gate will appear here." />
+        ) : (
+          <div className="columns-1 gap-3 sm:columns-2">
+            {reviewArticles.map((article) => (
+              <div
+                key={article.id}
+                className="mb-3 break-inside-avoid rounded-xl border border-slate-200 bg-white px-4 py-3"
+              >
+                <div className="mb-3 flex items-center gap-2">
+                  <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>
+                    {article.platform || article.kind}
+                  </Badge>
+                  {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+                </div>
+                <div className="content-font text-[15px] font-semibold leading-5 text-slate-900">
+                  {articleTitle(article)}
+                </div>
+                <p className="mt-2 line-clamp-4 content-font text-[15px] leading-5 text-slate-700">
+                  {article.content_md}
+                </p>
+                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                  <span>
+                    geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
+                  </span>
+                  <a href={`/projects/${projectId}/review`} className="font-semibold text-[#d93820]">
+                    Open review
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <SectionHeader title="Ready to distribute" action={<Badge tone={ready.length ? "green" : "neutral"}>{ready.length}</Badge>} />
+        {ready.length === 0 ? (
+          <EmptyState
+            title="No variants ready"
+            detail="Variants unlock only after the canonical article is published and canonical_url is available."
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {ready.map(({ article, compose_url, supports_canonical }) => (
+              <div key={article.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Badge tone="amber">{article.platform ?? "platform"}</Badge>
+                  <span className="text-xs font-semibold text-slate-400">
+                    {supports_canonical ? "canonical tag" : "source link"}
+                  </span>
+                </div>
+                <div className="mt-3 content-font text-[15px] font-semibold leading-5 text-slate-900">
+                  {articleTitle(article)}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => navigator.clipboard?.writeText(article.content_md)}>
+                    <Copy size={14} />
+                    Copy
+                  </Button>
+                  {compose_url && (
+                    <a
+                      href={compose_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      <ExternalLink size={14} />
+                      Compose
+                    </a>
+                  )}
+                  <Button size="sm" onClick={() => run("Distributed", () => api.distributed(article.id))}>
+                    Mark distributed
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <SectionHeader title="Recent runs" action={<a href={`/projects/${projectId}/runs`} className="text-xs font-semibold text-slate-500">View all</a>} />
+        <Notice
+          title="Runs endpoint is not available yet"
+          detail="The backend has write-side generation_runs queries, but no GET /runs route. This section will populate once that contract lands."
+        />
+      </section>
+
+      {waitingVariants.length > 0 && (
+        <section>
+          <SectionHeader title="Waiting on canonical" />
+          <div className="grid gap-2">
+            {waitingVariants.map((article) => (
+              <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm">
+                <span className="font-semibold text-slate-800">{articleTitle(article)}</span>
+                <span className="ml-2 text-slate-400">waiting for canonical URL</span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
