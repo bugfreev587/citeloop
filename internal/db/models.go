@@ -11,26 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminLlmCredential struct {
+	Singleton bool               `json:"singleton"`
+	Provider  string             `json:"provider"`
+	ApiKey    string             `json:"api_key"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	BaseUrl   string             `json:"base_url"`
+}
+
 type Article struct {
-	ID            uuid.UUID          `json:"id"`
-	ProjectID     uuid.UUID          `json:"project_id"`
-	TopicID       uuid.UUID          `json:"topic_id"`
-	Kind          string             `json:"kind"`
-	Platform      *string            `json:"platform"`
-	ContentMd     string             `json:"content_md"`
-	SeoMeta       json.RawMessage    `json:"seo_meta"`
-	GeoScore      pgtype.Numeric     `json:"geo_score"`
-	SeoScore      pgtype.Numeric     `json:"seo_score"`
-	QaIssues      json.RawMessage    `json:"qa_issues"`
-	QaBlocking    bool               `json:"qa_blocking"`
-	CanonicalUrl  *string            `json:"canonical_url"`
-	Status        string             `json:"status"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
-	ReviewedBy    *string            `json:"reviewed_by"`
-	ReviewedAt    pgtype.Timestamptz `json:"reviewed_at"`
-	PublishedAt   pgtype.Timestamptz `json:"published_at"`
-	PublishResult []byte             `json:"publish_result"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	TopicID                uuid.UUID          `json:"topic_id"`
+	Kind                   string             `json:"kind"`
+	Platform               *string            `json:"platform"`
+	ContentMd              string             `json:"content_md"`
+	SeoMeta                json.RawMessage    `json:"seo_meta"`
+	GeoScore               pgtype.Numeric     `json:"geo_score"`
+	SeoScore               pgtype.Numeric     `json:"seo_score"`
+	QaIssues               json.RawMessage    `json:"qa_issues"`
+	QaBlocking             bool               `json:"qa_blocking"`
+	CanonicalUrl           *string            `json:"canonical_url"`
+	Status                 string             `json:"status"`
+	ScheduledAt            pgtype.Timestamptz `json:"scheduled_at"`
+	ReviewedBy             *string            `json:"reviewed_by"`
+	ReviewedAt             pgtype.Timestamptz `json:"reviewed_at"`
+	PublishedAt            pgtype.Timestamptz `json:"published_at"`
+	PublishResult          []byte             `json:"publish_result"`
+	LastPublishError       *string            `json:"last_publish_error"`
+	PublishAttempts        int32              `json:"publish_attempts"`
+	NextPublishRetryAt     pgtype.Timestamptz `json:"next_publish_retry_at"`
+	PublishPhase           *string            `json:"publish_phase"`
+	ResolvedSlug           *string            `json:"resolved_slug"`
+	PublishPath            *string            `json:"publish_path"`
+	CanonicalUrlVerifiedAt pgtype.Timestamptz `json:"canonical_url_verified_at"`
+	LastPublishRunID       pgtype.UUID        `json:"last_publish_run_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 type ContentInventory struct {
@@ -57,6 +73,43 @@ type GenerationRun struct {
 	CostUsd   pgtype.Numeric     `json:"cost_usd"`
 	Status    string             `json:"status"`
 	Error     *string            `json:"error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type NotificationChannel struct {
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	Kind       string             `json:"kind"`
+	Config     json.RawMessage    `json:"config"`
+	Label      string             `json:"label"`
+	VerifiedAt pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type NotificationDelivery struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	SubscriptionID pgtype.UUID        `json:"subscription_id"`
+	ChannelID      uuid.UUID          `json:"channel_id"`
+	EventType      string             `json:"event_type"`
+	EventID        string             `json:"event_id"`
+	Payload        json.RawMessage    `json:"payload"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextRetryAt    pgtype.Timestamptz `json:"next_retry_at"`
+	LastError      *string            `json:"last_error"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type NotificationSubscription struct {
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	EventType string             `json:"event_type"`
+	ChannelID uuid.UUID          `json:"channel_id"`
+	Enabled   bool               `json:"enabled"`
+	Filter    []byte             `json:"filter"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 

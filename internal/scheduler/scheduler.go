@@ -8,29 +8,44 @@ package scheduler
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	reviewOverdueHours = 48
+	reviewOverdueLimit = 100
+)
+
 type Scheduler struct {
-	Pool    *pgxpool.Pool
-	LLM     llm.Provider
-	Search  search.Provider
-	Blog    *publisher.BlogPublisher
-	Log     *slog.Logger
-	now     func() time.Time
-	alert   func(projectID uuid.UUID, msg string)
+	Pool                 *pgxpool.Pool
+	LLM                  llm.Provider
+	Search               search.Provider
+	Blog                 *publisher.BlogPublisher
+	Log                  *slog.Logger
+	now                  func() time.Time
+	alert                func(projectID uuid.UUID, msg string)
+	httpClient           *http.Client
+	NotificationSecret   string
+	UniPostDeployHookURL string
 }
 
 func New(pool *pgxpool.Pool, llmP llm.Provider, searchP search.Provider, blog *publisher.BlogPublisher, log *slog.Logger) *Scheduler {
@@ -39,8 +54,49 @@ func New(pool *pgxpool.Pool, llmP llm.Provider, searchP search.Provider, blog *p
 	}
 	return &Scheduler{
 		Pool: pool, LLM: llmP, Search: searchP, Blog: blog, Log: log,
-		now:   time.Now,
-		alert: func(p uuid.UUID, m string) { log.Warn("ALERT", "project", p, "msg", m) },
+		now:        time.Now,
+		alert:      func(p uuid.UUID, m string) { log.Warn("ALERT", "project", p, "msg", m) },
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+func (s *Scheduler) TickNotifications(ctx context.Context) {
+	if s.NotificationSecret == "" {
+		s.Log.Warn("NOTIFICATION_SECRET_KEY not set; notification worker skipped")
+		return
+	}
+	worker := notification.Worker{
+		Store:  db.New(s.Pool),
+		Sender: notification.HTTPSender{Client: s.httpClient},
+		Secret: s.NotificationSecret,
+		Limit:  20,
+	}
+	processed, err := worker.ProcessOnce(ctx)
+	if err != nil {
+		s.Log.Error("notification worker failed", "err", err)
+		return
+	}
+	if processed > 0 {
+		s.Log.Info("notification deliveries processed", "count", processed)
+	}
+}
+
+func (s *Scheduler) TickReviewOverdue(ctx context.Context) {
+	q := db.New(s.Pool)
+	now := s.currentTime()
+	articles, err := q.ListOverdueReviewArticles(ctx, db.ListOverdueReviewArticlesParams{
+		CreatedAt: pgtype.Timestamptz{Time: now.Add(-reviewOverdueHours * time.Hour), Valid: true},
+		Limit:     reviewOverdueLimit,
+	})
+	if err != nil {
+		s.Log.Error("list overdue review articles", "err", err)
+		return
+	}
+	for _, article := range articles {
+		s.dispatchReviewOverdue(ctx, q, article)
+	}
+	if len(articles) > 0 {
+		s.Log.Info("review overdue sweep dispatched", "count", len(articles))
 	}
 }
 
@@ -83,6 +139,7 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 	}
 	if pgutil.Float(spent) >= cfg.MonthlyBudgetUSD {
 		s.alert(p.ID, "monthly budget reached; generation paused")
+		s.dispatchBudgetStopped(ctx, q, p.ID, pgutil.Float(spent), cfg.MonthlyBudgetUSD)
 		return tx.Commit(ctx)
 	}
 
@@ -121,6 +178,7 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		}
 		if _, err := writer.Generate(ctx, p.ID, t); err != nil {
 			s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
+			s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
 			// leave topic in generating; next tick may retry. Do not block others.
 			continue
 		}
@@ -141,12 +199,130 @@ func (s *Scheduler) TickPublish(ctx context.Context) {
 		if err := s.publishForProject(ctx, p); err != nil {
 			s.Log.Error("publish tick failed", "project", p.ID, "err", err)
 		}
+		if err := s.reconcilePublishForProject(ctx, p); err != nil {
+			s.Log.Error("publish reconcile failed", "project", p.ID, "err", err)
+		}
 	}
 	// variant unlock is project-independent in query; run once.
 	s.unlockVariants(ctx)
 }
 
 func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
+	due, err := s.prepareDueCanonicals(ctx, p)
+	if err != nil {
+		return err
+	}
+	q := db.New(s.Pool)
+	for _, a := range due {
+		res, err := s.Blog.Publish(ctx, &a)
+		if err != nil {
+			s.alert(p.ID, "publish failed for article "+a.ID.String()+": "+err.Error())
+			s.markPublishFailed(ctx, q, p, a, "github_write", err.Error(), true)
+			continue
+		}
+		resolvedSlug, publishPath := publishResultRefs(res)
+		res.Phase = "pending_url_verification"
+		if s.UniPostDeployHookURL != "" {
+			if err := s.triggerUniPostDeployHook(ctx); err != nil {
+				errText := "deploy hook failed: " + err.Error()
+				res.DeployHook = "failed"
+				if _, recErr := q.RecordPublishAttemptResult(ctx, db.RecordPublishAttemptResultParams{
+					ID:                 a.ID,
+					PublishResult:      mustJSON(res),
+					ResolvedSlug:       resolvedSlug,
+					PublishPath:        publishPath,
+					NextPublishRetryAt: nextPublishRetryAt(s.currentTime(), a.PublishAttempts),
+				}); recErr != nil {
+					s.Log.Error("record publish result failed", "article", a.ID, "err", recErr)
+				}
+				s.markPublishFailed(ctx, q, p, a, "deploy_hook", errText, true)
+				continue
+			}
+			res.DeployHook = "triggered"
+		} else {
+			res.DeployHook = "not_configured"
+		}
+		pubResult := mustJSON(res)
+		if _, err := q.RecordPublishAttemptResult(ctx, db.RecordPublishAttemptResultParams{
+			ID:                 a.ID,
+			PublishResult:      pubResult,
+			ResolvedSlug:       resolvedSlug,
+			PublishPath:        publishPath,
+			NextPublishRetryAt: pgtype.Timestamptz{Time: s.currentTime().Add(time.Minute), Valid: true},
+		}); err != nil {
+			errText := "record publish result failed: " + err.Error()
+			s.Log.Error("record publish result failed", "article", a.ID, "err", err)
+			s.markPublishFailed(ctx, q, p, a, "db_backfill", errText, true)
+			continue
+		}
+		if err := s.verifyPublishedURL(ctx, res.URL); err != nil {
+			s.Log.Info("published content waiting for URL verification", "article", a.ID, "url", res.URL, "err", err)
+			continue
+		}
+		published, err := q.MarkPublished(ctx, db.MarkPublishedParams{
+			ID:            a.ID,
+			PublishResult: pubResult,
+			CanonicalUrl:  &res.URL,
+			ResolvedSlug:  resolvedSlug,
+			PublishPath:   publishPath,
+		})
+		if err != nil {
+			errText := "mark published failed: " + err.Error()
+			s.Log.Error("mark published failed", "article", a.ID, "err", err)
+			s.markPublishFailed(ctx, q, p, a, "db_backfill", errText, true)
+			continue
+		}
+		// Published canonical feeds back into inventory (§5.6).
+		s.feedInventory(ctx, q, published, res.URL)
+		s.Log.Info("auto-published canonical", "article", a.ID, "url", res.URL)
+	}
+	return nil
+}
+
+func (s *Scheduler) prepareDueCanonicals(ctx context.Context, p db.Project) ([]db.Article, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(p.ID)); err != nil {
+		return nil, err
+	}
+	q := db.New(tx)
+
+	due, err := q.SelectDueCanonical(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	prepared := make([]db.Article, 0, len(due))
+	for _, a := range due {
+		slug, publishPath, _, err := s.Blog.Resolve(&a)
+		if err != nil {
+			return nil, err
+		}
+		phase := "github_write"
+		preparedArticle, err := q.PreparePublishAttempt(ctx, db.PreparePublishAttemptParams{
+			ID:           a.ID,
+			ResolvedSlug: ptr(slug),
+			PublishPath:  ptr(publishPath),
+			PublishPhase: ptr(phase),
+		})
+		if err != nil {
+			return nil, err
+		}
+		prepared = append(prepared, preparedArticle)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func (s *Scheduler) ReconcilePublishProject(ctx context.Context, p db.Project) error {
+	return s.reconcilePublishForProject(ctx, p)
+}
+
+func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -156,30 +332,45 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 		return err
 	}
 	q := db.New(tx)
-
-	due, err := q.SelectDueCanonical(ctx, p.ID)
+	candidates, err := q.SelectPublishReconcileCandidates(ctx, p.ID)
 	if err != nil {
 		return err
 	}
-	for _, a := range due {
-		res, err := s.Blog.Publish(ctx, &a)
+	for _, a := range candidates {
+		res, err := publishResultFromArticle(a)
 		if err != nil {
-			s.alert(p.ID, "publish failed for article "+a.ID.String()+": "+err.Error())
-			continue // do not mark published on failure (§5.6)
-		}
-		pubResult := mustJSON(res)
-		published, err := q.MarkPublished(ctx, db.MarkPublishedParams{
-			ID:            a.ID,
-			PublishResult: pubResult,
-			CanonicalUrl:  &res.URL,
-		})
-		if err != nil {
-			s.Log.Error("mark published failed", "article", a.ID, "err", err)
+			s.markPublishFailed(ctx, q, p, a, "reconcile_invalid_result", "reconcile publish_result invalid: "+err.Error(), true)
 			continue
 		}
-		// Published canonical feeds back into inventory (§5.6).
+		if res.URL == "" {
+			s.markPublishFailed(ctx, q, p, a, "reconcile_missing_url", "reconcile missing canonical url", true)
+			continue
+		}
+		if err := s.verifyPublishedPath(ctx, res.Path); err != nil {
+			s.markPublishFailed(ctx, q, p, a, "reconcile_missing_file", "reconcile content path failed: "+err.Error(), true)
+			continue
+		}
+		if err := s.verifyPublishedURL(ctx, res.URL); err != nil {
+			if a.Status == "pending_url_verification" {
+				s.Log.Info("publish still waiting for URL verification", "article", a.ID, "url", res.URL, "err", err)
+			} else {
+				s.markPublishFailed(ctx, q, p, a, "reconcile_url_unverified", "reconcile url verification failed: "+err.Error(), true)
+			}
+			continue
+		}
+		resolvedSlug, publishPath := publishResultRefs(res)
+		published, err := q.MarkPublished(ctx, db.MarkPublishedParams{
+			ID:            a.ID,
+			PublishResult: mustJSON(res),
+			CanonicalUrl:  &res.URL,
+			ResolvedSlug:  resolvedSlug,
+			PublishPath:   publishPath,
+		})
+		if err != nil {
+			return err
+		}
 		s.feedInventory(ctx, q, published, res.URL)
-		s.Log.Info("auto-published canonical", "article", a.ID, "url", res.URL)
+		s.Log.Info("publish state reconciled", "article", a.ID, "url", res.URL)
 	}
 	return tx.Commit(ctx)
 }
@@ -218,6 +409,218 @@ func (s *Scheduler) unlockVariants(ctx context.Context) {
 		}
 		s.Log.Info("variant ready to distribute", "article", v.ID, "platform", deref(v.Platform))
 	}
+}
+
+func (s *Scheduler) verifyPublishedURL(ctx context.Context, url string) error {
+	if url == "" {
+		return fmt.Errorf("empty published URL")
+	}
+	client := s.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	if ok, err := request2xx(ctx, client, http.MethodHead, url); err == nil && ok {
+		return nil
+	}
+	ok, err := request2xx(ctx, client, http.MethodGet, url)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("published URL did not return 2xx")
+	}
+	return nil
+}
+
+func (s *Scheduler) triggerUniPostDeployHook(ctx context.Context) error {
+	if s.UniPostDeployHookURL == "" {
+		return nil
+	}
+	client := s.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.UniPostDeployHookURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("deploy hook returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (s *Scheduler) verifyPublishedPath(ctx context.Context, publishPath string) error {
+	if publishPath == "" || s.Blog == nil {
+		return nil
+	}
+	return s.Blog.PublishedPathExists(ctx, publishPath)
+}
+
+func nextPublishRetryAt(now time.Time, attempt int32) pgtype.Timestamptz {
+	delays := []time.Duration{
+		5 * time.Minute,
+		15 * time.Minute,
+		time.Hour,
+		6 * time.Hour,
+	}
+	if attempt <= 0 || int(attempt) > len(delays) {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: now.Add(delays[attempt-1]), Valid: true}
+}
+
+func (s *Scheduler) markPublishFailed(ctx context.Context, q *db.Queries, p db.Project, a db.Article, phase, errText string, transition bool) {
+	failed, markErr := q.MarkPublishFailed(ctx, db.MarkPublishFailedParams{
+		ID:                 a.ID,
+		LastPublishError:   ptr(errText),
+		NextPublishRetryAt: nextPublishRetryAt(s.currentTime(), a.PublishAttempts),
+		PublishPhase:       ptr(phase),
+	})
+	if markErr != nil {
+		s.Log.Error("mark publish failed state failed", "article", a.ID, "err", markErr)
+	} else {
+		a = failed
+	}
+	s.dispatchPublishFailed(ctx, q, p, a, phase, errText, transition)
+}
+
+func request2xx(ctx context.Context, client *http.Client, method, url string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
+}
+
+func (s *Scheduler) currentTime() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+func (s *Scheduler) dispatchBudgetStopped(ctx context.Context, store notification.DispatchStore, projectID uuid.UUID, spentUSD, budgetUSD float64) {
+	event := notification.NewBudgetStoppedEvent(projectID, spentUSD, budgetUSD, s.currentTime(), "/projects/"+projectID.String())
+	s.dispatchNotification(ctx, store, event)
+}
+
+func (s *Scheduler) dispatchGenerationFailed(ctx context.Context, store notification.DispatchStore, projectID uuid.UUID, agent, scope, title, errText string) {
+	event := notification.NewGenerationFailedEvent(
+		projectID,
+		agent,
+		scope,
+		title,
+		errText,
+		s.currentTime(),
+		"/projects/"+projectID.String()+"/runs",
+	)
+	s.dispatchNotification(ctx, store, event)
+}
+
+func (s *Scheduler) dispatchPublishFailed(ctx context.Context, store notification.DispatchStore, p db.Project, a db.Article, phase, errText string, transition bool) {
+	title, slug := articleTitleSlug(a)
+	event := notification.NewPublishFailedEvent(
+		p.ID,
+		a.ID,
+		title,
+		slug,
+		phase,
+		a.PublishAttempts,
+		errText,
+		s.currentTime(),
+		"/projects/"+p.ID.String()+"/publishing",
+		transition,
+	)
+	s.dispatchNotification(ctx, store, event)
+}
+
+func (s *Scheduler) dispatchReviewOverdue(ctx context.Context, store notification.DispatchStore, a db.Article) {
+	title, _ := articleTitleSlug(a)
+	now := s.currentTime()
+	ageHours := 0
+	if a.CreatedAt.Valid {
+		ageHours = int(now.Sub(a.CreatedAt.Time) / time.Hour)
+		if ageHours < 0 {
+			ageHours = 0
+		}
+	}
+	event := notification.NewReviewOverdueEvent(
+		a.ProjectID,
+		a.ID,
+		title,
+		ageHours,
+		now,
+		"/projects/"+a.ProjectID.String()+"/review",
+	)
+	s.dispatchNotification(ctx, store, event)
+}
+
+func (s *Scheduler) dispatchNotification(ctx context.Context, store notification.DispatchStore, event notification.Event) {
+	if err := notification.Dispatch(ctx, store, event); err != nil {
+		log := s.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("notification dispatch failed", "event_type", event.Type, "event_id", event.ID, "err", err)
+	}
+}
+
+func articleTitleSlug(a db.Article) (string, string) {
+	seo := struct {
+		Title string `json:"title"`
+		H1    string `json:"h1"`
+		Slug  string `json:"slug"`
+	}{}
+	_ = jsonUnmarshal(a.SeoMeta, &seo)
+	title := seo.Title
+	if title == "" {
+		title = seo.H1
+	}
+	if title == "" {
+		title = a.ID.String()
+	}
+	return title, seo.Slug
+}
+
+func publishResultFromArticle(a db.Article) (publisher.Result, error) {
+	var res publisher.Result
+	if len(a.PublishResult) > 0 {
+		if err := jsonUnmarshal(a.PublishResult, &res); err != nil {
+			return res, err
+		}
+	}
+	if res.URL == "" && a.CanonicalUrl != nil {
+		res.URL = *a.CanonicalUrl
+	}
+	if res.Path == "" && a.PublishPath != nil {
+		res.Path = *a.PublishPath
+	}
+	return res, nil
+}
+
+func publishResultRefs(res publisher.Result) (*string, *string) {
+	slug := ""
+	if res.Path != "" {
+		base := path.Base(res.Path)
+		slug = strings.TrimSuffix(strings.TrimSuffix(base, ".mdx"), ".md")
+	}
+	if slug == "" && res.URL != "" {
+		if parsed, err := url.Parse(res.URL); err == nil {
+			slug = path.Base(parsed.Path)
+		}
+	}
+	return ptr(slug), ptr(res.Path)
 }
 
 func (s *Scheduler) feedInventory(ctx context.Context, q *db.Queries, a db.Article, url string) {

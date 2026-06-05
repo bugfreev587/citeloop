@@ -1,14 +1,53 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, CalendarDays, RefreshCw, Wand2 } from "lucide-react";
-import { api, Topic } from "../../../lib/api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
+import { Archive, CalendarDays, Check, Pencil, RefreshCw, Wand2, X } from "lucide-react";
+import { Topic } from "../../../lib/api";
+import { useApi } from "../../../lib/use-api";
+import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+type TopicDraft = {
+  channel: string;
+  title: string;
+  target_keyword: string;
+  target_prompt: string;
+  angle: string;
+  format: string;
+  priority: string;
+};
+
+function toDateTimeLocal(value: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? new Date(trimmed).toISOString() : null;
+}
+
+function draftFromTopic(topic: Topic): TopicDraft {
+  return {
+    channel: topic.channel,
+    title: topic.title,
+    target_keyword: topic.target_keyword ?? "",
+    target_prompt: topic.target_prompt ?? "",
+    angle: topic.angle ?? "",
+    format: topic.format ?? "",
+    priority: String(topic.priority),
+  };
+}
 
 export function TopicsClient({ projectId }: { projectId: string }) {
+  const api = useApi();
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [query, setQuery] = useState("");
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
@@ -16,11 +55,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      setTopics(await api.listTopics(projectId));
+      const next = await api.listTopics(projectId);
+      setTopics(next);
+      setScheduleDrafts(Object.fromEntries(next.map((topic) => [topic.id, toDateTimeLocal(topic.scheduled_at)])));
     } catch (e: any) {
       setMessage({ title: "Topics unavailable", detail: e.message, tone: "amber" });
     }
-  }, [projectId]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
@@ -53,6 +94,76 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  function replaceTopic(updated: Topic) {
+    setTopics((current) => current.map((topic) => (topic.id === updated.id ? updated : topic)));
+    setScheduleDrafts((current) => ({ ...current, [updated.id]: toDateTimeLocal(updated.scheduled_at) }));
+  }
+
+  function startEdit(topic: Topic) {
+    setEditingId(topic.id);
+    setDraft(draftFromTopic(topic));
+    setMessage(null);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setDraft(null);
+  }
+
+  async function saveEdit(topic: Topic) {
+    if (!draft) return;
+    const priority = Number.parseInt(draft.priority, 10);
+    setBusy(`edit-${topic.id}`);
+    setMessage(null);
+    try {
+      const updated = await api.updateTopic(projectId, topic.id, {
+        channel: draft.channel,
+        title: draft.title,
+        target_keyword: draft.target_keyword,
+        target_prompt: draft.target_prompt,
+        angle: draft.angle,
+        format: draft.format,
+        priority: Number.isFinite(priority) ? priority : 0,
+      });
+      replaceTopic(updated);
+      cancelEdit();
+      setMessage({ title: "Topic saved", detail: updated.title, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Save failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function schedule(topic: Topic) {
+    setBusy(`schedule-${topic.id}`);
+    setMessage(null);
+    try {
+      const updated = await api.scheduleTopic(projectId, topic.id, fromDateTimeLocal(scheduleDrafts[topic.id] ?? ""));
+      replaceTopic(updated);
+      setMessage({ title: updated.scheduled_at ? "Topic scheduled" : "Schedule cleared", detail: updated.title, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Schedule failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function archive(topic: Topic) {
+    setBusy(`archive-${topic.id}`);
+    setMessage(null);
+    try {
+      const updated = await api.archiveTopic(projectId, topic.id);
+      replaceTopic(updated);
+      if (editingId === topic.id) cancelEdit();
+      setMessage({ title: "Topic archived", detail: updated.title, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Archive failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function generate(topic: Topic) {
     setBusy(topic.id);
     setMessage(null);
@@ -61,13 +172,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       await refresh();
       setMessage({ title: "Topic generated", detail: `${articles.length} articles moved toward review.`, tone: "green" });
     } catch (e: any) {
-      const isDuplicate = String(e.message).includes("duplicate") || String(e.message).includes("unique");
       setMessage({
-        title: isDuplicate ? "Topic already has generated articles" : "Generate failed",
-        detail: isDuplicate
-          ? "The backend currently exposes duplicate generation as a raw database error. It should return existing articles or a friendly 409."
-          : e.message,
-        tone: isDuplicate ? "amber" : "red",
+        title: "Generate failed",
+        detail: e.message,
+        tone: "red",
       });
     } finally {
       setBusy(null);
@@ -122,7 +230,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone="blue">{topic.channel}</Badge>
-                      <Badge tone={topic.status === "backlog" ? "neutral" : "green"}>{topic.status}</Badge>
+                      <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
+                        {topic.status}
+                      </Badge>
                       <span className="text-xs font-semibold text-slate-400">priority {topic.priority}</span>
                     </div>
                     <div className="mt-2 text-base font-bold text-slate-900">{topic.title}</div>
@@ -137,31 +247,104 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
-                    <Button disabled={!!busy} size="sm" variant="primary" onClick={() => generate(topic)}>
+                    <Button
+                      disabled={!!busy || topic.status === "archived"}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(topic)}
+                    >
+                      <Pencil size={14} />
+                      Edit
+                    </Button>
+                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="primary" onClick={() => generate(topic)}>
                       <Wand2 size={14} />
                       Generate
                     </Button>
-                    <Button disabled size="sm" title="Topic schedule route is not available yet.">
-                      <CalendarDays size={14} />
-                      Schedule
-                    </Button>
-                    <Button disabled size="sm" title="Topic archive route is not available yet.">
+                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="danger" onClick={() => archive(topic)}>
                       <Archive size={14} />
                       Archive
                     </Button>
                   </div>
+                </div>
+                {editingId === topic.id && draft && (
+                  <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
+                    <div className="grid gap-3 md:grid-cols-[160px_1fr_120px]">
+                      <Field label="Channel">
+                        <select
+                          value={draft.channel}
+                          onChange={(event) => setDraft({ ...draft, channel: event.target.value })}
+                          className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
+                        >
+                          <option value="blog">Blog</option>
+                          <option value="syndication">Syndication</option>
+                          <option value="both">Both</option>
+                        </select>
+                      </Field>
+                      <Field label="Title">
+                        <TextInput value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+                      </Field>
+                      <Field label="Priority">
+                        <TextInput
+                          type="number"
+                          value={draft.priority}
+                          onChange={(event) => setDraft({ ...draft, priority: event.target.value })}
+                        />
+                      </Field>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Target keyword">
+                        <TextInput
+                          value={draft.target_keyword}
+                          onChange={(event) => setDraft({ ...draft, target_keyword: event.target.value })}
+                        />
+                      </Field>
+                      <Field label="Format">
+                        <TextInput value={draft.format} onChange={(event) => setDraft({ ...draft, format: event.target.value })} />
+                      </Field>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Angle">
+                        <TextArea rows={3} value={draft.angle} onChange={(event) => setDraft({ ...draft, angle: event.target.value })} />
+                      </Field>
+                      <Field label="Target prompt">
+                        <TextArea
+                          rows={3}
+                          value={draft.target_prompt}
+                          onChange={(event) => setDraft({ ...draft, target_prompt: event.target.value })}
+                        />
+                      </Field>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button disabled={!!busy} size="sm" variant="ghost" onClick={cancelEdit}>
+                        <X size={14} />
+                        Cancel
+                      </Button>
+                      <Button disabled={!!busy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
+                        <Check size={14} />
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3 md:flex-row md:items-end md:justify-end">
+                  <Field label="Scheduled at">
+                    <TextInput
+                      type="datetime-local"
+                      value={scheduleDrafts[topic.id] ?? ""}
+                      disabled={topic.status === "archived"}
+                      onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
+                    />
+                  </Field>
+                  <Button disabled={!!busy || topic.status === "archived"} size="sm" onClick={() => schedule(topic)}>
+                    <CalendarDays size={14} />
+                    Schedule
+                  </Button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </section>
-
-      <Notice
-        title="Topic edit contract needed"
-        detail="The backend has query support for status and scheduled_at, but no HTTP route for title/channel/priority edits or archive yet."
-        tone="amber"
-      />
     </div>
   );
 }

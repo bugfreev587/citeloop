@@ -36,8 +36,14 @@ func title(a *db.Article) string {
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+var scriptTagRe = regexp.MustCompile(`(?i)<\s*script\b`)
+var mdxImportRe = regexp.MustCompile(`(?m)^\s*import\s+`)
+var htmlEventHandlerRe = regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
 
 func slugOf(a *db.Article) string {
+	if a.ResolvedSlug != nil && strings.TrimSpace(*a.ResolvedSlug) != "" {
+		return strings.TrimSpace(*a.ResolvedSlug)
+	}
 	m := parseSEO(a)
 	s := m.Slug
 	if s == "" {
@@ -52,17 +58,42 @@ func slugOf(a *db.Article) string {
 }
 
 // renderMDX builds the MDX file with frontmatter for the canonical blog post.
-func renderMDX(a *db.Article, slug, publicURL string, now time.Time) []byte {
+func renderMDX(a *db.Article, slug, publicURL string, now time.Time) ([]byte, error) {
+	if err := validateGeneratedMDX(a.ContentMd); err != nil {
+		return nil, err
+	}
 	m := parseSEO(a)
 	var b strings.Builder
 	b.WriteString("---\n")
-	fmt.Fprintf(&b, "title: %q\n", title(a))
-	fmt.Fprintf(&b, "description: %q\n", m.MetaDescription)
+	b.WriteString("source: citeloop\n")
+	fmt.Fprintf(&b, "citeloop_article_id: %q\n", a.ID.String())
+	fmt.Fprintf(&b, "citeloop_topic_id: %q\n", a.TopicID.String())
 	fmt.Fprintf(&b, "slug: %q\n", slug)
+	fmt.Fprintf(&b, "title: %q\n", title(a))
+	fmt.Fprintf(&b, "seo_title: %q\n", title(a))
+	fmt.Fprintf(&b, "description: %q\n", m.MetaDescription)
+	fmt.Fprintf(&b, "excerpt: %q\n", m.MetaDescription)
+	fmt.Fprintf(&b, "published_at: %q\n", now.Format("2006-01-02"))
+	fmt.Fprintf(&b, "updated_at: %q\n", now.Format("2006-01-02"))
+	b.WriteString("author: \"UniPost\"\n")
+	b.WriteString("category: \"Engineering\"\n")
+	b.WriteString("keywords: []\n")
 	fmt.Fprintf(&b, "canonical: %q\n", publicURL)
-	fmt.Fprintf(&b, "date: %q\n", now.Format(time.RFC3339))
 	b.WriteString("---\n\n")
 	b.WriteString(a.ContentMd)
 	b.WriteString("\n")
-	return []byte(b.String())
+	return []byte(b.String()), nil
+}
+
+func validateGeneratedMDX(content string) error {
+	switch {
+	case scriptTagRe.MatchString(content):
+		return fmt.Errorf("unsafe generated mdx: script tag is not allowed")
+	case mdxImportRe.MatchString(content):
+		return fmt.Errorf("unsafe generated mdx: import is not allowed")
+	case htmlEventHandlerRe.MatchString(content):
+		return fmt.Errorf("unsafe generated mdx: html event handler is not allowed")
+	default:
+		return nil
+	}
 }

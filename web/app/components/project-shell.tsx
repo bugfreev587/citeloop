@@ -1,5 +1,6 @@
 "use client";
 
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -8,6 +9,7 @@ import {
   CircleHelp,
   Database,
   Home,
+  KeyRound,
   ListChecks,
   PenLine,
   Send,
@@ -24,6 +26,7 @@ const navItems = [
   { label: "Publishing", href: "publishing", icon: Send },
   { label: "Runs", href: "runs", icon: Activity },
   { label: "Settings", href: "settings", icon: Settings },
+  { label: "Admin", href: "admin", icon: KeyRound },
 ];
 
 function projectHref(projectId: string, leaf: string) {
@@ -108,6 +111,9 @@ export function ProjectShell({
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-slate-900">{projectName}</div>
               <div className="truncate text-xs text-slate-400">/{project?.slug ?? projectId}</div>
+            </div>
+            <div className="ml-auto">
+              <UserButton />
             </div>
           </div>
         </div>

@@ -1,9 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Save } from "lucide-react";
-import { api, defaultProjectConfig, ProjectConfig } from "../../../lib/api";
-import { Button, Field, Notice, SectionHeader, TextInput, TextArea } from "../../../components/ui";
+import { Bell, Plus, RefreshCw, RotateCcw, Save, Send, Trash2 } from "lucide-react";
+import {
+  defaultProjectConfig,
+  NotificationChannel,
+  NotificationChannelKind,
+  NotificationDelivery,
+  NotificationEvent,
+  NotificationSubscription,
+  ProjectConfig,
+} from "../../../lib/api";
+import { useApi } from "../../../lib/use-api";
+import { Badge, Button, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -17,9 +26,41 @@ function toFloat(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
+  { value: "slack_webhook", label: "Slack" },
+  { value: "discord_webhook", label: "Discord" },
+];
+
+const eventLabels: Record<string, string> = {
+  "generation.failed": "Generation failed",
+  "publish.failed": "Publish failed",
+  "budget.stopped": "Budget stopped",
+  "review.overdue": "Review overdue",
+  "webhook.delivery.dead": "Webhook delivery dead",
+};
+
+const deliveryStatuses = [
+  { value: "", label: "All" },
+  { value: "pending", label: "Pending" },
+  { value: "dead", label: "Dead" },
+  { value: "sent", label: "Sent" },
+];
+
 export function SettingsClient({ projectId }: { projectId: string }) {
+  const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
+  const [channels, setChannels] = useState<NotificationChannel[]>([]);
+  const [events, setEvents] = useState<NotificationEvent[]>([]);
+  const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
+  const [deliveries, setDeliveries] = useState<NotificationDelivery[]>([]);
+  const [deliveryStatus, setDeliveryStatus] = useState("");
+  const [channelDraft, setChannelDraft] = useState<{ kind: NotificationChannelKind; label: string; url: string }>({
+    kind: "slack_webhook",
+    label: "Ops",
+    url: "",
+  });
   const [busy, setBusy] = useState(false);
+  const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
   const refresh = useCallback(async () => {
@@ -29,11 +70,32 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     } catch (e: any) {
       setMessage({ title: "Settings unavailable", detail: e.message, tone: "amber" });
     }
-  }, [projectId]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const [nextChannels, nextEvents, nextSubscriptions, nextDeliveries] = await Promise.all([
+        api.listNotificationChannels(projectId),
+        api.listNotificationEvents(projectId),
+        api.listNotificationSubscriptions(projectId),
+        api.listNotificationDeliveries(projectId, { status: deliveryStatus, limit: 25 }),
+      ]);
+      setChannels(nextChannels);
+      setEvents(nextEvents);
+      setSubscriptions(nextSubscriptions);
+      setDeliveries(nextDeliveries);
+    } catch (e: any) {
+      setMessage({ title: "Notifications unavailable", detail: e.message, tone: "amber" });
+    }
+  }, [api, deliveryStatus, projectId]);
+
+  useEffect(() => {
+    refreshNotifications();
+  }, [refreshNotifications]);
 
   function update(next: Partial<ProjectConfig>) {
     setConfig((current) => ({ ...current, ...next }));
@@ -57,6 +119,89 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function createChannel() {
+    const url = channelDraft.url.trim();
+    if (!url) {
+      setMessage({ title: "Webhook URL required", tone: "amber" });
+      return;
+    }
+    setNotificationBusy("create-channel");
+    setMessage(null);
+    try {
+      await api.createNotificationChannel(projectId, {
+        kind: channelDraft.kind,
+        label: channelDraft.label.trim() || channelKinds.find((item) => item.value === channelDraft.kind)?.label || "Webhook",
+        url,
+      });
+      setChannelDraft((current) => ({ ...current, url: "" }));
+      setMessage({ title: "Notification channel saved", tone: "green" });
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Channel save failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function deleteChannel(channelID: string) {
+    setNotificationBusy(`delete-${channelID}`);
+    setMessage(null);
+    try {
+      await api.deleteNotificationChannel(projectId, channelID);
+      setMessage({ title: "Notification channel deleted", tone: "green" });
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Channel delete failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function testChannel(channelID: string) {
+    setNotificationBusy(`test-${channelID}`);
+    setMessage(null);
+    try {
+      await api.testNotificationChannel(projectId, channelID);
+      setMessage({ title: "Test notification sent", detail: "Channel is now verified.", tone: "green" });
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Test notification failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function toggleSubscription(eventType: string, channelID: string, enabled: boolean) {
+    setNotificationBusy(`sub-${eventType}-${channelID}`);
+    setMessage(null);
+    try {
+      await api.upsertNotificationSubscription(projectId, { event_type: eventType, channel_id: channelID, enabled });
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Subscription update failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function retryDelivery(deliveryID: string) {
+    setNotificationBusy(`retry-${deliveryID}`);
+    setMessage(null);
+    try {
+      await api.retryNotificationDelivery(projectId, deliveryID);
+      setMessage({ title: "Delivery queued", tone: "green" });
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Delivery retry failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  function subscriptionEnabled(eventType: string, channelID: string) {
+    return subscriptions.some((sub) => sub.event_type === eventType && sub.channel_id === channelID && sub.enabled);
   }
 
   return (
@@ -199,6 +344,234 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               Respect robots
             </label>
           </div>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="Notifications"
+          eyebrow="Operations"
+          action={
+            <Button size="sm" onClick={refreshNotifications} disabled={!!notificationBusy}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          }
+        />
+
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Bell size={16} />
+            Channels
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-[220px_1fr_1fr_auto]">
+            <div className="grid grid-cols-2 gap-2">
+              {channelKinds.map((kind) => {
+                const active = channelDraft.kind === kind.value;
+                return (
+                  <button
+                    type="button"
+                    key={kind.value}
+                    onClick={() => setChannelDraft((current) => ({ ...current, kind: kind.value }))}
+                    className={cx(
+                      "h-10 rounded-lg border text-sm font-semibold transition-colors",
+                      active ? "border-[#d93820] bg-red-50 text-[#b92f1c]" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                    )}
+                  >
+                    {kind.label}
+                  </button>
+                );
+              })}
+            </div>
+            <TextInput
+              value={channelDraft.label}
+              onChange={(event) => setChannelDraft((current) => ({ ...current, label: event.target.value }))}
+              placeholder="Label"
+            />
+            <TextInput
+              value={channelDraft.url}
+              onChange={(event) => setChannelDraft((current) => ({ ...current, url: event.target.value }))}
+              placeholder="Webhook URL"
+              type="password"
+              autoComplete="off"
+            />
+            <Button variant="primary" onClick={createChannel} disabled={notificationBusy === "create-channel"}>
+              <Plus size={16} />
+              Add
+            </Button>
+          </div>
+
+          {channels.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-5 text-sm font-semibold text-slate-500">
+              No channels
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">Label</th>
+                    <th className="px-3 py-2">Kind</th>
+                    <th className="px-3 py-2">Webhook</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {channels.map((channel) => (
+                    <tr key={channel.id}>
+                      <td className="px-3 py-2 font-semibold text-slate-900">{channel.label || "Webhook"}</td>
+                      <td className="px-3 py-2">
+                        <Badge tone={channel.kind === "slack_webhook" ? "green" : "blue"}>
+                          {channel.kind === "slack_webhook" ? "Slack" : "Discord"}
+                        </Badge>
+                      </td>
+                      <td className="max-w-[320px] truncate px-3 py-2 text-slate-500">{channel.config?.redacted_url ?? "Redacted"}</td>
+                      <td className="px-3 py-2">
+                        <Badge tone={channel.verified_at ? "green" : "amber"}>
+                          {channel.verified_at ? "Verified" : "Untested"}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => testChannel(channel.id)}
+                            disabled={notificationBusy === `test-${channel.id}`}
+                            title={channel.verified_at ? `Verified ${formatDate(channel.verified_at)}` : "Send test notification"}
+                          >
+                            <Send size={14} />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => deleteChannel(channel.id)}
+                            disabled={notificationBusy === `delete-${channel.id}`}
+                            title="Delete channel"
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader title="Notification subscriptions" />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          {channels.length === 0 ? (
+            <div className="text-sm font-semibold text-slate-500">No channels</div>
+          ) : (
+            <div className="grid gap-3">
+              {events.map((event) => (
+                <div key={event.type} className="grid gap-3 rounded-lg border border-slate-200 p-3 lg:grid-cols-[220px_1fr]">
+                  <div>
+                    <div className="text-sm font-bold text-slate-900">{eventLabels[event.type] ?? event.type}</div>
+                    <div className="mt-1 font-mono text-xs text-slate-500">{event.type}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {channels.map((channel) => {
+                      const checked = subscriptionEnabled(event.type, channel.id);
+                      return (
+                        <label
+                          key={`${event.type}-${channel.id}`}
+                          className={cx(
+                            "flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
+                            checked ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 text-slate-600",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={notificationBusy === `sub-${event.type}-${channel.id}`}
+                            onChange={(changeEvent) => toggleSubscription(event.type, channel.id, changeEvent.target.checked)}
+                          />
+                          {channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord")}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="Notification deliveries"
+          action={
+            <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+              {deliveryStatuses.map((status) => (
+                <button
+                  type="button"
+                  key={status.value}
+                  onClick={() => setDeliveryStatus(status.value)}
+                  className={cx(
+                    "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
+                    deliveryStatus === status.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
+                  )}
+                >
+                  {status.label}
+                </button>
+              ))}
+            </div>
+          }
+        />
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          {deliveries.length === 0 ? (
+            <div className="px-4 py-5 text-sm font-semibold text-slate-500">No deliveries</div>
+          ) : (
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Event</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Attempts</th>
+                  <th className="px-3 py-2">Last error</th>
+                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {deliveries.map((delivery) => (
+                  <tr key={delivery.id}>
+                    <td className="px-3 py-2">
+                      <div className="font-semibold text-slate-900">{eventLabels[delivery.event_type] ?? delivery.event_type}</div>
+                      <div className="max-w-[260px] truncate font-mono text-xs text-slate-500">{delivery.event_id}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge tone={delivery.status === "sent" ? "green" : delivery.status === "dead" ? "red" : "amber"}>
+                        {delivery.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-slate-600">{delivery.attempts ?? 0}</td>
+                    <td className="max-w-[360px] truncate px-3 py-2 text-slate-500">{delivery.last_error ?? "-"}</td>
+                    <td className="px-3 py-2 text-slate-500">{formatDate(delivery.created_at)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Button
+                        size="sm"
+                        onClick={() => retryDelivery(delivery.id)}
+                        disabled={delivery.status === "sent" || notificationBusy === `retry-${delivery.id}`}
+                        title="Retry delivery"
+                      >
+                        <RotateCcw size={14} />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 

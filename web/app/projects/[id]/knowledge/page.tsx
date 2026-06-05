@@ -1,5 +1,6 @@
 import { KnowledgeClient } from "./knowledge-client";
 
-export default function KnowledgePage({ params }: { params: { id: string } }) {
-  return <KnowledgeClient projectId={params.id} />;
+export default async function KnowledgePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <KnowledgeClient projectId={id} />;
 }

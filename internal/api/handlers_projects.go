@@ -141,6 +141,11 @@ func (s *Server) listInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateInventory(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
 	itemID, err := uuid.Parse(chi.URLParam(r, "itemID"))
 	if err != nil {
 		writeErr(w, 400, "bad item id")
@@ -151,6 +156,7 @@ func (s *Server) updateInventory(w http.ResponseWriter, r *http.Request) {
 		TargetKeyword string          `json:"target_keyword"`
 		Topics        json.RawMessage `json:"topics"`
 		Summary       string          `json:"summary"`
+		Evidence      json.RawMessage `json:"evidence_snippets"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, 400, err.Error())
@@ -159,12 +165,16 @@ func (s *Server) updateInventory(w http.ResponseWriter, r *http.Request) {
 	if in.Topics == nil {
 		in.Topics = json.RawMessage("[]")
 	}
+	if in.Evidence == nil {
+		in.Evidence = json.RawMessage("[]")
+	}
 	item, err := s.Q.UpdateInventoryItem(r.Context(), db.UpdateInventoryItemParams{
 		ID: itemID, Title: strPtr(in.Title), TargetKeyword: strPtr(in.TargetKeyword),
-		Topics: in.Topics, Summary: strPtr(in.Summary),
+		Topics: in.Topics, Summary: strPtr(in.Summary), EvidenceSnippets: in.Evidence,
+		ProjectID: projectID,
 	})
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeErr(w, 404, "inventory item not found")
 		return
 	}
 	writeJSON(w, 200, item)

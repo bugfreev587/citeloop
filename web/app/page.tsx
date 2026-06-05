@@ -1,11 +1,16 @@
 import Link from "next/link";
+import { UserButton } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Database, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
-import { api } from "./lib/api";
+import { createApi, Project } from "./lib/api";
 
 export default async function Home() {
-  let projects: Awaited<ReturnType<typeof api.listProjects>> = [];
+  const { getToken } = await auth();
+  const token = await getToken();
+  const api = createApi({ token });
+  let projects: Project[] = [];
   let error: string | null = null;
   try {
     projects = await api.listProjects();
@@ -18,6 +23,9 @@ export default async function Home() {
       <div className="mx-auto grid max-w-5xl gap-8 lg:grid-cols-[1fr_320px]">
         <section className="min-w-0">
           <div className="mb-8">
+            <div className="mb-4 flex justify-end">
+              <UserButton />
+            </div>
             <div className="mb-3 inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
               SEO + GEO content engine
             </div>

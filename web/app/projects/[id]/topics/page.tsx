@@ -1,5 +1,6 @@
 import { TopicsClient } from "./topics-client";
 
-export default function TopicsPage({ params }: { params: { id: string } }) {
-  return <TopicsClient projectId={params.id} />;
+export default async function TopicsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <TopicsClient projectId={id} />;
 }

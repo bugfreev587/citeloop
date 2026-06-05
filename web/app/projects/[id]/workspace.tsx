@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
-import { api, Article, DistributeItem, Project, ReviewGroup, Topic } from "../../lib/api";
+import { Article, DistributeItem, GenerationRun, Project, ReviewGroup, Topic } from "../../lib/api";
+import { useApi } from "../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
@@ -15,14 +16,29 @@ function topicLabel(topic: Topic) {
   return topic.title || "Untitled topic";
 }
 
+function runStatusTone(status: string): "green" | "red" | "amber" | "neutral" {
+  if (status === "ok") return "green";
+  if (status === "error" || status === "failed") return "red";
+  if (status === "running") return "amber";
+  return "neutral";
+}
+
+function money(value: number | null) {
+  if (value == null) return "-";
+  return `$${value.toFixed(4)}`;
+}
+
 export function Workspace({ projectId }: { projectId: string }) {
+  const api = useApi();
   const [landing, setLanding] = useState("");
   const [project, setProject] = useState<Project | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [review, setReview] = useState<ReviewGroup[]>([]);
   const [published, setPublished] = useState<Article[]>([]);
   const [approved, setApproved] = useState<Article[]>([]);
+  const [failedPublish, setFailedPublish] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
+  const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -30,24 +46,28 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, t, r, pub, app, dist] = await Promise.all([
+      const [p, t, r, pub, app, failed, dist, runRows] = await Promise.all([
         api.getProject(projectId),
         api.listTopics(projectId),
         api.listReview(projectId),
         api.listArticles(projectId, "published"),
         api.listArticles(projectId, "approved"),
+        api.listArticles(projectId, "publish_failed"),
         api.listDistribute(projectId),
+        api.listRuns(projectId, { limit: 5 }),
       ]);
       setProject(p);
       setTopics(t);
       setReview(r);
       setPublished(pub);
       setApproved(app);
+      setFailedPublish(failed);
       setReady(dist);
+      setRuns(runRows);
     } catch (e: any) {
       setApiError(e.message);
     }
-  }, [projectId]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
@@ -179,6 +199,25 @@ export function Workspace({ projectId }: { projectId: string }) {
       </section>
 
       <section>
+        <SectionHeader title="Needs attention" action={<Badge tone={failedPublish.length ? "red" : "neutral"}>{failedPublish.length}</Badge>} />
+        {failedPublish.length === 0 ? (
+          <EmptyState title="No publish failures" detail="Publish failures will appear here without checking server logs." />
+        ) : (
+          <div className="grid gap-2">
+            {failedPublish.slice(0, 3).map((article) => (
+              <div key={article.id} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
+                <div className="font-bold text-red-950">{articleTitle(article)}</div>
+                <div className="mt-1 line-clamp-2 text-red-800">{article.last_publish_error || "No publish error captured."}</div>
+                <a href={`/projects/${projectId}/publishing`} className="mt-2 inline-block text-xs font-semibold text-red-700">
+                  Open publishing
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
         <SectionHeader title="Needs review" action={<Badge tone={reviewArticles.length ? "amber" : "neutral"}>{reviewArticles.length}</Badge>} />
         {reviewArticles.length === 0 ? (
           <EmptyState title="Nothing pending review" detail="Generated drafts that need the human gate will appear here." />
@@ -251,7 +290,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                       Compose
                     </a>
                   )}
-                  <Button size="sm" onClick={() => run("Distributed", () => api.distributed(article.id))}>
+                  <Button size="sm" onClick={() => run("Distributed", () => api.distributed(projectId, article.id))}>
                     Mark distributed
                   </Button>
                 </div>
@@ -263,10 +302,32 @@ export function Workspace({ projectId }: { projectId: string }) {
 
       <section>
         <SectionHeader title="Recent runs" action={<a href={`/projects/${projectId}/runs`} className="text-xs font-semibold text-slate-500">View all</a>} />
-        <Notice
-          title="Runs endpoint is not available yet"
-          detail="The backend has write-side generation_runs queries, but no GET /runs route. This section will populate once that contract lands."
-        />
+        {runs.length === 0 ? (
+          <EmptyState title="No recent runs" detail="Insight, Strategist, Writer, QA, Publisher, and Notification runs will appear here." />
+        ) : (
+          <div className="grid gap-2">
+            {runs.map((run) => (
+              <div
+                key={run.id}
+                className="flex min-h-[44px] flex-col gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-900">{run.agent}</span>
+                    <Badge tone={runStatusTone(run.status)}>{run.status}</Badge>
+                    {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">{run.error ?? run.model ?? "No error"}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs font-semibold text-slate-400">
+                  <span>{money(run.cost_usd)}</span>
+                  <span>{run.tokens ?? 0} tokens</span>
+                  <span>{formatDate(run.created_at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {waitingVariants.length > 0 && (

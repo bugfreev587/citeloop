@@ -1,5 +1,6 @@
 import { ReviewClient } from "./review-client";
 
-export default function ReviewPage({ params }: { params: { id: string } }) {
-  return <ReviewClient projectId={params.id} />;
+export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <ReviewClient projectId={id} />;
 }

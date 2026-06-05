@@ -9,28 +9,42 @@ import (
 
 // Env is process-level configuration sourced from the environment.
 type Env struct {
-	DatabaseURL     string
-	Port            string
-	AnthropicAPIKey string
-	AnthropicModel  string
-	SearchAPIKey    string // Brave Search API key (or swapped provider)
-	GitHubToken     string // for BlogPublisher auto-commit (§5.6, option A)
-	BlogRepo        string // "owner/name" of the blog repo
-	BlogBranch      string // publish branch
-	BlogBaseURL     string // public base for published canonical URLs
+	DatabaseURL           string
+	Port                  string
+	TokenGateAPIKey       string
+	TokenGateBaseURL      string
+	TokenGateModel        string
+	AnthropicAPIKey       string
+	AnthropicModel        string
+	ClerkSecretKey        string
+	SearchAPIKey          string // Brave Search API key (or swapped provider)
+	GitHubToken           string // for BlogPublisher auto-commit (§5.6, option A)
+	BlogRepo              string // "owner/name" of the blog repo
+	BlogBranch            string // publish branch
+	BlogContentDir        string // generated MDX root inside the blog repo
+	BlogBaseURL           string // public base for published canonical URLs
+	UniPostDeployHookURL  string // Vercel deploy hook for UniPost build-time content fetch
+	NotificationSecretKey string // AEAD key material for webhook URL encryption
 }
 
 func FromEnv() Env {
 	return Env{
-		DatabaseURL:     getenv("DATABASE_URL", "postgres://localhost:5432/citeloop?sslmode=disable"),
-		Port:            getenv("PORT", "8080"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicModel:  getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
-		SearchAPIKey:    os.Getenv("SEARCH_API_KEY"),
-		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
-		BlogRepo:        os.Getenv("BLOG_REPO"),
-		BlogBranch:      getenv("BLOG_BRANCH", "content-publish"),
-		BlogBaseURL:     getenv("BLOG_BASE_URL", "https://unipost.example/blog"),
+		DatabaseURL:           getenv("DATABASE_URL", "postgres://localhost:5432/citeloop?sslmode=disable"),
+		Port:                  getenv("PORT", "8080"),
+		TokenGateAPIKey:       os.Getenv("TOKENGATE_API_KEY"),
+		TokenGateBaseURL:      getenv("TOKENGATE_BASE_URL", "https://tokengate-production.up.railway.app/v1"),
+		TokenGateModel:        getenv("TOKENGATE_MODEL", "claude-haiku-4-5-20251001"),
+		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicModel:        getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
+		ClerkSecretKey:        os.Getenv("CLERK_SECRET_KEY"),
+		SearchAPIKey:          os.Getenv("SEARCH_API_KEY"),
+		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
+		BlogRepo:              os.Getenv("BLOG_REPO"),
+		BlogBranch:            getenv("BLOG_BRANCH", "citeloop-content"),
+		BlogContentDir:        getenv("BLOG_CONTENT_DIR", "content/citeloop/blog"),
+		BlogBaseURL:           getenv("BLOG_BASE_URL", "https://unipost.example/blog"),
+		UniPostDeployHookURL:  os.Getenv("UNIPOST_DEPLOY_HOOK_URL"),
+		NotificationSecretKey: os.Getenv("NOTIFICATION_SECRET_KEY"),
 	}
 }
 

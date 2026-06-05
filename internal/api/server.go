@@ -13,6 +13,8 @@ import (
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/scheduler"
 	"github.com/citeloop/citeloop/internal/search"
+	"github.com/clerk/clerk-sdk-go/v2"
+	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +39,14 @@ func (s *Server) Router() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
 	r.Route("/api", func(r chi.Router) {
+		if s.Env.ClerkSecretKey != "" {
+			clerk.SetKey(s.Env.ClerkSecretKey)
+			r.Use(clerkhttp.RequireHeaderAuthorization())
+		}
+
+		r.Get("/admin/llm-credentials", s.getLLMCredentials)
+		r.Put("/admin/llm-credentials", s.updateLLMCredentials)
+
 		r.Get("/projects", s.listProjects)
 		r.Post("/projects", s.createProject)
 		r.Route("/projects/{projectID}", func(r chi.Router) {
@@ -53,20 +63,35 @@ func (s *Server) Router() http.Handler {
 
 			r.Post("/strategist", s.runStrategist)
 			r.Get("/topics", s.listTopics)
+			r.Put("/topics/{topicID}", s.updateTopic)
 			r.Post("/topics/{topicID}/generate", s.generateTopic)
+			r.Post("/topics/{topicID}/schedule", s.scheduleTopic)
+			r.Post("/topics/{topicID}/archive", s.archiveTopic)
 
 			r.Get("/review", s.listReview)
 			r.Get("/articles", s.listArticles)
+			r.Get("/articles/{articleID}", s.getProjectArticle)
+			r.Put("/articles/{articleID}", s.editProjectArticle)
+			r.Post("/articles/{articleID}/approve", s.approveProjectArticle)
+			r.Post("/articles/{articleID}/reject", s.rejectProjectArticle)
+			r.Post("/articles/{articleID}/distributed", s.markProjectDistributed)
+			r.Post("/articles/{articleID}/retry-publish", s.retryProjectPublish)
 			r.Get("/distribute", s.listDistribute)
+			r.Get("/runs", s.listRuns)
+			r.Get("/runs/{runID}", s.getRun)
+			r.Get("/notifications/channels", s.listNotificationChannels)
+			r.Post("/notifications/channels", s.createNotificationChannel)
+			r.Post("/notifications/channels/{channelID}/test", s.testNotificationChannel)
+			r.Delete("/notifications/channels/{channelID}", s.deleteNotificationChannel)
+			r.Get("/notifications/events", s.listNotificationEvents)
+			r.Get("/notifications/subscriptions", s.listNotificationSubscriptions)
+			r.Put("/notifications/subscriptions", s.upsertNotificationSubscription)
+			r.Get("/notifications/deliveries", s.listNotificationDeliveries)
+			r.Post("/notifications/deliveries/{deliveryID}/retry", s.retryNotificationDelivery)
+			r.Post("/publishing/reconcile", s.reconcilePublishing)
 
 			r.Post("/tick/generate", s.tickGenerate)
 			r.Post("/tick/publish", s.tickPublish)
-		})
-		r.Route("/articles/{articleID}", func(r chi.Router) {
-			r.Put("/", s.editArticle)
-			r.Post("/approve", s.approveArticle)
-			r.Post("/reject", s.rejectArticle)
-			r.Post("/distributed", s.markDistributed)
 		})
 	})
 	return r

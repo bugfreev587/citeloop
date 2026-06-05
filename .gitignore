@@ -17,3 +17,4 @@ node_modules
 # OS
 .DS_Store
 docs/.DS_Store
+.vercel

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button, Field, Notice, TextInput } from "./components/ui";
-import { api } from "./lib/api";
+import { useApi } from "./lib/use-api";
 
 function slugify(value: string) {
   return value
@@ -15,6 +15,7 @@ function slugify(value: string) {
 }
 
 export function ProjectCreateForm() {
+  const api = useApi();
   const router = useRouter();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");

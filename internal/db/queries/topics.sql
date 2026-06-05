@@ -7,10 +7,29 @@ returning *;
 -- name: GetTopic :one
 select * from topics where id = $1;
 
+-- name: GetTopicForProject :one
+select * from topics
+where id = $1 and project_id = $2;
+
 -- name: ListTopics :many
 select * from topics
 where project_id = $1
 order by priority desc, created_at desc;
+
+-- name: UpdateTopic :one
+update topics set
+  channel = $3,
+  title = $4,
+  target_keyword = $5,
+  target_prompt = $6,
+  angle = $7,
+  format = $8,
+  priority = $9,
+  internal_links = $10,
+  status = $11,
+  scheduled_at = $12
+where id = $1 and project_id = $2
+returning *;
 
 -- name: UpdateTopicStatus :one
 update topics set status = $2 where id = $1
@@ -18,6 +37,18 @@ returning *;
 
 -- name: SetTopicScheduledAt :one
 update topics set scheduled_at = $2 where id = $1
+returning *;
+
+-- name: SetTopicScheduledAtForProject :one
+update topics set
+  scheduled_at = $3,
+  status = case when $3::timestamptz is null then 'backlog' else 'scheduled' end
+where id = $1 and project_id = $2
+returning *;
+
+-- name: ArchiveTopicForProject :one
+update topics set status = 'archived', scheduled_at = null
+where id = $1 and project_id = $2
 returning *;
 
 -- Scheduler candidate selection: backlog/scheduled topics with a slot inside the
@@ -33,3 +64,8 @@ for update skip locked;
 -- name: CountNonRejectedArticlesForTopic :one
 select count(*) from articles
 where topic_id = $1 and status <> 'rejected';
+
+-- name: ListArticlesByTopicForProject :many
+select * from articles
+where topic_id = $1 and project_id = $2
+order by kind, platform;

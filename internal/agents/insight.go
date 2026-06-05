@@ -19,6 +19,16 @@ type Insight struct {
 	Log *slog.Logger
 }
 
+type CrawlSummary struct {
+	LandingURL      string   `json:"landing_url"`
+	DiscoveredCount int      `json:"discovered_count"`
+	FetchedCount    int      `json:"fetched_count"`
+	InventoryCount  int      `json:"inventory_count"`
+	Truncated       bool     `json:"truncated"`
+	Errors          []string `json:"errors"`
+	SampleURLs      []string `json:"sample_urls"`
+}
+
 func NewInsight(d Deps, log *slog.Logger) *Insight {
 	if log == nil {
 		log = slog.Default()
@@ -29,27 +39,31 @@ func NewInsight(d Deps, log *slog.Logger) *Insight {
 // Run crawls landingURL and writes a new active profile + inventory rows.
 // A new profile version is created each run; old versions are retained and
 // deactivated (one_active_profile_per_project, §5.1 acceptance).
-func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (*Profile, int, error) {
+func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (*Profile, int, CrawlSummary, error) {
 	cr := crawl.New(crawlCfg, a.Log)
 	res, err := cr.Run(ctx, landingURL)
 	if err != nil {
-		return nil, 0, fmt.Errorf("crawl: %w", err)
+		return nil, 0, CrawlSummary{}, fmt.Errorf("crawl: %w", err)
 	}
+	summary := summarizeCrawl(landingURL, res)
 
 	// 1) Product Profile from landing + article corpus.
 	profile, resp, err := a.extractProfile(ctx, res)
-	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL}, profile, resp, err)
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL}, map[string]any{
+		"profile":       profile,
+		"crawl_summary": summary,
+	}, resp, err)
 	if err != nil {
-		return nil, 0, fmt.Errorf("profile extraction: %w", err)
+		return nil, 0, summary, fmt.Errorf("profile extraction: %w", err)
 	}
 
 	// 2) Persist profile as a new active version.
 	if err := a.Q.DeactivateProfiles(ctx, projectID); err != nil {
-		return nil, 0, err
+		return nil, 0, summary, err
 	}
 	ver, err := a.Q.NextProfileVersion(ctx, projectID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, summary, err
 	}
 	srcURLs := []string{landingURL}
 	for _, p := range res.Articles {
@@ -62,7 +76,7 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 		Version:    int32(ver),
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, summary, err
 	}
 
 	// 3) Per-article inventory with evidence snippets (skip failures, §5.1).
@@ -90,8 +104,36 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 		}
 		count++
 	}
+	summary.InventoryCount = count
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl_summary", "landing": landingURL}, map[string]any{
+		"crawl_summary": summary,
+	}, llm.CompletionResp{}, nil)
 	a.Log.Info("insight complete", "version", saved.Version, "articles", count, "truncated", res.Truncated)
-	return profile, count, nil
+	return profile, count, summary, nil
+}
+
+func summarizeCrawl(landingURL string, res *crawl.Result) CrawlSummary {
+	summary := CrawlSummary{LandingURL: landingURL}
+	if res == nil {
+		return summary
+	}
+	if res.Landing != nil && res.Landing.URL != "" {
+		summary.LandingURL = res.Landing.URL
+	}
+	summary.DiscoveredCount = len(res.Discovered)
+	summary.FetchedCount = len(res.Articles)
+	summary.Truncated = res.Truncated
+	summary.Errors = append([]string(nil), res.Errors...)
+	for _, page := range res.Articles {
+		if page == nil || page.URL == "" {
+			continue
+		}
+		summary.SampleURLs = append(summary.SampleURLs, page.URL)
+		if len(summary.SampleURLs) >= 10 {
+			break
+		}
+	}
+	return summary
 }
 
 func (a *Insight) extractProfile(ctx context.Context, res *crawl.Result) (*Profile, llm.CompletionResp, error) {

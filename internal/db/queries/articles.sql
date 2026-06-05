@@ -8,6 +8,10 @@ returning *;
 -- name: GetArticle :one
 select * from articles where id = $1;
 
+-- name: GetArticleForProject :one
+select * from articles
+where id = $1 and project_id = $2;
+
 -- name: ListArticlesByStatus :many
 select * from articles
 where project_id = $1 and status = $2
@@ -21,8 +25,20 @@ select * from articles
 where project_id = $1 and status = 'pending_review'
 order by created_at asc;
 
+-- name: ListOverdueReviewArticles :many
+select * from articles
+where status = 'pending_review'
+  and created_at <= $1
+order by created_at asc
+limit $2;
+
 -- name: UpdateArticleContent :one
 update articles set content_md = $2, seo_meta = $3 where id = $1
+returning *;
+
+-- name: UpdateArticleContentForProject :one
+update articles set content_md = $2, seo_meta = $3
+where id = $1 and project_id = $4
 returning *;
 
 -- name: ApproveArticle :one
@@ -34,9 +50,23 @@ update articles set
 where id = $1
 returning *;
 
+-- name: ApproveArticleForProject :one
+update articles set
+  status = $2,
+  scheduled_at = $3,
+  reviewed_by = $4,
+  reviewed_at = now()
+where id = $1 and project_id = $5
+returning *;
+
 -- name: RejectArticle :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1
+returning *;
+
+-- name: RejectArticleForProject :one
+update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
+where id = $1 and project_id = $3
 returning *;
 
 -- name: SetArticleQA :one
@@ -50,19 +80,83 @@ returning *;
 select * from articles
 where project_id = $1
   and kind = 'canonical'
-  and status = 'approved'
+  and (
+    status = 'approved'
+    or (status = 'publish_failed' and next_publish_retry_at is not null and next_publish_retry_at <= now())
+  )
   and scheduled_at is not null
   and scheduled_at <= now()
 for update skip locked;
+
+-- name: PreparePublishAttempt :one
+update articles set
+  resolved_slug = $2,
+  publish_path = $3,
+  publish_phase = $4,
+  publish_attempts = publish_attempts + 1,
+  next_publish_retry_at = null,
+  last_publish_error = null
+where id = $1
+returning *;
 
 -- name: MarkPublished :one
 update articles set
   status = 'published',
   published_at = now(),
   publish_result = $2,
-  canonical_url = $3
+  canonical_url = $3,
+  resolved_slug = $4,
+  publish_path = $5,
+  publish_phase = 'published',
+  canonical_url_verified_at = now(),
+  last_publish_error = null,
+  next_publish_retry_at = null
 where id = $1
 returning *;
+
+-- name: RecordPublishAttemptResult :one
+update articles set
+  status = 'pending_url_verification',
+  publish_result = $2,
+  resolved_slug = $3,
+  publish_path = $4,
+  publish_phase = 'pending_url_verification',
+  last_publish_error = null,
+  next_publish_retry_at = $5
+where id = $1
+returning *;
+
+-- name: MarkPublishFailed :one
+update articles set
+  status = 'publish_failed',
+  last_publish_error = $2,
+  next_publish_retry_at = $3,
+  publish_phase = $4,
+  canonical_url_verified_at = null
+where id = $1
+returning *;
+
+-- name: RetryPublishArticle :one
+update articles set
+  next_publish_retry_at = null,
+  last_publish_error = null
+where id = $1
+  and project_id = $2
+  and status = 'publish_failed'
+returning *;
+
+-- name: SelectPublishReconcileCandidates :many
+select * from articles
+where project_id = $1
+  and kind = 'canonical'
+  and (
+    (status in ('approved','publish_failed') and publish_result is not null)
+    or
+    status = 'pending_url_verification'
+    or
+    (status = 'published' and (canonical_url is null or canonical_url_verified_at is null or publish_result is null))
+  )
+order by created_at asc;
 
 -- syndication unlock: variants whose canonical is published (§5.6).
 -- name: SelectUnlockableVariants :many
@@ -72,7 +166,8 @@ join articles c
 where v.kind = 'syndication_variant'
   and v.status = 'approved'
   and c.status = 'published'
-  and c.canonical_url is not null;
+  and c.canonical_url is not null
+  and c.canonical_url_verified_at is not null;
 
 -- name: UnlockVariant :one
 update articles set
@@ -90,8 +185,13 @@ returning *;
 select count(*) from articles
 where project_id = $1
   and kind = 'canonical'
-  and status in ('generating','pending_review','approved','scheduled');
+  and status in ('generating','pending_review','approved','scheduled','pending_url_verification');
 
 -- name: MarkDistributed :one
 update articles set status = 'distributed' where id = $1
+returning *;
+
+-- name: MarkDistributedForProject :one
+update articles set status = 'distributed'
+where id = $1 and project_id = $2
 returning *;

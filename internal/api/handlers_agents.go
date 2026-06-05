@@ -3,14 +3,18 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) projectConfig(r *http.Request, id uuid.UUID) (config.ProjectConfig, error) {
@@ -41,12 +45,12 @@ func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
-	profile, count, err := ag.Run(r.Context(), id, in.LandingURL, cfg.Crawl)
+	profile, count, summary, err := ag.Run(r.Context(), id, in.LandingURL, cfg.Crawl)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"profile": profile, "inventory_count": count})
+	writeJSON(w, 200, map[string]any{"profile": profile, "inventory_count": count, "crawl_summary": summary})
 }
 
 // runStrategist produces the topic backlog (§5.2).
@@ -84,6 +88,181 @@ func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, topics)
 }
 
+func (s *Server) topicID(r *http.Request) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, "topicID"))
+}
+
+func nullableTopicText(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func validTopicChannel(value string) bool {
+	return value == "blog" || value == "syndication" || value == "both"
+}
+
+// updateTopic allows the single operator to correct Strategist output before
+// generation while keeping every mutation scoped to the project route.
+func (s *Server) updateTopic(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	topicID, err := s.topicID(r)
+	if err != nil {
+		writeErr(w, 400, "bad topic id")
+		return
+	}
+	var in struct {
+		Channel       *string          `json:"channel"`
+		Title         *string          `json:"title"`
+		TargetKeyword *string          `json:"target_keyword"`
+		TargetPrompt  *string          `json:"target_prompt"`
+		Angle         *string          `json:"angle"`
+		Format        *string          `json:"format"`
+		Priority      *int             `json:"priority"`
+		InternalLinks *json.RawMessage `json:"internal_links"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+
+	cur, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	params := db.UpdateTopicParams{
+		ID:            topicID,
+		ProjectID:     projectID,
+		Channel:       cur.Channel,
+		Title:         cur.Title,
+		TargetKeyword: cur.TargetKeyword,
+		TargetPrompt:  cur.TargetPrompt,
+		Angle:         cur.Angle,
+		Format:        cur.Format,
+		Priority:      cur.Priority,
+		InternalLinks: cur.InternalLinks,
+		Status:        cur.Status,
+		ScheduledAt:   cur.ScheduledAt,
+	}
+	if in.Channel != nil {
+		channel := strings.TrimSpace(*in.Channel)
+		if !validTopicChannel(channel) {
+			writeErr(w, 400, "invalid channel")
+			return
+		}
+		params.Channel = channel
+	}
+	if in.Title != nil {
+		title := strings.TrimSpace(*in.Title)
+		if title == "" {
+			writeErr(w, 400, "title required")
+			return
+		}
+		params.Title = title
+	}
+	if in.TargetKeyword != nil {
+		params.TargetKeyword = nullableTopicText(*in.TargetKeyword)
+	}
+	if in.TargetPrompt != nil {
+		params.TargetPrompt = nullableTopicText(*in.TargetPrompt)
+	}
+	if in.Angle != nil {
+		params.Angle = nullableTopicText(*in.Angle)
+	}
+	if in.Format != nil {
+		params.Format = nullableTopicText(*in.Format)
+	}
+	if in.Priority != nil {
+		params.Priority = int32(*in.Priority)
+	}
+	if in.InternalLinks != nil {
+		if len(*in.InternalLinks) == 0 || !json.Valid(*in.InternalLinks) {
+			writeErr(w, 400, "invalid internal_links")
+			return
+		}
+		params.InternalLinks = *in.InternalLinks
+	}
+
+	updated, err := s.Q.UpdateTopic(r.Context(), params)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
+func parseTopicSchedule(value *string) (pgtype.Timestamptz, error) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return pgtype.Timestamptz{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(*value))
+	if err != nil {
+		return pgtype.Timestamptz{}, err
+	}
+	return pgutil.TS(t), nil
+}
+
+func (s *Server) scheduleTopic(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	topicID, err := s.topicID(r)
+	if err != nil {
+		writeErr(w, 400, "bad topic id")
+		return
+	}
+	var in struct {
+		ScheduledAt *string `json:"scheduled_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	scheduledAt, err := parseTopicSchedule(in.ScheduledAt)
+	if err != nil {
+		writeErr(w, 400, "scheduled_at must be RFC3339")
+		return
+	}
+	updated, err := s.Q.SetTopicScheduledAtForProject(r.Context(), db.SetTopicScheduledAtForProjectParams{
+		ID:          topicID,
+		ProjectID:   projectID,
+		ScheduledAt: scheduledAt,
+	})
+	if err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) archiveTopic(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	topicID, err := s.topicID(r)
+	if err != nil {
+		writeErr(w, 400, "bad topic id")
+		return
+	}
+	updated, err := s.Q.ArchiveTopicForProject(r.Context(), db.ArchiveTopicForProjectParams{ID: topicID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
 // generateTopic runs Writer+QA for a single topic on demand (§5.3).
 func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 	id, err := s.projectID(r)
@@ -91,14 +270,29 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad project id")
 		return
 	}
-	topicID, err := uuid.Parse(chi.URLParam(r, "topicID"))
+	topicID, err := s.topicID(r)
 	if err != nil {
 		writeErr(w, 400, "bad topic id")
 		return
 	}
-	topic, err := s.Q.GetTopic(r.Context(), topicID)
+	topic, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: id})
 	if err != nil {
 		writeErr(w, 404, "topic not found")
+		return
+	}
+	existing, err := s.Q.ListArticlesByTopicForProject(r.Context(), db.ListArticlesByTopicForProjectParams{TopicID: topicID, ProjectID: id})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	nonRejected := make([]db.Article, 0, len(existing))
+	for _, article := range existing {
+		if article.Status != "rejected" {
+			nonRejected = append(nonRejected, article)
+		}
+	}
+	if len(nonRejected) > 0 {
+		writeJSON(w, 200, nonRejected)
 		return
 	}
 	ag := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
@@ -118,6 +312,28 @@ func (s *Server) tickGenerate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tickPublish(w http.ResponseWriter, r *http.Request) {
 	s.Sched.TickPublish(r.Context())
 	writeJSON(w, 200, map[string]string{"status": "publish tick complete"})
+}
+
+func (s *Server) reconcilePublishing(w http.ResponseWriter, r *http.Request) {
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	project, err := s.Q.GetProject(r.Context(), id)
+	if err != nil {
+		writeErr(w, 404, "project not found")
+		return
+	}
+	if s.Sched == nil {
+		writeErr(w, 503, "scheduler unavailable")
+		return
+	}
+	if err := s.Sched.ReconcilePublishProject(r.Context(), project); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "reconcile complete"})
 }
 
 // listDistribute returns ready_to_distribute variants enriched with the target
@@ -141,9 +357,9 @@ func (s *Server) listDistribute(w http.ResponseWriter, r *http.Request) {
 			plat = *a.Platform
 		}
 		out = append(out, map[string]any{
-			"article":             a,
-			"compose_url":         publisher.ComposeURL(plat),
-			"supports_canonical":  platform.SupportsCanonical(platform.Platform(plat)),
+			"article":            a,
+			"compose_url":        publisher.ComposeURL(plat),
+			"supports_canonical": platform.SupportsCanonical(platform.Platform(plat)),
 		})
 	}
 	writeJSON(w, 200, out)

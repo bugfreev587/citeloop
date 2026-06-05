@@ -13,6 +13,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveTopicForProject = `-- name: ArchiveTopicForProject :one
+update topics set status = 'archived', scheduled_at = null
+where id = $1 and project_id = $2
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at
+`
+
+type ArchiveTopicForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, archiveTopicForProject, arg.ID, arg.ProjectID)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const countNonRejectedArticlesForTopic = `-- name: CountNonRejectedArticlesForTopic :one
 select count(*) from articles
 where topic_id = $1 and status <> 'rejected'
@@ -102,6 +134,96 @@ func (q *Queries) GetTopic(ctx context.Context, id uuid.UUID) (Topic, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getTopicForProject = `-- name: GetTopicForProject :one
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at from topics
+where id = $1 and project_id = $2
+`
+
+type GetTopicForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetTopicForProject(ctx context.Context, arg GetTopicForProjectParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, getTopicForProject, arg.ID, arg.ProjectID)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listArticlesByTopicForProject = `-- name: ListArticlesByTopicForProject :many
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+where topic_id = $1 and project_id = $2
+order by kind, platform
+`
+
+type ListArticlesByTopicForProjectParams struct {
+	TopicID   uuid.UUID `json:"topic_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) ListArticlesByTopicForProject(ctx context.Context, arg ListArticlesByTopicForProjectParams) ([]Article, error) {
+	rows, err := q.db.Query(ctx, listArticlesByTopicForProject, arg.TopicID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Article
+	for rows.Next() {
+		var i Article
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TopicID,
+			&i.Kind,
+			&i.Platform,
+			&i.ContentMd,
+			&i.SeoMeta,
+			&i.GeoScore,
+			&i.SeoScore,
+			&i.QaIssues,
+			&i.QaBlocking,
+			&i.CanonicalUrl,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.PublishedAt,
+			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTopics = `-- name: ListTopics :many
@@ -206,6 +328,106 @@ type SetTopicScheduledAtParams struct {
 
 func (q *Queries) SetTopicScheduledAt(ctx context.Context, arg SetTopicScheduledAtParams) (Topic, error) {
 	row := q.db.QueryRow(ctx, setTopicScheduledAt, arg.ID, arg.ScheduledAt)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const setTopicScheduledAtForProject = `-- name: SetTopicScheduledAtForProject :one
+update topics set
+  scheduled_at = $3,
+  status = case when $3::timestamptz is null then 'backlog' else 'scheduled' end
+where id = $1 and project_id = $2
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at
+`
+
+type SetTopicScheduledAtForProjectParams struct {
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+func (q *Queries) SetTopicScheduledAtForProject(ctx context.Context, arg SetTopicScheduledAtForProjectParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, setTopicScheduledAtForProject, arg.ID, arg.ProjectID, arg.ScheduledAt)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateTopic = `-- name: UpdateTopic :one
+update topics set
+  channel = $3,
+  title = $4,
+  target_keyword = $5,
+  target_prompt = $6,
+  angle = $7,
+  format = $8,
+  priority = $9,
+  internal_links = $10,
+  status = $11,
+  scheduled_at = $12
+where id = $1 and project_id = $2
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at
+`
+
+type UpdateTopicParams struct {
+	ID            uuid.UUID          `json:"id"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	Channel       string             `json:"channel"`
+	Title         string             `json:"title"`
+	TargetKeyword *string            `json:"target_keyword"`
+	TargetPrompt  *string            `json:"target_prompt"`
+	Angle         *string            `json:"angle"`
+	Format        *string            `json:"format"`
+	Priority      int32              `json:"priority"`
+	InternalLinks json.RawMessage    `json:"internal_links"`
+	Status        string             `json:"status"`
+	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+func (q *Queries) UpdateTopic(ctx context.Context, arg UpdateTopicParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, updateTopic,
+		arg.ID,
+		arg.ProjectID,
+		arg.Channel,
+		arg.Title,
+		arg.TargetKeyword,
+		arg.TargetPrompt,
+		arg.Angle,
+		arg.Format,
+		arg.Priority,
+		arg.InternalLinks,
+		arg.Status,
+		arg.ScheduledAt,
+	)
 	var i Topic
 	err := row.Scan(
 		&i.ID,

@@ -45,11 +45,43 @@ func (s *Server) articleID(r *http.Request) (uuid.UUID, error) {
 	return uuid.Parse(chi.URLParam(r, "articleID"))
 }
 
+func (s *Server) getProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	a, err := s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{ID: aid, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "article not found")
+		return
+	}
+	writeJSON(w, 200, a)
+}
+
+func (s *Server) editProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	s.editArticleScoped(w, r, projectID)
+}
+
 // editArticle updates content/seo. When the content changes it re-runs QA so
 // qa_blocking is recomputed from the actual (edited) text — the ONLY way to
 // clear the blocking gate. There is no flag-flip shortcut: a reviewer must edit
 // the unsupported claim out (or map it to evidence) for QA to unblock it (§5.5).
 func (s *Server) editArticle(w http.ResponseWriter, r *http.Request) {
+	s.editArticleScoped(w, r, uuid.Nil)
+}
+
+func (s *Server) editArticleScoped(w http.ResponseWriter, r *http.Request, projectID uuid.UUID) {
 	aid, err := s.articleID(r)
 	if err != nil {
 		writeErr(w, 400, "bad article id")
@@ -63,7 +95,12 @@ func (s *Server) editArticle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	cur, err := s.Q.GetArticle(r.Context(), aid)
+	var cur db.Article
+	if projectID == uuid.Nil {
+		cur, err = s.Q.GetArticle(r.Context(), aid)
+	} else {
+		cur, err = s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{ID: aid, ProjectID: projectID})
+	}
 	if err != nil {
 		writeErr(w, 404, "article not found")
 		return
@@ -75,9 +112,16 @@ func (s *Server) editArticle(w http.ResponseWriter, r *http.Request) {
 	if in.ContentMd == "" {
 		in.ContentMd = cur.ContentMd
 	}
-	updated, err := s.Q.UpdateArticleContent(r.Context(), db.UpdateArticleContentParams{
-		ID: aid, ContentMd: in.ContentMd, SeoMeta: in.SeoMeta,
-	})
+	var updated db.Article
+	if projectID == uuid.Nil {
+		updated, err = s.Q.UpdateArticleContent(r.Context(), db.UpdateArticleContentParams{
+			ID: aid, ContentMd: in.ContentMd, SeoMeta: in.SeoMeta,
+		})
+	} else {
+		updated, err = s.Q.UpdateArticleContentForProject(r.Context(), db.UpdateArticleContentForProjectParams{
+			ID: aid, ContentMd: in.ContentMd, SeoMeta: in.SeoMeta, ProjectID: projectID,
+		})
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -96,10 +140,23 @@ func (s *Server) editArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
+func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	s.approveArticleScoped(w, r, projectID)
+}
+
 // approveArticle is the human gate. canonical → approved + scheduled_at written
 // (inherit topic.scheduled_at or now()+buffer_days). variant → approved (waits
 // for canonical publish). Blocking articles cannot be approved (§5.5).
 func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
+	s.approveArticleScoped(w, r, uuid.Nil)
+}
+
+func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, projectID uuid.UUID) {
 	aid, err := s.articleID(r)
 	if err != nil {
 		writeErr(w, 400, "bad article id")
@@ -112,7 +169,12 @@ func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 	if in.ReviewedBy == "" {
 		in.ReviewedBy = "reviewer"
 	}
-	a, err := s.Q.GetArticle(r.Context(), aid)
+	var a db.Article
+	if projectID == uuid.Nil {
+		a, err = s.Q.GetArticle(r.Context(), aid)
+	} else {
+		a, err = s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{ID: aid, ProjectID: projectID})
+	}
 	if err != nil {
 		writeErr(w, 404, "article not found")
 		return
@@ -125,7 +187,12 @@ func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 	var schedAt time.Time
 	if a.Kind == "canonical" {
 		// scheduled_at single source of truth (§3): inherit topic or now+buffer.
-		topic, err := s.Q.GetTopic(r.Context(), a.TopicID)
+		var topic db.Topic
+		if projectID == uuid.Nil {
+			topic, err = s.Q.GetTopic(r.Context(), a.TopicID)
+		} else {
+			topic, err = s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: a.TopicID, ProjectID: projectID})
+		}
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -138,12 +205,23 @@ func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := s.Q.ApproveArticle(r.Context(), db.ApproveArticleParams{
-		ID:          aid,
-		Status:      "approved",
-		ScheduledAt: pgutil.TS(schedAt), // zero time for variants is harmless; unlock is gated on canonical publish
-		ReviewedBy:  &in.ReviewedBy,
-	})
+	var updated db.Article
+	if projectID == uuid.Nil {
+		updated, err = s.Q.ApproveArticle(r.Context(), db.ApproveArticleParams{
+			ID:          aid,
+			Status:      "approved",
+			ScheduledAt: pgutil.TS(schedAt), // zero time for variants is harmless; unlock is gated on canonical publish
+			ReviewedBy:  &in.ReviewedBy,
+		})
+	} else {
+		updated, err = s.Q.ApproveArticleForProject(r.Context(), db.ApproveArticleForProjectParams{
+			ID:          aid,
+			Status:      "approved",
+			ScheduledAt: pgutil.TS(schedAt),
+			ReviewedBy:  &in.ReviewedBy,
+			ProjectID:   projectID,
+		})
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -151,7 +229,20 @@ func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
+func (s *Server) rejectProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	s.rejectArticleScoped(w, r, projectID)
+}
+
 func (s *Server) rejectArticle(w http.ResponseWriter, r *http.Request) {
+	s.rejectArticleScoped(w, r, uuid.Nil)
+}
+
+func (s *Server) rejectArticleScoped(w http.ResponseWriter, r *http.Request, projectID uuid.UUID) {
 	aid, err := s.articleID(r)
 	if err != nil {
 		writeErr(w, 400, "bad article id")
@@ -164,7 +255,14 @@ func (s *Server) rejectArticle(w http.ResponseWriter, r *http.Request) {
 	if in.ReviewedBy == "" {
 		in.ReviewedBy = "reviewer"
 	}
-	a, err := s.Q.RejectArticle(r.Context(), db.RejectArticleParams{ID: aid, ReviewedBy: &in.ReviewedBy})
+	var a db.Article
+	if projectID == uuid.Nil {
+		a, err = s.Q.RejectArticle(r.Context(), db.RejectArticleParams{ID: aid, ReviewedBy: &in.ReviewedBy})
+	} else {
+		a, err = s.Q.RejectArticleForProject(r.Context(), db.RejectArticleForProjectParams{
+			ID: aid, ReviewedBy: &in.ReviewedBy, ProjectID: projectID,
+		})
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -174,16 +272,56 @@ func (s *Server) rejectArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a)
 }
 
+func (s *Server) markProjectDistributed(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	s.markDistributedScoped(w, r, projectID)
+}
+
 func (s *Server) markDistributed(w http.ResponseWriter, r *http.Request) {
+	s.markDistributedScoped(w, r, uuid.Nil)
+}
+
+func (s *Server) markDistributedScoped(w http.ResponseWriter, r *http.Request, projectID uuid.UUID) {
 	aid, err := s.articleID(r)
 	if err != nil {
 		writeErr(w, 400, "bad article id")
 		return
 	}
-	a, err := s.Q.MarkDistributed(r.Context(), aid)
+	var a db.Article
+	if projectID == uuid.Nil {
+		a, err = s.Q.MarkDistributed(r.Context(), aid)
+	} else {
+		a, err = s.Q.MarkDistributedForProject(r.Context(), db.MarkDistributedForProjectParams{ID: aid, ProjectID: projectID})
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	writeJSON(w, 200, a)
+}
+
+func (s *Server) retryProjectPublish(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	a, err := s.Q.RetryPublishArticle(r.Context(), db.RetryPublishArticleParams{ID: aid, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "publish_failed article not found")
+		return
+	}
+	if s.Sched != nil {
+		s.Sched.TickPublish(r.Context())
 	}
 	writeJSON(w, 200, a)
 }

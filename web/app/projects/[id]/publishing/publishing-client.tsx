@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, RefreshCw, Send } from "lucide-react";
-import { api, Article, DistributeItem } from "../../../lib/api";
+import { Copy, ExternalLink, RefreshCw, RotateCcw, Send } from "lucide-react";
+import { Article, DistributeItem } from "../../../lib/api";
+import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -12,26 +13,30 @@ function articleTitle(article: Article) {
 }
 
 export function PublishingClient({ projectId }: { projectId: string }) {
+  const api = useApi();
   const [published, setPublished] = useState<Article[]>([]);
   const [approved, setApproved] = useState<Article[]>([]);
+  const [failed, setFailed] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [pub, app, dist] = await Promise.all([
+      const [pub, app, fail, dist] = await Promise.all([
         api.listArticles(projectId, "published"),
         api.listArticles(projectId, "approved"),
+        api.listArticles(projectId, "publish_failed"),
         api.listDistribute(projectId),
       ]);
       setPublished(pub);
       setApproved(app);
+      setFailed(fail);
       setReady(dist);
     } catch (e: any) {
       setMessage({ title: "Publishing data unavailable", detail: e.message, tone: "amber" });
     }
-  }, [projectId]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
@@ -50,11 +55,39 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     setBusy(article.id);
     setMessage(null);
     try {
-      await api.distributed(article.id);
+      await api.distributed(projectId, article.id);
       await refresh();
       setMessage({ title: "Variant marked distributed", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not mark distributed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function retryPublish(article: Article) {
+    setBusy(article.id);
+    setMessage(null);
+    try {
+      await api.retryPublish(projectId, article.id);
+      await refresh();
+      setMessage({ title: "Publish retry queued", detail: articleTitle(article), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not retry publish", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reconcile() {
+    setBusy("reconcile");
+    setMessage(null);
+    try {
+      await api.reconcilePublishing(projectId);
+      await refresh();
+      setMessage({ title: "Publishing reconciled", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Reconcile failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -66,13 +99,57 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         title="Publishing"
         eyebrow="Canonical and syndication lanes"
         action={
-          <Button disabled={!!busy} size="sm" onClick={refresh}>
-            <RefreshCw size={14} />
-            Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={!!busy} size="sm" onClick={reconcile}>
+              <RotateCcw size={14} />
+              Reconcile
+            </Button>
+            <Button disabled={!!busy} size="sm" onClick={refresh}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          </div>
         }
       />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+
+      <section>
+        <SectionHeader title="Publish failures" action={<Badge tone={failed.length ? "red" : "neutral"}>{failed.length}</Badge>} />
+        {failed.length === 0 ? (
+          <EmptyState title="No publish failures" detail="Failed canonical publish attempts will appear here with retry controls." />
+        ) : (
+          <div className="grid gap-2">
+            {failed.map((article) => (
+              <div key={article.id} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-red-950">{articleTitle(article)}</div>
+                    <div className="mt-1 text-xs font-semibold text-red-700">
+                      attempt {article.publish_attempts} · next retry {formatDate(article.next_publish_retry_at)}
+                    </div>
+                    <div className="mt-2 line-clamp-3 text-sm leading-5 text-red-800">
+                      {article.last_publish_error || "No publish error captured."}
+                    </div>
+                    {article.publish_path && <div className="mt-1 truncate text-xs text-red-700">{article.publish_path}</div>}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <a
+                      href={`/projects/${projectId}/articles/${article.id}`}
+                      className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
+                    >
+                      Detail
+                    </a>
+                    <Button disabled={busy === article.id} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                      <RotateCcw size={14} />
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section>
         <SectionHeader title="Published canonical" action={<Badge tone="green">{published.length}</Badge>} />

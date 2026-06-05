@@ -35,6 +35,12 @@ export type Article = {
   scheduled_at: string | null;
   reviewed_at: string | null;
   published_at: string | null;
+  last_publish_error: string | null;
+  publish_attempts: number;
+  next_publish_retry_at: string | null;
+  resolved_slug: string | null;
+  publish_path: string | null;
+  canonical_url_verified_at: string | null;
   created_at: string | null;
 };
 
@@ -153,6 +159,12 @@ export function normalizeArticle(raw: any): Article {
     scheduled_at: normalizeTime(raw.scheduled_at),
     reviewed_at: normalizeTime(raw.reviewed_at),
     published_at: normalizeTime(raw.published_at),
+    last_publish_error: raw.last_publish_error ?? null,
+    publish_attempts: Number(raw.publish_attempts ?? 0),
+    next_publish_retry_at: normalizeTime(raw.next_publish_retry_at),
+    resolved_slug: raw.resolved_slug ?? null,
+    publish_path: raw.publish_path ?? null,
+    canonical_url_verified_at: normalizeTime(raw.canonical_url_verified_at),
     created_at: normalizeTime(raw.created_at),
   };
 }

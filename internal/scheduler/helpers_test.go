@@ -1,6 +1,11 @@
 package scheduler
 
-import "testing"
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestCeilDiv(t *testing.T) {
 	cases := []struct {
@@ -17,5 +22,27 @@ func TestCeilDiv(t *testing.T) {
 		if got := ceilDiv(c.a, c.b); got != c.want {
 			t.Errorf("ceilDiv(%d,%d) = %d, want %d", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+func TestSchedulerExposesNotificationTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickNotifications
+}
+
+func TestSchedulerExposesReviewOverdueTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickReviewOverdue
+}
+
+func TestStartRegistersNotificationTick(t *testing.T) {
+	raw, err := os.ReadFile("helpers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, "TickNotifications") || !strings.Contains(source, "@every 10s") {
+		t.Fatal("Start must register TickNotifications every 10 seconds")
+	}
+	if !strings.Contains(source, "TickReviewOverdue") || !strings.Contains(source, "@every 30m") {
+		t.Fatal("Start must register TickReviewOverdue every 30 minutes")
 	}
 }

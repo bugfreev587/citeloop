@@ -1,6 +1,6 @@
 // Command api is the CiteLoop service entrypoint: runs migrations, seeds the
-// placeholder project, wires providers (real Claude/Brave with mock fallback),
-// starts the scheduler cron, and serves the HTTP API.
+// placeholder project, wires providers (TokenGate/OpenAI or Claude with mock
+// fallback), starts the scheduler cron, and serves the HTTP API.
 package main
 
 import (
@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/api"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
@@ -53,19 +54,17 @@ func main() {
 	}
 
 	// Providers: real when keyed, deterministic mock otherwise (still runs).
-	var llmP llm.Provider = llm.NewClaude(env.AnthropicAPIKey, env.AnthropicModel)
-	if env.AnthropicAPIKey == "" {
-		log.Warn("ANTHROPIC_API_KEY not set — using mock LLM provider")
-		llmP = llm.NewMock()
-	}
+	llmP := admin.NewRuntimeProvider(pool, env, selectLLMProvider(env, log))
 	var searchP search.Provider = search.NewBrave(env.SearchAPIKey)
 	if env.SearchAPIKey == "" {
 		log.Warn("SEARCH_API_KEY not set — using mock search provider")
 		searchP = search.NewMock()
 	}
-	blog := publisher.NewBlog(env.GitHubToken, env.BlogRepo, env.BlogBranch, env.BlogBaseURL, log)
+	blog := publisher.NewBlog(env.GitHubToken, env.BlogRepo, env.BlogBranch, env.BlogBaseURL, env.BlogContentDir, log)
 
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
+	sched.NotificationSecret = env.NotificationSecretKey
+	sched.UniPostDeployHookURL = env.UniPostDeployHookURL
 	cron := sched.Start(ctx)
 	defer cron.Stop()
 
@@ -93,6 +92,19 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+}
+
+func selectLLMProvider(env config.Env, log *slog.Logger) llm.Provider {
+	if env.TokenGateAPIKey != "" {
+		log.Info("using TokenGate OpenAI-compatible LLM provider", "base_url", env.TokenGateBaseURL, "model", env.TokenGateModel)
+		return llm.NewOpenAIChat(env.TokenGateAPIKey, env.TokenGateBaseURL, env.TokenGateModel)
+	}
+	if env.AnthropicAPIKey != "" {
+		log.Info("using Claude LLM provider", "model", env.AnthropicModel)
+		return llm.NewClaude(env.AnthropicAPIKey, env.AnthropicModel)
+	}
+	log.Warn("TOKENGATE_API_KEY and ANTHROPIC_API_KEY not set — using mock LLM provider")
+	return llm.NewMock()
 }
 
 func pingWithRetry(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {

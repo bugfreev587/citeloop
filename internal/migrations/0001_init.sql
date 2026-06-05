@@ -73,13 +73,22 @@ create table articles (
   canonical_url  text,                     -- real URL, backfilled only after canonical publish
   status         text not null default 'generating'
                  check (status in ('generating','pending_review','approved',
-                                    'scheduled','published',
+                                    'scheduled','pending_url_verification',
+                                    'published','publish_failed',
                                     'ready_to_distribute','distributed','rejected')),
   scheduled_at   timestamptz,              -- this artifact's publish time (source of truth, §3 state machine)
   reviewed_by    text,
   reviewed_at    timestamptz,
   published_at   timestamptz,
   publish_result jsonb,
+  last_publish_error text,
+  publish_attempts int not null default 0,
+  next_publish_retry_at timestamptz,
+  publish_phase text,
+  resolved_slug text,
+  publish_path text,
+  canonical_url_verified_at timestamptz,
+  last_publish_run_id uuid,
   created_at     timestamptz not null default now(),
   -- canonical must have no platform; variant must have a platform
   check ((kind='canonical' and platform is null)
@@ -92,7 +101,7 @@ create unique index uniq_article_topic_kind_platform
 create table generation_runs (   -- observability + cost audit (breaker basis)
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid not null references projects(id),
-  agent       text not null check (agent in ('insight','strategist','writer','qa')),
+  agent       text not null check (agent in ('insight','strategist','writer','qa','publisher','notification')),
   input       jsonb,
   output      jsonb,        -- includes search result snapshot (§5.2)
   model       text,

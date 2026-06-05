@@ -82,17 +82,19 @@ func (q *Queries) ListInventory(ctx context.Context, projectID uuid.UUID) ([]Con
 
 const updateInventoryItem = `-- name: UpdateInventoryItem :one
 update content_inventory set
-  title = $2, target_keyword = $3, topics = $4, summary = $5
-where id = $1
+  title = $2, target_keyword = $3, topics = $4, summary = $5, evidence_snippets = $6
+where id = $1 and project_id = $7
 returning id, project_id, url, title, target_keyword, topics, summary, evidence_snippets, source, captured_at
 `
 
 type UpdateInventoryItemParams struct {
-	ID            uuid.UUID       `json:"id"`
-	Title         *string         `json:"title"`
-	TargetKeyword *string         `json:"target_keyword"`
-	Topics        json.RawMessage `json:"topics"`
-	Summary       *string         `json:"summary"`
+	ID               uuid.UUID       `json:"id"`
+	Title            *string         `json:"title"`
+	TargetKeyword    *string         `json:"target_keyword"`
+	Topics           json.RawMessage `json:"topics"`
+	Summary          *string         `json:"summary"`
+	EvidenceSnippets json.RawMessage `json:"evidence_snippets"`
+	ProjectID        uuid.UUID       `json:"project_id"`
 }
 
 func (q *Queries) UpdateInventoryItem(ctx context.Context, arg UpdateInventoryItemParams) (ContentInventory, error) {
@@ -102,6 +104,8 @@ func (q *Queries) UpdateInventoryItem(ctx context.Context, arg UpdateInventoryIt
 		arg.TargetKeyword,
 		arg.Topics,
 		arg.Summary,
+		arg.EvidenceSnippets,
+		arg.ProjectID,
 	)
 	var i ContentInventory
 	err := row.Scan(

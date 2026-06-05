@@ -43,3 +43,61 @@ func TestParsePartialCrawl(t *testing.T) {
 		t.Fatalf("sibling crawl.max_depth default lost: %d", c.Crawl.MaxDepth)
 	}
 }
+
+func TestFromEnvReadsTokenGateDefaults(t *testing.T) {
+	t.Setenv("TOKENGATE_API_KEY", "tg-test-key")
+	t.Setenv("TOKENGATE_BASE_URL", "")
+	t.Setenv("TOKENGATE_MODEL", "")
+
+	env := FromEnv()
+	if env.TokenGateAPIKey != "tg-test-key" {
+		t.Fatalf("TokenGateAPIKey = %q", env.TokenGateAPIKey)
+	}
+	if env.TokenGateBaseURL != "https://tokengate-production.up.railway.app/v1" {
+		t.Fatalf("TokenGateBaseURL = %q", env.TokenGateBaseURL)
+	}
+	if env.TokenGateModel != "claude-haiku-4-5-20251001" {
+		t.Fatalf("TokenGateModel = %q", env.TokenGateModel)
+	}
+}
+
+func TestFromEnvReadsClerkSecretKey(t *testing.T) {
+	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
+
+	env := FromEnv()
+	if env.ClerkSecretKey != "sk_test_clerk" {
+		t.Fatalf("ClerkSecretKey = %q", env.ClerkSecretKey)
+	}
+}
+
+func TestFromEnvReadsBlogContentDirDefaultAndOverride(t *testing.T) {
+	t.Setenv("BLOG_CONTENT_DIR", "")
+	env := FromEnv()
+	if env.BlogContentDir != "content/citeloop/blog" {
+		t.Fatalf("default BlogContentDir = %q", env.BlogContentDir)
+	}
+
+	t.Setenv("BLOG_CONTENT_DIR", "custom/generated")
+	env = FromEnv()
+	if env.BlogContentDir != "custom/generated" {
+		t.Fatalf("override BlogContentDir = %q", env.BlogContentDir)
+	}
+}
+
+func TestFromEnvReadsUniPostDeployHookURL(t *testing.T) {
+	t.Setenv("UNIPOST_DEPLOY_HOOK_URL", "https://api.vercel.com/v1/integrations/deploy/example")
+
+	env := FromEnv()
+	if env.UniPostDeployHookURL != "https://api.vercel.com/v1/integrations/deploy/example" {
+		t.Fatalf("UniPostDeployHookURL = %q", env.UniPostDeployHookURL)
+	}
+}
+
+func TestFromEnvReadsNotificationSecretKey(t *testing.T) {
+	t.Setenv("NOTIFICATION_SECRET_KEY", "notification-secret")
+
+	env := FromEnv()
+	if env.NotificationSecretKey != "notification-secret" {
+		t.Fatalf("NotificationSecretKey = %q", env.NotificationSecretKey)
+	}
+}

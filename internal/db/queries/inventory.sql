@@ -22,8 +22,8 @@ select * from content_inventory where id = $1;
 
 -- name: UpdateInventoryItem :one
 update content_inventory set
-  title = $2, target_keyword = $3, topics = $4, summary = $5
-where id = $1
+  title = $2, target_keyword = $3, topics = $4, summary = $5, evidence_snippets = $6
+where id = $1 and project_id = $7
 returning *;
 
 -- name: DeleteInventoryItem :exec

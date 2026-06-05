@@ -12,6 +12,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getGenerationRun = `-- name: GetGenerationRun :one
+select id, project_id, agent, input, output, model, tokens, cost_usd, status, error, created_at from generation_runs
+where id = $1
+  and project_id = $2
+`
+
+type GetGenerationRunParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error) {
+	row := q.db.QueryRow(ctx, getGenerationRun, arg.ID, arg.ProjectID)
+	var i GenerationRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Agent,
+		&i.Input,
+		&i.Output,
+		&i.Model,
+		&i.Tokens,
+		&i.CostUsd,
+		&i.Status,
+		&i.Error,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertGenerationRun = `-- name: InsertGenerationRun :one
 insert into generation_runs
   (project_id, agent, input, output, model, tokens, cost_usd, status, error)
@@ -58,6 +88,62 @@ func (q *Queries) InsertGenerationRun(ctx context.Context, arg InsertGenerationR
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listGenerationRuns = `-- name: ListGenerationRuns :many
+select id, project_id, agent, input, output, model, tokens, cost_usd, status, error, created_at from generation_runs
+where project_id = $1
+  and ($2::text = '' or agent = $2)
+  and ($3::text = '' or status = $3)
+  and ($4::timestamptz is null or created_at < $4)
+order by created_at desc
+limit $5
+`
+
+type ListGenerationRunsParams struct {
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Agent           string             `json:"agent"`
+	Status          string             `json:"status"`
+	CursorCreatedAt pgtype.Timestamptz `json:"cursor_created_at"`
+	LimitRows       int32              `json:"limit_rows"`
+}
+
+func (q *Queries) ListGenerationRuns(ctx context.Context, arg ListGenerationRunsParams) ([]GenerationRun, error) {
+	rows, err := q.db.Query(ctx, listGenerationRuns,
+		arg.ProjectID,
+		arg.Agent,
+		arg.Status,
+		arg.CursorCreatedAt,
+		arg.LimitRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GenerationRun
+	for rows.Next() {
+		var i GenerationRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Agent,
+			&i.Input,
+			&i.Output,
+			&i.Model,
+			&i.Tokens,
+			&i.CostUsd,
+			&i.Status,
+			&i.Error,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const monthlySpend = `-- name: MonthlySpend :one

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, RefreshCw, Save, XCircle } from "lucide-react";
-import { api, Article, ReviewGroup } from "../../../lib/api";
+import { Article, ReviewGroup } from "../../../lib/api";
+import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, TextArea, formatScore } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -12,6 +13,7 @@ function articleTitle(article: Article) {
 }
 
 export function ReviewClient({ projectId }: { projectId: string }) {
+  const api = useApi();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
@@ -22,7 +24,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     } catch (e: any) {
       setMessage({ title: "Review queue unavailable", detail: e.message, tone: "amber" });
     }
-  }, [projectId]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
@@ -79,11 +81,12 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                     key={article.id}
                     article={article}
                     busy={busy === article.id}
-                    onApprove={() => mutate("Article approved", article.id, () => api.approve(article.id))}
-                    onReject={() => mutate("Article rejected", article.id, () => api.reject(article.id))}
+                    onApprove={() => mutate("Article approved", article.id, () => api.approve(projectId, article.id))}
+                    onReject={() => mutate("Article rejected", article.id, () => api.reject(projectId, article.id))}
                     onSave={(content) =>
-                      mutate("Content saved and QA refreshed", article.id, () => api.edit(article.id, { content_md: content }))
+                      mutate("Content saved and QA refreshed", article.id, () => api.edit(projectId, article.id, { content_md: content }))
                     }
+                    detailHref={`/projects/${projectId}/articles/${article.id}`}
                   />
                 ))}
               </div>
@@ -101,12 +104,14 @@ function ReviewArticle({
   onApprove,
   onReject,
   onSave,
+  detailHref,
 }: {
   article: Article;
   busy: boolean;
   onApprove: () => void;
   onReject: () => void;
   onSave: (content: string) => void;
+  detailHref: string;
 }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState(article.content_md);
@@ -128,6 +133,9 @@ function ReviewArticle({
           <p className="mt-2 line-clamp-3 content-font text-[15px] leading-5 text-slate-700">{article.content_md}</p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          <a href={detailHref} className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Detail
+          </a>
           <Button size="sm" onClick={() => setOpen((value) => !value)}>
             {open ? "Hide" : "Edit"}
           </Button>

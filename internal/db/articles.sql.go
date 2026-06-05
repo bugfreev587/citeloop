@@ -20,7 +20,7 @@ update articles set
   reviewed_by = $4,
   reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type ApproveArticleParams struct {
@@ -57,6 +57,73 @@ func (q *Queries) ApproveArticle(ctx context.Context, arg ApproveArticleParams) 
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const approveArticleForProject = `-- name: ApproveArticleForProject :one
+update articles set
+  status = $2,
+  scheduled_at = $3,
+  reviewed_by = $4,
+  reviewed_at = now()
+where id = $1 and project_id = $5
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type ApproveArticleForProjectParams struct {
+	ID          uuid.UUID          `json:"id"`
+	Status      string             `json:"status"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	ReviewedBy  *string            `json:"reviewed_by"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) ApproveArticleForProject(ctx context.Context, arg ApproveArticleForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, approveArticleForProject,
+		arg.ID,
+		arg.Status,
+		arg.ScheduledAt,
+		arg.ReviewedBy,
+		arg.ProjectID,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -66,7 +133,7 @@ const countStockedCanonical = `-- name: CountStockedCanonical :one
 select count(*) from articles
 where project_id = $1
   and kind = 'canonical'
-  and status in ('generating','pending_review','approved','scheduled')
+  and status in ('generating','pending_review','approved','scheduled','pending_url_verification')
 `
 
 // CountStockedCanonical counts canonical articles already in flight toward
@@ -84,7 +151,7 @@ insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
    geo_score, seo_score, qa_issues, qa_blocking, status)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type CreateArticleParams struct {
@@ -135,13 +202,21 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getArticle = `-- name: GetArticle :one
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at from articles where id = $1
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles where id = $1
 `
 
 func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -166,13 +241,66 @@ func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getArticleForProject = `-- name: GetArticleForProject :one
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+where id = $1 and project_id = $2
+`
+
+type GetArticleForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, getArticleForProject, arg.ID, arg.ProjectID)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listArticlesByStatus = `-- name: ListArticlesByStatus :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
 where project_id = $1 and status = $2
 order by created_at desc
 `
@@ -210,6 +338,14 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 			&i.ReviewedAt,
 			&i.PublishedAt,
 			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -223,7 +359,7 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 }
 
 const listArticlesByTopic = `-- name: ListArticlesByTopic :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at from articles where topic_id = $1 order by kind, platform
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles where topic_id = $1 order by kind, platform
 `
 
 func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error) {
@@ -254,6 +390,75 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 			&i.ReviewedAt,
 			&i.PublishedAt,
 			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOverdueReviewArticles = `-- name: ListOverdueReviewArticles :many
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+where status = 'pending_review'
+  and created_at <= $1
+order by created_at asc
+limit $2
+`
+
+type ListOverdueReviewArticlesParams struct {
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Limit     int32              `json:"limit"`
+}
+
+func (q *Queries) ListOverdueReviewArticles(ctx context.Context, arg ListOverdueReviewArticlesParams) ([]Article, error) {
+	rows, err := q.db.Query(ctx, listOverdueReviewArticles, arg.CreatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Article
+	for rows.Next() {
+		var i Article
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TopicID,
+			&i.Kind,
+			&i.Platform,
+			&i.ContentMd,
+			&i.SeoMeta,
+			&i.GeoScore,
+			&i.SeoScore,
+			&i.QaIssues,
+			&i.QaBlocking,
+			&i.CanonicalUrl,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.PublishedAt,
+			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -267,7 +472,7 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 }
 
 const listPendingReview = `-- name: ListPendingReview :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
 where project_id = $1 and status = 'pending_review'
 order by created_at asc
 `
@@ -300,6 +505,14 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 			&i.ReviewedAt,
 			&i.PublishedAt,
 			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -314,7 +527,7 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 
 const markDistributed = `-- name: MarkDistributed :one
 update articles set status = 'distributed' where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -339,29 +552,32 @@ func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, e
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const markPublished = `-- name: MarkPublished :one
-update articles set
-  status = 'published',
-  published_at = now(),
-  publish_result = $2,
-  canonical_url = $3
-where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+const markDistributedForProject = `-- name: MarkDistributedForProject :one
+update articles set status = 'distributed'
+where id = $1 and project_id = $2
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
-type MarkPublishedParams struct {
-	ID            uuid.UUID `json:"id"`
-	PublishResult []byte    `json:"publish_result"`
-	CanonicalUrl  *string   `json:"canonical_url"`
+type MarkDistributedForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
 }
 
-func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (Article, error) {
-	row := q.db.QueryRow(ctx, markPublished, arg.ID, arg.PublishResult, arg.CanonicalUrl)
+func (q *Queries) MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, markDistributedForProject, arg.ID, arg.ProjectID)
 	var i Article
 	err := row.Scan(
 		&i.ID,
@@ -382,6 +598,258 @@ func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (A
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markPublishFailed = `-- name: MarkPublishFailed :one
+update articles set
+  status = 'publish_failed',
+  last_publish_error = $2,
+  next_publish_retry_at = $3,
+  publish_phase = $4,
+  canonical_url_verified_at = null
+where id = $1
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type MarkPublishFailedParams struct {
+	ID                 uuid.UUID          `json:"id"`
+	LastPublishError   *string            `json:"last_publish_error"`
+	NextPublishRetryAt pgtype.Timestamptz `json:"next_publish_retry_at"`
+	PublishPhase       *string            `json:"publish_phase"`
+}
+
+func (q *Queries) MarkPublishFailed(ctx context.Context, arg MarkPublishFailedParams) (Article, error) {
+	row := q.db.QueryRow(ctx, markPublishFailed,
+		arg.ID,
+		arg.LastPublishError,
+		arg.NextPublishRetryAt,
+		arg.PublishPhase,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markPublished = `-- name: MarkPublished :one
+update articles set
+  status = 'published',
+  published_at = now(),
+  publish_result = $2,
+  canonical_url = $3,
+  resolved_slug = $4,
+  publish_path = $5,
+  publish_phase = 'published',
+  canonical_url_verified_at = now(),
+  last_publish_error = null,
+  next_publish_retry_at = null
+where id = $1
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type MarkPublishedParams struct {
+	ID            uuid.UUID `json:"id"`
+	PublishResult []byte    `json:"publish_result"`
+	CanonicalUrl  *string   `json:"canonical_url"`
+	ResolvedSlug  *string   `json:"resolved_slug"`
+	PublishPath   *string   `json:"publish_path"`
+}
+
+func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (Article, error) {
+	row := q.db.QueryRow(ctx, markPublished,
+		arg.ID,
+		arg.PublishResult,
+		arg.CanonicalUrl,
+		arg.ResolvedSlug,
+		arg.PublishPath,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const preparePublishAttempt = `-- name: PreparePublishAttempt :one
+update articles set
+  resolved_slug = $2,
+  publish_path = $3,
+  publish_phase = $4,
+  publish_attempts = publish_attempts + 1,
+  next_publish_retry_at = null,
+  last_publish_error = null
+where id = $1
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type PreparePublishAttemptParams struct {
+	ID           uuid.UUID `json:"id"`
+	ResolvedSlug *string   `json:"resolved_slug"`
+	PublishPath  *string   `json:"publish_path"`
+	PublishPhase *string   `json:"publish_phase"`
+}
+
+func (q *Queries) PreparePublishAttempt(ctx context.Context, arg PreparePublishAttemptParams) (Article, error) {
+	row := q.db.QueryRow(ctx, preparePublishAttempt,
+		arg.ID,
+		arg.ResolvedSlug,
+		arg.PublishPath,
+		arg.PublishPhase,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const recordPublishAttemptResult = `-- name: RecordPublishAttemptResult :one
+update articles set
+  status = 'pending_url_verification',
+  publish_result = $2,
+  resolved_slug = $3,
+  publish_path = $4,
+  publish_phase = 'pending_url_verification',
+  last_publish_error = null,
+  next_publish_retry_at = $5
+where id = $1
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type RecordPublishAttemptResultParams struct {
+	ID                 uuid.UUID          `json:"id"`
+	PublishResult      []byte             `json:"publish_result"`
+	ResolvedSlug       *string            `json:"resolved_slug"`
+	PublishPath        *string            `json:"publish_path"`
+	NextPublishRetryAt pgtype.Timestamptz `json:"next_publish_retry_at"`
+}
+
+func (q *Queries) RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error) {
+	row := q.db.QueryRow(ctx, recordPublishAttemptResult,
+		arg.ID,
+		arg.PublishResult,
+		arg.ResolvedSlug,
+		arg.PublishPath,
+		arg.NextPublishRetryAt,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -390,7 +858,7 @@ func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (A
 const rejectArticle = `-- name: RejectArticle :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type RejectArticleParams struct {
@@ -420,16 +888,124 @@ func (q *Queries) RejectArticle(ctx context.Context, arg RejectArticleParams) (A
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const rejectArticleForProject = `-- name: RejectArticleForProject :one
+update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
+where id = $1 and project_id = $3
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type RejectArticleForProjectParams struct {
+	ID         uuid.UUID `json:"id"`
+	ReviewedBy *string   `json:"reviewed_by"`
+	ProjectID  uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, rejectArticleForProject, arg.ID, arg.ReviewedBy, arg.ProjectID)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const retryPublishArticle = `-- name: RetryPublishArticle :one
+update articles set
+  next_publish_retry_at = null,
+  last_publish_error = null
+where id = $1
+  and project_id = $2
+  and status = 'publish_failed'
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type RetryPublishArticleParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error) {
+	row := q.db.QueryRow(ctx, retryPublishArticle, arg.ID, arg.ProjectID)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const selectDueCanonical = `-- name: SelectDueCanonical :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
 where project_id = $1
   and kind = 'canonical'
-  and status = 'approved'
+  and (
+    status = 'approved'
+    or (status = 'publish_failed' and next_publish_retry_at is not null and next_publish_retry_at <= now())
+  )
   and scheduled_at is not null
   and scheduled_at <= now()
 for update skip locked
@@ -464,6 +1040,76 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 			&i.ReviewedAt,
 			&i.PublishedAt,
 			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const selectPublishReconcileCandidates = `-- name: SelectPublishReconcileCandidates :many
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+where project_id = $1
+  and kind = 'canonical'
+  and (
+    (status in ('approved','publish_failed') and publish_result is not null)
+    or
+    status = 'pending_url_verification'
+    or
+    (status = 'published' and (canonical_url is null or canonical_url_verified_at is null or publish_result is null))
+  )
+order by created_at asc
+`
+
+func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectID uuid.UUID) ([]Article, error) {
+	rows, err := q.db.Query(ctx, selectPublishReconcileCandidates, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Article
+	for rows.Next() {
+		var i Article
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TopicID,
+			&i.Kind,
+			&i.Platform,
+			&i.ContentMd,
+			&i.SeoMeta,
+			&i.GeoScore,
+			&i.SeoScore,
+			&i.QaIssues,
+			&i.QaBlocking,
+			&i.CanonicalUrl,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.PublishedAt,
+			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -477,13 +1123,14 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 }
 
 const selectUnlockableVariants = `-- name: SelectUnlockableVariants :many
-select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.created_at from articles v
+select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.last_publish_error, v.publish_attempts, v.next_publish_retry_at, v.publish_phase, v.resolved_slug, v.publish_path, v.canonical_url_verified_at, v.last_publish_run_id, v.created_at from articles v
 join articles c
   on c.topic_id = v.topic_id and c.kind = 'canonical'
 where v.kind = 'syndication_variant'
   and v.status = 'approved'
   and c.status = 'published'
   and c.canonical_url is not null
+  and c.canonical_url_verified_at is not null
 `
 
 // syndication unlock: variants whose canonical is published (§5.6).
@@ -515,6 +1162,14 @@ func (q *Queries) SelectUnlockableVariants(ctx context.Context) ([]Article, erro
 			&i.ReviewedAt,
 			&i.PublishedAt,
 			&i.PublishResult,
+			&i.LastPublishError,
+			&i.PublishAttempts,
+			&i.NextPublishRetryAt,
+			&i.PublishPhase,
+			&i.ResolvedSlug,
+			&i.PublishPath,
+			&i.CanonicalUrlVerifiedAt,
+			&i.LastPublishRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -531,7 +1186,7 @@ const setArticleQA = `-- name: SetArticleQA :one
 update articles set
   geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type SetArticleQAParams struct {
@@ -572,6 +1227,14 @@ func (q *Queries) SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Art
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -584,7 +1247,7 @@ update articles set
   content_md = $3,
   seo_meta = $4          -- canonical placeholder backfilled in seo_meta too (§5.6)
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type UnlockVariantParams struct {
@@ -621,6 +1284,14 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -628,7 +1299,7 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 
 const updateArticleContent = `-- name: UpdateArticleContent :one
 update articles set content_md = $2, seo_meta = $3 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
 `
 
 type UpdateArticleContentParams struct {
@@ -659,6 +1330,67 @@ func (q *Queries) UpdateArticleContent(ctx context.Context, arg UpdateArticleCon
 		&i.ReviewedAt,
 		&i.PublishedAt,
 		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateArticleContentForProject = `-- name: UpdateArticleContentForProject :one
+update articles set content_md = $2, seo_meta = $3
+where id = $1 and project_id = $4
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+`
+
+type UpdateArticleContentForProjectParams struct {
+	ID        uuid.UUID       `json:"id"`
+	ContentMd string          `json:"content_md"`
+	SeoMeta   json.RawMessage `json:"seo_meta"`
+	ProjectID uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateArticleContentForProject(ctx context.Context, arg UpdateArticleContentForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, updateArticleContentForProject,
+		arg.ID,
+		arg.ContentMd,
+		arg.SeoMeta,
+		arg.ProjectID,
+	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
 		&i.CreatedAt,
 	)
 	return i, err
