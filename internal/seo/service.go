@@ -148,7 +148,9 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 			s := runErr.Error()
 			errText = &s
 		}
-		finished, err := s.Q.FinishSEORun(ctx, db.FinishSEORunParams{
+		finishCtx, cancel := finishRunContext(ctx)
+		defer cancel()
+		finished, err := s.Q.FinishSEORun(finishCtx, db.FinishSEORunParams{
 			ID:         run.ID,
 			ProjectID:  projectID,
 			Status:     status,
@@ -174,15 +176,18 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	if err != nil {
 		return finish("error", result, err)
 	}
-	result.ConnectedGSC = hasConnectedGSC(integrations)
-	if !result.ConnectedGSC {
+	if !isProviderAttemptable(integrations, ProviderGSC) {
 		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_missing")
 	} else if s.GoogleData == nil {
 		result.DataSourceNotes = append(result.DataSourceNotes, "google_service_account_env_missing")
 		result.ConnectedGSC = false
+	} else if prop.GscSiteUrl == nil || strings.TrimSpace(*prop.GscSiteUrl) == "" {
+		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_site_url_missing")
+		result.ConnectedGSC = false
 	} else {
 		if err := s.syncGoogleMetrics(ctx, projectID, prop, integrations, now, &result); err != nil {
 			result.DataSourceNotes = append(result.DataSourceNotes, "google_metrics_error")
+			result.ConnectedGSC = false
 			errText := err.Error()
 			_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
 				ProjectID:      projectID,
@@ -192,6 +197,8 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 				LastVerifiedAt: pgtype.Timestamptz{},
 				LastError:      &errText,
 			})
+		} else {
+			result.ConnectedGSC = true
 		}
 	}
 	articles, err := s.Q.ListPublishedCanonicalArticlesForSEO(ctx, projectID)
@@ -368,7 +375,7 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 		CredentialRef:  integrationCredentialRef(integrations, ProviderGSC),
 		LastVerifiedAt: pgutil.TS(s.now()),
 	})
-	if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" || !isProviderConnected(integrations, ProviderGA4) {
+	if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" || !isProviderAttemptable(integrations, ProviderGA4) {
 		if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" {
 			result.DataSourceNotes = append(result.DataSourceNotes, "ga4_property_missing")
 		}
@@ -444,7 +451,9 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 			s := runErr.Error()
 			errText = &s
 		}
-		_, err := s.Q.FinishSEORun(ctx, db.FinishSEORunParams{
+		finishCtx, cancel := finishRunContext(ctx)
+		defer cancel()
+		_, err := s.Q.FinishSEORun(finishCtx, db.FinishSEORunParams{
 			ID:         run.ID,
 			ProjectID:  projectID,
 			Status:     status,
@@ -663,6 +672,10 @@ func isColdStart(stats db.SEOOverviewStatsRow) bool {
 	return stats.GscDays28d < 14 || pgutil.Float(stats.Impressions28d) < 500 || pgutil.Float(stats.Clicks28d) < 30
 }
 
+func finishRunContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+}
+
 func hasConnectedGSC(integrations []db.SeoIntegration) bool {
 	return isProviderConnected(integrations, ProviderGSC)
 }
@@ -670,6 +683,19 @@ func hasConnectedGSC(integrations []db.SeoIntegration) bool {
 func isProviderConnected(integrations []db.SeoIntegration, provider string) bool {
 	for _, integration := range integrations {
 		if integration.Provider == provider && integration.Status == "connected" {
+			return true
+		}
+	}
+	return false
+}
+
+func isProviderAttemptable(integrations []db.SeoIntegration, provider string) bool {
+	for _, integration := range integrations {
+		if integration.Provider != provider {
+			continue
+		}
+		switch integration.Status {
+		case "connected", "error", "expired":
 			return true
 		}
 	}

@@ -52,6 +52,37 @@ func TestSearchConsoleFetchParsesDailyPageQueryAndAppearanceRows(t *testing.T) {
 	}
 }
 
+func TestSearchConsoleFetchKeepsPageAndQueryRowsWhenAppearanceUnsupported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := readBody(t, r)
+		switch {
+		case strings.Contains(body, `"searchAppearance"`):
+			http.Error(w, `{"error":{"code":400,"message":"Cannot group by search appearance dimension together with another dimension.","reason":"invalidParameter"}}`, http.StatusBadRequest)
+		case strings.Contains(body, `"query"`):
+			w.Write([]byte(`{"rows":[{"keys":["2026-06-01","https://unipost.dev/blog/a","best scheduler","usa","DESKTOP"],"clicks":2,"impressions":20,"ctr":0.1,"position":8}]}`))
+		default:
+			w.Write([]byte(`{"rows":[{"keys":["2026-06-01","https://unipost.dev/blog/a"],"clicks":5,"impressions":50,"ctr":0.1,"position":6}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	client := Client{HTTPClient: srv.Client(), SearchConsoleBaseURL: srv.URL + "/webmasters/v3"}
+	data, err := client.FetchSearchConsole(context.Background(), SearchConsoleRequest{
+		SiteURL:   "sc-domain:unipost.dev",
+		StartDate: date(2026, 6, 1),
+		EndDate:   date(2026, 6, 2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.PageRows) != 1 || len(data.QueryRows) != 1 {
+		t.Fatalf("page/query rows = %d/%d, want 1/1", len(data.PageRows), len(data.QueryRows))
+	}
+	if len(data.AppearanceRows) != 0 {
+		t.Fatalf("appearance rows = %d, want 0", len(data.AppearanceRows))
+	}
+}
+
 func TestAnalyticsFetchParsesLandingPageRows(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
