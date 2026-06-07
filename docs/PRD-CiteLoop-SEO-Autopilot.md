@@ -40,7 +40,15 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - Outcome learning loop。
 - Rollback and audit。
 
-如果第二阶段数据不稳定，本阶段不得启用自动执行。
+如果第二阶段数据不稳定，本阶段不得启用自动执行。Level 2 自动执行的硬前置：
+
+- Operations Loop 达到 Definition of Done，并通过机器可读 health check。
+- `seo_sync` 连续 14 天成功，且最近 28 天 GSC page total 数据可用。
+- URL normalization 最近 14 天无同页重复冲突。
+- verified notification channel 存在并通过测试投递。
+- Google service account integration 状态为 `connected`。
+- outcome measurement 至少能读取 baseline 并写入 measurement schedule。
+- kill switch 和 safe mode 状态可在 UI 第一屏看到。
 
 ## 3. 目标
 
@@ -94,6 +102,16 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - 仍保留 kill switch、预算上限、风险边界和 audit。
 - 本 PRD 只定义通向 Level 4 的架构，不把 Level 4 作为首个交付目标。
 
+Run mode 由 `autopilot_level` 派生，不单独配置：
+
+| `autopilot_level` | derived mode | 自动发布能力 |
+|---:|---|---|
+| 0 | `observe` | 无 |
+| 1 | `draft` | 无 |
+| 2 | `guarded` | 仅低风险且 policy 允许 |
+| 3 | `portfolio` | 低风险自动，中风险批量 review |
+| 4 | `expanded` | 本 PRD 只定义架构，不作为首交付 |
+
 ## 6. 自动执行动作矩阵
 
 | 动作 | 风险 | Level 2 | Level 3 | Level 4 |
@@ -114,6 +132,42 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - 删除、noindex、merge、redirect 永远不全自动。
 - 所有 product claim 修改必须过 fact-safety QA。
 
+### 6.1 Risk classification
+
+风险分级必须是确定性规则，不由 LLM 自由判断。Classifier 输入：
+
+- `action_type`
+- 最近 28 天 page clicks / impressions 及项目内分位
+- page type：`blog`, `docs`, `pricing`, `homepage`, `legal`, `unknown`
+- diff 规模：metadata-only、link-only、paragraph、section、major rewrite
+- 是否涉及 product claim、canonical、robots、redirect、merge/noindex/delete
+- policy allow/deny patterns
+
+输出：
+
+- `risk_level`：`low`, `medium`, `high`
+- `risk_reasons`
+- `classifier_version`
+
+默认规则：
+
+- `high`：homepage/pricing/docs critical/legal；merge、redirect、noindex、delete；canonical/robots 改动；major rewrite；最近 28 天 clicks 或 impressions 位于项目 P80 以上。
+- `medium`：new supporting article；paragraph/section refresh；internal link patch on non-low-traffic page；product claim diff；confidence 低于 policy 阈值。
+- `low`：sitemap submit；metadata-only rewrite on low-traffic blog page；internal link patch from approved source to approved target 且 diff 小于 3 个链接。
+
+Classifier 规则必须版本化并写入 audit，action 执行时使用的版本不可被事后覆盖。
+
+### 6.2 Low-traffic definition
+
+默认 `low_traffic` 判定：
+
+- 最近 28 天 clicks `< 10`，且
+- 最近 28 天 impressions `< 500`，且
+- page 不属于 homepage/pricing/docs critical/legal，且
+- page traffic 分位低于项目 P60。
+
+阈值可在 `seo_policies` 配置。任何一个条件不满足都不得按 low-traffic 自动发布。
+
 ## 7. 数据模型
 
 ### 7.1 `seo_objectives`
@@ -130,7 +184,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `target_topics`
 - `target_queries`
 - `time_horizon_days`
-- `budget_usd`
+- `budget_usd`：planner allocation，不是硬上限；不能超过 `seo_policies.monthly_budget_limit`
 - `created_at`
 - `updated_at`
 
@@ -142,16 +196,30 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `project_id`
 - `autopilot_level`
 - `weekly_action_limit`
-- `monthly_budget_limit`
+- `monthly_budget_limit`：SEO Autopilot 子系统硬上限
 - `allowed_action_types`
 - `blocked_url_patterns`
 - `requires_review_action_types`
 - `max_auto_changes_per_page_per_month`
+- `low_traffic_clicks_28d_threshold`：默认 10
+- `low_traffic_impressions_28d_threshold`：默认 500
 - `min_confidence_for_auto_publish`
-- `quiet_hours`
+- `quiet_hours_start`
+- `quiet_hours_end`
+- `quiet_hours_timezone`
+- `quiet_hours_behavior`：`defer_to_next_window` 或 `skip_cycle`，默认 `defer_to_next_window`
 - `kill_switch_enabled`
+- `safe_mode_enabled`
+- `risk_classifier_version`
 - `created_at`
 - `updated_at`
+
+预算关系：
+
+- 现有 `generation_runs` 月度 budget breaker 是项目级最终硬上限。
+- `seo_policies.monthly_budget_limit` 是 SEO Autopilot 子系统硬上限。
+- `seo_objectives.budget_usd` 是某个 objective 的计划分配；多 objective 共享 `seo_policies.monthly_budget_limit`，Planner 不得让分配总和超过 policy。
+- 任一预算触顶时，Planner 只能 observe/draft，不得 auto publish 或调用额外 LLM。
 
 ### 7.3 `autopilot_runs`
 
@@ -161,7 +229,8 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `project_id`
 - `objective_id`
 - `status`
-- `mode`：`observe`, `draft`, `guarded`, `portfolio`
+- `autopilot_level_snapshot`
+- `derived_mode`：由 `autopilot_level_snapshot` 推导，不允许 UI 独立设置
 - `started_at`
 - `finished_at`
 - `input_snapshot`
@@ -187,6 +256,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `expected_impact`
 - `expected_effort`
 - `aggregate_risk`
+- `risk_classifier_version`
 - `approval_required`
 - `approved_by`
 - `approved_at`
@@ -206,6 +276,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `primary_metric`
 - `secondary_metrics`
 - `control_pages`
+- `evidence_level`：`matched_control`, `site_trend_normalized`, `no_control`
 - `result`
 - `confidence`
 - `notes`
@@ -221,6 +292,9 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `status`
 - `severity`
 - `details`
+- `reported_false_positive_at`
+- `reported_false_negative_at`
+- `reported_by`
 - `created_at`
 
 ### 7.7 `rollback_records`
@@ -235,6 +309,59 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `rollback_commit_sha`
 - `reason`
 - `performed_by`
+- `created_at`
+
+### 7.8 `risk_classification_rules`
+
+字段：
+
+- `id`
+- `project_id`
+- `version`
+- `rules`
+- `created_by`
+- `created_at`
+- `retired_at`
+
+约束：
+
+- action 记录只保存使用时的 `classifier_version` 和 `risk_reasons`。
+- 已执行 action 不随规则更新重算历史风险。
+
+### 7.9 `safe_mode_events`
+
+字段：
+
+- `id`
+- `project_id`
+- `reason`
+- `trigger_source`：`manual`, `publish_failure`, `auth`, `notification`, `guardrail_report`, `traffic_anomaly`, `budget`
+- `entered_at`
+- `entered_by`
+- `exited_at`
+- `exited_by`
+- `exit_reason`
+- `related_run_id`
+- `related_action_id`
+
+约束：
+
+- 同一 project 同时只能有一个 open safe mode event。
+- 退出一律需要人工确认；系统可以显示恢复建议，但不得自动退出 safe mode。
+- safe mode open 时，Executor 不得 auto publish。
+
+### 7.10 `autopilot_audit_events`
+
+字段：
+
+- `id`
+- `project_id`
+- `actor`：`autopilot`, `human`, `system`
+- `event_type`
+- `entity_type`
+- `entity_id`
+- `before_snapshot`
+- `after_snapshot`
 - `created_at`
 
 ## 8. Planner / Executor / Verifier 架构
@@ -265,6 +392,13 @@ Planner 必须解释：
 - 为什么没有选其他高分 opportunity。
 - 这些动作是否互相冲突。
 - 本周计划是否超过运营 capacity。
+- 每个 action 使用的 `risk_classifier_version`、risk reasons 和 low-traffic 判断结果。
+
+同页冲突规则：
+
+- 同一 plan 内两个 action 命中同一 `target_article_id` 或 `normalized_target_url` 时，Planner 必须合并为一个复合 action 或只保留最高优先级 action。
+- 不能合并的冲突 action 标为 `rejected_due_to_conflict`，并写 rejected reason。
+- 同一 article 每月自动发布次数不得超过 `max_auto_changes_per_page_per_month`。
 
 ### 8.2 Executor
 
@@ -288,6 +422,9 @@ Planner 必须解释：
 - 低风险动作可自动执行。
 - 需要 review 的动作必须停在 review gate。
 - 所有代码/content 写入必须走 branch/path guard。
+- Executor claim action 时必须记录 `content_hash_before`；发布前再次读取目标 article hash。
+- 如果执行中发现 article 被人工编辑或 hash 与 plan snapshot 不一致，Executor 必须 abort，并把 action 转为 review。
+- quiet hours 命中时，默认延后到下一个允许窗口；如果延后超过 plan window，则跳过本周期并写 audit。
 
 ### 8.3 Verifier
 
@@ -373,7 +510,7 @@ Verifier 失败时：
 
 ### 9.5 Risk guard
 
-如果动作满足任一条件，必须人工 review：
+Risk guard 调用 §6.1 的 deterministic classifier；LLM 只能补充解释，不能覆盖 classifier 输出。如果动作满足任一条件，必须人工 review：
 
 - high traffic page
 - homepage / pricing / docs critical page
@@ -382,6 +519,7 @@ Verifier 失败时：
 - claim confidence below threshold
 - opportunity confidence below threshold
 - policy explicit block
+- classifier version missing 或 policy threshold missing
 
 ## 10. 用户体验
 
@@ -410,7 +548,9 @@ Verifier 失败时：
 - budget limit
 - URL allow/deny patterns
 - minimum confidence
+- low-traffic thresholds
 - quiet hours
+- quiet hours timezone and behavior
 - notification preferences
 
 ### 10.3 Weekly Plan Review
@@ -437,6 +577,7 @@ Verifier 失败时：
 - commit/deploy verification
 - measurement result
 - rollback button if applicable
+- report guardrail false positive / false negative
 
 ### 10.5 Outcome Dashboard
 
@@ -498,7 +639,14 @@ Safe mode 行为：
 - 停止 auto publish。
 - 允许 observe/draft。
 - 发 critical notification。
-- UI 显示恢复条件。
+- 写入 `safe_mode_events` open event。
+- UI 显示进入原因、相关 action/run、恢复建议和人工恢复按钮。
+
+退出机制：
+
+- 一律需要人工确认，不自动退出。
+- 恢复前必须重新验证：notification channel、Google integration、budget、最近一次 publish health。
+- 退出写 `safe_mode_events.exited_at/exited_by/exit_reason` 和 audit event。
 
 ## 12. 实验与评估
 
@@ -510,6 +658,21 @@ Safe mode 行为：
 - comparable previous period。
 - seasonality note。
 - affected query/page set。
+
+### 12.1.1 Control page selection
+
+优先选择 control pages：
+
+- 同 topic cluster。
+- 同 page type。
+- 最近 28 天 clicks/impressions 分位接近。
+- 未在本 measurement window 内被其他 action 修改。
+
+如果找不到至少 3 个合格 control pages：
+
+- 降级为 site-trend normalized comparison。
+- `seo_experiments.evidence_level` 标为 `site_trend_normalized`。
+- 如果连站点趋势也不可用，标为 `no_control`，result 只能是 `inconclusive` 或弱信号。
 
 ### 12.2 Measurement windows
 
@@ -550,6 +713,21 @@ Planner 不得：
 - 因一个小样本结果永久屏蔽某类动作。
 - 把 correlation 当作确定 causation。
 
+### 12.5 Rollback semantics
+
+不同 action 的 rollback 含义：
+
+| action type | rollback_type | 可恢复内容 | 局限 |
+|---|---|---|---|
+| metadata rewrite | `git_revert` 或 `content_snapshot_restore` | title/meta/frontmatter | Google SERP 可能已抓取中间版本，不能保证 SERP 立即恢复 |
+| internal link patch | `git_revert` 或 `content_snapshot_restore` | source article link diff | 已被 crawl 的 link graph 变化不可即时撤销 |
+| paragraph/section refresh | `content_snapshot_restore` | article body diff | 事实更新若已被后续人工编辑覆盖，需人工 merge |
+| new supporting article | `unpublish_or_redirect_plan` | 只能生成下架/redirect 计划 | 不自动 delete/noindex |
+| sitemap submit | `not_reversible` | 无 | sitemap submit 无法真正回滚，只能提交新版 sitemap |
+| merge/redirect/noindex/delete | `manual_plan_required` | 需人工制定反向 redirect/restore plan | 搜索状态和 canonical 选择不可保证恢复 |
+
+Rollback 是内容和配置层面的恢复，不等于恢复 Google 排名、抓取状态或 SERP 展示。
+
 ## 13. Notifications
 
 新增事件：
@@ -571,6 +749,7 @@ Planner 不得：
 ## 14. 安全、权限与审计
 
 - 所有自动写入必须绑定 actor：`autopilot`。
+- Phase 1 必须先迁移自动写入链路的 actor 字段或 audit event；现有 `articles` / publish 链路没有 actor 概念，不能在缺失 actor 的情况下启用自动执行。
 - 所有 commit message 包含 action id。
 - 所有 generated changes 可追溯到 input snapshot。
 - Kill switch 必须在 UI 第一屏可见。
@@ -578,6 +757,7 @@ Planner 不得：
 - Google credentials 和 repo credentials 不进 logs。
 - Policy 变更要写 audit log。
 - Autopilot mode 提升必须二次确认。
+- Risk classifier rule 变更必须写 audit log，并从新 action 开始生效。
 
 ## 15. 失败处理
 
@@ -612,34 +792,38 @@ Planner 不得：
 
 ## 16. Rollout plan
 
-### Phase 1：Observe-only autopilot
+### Phase 1：Observe-only autopilot（目标 Level 0/1）
 
 - Objective manager。
 - Policy editor。
 - Weekly plan generation。
 - No auto execution。
+- actor/audit migration。
+- risk classification rules v1。
+- safe mode event storage。
 
-### Phase 2：Draft autopilot
+### Phase 2：Draft autopilot（目标 Level 1）
 
 - Accepted plan 自动生成 draft。
 - 所有动作仍需人工 publish。
 - Guardrail dashboard。
+- content hash conflict abort。
 
-### Phase 3：Guarded low-risk execution
+### Phase 3：Guarded low-risk execution（目标 Level 2）
 
 - metadata and sitemap low-risk auto execution。
-- internal link auto execution only when policy allows。
+- internal link 仍默认 review required；只有 policy 显式允许且 classifier 判定 low risk 时才可 auto。
 - kill switch。
 - rollback records。
 
-### Phase 4：Portfolio autopilot
+### Phase 4：Portfolio autopilot（目标 Level 3）
 
 - Weekly portfolio approval。
 - Limited autonomous publish。
 - Measurement learning loop。
 - safe mode。
 
-### Phase 5：Expanded autonomy
+### Phase 5：Expanded autonomy（目标 Level 4 架构，不作为首交付）
 
 - High-confidence refresh auto execution。
 - Sampling review。
@@ -652,25 +836,36 @@ Planner 不得：
 2. 可配置 autopilot policy。
 3. Observe-only 模式能生成 weekly action plan。
 4. Plan 每个 action 都有 reason、evidence、risk、expected impact。
-5. Policy 能阻止不允许的 action。
-6. Low-risk action 可自动生成 draft。
-7. Guardrail checks 全部落库并可查看。
-8. Fact guard 能阻止无 evidence 产品事实。
-9. Technical guard 能阻止 canonical/noindex/unsafe MDX 问题。
-10. Level 2 下 low-risk metadata rewrite 可自动发布。
-11. 中高风险动作不会自动发布。
-12. Publish 后写 measurement schedule。
-13. Outcome measurer 能给出 improved/neutral/worsened/inconclusive。
-14. Planner 能读取 historical outcome 调整 future scoring。
-15. Safe mode 可由 kill switch 手动开启。
-16. Safe mode 可由连续 publish failure 自动开启。
-17. Safe mode 开启后不再 auto publish。
-18. Action audit detail 可追溯到 opportunity、plan、diff、commit、measurement。
-19. Rollback record 可创建。
-20. Notification 事件可投递。
-21. No raw secret in logs/API/UI。
-22. `go test ./...` 通过。
-23. `web npm run build` 通过。
+5. Risk classifier 用 deterministic rules 输出 risk level、risk reasons、classifier version。
+6. Low-traffic 阈值可配置，默认 clicks < 10 且 impressions < 500 且非 critical page。
+7. Policy 能阻止不允许的 action。
+8. `autopilot_level` 到 derived mode 的映射固定，UI 不允许独立设置 mode。
+9. `seo_policies.monthly_budget_limit` 和现有 `generation_runs` 月度 breaker 任一触顶时，不会 auto publish。
+10. Low-risk action 可自动生成 draft。
+11. Guardrail checks 全部落库并可查看。
+12. Guardrail false positive/negative 可人工上报，并触发 safe mode 条件。
+13. Fact guard 能阻止无 evidence 产品事实。
+14. Technical guard 能阻止 canonical/noindex/unsafe MDX 问题。
+15. Level 2 下 low-risk metadata rewrite 可自动发布。
+16. 中高风险动作不会自动发布。
+17. 同一 plan 内同页 action 会合并或拒绝；不会并发修改同一 article。
+18. Executor 发现 content hash 被人工改动时 abort 并转 review。
+19. Quiet hours 命中时按 policy 延后或跳过，并写 audit。
+20. Publish 后写 measurement schedule。
+21. Control page 不足时 measurement 降级为 site-trend normalized，并写 evidence level。
+22. Outcome measurer 能给出 improved/neutral/worsened/inconclusive。
+23. Planner 能读取 historical outcome 调整 future scoring。
+24. Safe mode 可由 kill switch 手动开启。
+25. Safe mode 可由连续 publish failure 自动开启。
+26. Safe mode 开启后不再 auto publish。
+27. Safe mode open event 落库，退出必须人工确认并写 exited fields。
+28. Action audit detail 可追溯到 opportunity、plan、diff、commit、measurement。
+29. Rollback record 可按 action type 创建，并展示 rollback 局限。
+30. 所有自动写入绑定 actor 或 audit event。
+31. Notification 事件可投递。
+32. No raw secret in logs/API/UI。
+33. `go test ./...` 通过。
+34. `web npm run build` 通过。
 
 ## 18. Definition of Done
 
