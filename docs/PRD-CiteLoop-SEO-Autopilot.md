@@ -46,7 +46,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `seo_sync` 连续 14 天成功，且最近 28 天 GSC page total 数据可用。
 - URL normalization 最近 14 天无同页重复冲突。
 - verified notification channel 存在并通过测试投递。
-- Google service account integration 状态为 `connected`。
+- 项目的 SEO data mode 已连接到可用于自动决策的数据层：`managed_content_connected` 或 `customer_site_connected`。`public_only` 项目不得启用 Level 2 自动执行，只能停留在 observe/draft。
 - outcome measurement 至少能读取 baseline 并写入 measurement schedule。
 - kill switch 和 safe mode 状态可在 UI 第一屏看到。
 
@@ -60,6 +60,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 6. 系统能根据 outcome 调整 future prioritization。
 7. 所有自动动作可审计、可回滚、可暂停。
 8. 系统能在异常时自动进入 safe mode。
+9. 真实用户只输入 product domain 的项目，也能进入自动驾驶前的冷启动观察状态；系统不得要求用户手动配置 GSC/GA4/service account。
 
 ## 4. 非目标
 
@@ -82,6 +83,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 
 - 系统生成 opportunity 和 draft。
 - 人工选择、人工 approve、人工 publish。
+- `public_only` 项目最高只能到 Level 1，除非接入 CiteLoop 托管内容数据或完成客户站点所有权验证。
 
 ### Level 2：Guarded execution
 
@@ -522,6 +524,13 @@ Risk guard 调用 §6.1 的 deterministic classifier；LLM 只能补充解释，
 - classifier version missing 或 policy threshold missing
 
 ## 10. 用户体验
+
+Autopilot UI 必须继承 Operations Loop 的 domain-only onboarding 约束：
+
+- 真实用户只看到 product domain、data mode、connection health、autopilot readiness。
+- 不展示 `gsc_site_url`、GA4 property id、service account、credential ref 作为必填项。
+- 如果项目仍是 `public_only`，Level 2+ 控件禁用，并解释为 “CiteLoop can draft recommendations from public data; automatic execution requires managed content data or verified first-party search data.”
+- 内部管理员可以查看 provider-level diagnostics，但该视图不作为真实用户主路径。
 
 ### 10.1 Autopilot Overview
 
