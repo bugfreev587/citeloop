@@ -75,6 +75,8 @@ func main() {
 	}
 
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
+	sched.BlogBaseURL = env.BlogBaseURL
+	sched.SEOData = seoData
 	sched.NotificationSecret = env.NotificationSecretKey
 	sched.UniPostDeployHookURL = env.UniPostDeployHookURL
 	cron := sched.Start(ctx)

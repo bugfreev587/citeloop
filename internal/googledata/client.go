@@ -136,6 +136,9 @@ func (c Client) FetchSearchConsole(ctx context.Context, req SearchConsoleRequest
 	}
 	appearances, err := c.searchAnalytics(ctx, req, []string{"date", "searchAppearance"})
 	if err != nil {
+		if isUnsupportedSearchAppearanceError(err) {
+			return out, nil
+		}
 		return out, err
 	}
 	for _, row := range appearances.Rows {
@@ -152,6 +155,14 @@ func (c Client) FetchSearchConsole(ctx context.Context, req SearchConsoleRequest
 		})
 	}
 	return out, nil
+}
+
+func isUnsupportedSearchAppearanceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "search appearance dimension") && strings.Contains(msg, "invalidparameter")
 }
 
 func (c Client) searchAnalytics(ctx context.Context, req SearchConsoleRequest, dimensions []string) (searchAnalyticsResponse, error) {
