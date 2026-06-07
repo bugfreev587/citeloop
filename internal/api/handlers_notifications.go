@@ -312,7 +312,19 @@ func notificationChannelResponse(channel db.NotificationChannel) notificationCha
 }
 
 func supportedNotificationEvents() []notificationEventDTO {
-	types := []string{"generation.failed", "publish.failed", "budget.stopped", "review.overdue", "webhook.delivery.dead"}
+	types := []string{
+		"generation.failed",
+		"publish.failed",
+		"budget.stopped",
+		"review.overdue",
+		"webhook.delivery.dead",
+		"seo.sync.failed",
+		"seo.auth.expired",
+		"seo.opportunity.ready",
+		"seo.brief.ready",
+		"seo.action.measurement_ready",
+		"seo.indexing.anomaly",
+	}
 	out := make([]notificationEventDTO, 0, len(types))
 	for _, eventType := range types {
 		out = append(out, notificationEventDTO{Type: eventType})

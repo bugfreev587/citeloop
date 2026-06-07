@@ -3,6 +3,7 @@ import {
   GenerationRun,
   InventoryItem,
   ProductProfile,
+  RawPgNumeric,
   Topic,
   normalizeArticle,
   normalizeInventoryItem,
@@ -144,6 +145,136 @@ export type NotificationDelivery = {
 export type NotificationDeliveryListOptions = {
   status?: string;
   limit?: number;
+};
+
+export type SEOIntegration = {
+  id: string;
+  project_id: string;
+  provider: string;
+  status: "missing" | "connected" | "expired" | "error";
+  credential_ref?: string | null;
+  last_verified_at?: any;
+  last_error?: string | null;
+};
+
+export type SEOProperty = {
+  id: string;
+  project_id: string;
+  site_url: string;
+  gsc_site_url?: string | null;
+  ga4_property_id?: string | null;
+  url_normalization_config?: any;
+  default_country?: string | null;
+  default_language?: string | null;
+};
+
+export type SEOOverview = {
+  property?: SEOProperty | null;
+  integrations: SEOIntegration[];
+  last_28_days: {
+    clicks_28d?: RawPgNumeric;
+    impressions_28d?: RawPgNumeric;
+    ctr_28d?: RawPgNumeric;
+    position_28d?: RawPgNumeric;
+    gsc_days_28d?: number;
+  };
+  technical: {
+    checked_urls?: number;
+    ok_urls?: number;
+    anomaly_urls?: number;
+  };
+  opportunities_by_type: Array<{ type: string; status: string; count: number }>;
+  actions_by_status: Array<{ status: string; count: number }>;
+  cold_start: boolean;
+  handoff_ready_for_autopilot: boolean;
+  data_source_warnings?: string[];
+};
+
+export type SEOOpportunity = {
+  id: string;
+  type: string;
+  status: string;
+  priority_score?: RawPgNumeric;
+  confidence?: RawPgNumeric;
+  page_url?: string | null;
+  normalized_page_url?: string;
+  query?: string | null;
+  evidence?: any;
+  recommended_action?: string | null;
+  expected_impact?: string | null;
+  effort?: number;
+  risk_level?: string;
+  created_at?: any;
+};
+
+export type SEOContentAction = {
+  id: string;
+  opportunity_id: string;
+  action_type: string;
+  status: string;
+  target_url?: string | null;
+  normalized_target_url?: string | null;
+  target_content_hash_before?: string | null;
+  created_at?: any;
+};
+
+export type SEOBrief = {
+  mode: "cold_start" | "opportunities" | string;
+  title: string;
+  generated_at: string;
+  actions: SEOOpportunity[];
+  blockers: string[];
+  measurement_updates: string[];
+};
+
+export type SEOListOptions = {
+  type?: string;
+  status?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type SEOPolicy = {
+  id: string;
+  autopilot_level: number;
+  weekly_action_limit: number;
+  monthly_budget_limit?: RawPgNumeric;
+  low_traffic_clicks_28d_threshold: number;
+  low_traffic_impressions_28d_threshold: number;
+  min_confidence_for_auto_publish?: RawPgNumeric;
+  quiet_hours_timezone: string;
+  quiet_hours_behavior: string;
+  kill_switch_enabled: boolean;
+  safe_mode_enabled: boolean;
+  risk_classifier_version: string;
+};
+
+export type SEOObjective = {
+  id: string;
+  name: string;
+  status: string;
+  primary_metric: string;
+  time_horizon_days: number;
+  budget_usd?: RawPgNumeric;
+};
+
+export type SEOActionPlan = {
+  id: string;
+  status: string;
+  actions: any[];
+  aggregate_risk: string;
+  risk_classifier_version: string;
+  approval_required: boolean;
+  created_at?: any;
+};
+
+export type SafeModeEvent = {
+  id: string;
+  reason: string;
+  trigger_source: string;
+  entered_at?: any;
+  entered_by?: string;
+  exited_at?: any;
 };
 
 export function defaultProjectConfig(): ProjectConfig {
@@ -330,6 +461,96 @@ export function createApi(auth?: AuthOptions) {
     const suffix = params.toString() ? `?${params}` : "";
     const raw = await req<any[]>(`/projects/${id}/runs${suffix}`, undefined, auth);
     return raw.map(normalizeRun);
+  },
+  getSEOOverview: async (id: string): Promise<SEOOverview> => {
+    return req<SEOOverview>(`/projects/${id}/seo/overview`, undefined, auth);
+  },
+  syncSEO: async (id: string, siteURL?: string) => {
+    return req<any>(`/projects/${id}/seo/sync`, { method: "POST", body: JSON.stringify({ site_url: siteURL ?? "" }) }, auth);
+  },
+  analyzeSEO: async (id: string) => {
+    return req<any>(`/projects/${id}/seo/analyze`, { method: "POST" }, auth);
+  },
+  getSEOSettings: async (id: string): Promise<{ property?: SEOProperty | null; integrations: SEOIntegration[] }> => {
+    return req<{ property?: SEOProperty | null; integrations: SEOIntegration[] }>(`/projects/${id}/seo/settings`, undefined, auth);
+  },
+  updateSEOSettings: async (
+    id: string,
+    body: {
+      site_url: string;
+      gsc_site_url?: string;
+      ga4_property_id?: string;
+      url_normalization_config?: any;
+      default_country?: string;
+      default_language?: string;
+      gsc_credential_ref?: string;
+    },
+  ) => {
+    return req<any>(`/projects/${id}/seo/settings`, { method: "PUT", body: JSON.stringify(body) }, auth);
+  },
+  getSEOBrief: async (id: string): Promise<SEOBrief> => {
+    return req<SEOBrief>(`/projects/${id}/seo/briefs/latest`, undefined, auth);
+  },
+  listSEOOpportunities: async (id: string, options: SEOListOptions = {}): Promise<SEOOpportunity[]> => {
+    const params = new URLSearchParams();
+    if (options.type) params.set("type", options.type);
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.cursor) params.set("cursor", options.cursor);
+    const suffix = params.toString() ? `?${params}` : "";
+    return req<SEOOpportunity[]>(`/projects/${id}/seo/opportunities${suffix}`, undefined, auth);
+  },
+  acceptSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
+    return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/accept`, { method: "POST" }, auth);
+  },
+  dismissSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
+    return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/dismiss`, { method: "POST" }, auth);
+  },
+  createSEOContentAction: async (
+    id: string,
+    opportunityID: string,
+    body: { action_type?: string } = {},
+  ): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(
+      `/projects/${id}/seo/opportunities/${opportunityID}/actions`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  listSEOContentActions: async (id: string, options: SEOListOptions = {}): Promise<SEOContentAction[]> => {
+    const params = new URLSearchParams();
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.cursor) params.set("cursor", options.cursor);
+    const suffix = params.toString() ? `?${params}` : "";
+    return req<SEOContentAction[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
+  },
+  listSEOObjectives: async (id: string): Promise<SEOObjective[]> => {
+    return req<SEOObjective[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
+  },
+  createSEOObjective: async (
+    id: string,
+    body: { name: string; primary_metric?: string; time_horizon_days?: number; budget_usd?: number },
+  ): Promise<SEOObjective> => {
+    return req<SEOObjective>(`/projects/${id}/seo/autopilot/objectives`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  getSEOPolicy: async (id: string): Promise<SEOPolicy> => {
+    return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, undefined, auth);
+  },
+  updateSEOPolicy: async (id: string, body: Partial<SEOPolicy>): Promise<SEOPolicy> => {
+    return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, { method: "PUT", body: JSON.stringify(body) }, auth);
+  },
+  generateAutopilotPlan: async (id: string): Promise<{ plan: SEOActionPlan; run: any }> => {
+    return req<{ plan: SEOActionPlan; run: any }>(`/projects/${id}/seo/autopilot/plans/generate`, { method: "POST" }, auth);
+  },
+  listAutopilotPlans: async (id: string): Promise<SEOActionPlan[]> => {
+    return req<SEOActionPlan[]>(`/projects/${id}/seo/autopilot/plans`, undefined, auth);
+  },
+  listSafeModeEvents: async (id: string): Promise<SafeModeEvent[]> => {
+    return req<SafeModeEvent[]>(`/projects/${id}/seo/autopilot/safe-mode`, undefined, auth);
+  },
+  enterSafeMode: async (id: string, body: { reason: string; trigger_source?: string; entered_by?: string }): Promise<SafeModeEvent> => {
+    return req<SafeModeEvent>(`/projects/${id}/seo/autopilot/safe-mode`, { method: "POST", body: JSON.stringify(body) }, auth);
   },
   listNotificationChannels: async (id: string): Promise<NotificationChannel[]> => {
     return req<NotificationChannel[]>(`/projects/${id}/notifications/channels`, undefined, auth);
