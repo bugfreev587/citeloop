@@ -73,20 +73,56 @@ insert into page_performance_daily
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 on conflict (project_id, property_id, date, normalized_page_url) do update set
   page_url = excluded.page_url,
-  article_id = excluded.article_id,
-  topic_id = excluded.topic_id,
-  clicks = excluded.clicks,
-  impressions = excluded.impressions,
-  weighted_position = excluded.weighted_position,
-  ctr = excluded.ctr,
-  ga4_sessions = excluded.ga4_sessions,
-  ga4_engaged_sessions = excluded.ga4_engaged_sessions,
-  ga4_conversions = excluded.ga4_conversions,
-  indexed_state = excluded.indexed_state,
-  technical_status = excluded.technical_status,
-  data_source_notes = excluded.data_source_notes,
+  article_id = coalesce(excluded.article_id, page_performance_daily.article_id),
+  topic_id = coalesce(excluded.topic_id, page_performance_daily.topic_id),
+  clicks = coalesce(excluded.clicks, page_performance_daily.clicks),
+  impressions = coalesce(excluded.impressions, page_performance_daily.impressions),
+  weighted_position = coalesce(excluded.weighted_position, page_performance_daily.weighted_position),
+  ctr = coalesce(excluded.ctr, page_performance_daily.ctr),
+  ga4_sessions = coalesce(excluded.ga4_sessions, page_performance_daily.ga4_sessions),
+  ga4_engaged_sessions = coalesce(excluded.ga4_engaged_sessions, page_performance_daily.ga4_engaged_sessions),
+  ga4_conversions = coalesce(excluded.ga4_conversions, page_performance_daily.ga4_conversions),
+  indexed_state = coalesce(excluded.indexed_state, page_performance_daily.indexed_state),
+  technical_status = coalesce(excluded.technical_status, page_performance_daily.technical_status),
+  data_source_notes = page_performance_daily.data_source_notes || excluded.data_source_notes,
   updated_at = now()
 returning *;
+
+-- name: UpsertSearchPerformanceDaily :one
+insert into search_performance_daily
+  (project_id, property_id, date, page_url, normalized_page_url, query, country, device,
+   clicks, impressions, ctr, position, query_data_partial, source)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+on conflict (project_id, property_id, date, normalized_page_url, query, country, device) do update set
+  page_url = excluded.page_url,
+  clicks = excluded.clicks,
+  impressions = excluded.impressions,
+  ctr = excluded.ctr,
+  position = excluded.position,
+  query_data_partial = excluded.query_data_partial,
+  source = excluded.source,
+  updated_at = now()
+returning *;
+
+-- name: UpsertSearchAppearanceDaily :one
+insert into search_appearance_daily
+  (project_id, property_id, date, search_appearance, clicks, impressions, ctr, position, source)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+on conflict (project_id, property_id, date, search_appearance) do update set
+  clicks = excluded.clicks,
+  impressions = excluded.impressions,
+  ctr = excluded.ctr,
+  position = excluded.position,
+  source = excluded.source,
+  updated_at = now()
+returning *;
+
+-- name: SEODataDayCount :one
+select count(distinct date)::bigint
+from page_performance_daily
+where project_id = $1
+  and property_id = $2
+  and (clicks is not null or impressions is not null);
 
 -- name: UpsertTechnicalCheck :one
 insert into technical_checks

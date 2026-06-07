@@ -1,0 +1,95 @@
+package googledata
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestSearchConsoleFetchParsesDailyPageQueryAndAppearanceRows(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		seen = append(seen, r.URL.Path)
+		body := readBody(t, r)
+		switch {
+		case strings.Contains(body, `"searchAppearance"`):
+			w.Write([]byte(`{"rows":[{"keys":["2026-06-01","WEB_RESULT"],"clicks":3,"impressions":30,"ctr":0.1,"position":4.5}]}`))
+		case strings.Contains(body, `"query"`):
+			w.Write([]byte(`{"rows":[{"keys":["2026-06-01","https://unipost.dev/blog/a","best scheduler","usa","DESKTOP"],"clicks":2,"impressions":20,"ctr":0.1,"position":8}]}`))
+		default:
+			w.Write([]byte(`{"rows":[{"keys":["2026-06-01","https://unipost.dev/blog/a"],"clicks":5,"impressions":50,"ctr":0.1,"position":6}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	client := Client{HTTPClient: srv.Client(), SearchConsoleBaseURL: srv.URL + "/webmasters/v3"}
+	data, err := client.FetchSearchConsole(context.Background(), SearchConsoleRequest{
+		SiteURL:   "sc-domain:unipost.dev",
+		StartDate: date(2026, 6, 1),
+		EndDate:   date(2026, 6, 2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("requests = %d, want 3", len(seen))
+	}
+	if got := data.PageRows[0].PageURL; got != "https://unipost.dev/blog/a" {
+		t.Fatalf("page url = %q", got)
+	}
+	if got := data.QueryRows[0].Query; got != "best scheduler" {
+		t.Fatalf("query = %q", got)
+	}
+	if got := data.AppearanceRows[0].SearchAppearance; got != "WEB_RESULT" {
+		t.Fatalf("appearance = %q", got)
+	}
+}
+
+func TestAnalyticsFetchParsesLandingPageRows(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/properties/123456:runReport") {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"rows":[{"dimensionValues":[{"value":"20260601"},{"value":"/blog/a"}],"metricValues":[{"value":"10"},{"value":"7"},{"value":"1"}]}]}`))
+	}))
+	defer srv.Close()
+
+	client := Client{HTTPClient: srv.Client(), AnalyticsDataBaseURL: srv.URL + "/v1beta"}
+	rows, err := client.FetchAnalytics(context.Background(), AnalyticsRequest{
+		PropertyID: "123456",
+		StartDate:  date(2026, 6, 1),
+		EndDate:    date(2026, 6, 2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].PagePath != "/blog/a" || rows[0].Sessions != 10 || rows[0].EngagedSessions != 7 || rows[0].KeyEvents != 1 {
+		t.Fatalf("row = %#v", rows[0])
+	}
+}
+
+func date(year int, month time.Month, day int) time.Time {
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+func readBody(t *testing.T, r *http.Request) string {
+	t.Helper()
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}

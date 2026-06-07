@@ -17,7 +17,7 @@ import (
 )
 
 func (s *Server) seoService() seopkg.Service {
-	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL}
+	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData}
 }
 
 func (s *Server) getSEOOverview(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +373,7 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 		status = "connected"
 		verified = pgutil.TS(time.Now().UTC())
 	}
-	integration, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
+	gscIntegration, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
 		ProjectID:      projectID,
 		Provider:       seopkg.ProviderGSC,
 		Status:         status,
@@ -384,7 +384,22 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integration": integration})
+	var ga4Integration *db.SeoIntegration
+	if strings.TrimSpace(in.GA4PropertyID) != "" || strings.TrimSpace(in.CredentialRef) != "" {
+		row, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       seopkg.ProviderGA4,
+			Status:         status,
+			CredentialRef:  strPtrFrom(in.CredentialRef),
+			LastVerifiedAt: verified,
+		})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ga4Integration = &row
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integration": gscIntegration, "ga4_integration": ga4Integration})
 }
 
 func (s *Server) seoIDs(w http.ResponseWriter, r *http.Request, param string) (uuid.UUID, uuid.UUID, bool) {

@@ -17,11 +17,13 @@ import (
 	"github.com/citeloop/citeloop/internal/api"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/scheduler"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/seed"
+	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -61,6 +63,16 @@ func main() {
 		searchP = search.NewMock()
 	}
 	blog := publisher.NewBlog(env.GitHubToken, env.BlogRepo, env.BlogBranch, env.BlogBaseURL, env.BlogContentDir, log)
+	var seoData seopkg.GoogleDataProvider
+	if env.GoogleServiceAccountJSON != "" {
+		provider, err := googledata.NewServiceAccountClient(ctx, env.GoogleServiceAccountJSON)
+		if err != nil {
+			log.Warn("Google data provider disabled", "err", err)
+		} else {
+			log.Info("Google data provider ready")
+			seoData = provider
+		}
+	}
 
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
 	sched.NotificationSecret = env.NotificationSecretKey
@@ -69,7 +81,7 @@ func main() {
 	defer cron.Stop()
 
 	srv := &api.Server{
-		Pool: pool, Q: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log,
+		Pool: pool, Q: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log, SEOData: seoData,
 	}
 	httpServer := &http.Server{
 		Addr:              ":" + env.Port,

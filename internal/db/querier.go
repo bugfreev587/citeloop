@@ -97,6 +97,7 @@ type Querier interface {
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
 	RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (NotificationDelivery, error)
 	RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error)
+	SEODataDayCount(ctx context.Context, arg SEODataDayCountParams) (int64, error)
 	SEOOpportunityCounts(ctx context.Context, projectID uuid.UUID) ([]SEOOpportunityCountsRow, error)
 	SEOOverviewStats(ctx context.Context, projectID uuid.UUID) (SEOOverviewStatsRow, error)
 	SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) (SEOTechnicalSummaryRow, error)
@@ -132,6 +133,8 @@ type Querier interface {
 	UpsertSEOOpportunity(ctx context.Context, arg UpsertSEOOpportunityParams) (SeoOpportunity, error)
 	UpsertSEOPolicy(ctx context.Context, arg UpsertSEOPolicyParams) (SeoPolicy, error)
 	UpsertSEOProperty(ctx context.Context, arg UpsertSEOPropertyParams) (SeoProperty, error)
+	UpsertSearchAppearanceDaily(ctx context.Context, arg UpsertSearchAppearanceDailyParams) (SearchAppearanceDaily, error)
+	UpsertSearchPerformanceDaily(ctx context.Context, arg UpsertSearchPerformanceDailyParams) (SearchPerformanceDaily, error)
 	UpsertTechnicalCheck(ctx context.Context, arg UpsertTechnicalCheckParams) (TechnicalCheck, error)
 }
 

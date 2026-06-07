@@ -13,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/scheduler"
 	"github.com/citeloop/citeloop/internal/search"
+	"github.com/citeloop/citeloop/internal/seo"
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/go-chi/chi/v5"
@@ -21,14 +22,15 @@ import (
 )
 
 type Server struct {
-	Pool   *pgxpool.Pool
-	Q      *db.Queries
-	LLM    llm.Provider
-	Search search.Provider
-	Blog   *publisher.BlogPublisher
-	Sched  *scheduler.Scheduler
-	Env    config.Env
-	Log    *slog.Logger
+	Pool    *pgxpool.Pool
+	Q       *db.Queries
+	LLM     llm.Provider
+	Search  search.Provider
+	Blog    *publisher.BlogPublisher
+	Sched   *scheduler.Scheduler
+	Env     config.Env
+	Log     *slog.Logger
+	SEOData seo.GoogleDataProvider
 }
 
 func (s *Server) Router() http.Handler {

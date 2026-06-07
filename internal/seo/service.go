@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,14 +23,21 @@ import (
 
 const (
 	ProviderGSC       = "google_search_console"
+	ProviderGA4       = "google_analytics"
 	DefaultBriefLimit = 10
 )
+
+type GoogleDataProvider interface {
+	FetchSearchConsole(context.Context, googledata.SearchConsoleRequest) (googledata.SearchConsoleData, error)
+	FetchAnalytics(context.Context, googledata.AnalyticsRequest) ([]googledata.AnalyticsPageRow, error)
+}
 
 // Service coordinates the Operations Loop backend workflow.
 type Service struct {
 	Q           *db.Queries
 	HTTPClient  *http.Client
 	BlogBaseURL string
+	GoogleData  GoogleDataProvider
 	Now         func() time.Time
 }
 
@@ -169,6 +177,22 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	result.ConnectedGSC = hasConnectedGSC(integrations)
 	if !result.ConnectedGSC {
 		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_missing")
+	} else if s.GoogleData == nil {
+		result.DataSourceNotes = append(result.DataSourceNotes, "google_service_account_env_missing")
+		result.ConnectedGSC = false
+	} else {
+		if err := s.syncGoogleMetrics(ctx, projectID, prop, integrations, now, &result); err != nil {
+			result.DataSourceNotes = append(result.DataSourceNotes, "google_metrics_error")
+			errText := err.Error()
+			_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+				ProjectID:      projectID,
+				Provider:       ProviderGSC,
+				Status:         "error",
+				CredentialRef:  integrationCredentialRef(integrations, ProviderGSC),
+				LastVerifiedAt: pgtype.Timestamptz{},
+				LastError:      &errText,
+			})
+		}
 	}
 	articles, err := s.Q.ListPublishedCanonicalArticlesForSEO(ctx, projectID)
 	if err != nil {
@@ -239,8 +263,166 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	status := "ok"
 	if !result.ConnectedGSC {
 		status = "degraded"
+	} else if hasNote(result.DataSourceNotes, "google_metrics_error") {
+		status = "degraded"
 	}
 	return finish(status, result, nil)
+}
+
+func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, prop db.SeoProperty, integrations []db.SeoIntegration, now time.Time, result *SyncResult) error {
+	if s.GoogleData == nil {
+		return nil
+	}
+	if prop.GscSiteUrl == nil || strings.TrimSpace(*prop.GscSiteUrl) == "" {
+		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_site_url_missing")
+		result.ConnectedGSC = false
+		return nil
+	}
+	days, err := s.Q.SEODataDayCount(ctx, db.SEODataDayCountParams{ProjectID: projectID, PropertyID: prop.ID})
+	if err != nil {
+		return err
+	}
+	end := now.AddDate(0, 0, -2)
+	window := 28
+	if days == 0 {
+		window = 90
+	}
+	start := end.AddDate(0, 0, -window+1)
+	cfg := decodeNormalizationConfig(prop.UrlNormalizationConfig)
+	gsc, err := s.GoogleData.FetchSearchConsole(ctx, googledata.SearchConsoleRequest{
+		SiteURL:   *prop.GscSiteUrl,
+		StartDate: start,
+		EndDate:   end,
+		RowLimit:  25000,
+	})
+	if err != nil {
+		return err
+	}
+	for _, row := range gsc.PageRows {
+		normalized, err := NormalizeURL(row.PageURL, prop.SiteUrl, cfg)
+		if err != nil {
+			continue
+		}
+		_, err = s.Q.UpsertPagePerformanceDaily(ctx, db.UpsertPagePerformanceDailyParams{
+			ProjectID:         projectID,
+			PropertyID:        prop.ID,
+			Date:              pgDate(row.Date),
+			PageUrl:           row.PageURL,
+			NormalizedPageUrl: normalized,
+			Clicks:            pgutil.Numeric(row.Clicks),
+			Impressions:       pgutil.Numeric(row.Impressions),
+			WeightedPosition:  pgutil.Numeric(row.Position),
+			Ctr:               pgutil.Numeric(row.CTR),
+			DataSourceNotes:   mustJSON(map[string]any{"gsc_status": "connected", "gsc_source": "searchanalytics.page"}),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	for _, row := range gsc.QueryRows {
+		normalized, err := NormalizeURL(row.PageURL, prop.SiteUrl, cfg)
+		if err != nil {
+			continue
+		}
+		_, err = s.Q.UpsertSearchPerformanceDaily(ctx, db.UpsertSearchPerformanceDailyParams{
+			ProjectID:         projectID,
+			PropertyID:        prop.ID,
+			Date:              pgDate(row.Date),
+			PageUrl:           row.PageURL,
+			NormalizedPageUrl: normalized,
+			Query:             row.Query,
+			Country:           row.Country,
+			Device:            row.Device,
+			Clicks:            pgutil.Numeric(row.Clicks),
+			Impressions:       pgutil.Numeric(row.Impressions),
+			Ctr:               pgutil.Numeric(row.CTR),
+			Position:          pgutil.Numeric(row.Position),
+			QueryDataPartial:  true,
+			Source:            "gsc_api",
+		})
+		if err != nil {
+			return err
+		}
+	}
+	for _, row := range gsc.AppearanceRows {
+		_, err = s.Q.UpsertSearchAppearanceDaily(ctx, db.UpsertSearchAppearanceDailyParams{
+			ProjectID:        projectID,
+			PropertyID:       prop.ID,
+			Date:             pgDate(row.Date),
+			SearchAppearance: row.SearchAppearance,
+			Clicks:           pgutil.Numeric(row.Clicks),
+			Impressions:      pgutil.Numeric(row.Impressions),
+			Ctr:              pgutil.Numeric(row.CTR),
+			Position:         pgutil.Numeric(row.Position),
+			Source:           "gsc_api",
+		})
+		if err != nil {
+			return err
+		}
+	}
+	result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("gsc_rows:%d/%d/%d", len(gsc.PageRows), len(gsc.QueryRows), len(gsc.AppearanceRows)))
+	_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+		ProjectID:      projectID,
+		Provider:       ProviderGSC,
+		Status:         "connected",
+		CredentialRef:  integrationCredentialRef(integrations, ProviderGSC),
+		LastVerifiedAt: pgutil.TS(s.now()),
+	})
+	if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" || !isProviderConnected(integrations, ProviderGA4) {
+		if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" {
+			result.DataSourceNotes = append(result.DataSourceNotes, "ga4_property_missing")
+		}
+		return nil
+	}
+	ga4Rows, err := s.GoogleData.FetchAnalytics(ctx, googledata.AnalyticsRequest{
+		PropertyID: *prop.Ga4PropertyID,
+		StartDate:  start,
+		EndDate:    end,
+		RowLimit:   25000,
+	})
+	if err != nil {
+		errText := err.Error()
+		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       ProviderGA4,
+			Status:         "error",
+			CredentialRef:  integrationCredentialRef(integrations, ProviderGA4),
+			LastVerifiedAt: pgtype.Timestamptz{},
+			LastError:      &errText,
+		})
+		result.DataSourceNotes = append(result.DataSourceNotes, "ga4_error")
+		return nil
+	}
+	for _, row := range ga4Rows {
+		rawURL := absolutePageURL(prop.SiteUrl, row.PagePath)
+		normalized, err := NormalizeURL(rawURL, prop.SiteUrl, cfg)
+		if err != nil {
+			continue
+		}
+		_, err = s.Q.UpsertPagePerformanceDaily(ctx, db.UpsertPagePerformanceDailyParams{
+			ProjectID:          projectID,
+			PropertyID:         prop.ID,
+			Date:               pgDate(row.Date),
+			PageUrl:            rawURL,
+			NormalizedPageUrl:  normalized,
+			Ga4Sessions:        pgutil.Numeric(row.Sessions),
+			Ga4EngagedSessions: pgutil.Numeric(row.EngagedSessions),
+			Ga4Conversions:     pgutil.Numeric(row.KeyEvents),
+			DataSourceNotes:    mustJSON(map[string]any{"ga4_status": "connected", "ga4_source": "runReport"}),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("ga4_rows:%d", len(ga4Rows)))
+	_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+		ProjectID:      projectID,
+		Provider:       ProviderGA4,
+		Status:         "connected",
+		CredentialRef:  integrationCredentialRef(integrations, ProviderGA4),
+		LastVerifiedAt: pgutil.TS(s.now()),
+	})
+	return nil
 }
 
 func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, error) {
@@ -482,12 +664,52 @@ func isColdStart(stats db.SEOOverviewStatsRow) bool {
 }
 
 func hasConnectedGSC(integrations []db.SeoIntegration) bool {
+	return isProviderConnected(integrations, ProviderGSC)
+}
+
+func isProviderConnected(integrations []db.SeoIntegration, provider string) bool {
 	for _, integration := range integrations {
-		if integration.Provider == ProviderGSC && integration.Status == "connected" {
+		if integration.Provider == provider && integration.Status == "connected" {
 			return true
 		}
 	}
 	return false
+}
+
+func integrationCredentialRef(integrations []db.SeoIntegration, provider string) *string {
+	for _, integration := range integrations {
+		if integration.Provider == provider {
+			return integration.CredentialRef
+		}
+	}
+	return nil
+}
+
+func hasNote(notes []string, want string) bool {
+	for _, note := range notes {
+		if note == want {
+			return true
+		}
+	}
+	return false
+}
+
+func pgDate(t time.Time) pgtype.Date {
+	return pgtype.Date{Time: t, Valid: !t.IsZero()}
+}
+
+func absolutePageURL(siteURL, path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || trimmed == "(not set)" {
+		return strings.TrimRight(siteURL, "/") + "/"
+	}
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		return trimmed
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	return strings.TrimRight(siteURL, "/") + trimmed
 }
 
 func decodeNormalizationConfig(raw json.RawMessage) URLNormalizationConfig {

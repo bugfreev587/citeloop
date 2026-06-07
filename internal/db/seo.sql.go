@@ -575,6 +575,26 @@ func (q *Queries) ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]Seo
 	return items, nil
 }
 
+const sEODataDayCount = `-- name: SEODataDayCount :one
+select count(distinct date)::bigint
+from page_performance_daily
+where project_id = $1
+  and property_id = $2
+  and (clicks is not null or impressions is not null)
+`
+
+type SEODataDayCountParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PropertyID uuid.UUID `json:"property_id"`
+}
+
+func (q *Queries) SEODataDayCount(ctx context.Context, arg SEODataDayCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sEODataDayCount, arg.ProjectID, arg.PropertyID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const sEOOpportunityCounts = `-- name: SEOOpportunityCounts :many
 select type, status, count(*)::bigint as count
 from seo_opportunities
@@ -795,18 +815,18 @@ insert into page_performance_daily
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 on conflict (project_id, property_id, date, normalized_page_url) do update set
   page_url = excluded.page_url,
-  article_id = excluded.article_id,
-  topic_id = excluded.topic_id,
-  clicks = excluded.clicks,
-  impressions = excluded.impressions,
-  weighted_position = excluded.weighted_position,
-  ctr = excluded.ctr,
-  ga4_sessions = excluded.ga4_sessions,
-  ga4_engaged_sessions = excluded.ga4_engaged_sessions,
-  ga4_conversions = excluded.ga4_conversions,
-  indexed_state = excluded.indexed_state,
-  technical_status = excluded.technical_status,
-  data_source_notes = excluded.data_source_notes,
+  article_id = coalesce(excluded.article_id, page_performance_daily.article_id),
+  topic_id = coalesce(excluded.topic_id, page_performance_daily.topic_id),
+  clicks = coalesce(excluded.clicks, page_performance_daily.clicks),
+  impressions = coalesce(excluded.impressions, page_performance_daily.impressions),
+  weighted_position = coalesce(excluded.weighted_position, page_performance_daily.weighted_position),
+  ctr = coalesce(excluded.ctr, page_performance_daily.ctr),
+  ga4_sessions = coalesce(excluded.ga4_sessions, page_performance_daily.ga4_sessions),
+  ga4_engaged_sessions = coalesce(excluded.ga4_engaged_sessions, page_performance_daily.ga4_engaged_sessions),
+  ga4_conversions = coalesce(excluded.ga4_conversions, page_performance_daily.ga4_conversions),
+  indexed_state = coalesce(excluded.indexed_state, page_performance_daily.indexed_state),
+  technical_status = coalesce(excluded.technical_status, page_performance_daily.technical_status),
+  data_source_notes = page_performance_daily.data_source_notes || excluded.data_source_notes,
   updated_at = now()
 returning project_id, property_id, date, page_url, normalized_page_url, article_id, topic_id, clicks, impressions, weighted_position, ctr, ga4_sessions, ga4_engaged_sessions, ga4_conversions, indexed_state, technical_status, data_source_notes, updated_at
 `
@@ -1051,6 +1071,132 @@ func (q *Queries) UpsertSEOProperty(ctx context.Context, arg UpsertSEOPropertyPa
 		&i.DefaultCountry,
 		&i.DefaultLanguage,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertSearchAppearanceDaily = `-- name: UpsertSearchAppearanceDaily :one
+insert into search_appearance_daily
+  (project_id, property_id, date, search_appearance, clicks, impressions, ctr, position, source)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+on conflict (project_id, property_id, date, search_appearance) do update set
+  clicks = excluded.clicks,
+  impressions = excluded.impressions,
+  ctr = excluded.ctr,
+  position = excluded.position,
+  source = excluded.source,
+  updated_at = now()
+returning project_id, property_id, date, search_appearance, clicks, impressions, ctr, position, source, updated_at
+`
+
+type UpsertSearchAppearanceDailyParams struct {
+	ProjectID        uuid.UUID      `json:"project_id"`
+	PropertyID       uuid.UUID      `json:"property_id"`
+	Date             pgtype.Date    `json:"date"`
+	SearchAppearance string         `json:"search_appearance"`
+	Clicks           pgtype.Numeric `json:"clicks"`
+	Impressions      pgtype.Numeric `json:"impressions"`
+	Ctr              pgtype.Numeric `json:"ctr"`
+	Position         pgtype.Numeric `json:"position"`
+	Source           string         `json:"source"`
+}
+
+func (q *Queries) UpsertSearchAppearanceDaily(ctx context.Context, arg UpsertSearchAppearanceDailyParams) (SearchAppearanceDaily, error) {
+	row := q.db.QueryRow(ctx, upsertSearchAppearanceDaily,
+		arg.ProjectID,
+		arg.PropertyID,
+		arg.Date,
+		arg.SearchAppearance,
+		arg.Clicks,
+		arg.Impressions,
+		arg.Ctr,
+		arg.Position,
+		arg.Source,
+	)
+	var i SearchAppearanceDaily
+	err := row.Scan(
+		&i.ProjectID,
+		&i.PropertyID,
+		&i.Date,
+		&i.SearchAppearance,
+		&i.Clicks,
+		&i.Impressions,
+		&i.Ctr,
+		&i.Position,
+		&i.Source,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertSearchPerformanceDaily = `-- name: UpsertSearchPerformanceDaily :one
+insert into search_performance_daily
+  (project_id, property_id, date, page_url, normalized_page_url, query, country, device,
+   clicks, impressions, ctr, position, query_data_partial, source)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+on conflict (project_id, property_id, date, normalized_page_url, query, country, device) do update set
+  page_url = excluded.page_url,
+  clicks = excluded.clicks,
+  impressions = excluded.impressions,
+  ctr = excluded.ctr,
+  position = excluded.position,
+  query_data_partial = excluded.query_data_partial,
+  source = excluded.source,
+  updated_at = now()
+returning project_id, property_id, date, page_url, normalized_page_url, query, country, device, clicks, impressions, ctr, position, query_data_partial, source, updated_at
+`
+
+type UpsertSearchPerformanceDailyParams struct {
+	ProjectID         uuid.UUID      `json:"project_id"`
+	PropertyID        uuid.UUID      `json:"property_id"`
+	Date              pgtype.Date    `json:"date"`
+	PageUrl           string         `json:"page_url"`
+	NormalizedPageUrl string         `json:"normalized_page_url"`
+	Query             string         `json:"query"`
+	Country           string         `json:"country"`
+	Device            string         `json:"device"`
+	Clicks            pgtype.Numeric `json:"clicks"`
+	Impressions       pgtype.Numeric `json:"impressions"`
+	Ctr               pgtype.Numeric `json:"ctr"`
+	Position          pgtype.Numeric `json:"position"`
+	QueryDataPartial  bool           `json:"query_data_partial"`
+	Source            string         `json:"source"`
+}
+
+func (q *Queries) UpsertSearchPerformanceDaily(ctx context.Context, arg UpsertSearchPerformanceDailyParams) (SearchPerformanceDaily, error) {
+	row := q.db.QueryRow(ctx, upsertSearchPerformanceDaily,
+		arg.ProjectID,
+		arg.PropertyID,
+		arg.Date,
+		arg.PageUrl,
+		arg.NormalizedPageUrl,
+		arg.Query,
+		arg.Country,
+		arg.Device,
+		arg.Clicks,
+		arg.Impressions,
+		arg.Ctr,
+		arg.Position,
+		arg.QueryDataPartial,
+		arg.Source,
+	)
+	var i SearchPerformanceDaily
+	err := row.Scan(
+		&i.ProjectID,
+		&i.PropertyID,
+		&i.Date,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.Query,
+		&i.Country,
+		&i.Device,
+		&i.Clicks,
+		&i.Impressions,
+		&i.Ctr,
+		&i.Position,
+		&i.QueryDataPartial,
+		&i.Source,
 		&i.UpdatedAt,
 	)
 	return i, err
