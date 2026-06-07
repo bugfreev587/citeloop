@@ -61,9 +61,14 @@ ARTICLE:
 	if err != nil {
 		return nil, resp, err
 	}
-	var out QAOutput
-	if err := extractJSON(resp.Text, &out); err != nil {
-		return nil, resp, fmt.Errorf("parse qa: %w", err)
+	out, err := extractQAOutput(resp.Text)
+	if err != nil {
+		fallback, fallbackResp, fallbackErr := qa.compactCheck(ctx, profileJSON, evidence, contentMD)
+		if fallbackErr != nil {
+			return nil, fallbackResp, fmt.Errorf("parse qa: %w; compact fallback failed: %w", err, fallbackErr)
+		}
+		out = *fallback
+		resp = fallbackResp
 	}
 	// Defense in depth: any unmapped claim forces blocking regardless of the
 	// model's own flag (§5.3 acceptance).
@@ -71,6 +76,40 @@ ARTICLE:
 		if !c.Mapped {
 			out.QABlocking = true
 		}
+	}
+	return &out, resp, nil
+}
+
+func (qa *QA) compactCheck(ctx context.Context, profileJSON json.RawMessage, evidence, contentMD string) (*QAOutput, llm.CompletionResp, error) {
+	prompt := fmt.Sprintf(`[[QA_COMPACT]] Audit this article. Return only this compact JSON object shape:
+{"claims":[{"claim":"short product claim","mapped":true,"evidence":"profile or evidence snippet"}],"qa_blocking":false,"geo_score":0.5,"seo_score":0.5,"issues":[]}
+
+Rules:
+- claims must be an array, even if empty.
+- issues must be an array, even if empty.
+- scores must be numbers from 0 to 1.
+- Set qa_blocking=true if an important product claim cannot be mapped.
+- Keep each claim under 120 characters.
+
+PROFILE:
+%s
+
+EVIDENCE SNIPPETS:
+%s
+
+ARTICLE EXCERPT:
+%s`, clip(string(profileJSON), 1200), clip(evidence, 1200), clip(contentMD, 2500))
+
+	resp, err := qa.LLM.Complete(ctx, llm.CompletionReq{
+		System: "You are a strict fact-checking QA auditor. Return only compact JSON.",
+		Prompt: prompt, JSON: true, MaxTokens: 1200,
+	})
+	if err != nil {
+		return nil, resp, err
+	}
+	out, err := extractQAOutput(resp.Text)
+	if err != nil {
+		return nil, resp, err
 	}
 	return &out, resp, nil
 }

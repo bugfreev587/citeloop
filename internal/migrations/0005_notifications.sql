@@ -1,3 +1,38 @@
+do $$
+declare
+  legacy_suffix text := to_char(clock_timestamp(), 'YYYYMMDDHH24MISSMS');
+begin
+  if to_regclass('public.notification_deliveries') is not null
+     and not exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'notification_deliveries'
+         and column_name = 'project_id'
+     ) then
+    execute format('alter table public.notification_deliveries rename to %I', 'notification_deliveries_legacy_' || legacy_suffix);
+  end if;
+
+  if to_regclass('public.notification_subscriptions') is not null
+     and not exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'notification_subscriptions'
+         and column_name = 'project_id'
+     ) then
+    execute format('alter table public.notification_subscriptions rename to %I', 'notification_subscriptions_legacy_' || legacy_suffix);
+  end if;
+
+  if to_regclass('public.notification_channels') is not null
+     and not exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'notification_channels'
+         and column_name = 'project_id'
+     ) then
+    execute format('alter table public.notification_channels rename to %I', 'notification_channels_legacy_' || legacy_suffix);
+  end if;
+end $$;
+
 create table if not exists notification_channels (
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid not null references projects(id),

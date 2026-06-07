@@ -6,6 +6,8 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -50,11 +52,11 @@ type TopicSpec struct {
 
 // SEOMeta is the on-page SEO block (PRD §5.3).
 type SEOMeta struct {
-	Title          string `json:"title"`
+	Title           string `json:"title"`
 	MetaDescription string `json:"meta_description"`
-	Slug           string `json:"slug"`
-	H1             string `json:"h1"`
-	CanonicalURL   string `json:"canonical_url,omitempty"`
+	Slug            string `json:"slug"`
+	H1              string `json:"h1"`
+	CanonicalURL    string `json:"canonical_url,omitempty"`
 }
 
 // WriterOutput is the Writer agent's article payload (PRD §5.3).
@@ -99,23 +101,93 @@ const (
 // extractJSON pulls the first balanced JSON object out of an LLM response that
 // may wrap it in prose or fences, then unmarshals into v.
 func extractJSON(s string, v any) error {
-	start := -1
-	depth := 0
+	var lastErr error
 	for i, r := range s {
-		switch r {
-		case '{':
-			if depth == 0 {
-				start = i
-			}
-			depth++
-		case '}':
-			depth--
-			if depth == 0 && start >= 0 {
-				return json.Unmarshal([]byte(s[start:i+1]), v)
-			}
+		if r != '{' {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		if err := dec.Decode(v); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 	}
+	if lastErr != nil {
+		return lastErr
+	}
 	return json.Unmarshal([]byte(s), v) // let it surface a real error
+}
+
+func extractValidJSON[T any](s string, validate func(T) error) (T, error) {
+	var lastErr error
+	for i, r := range s {
+		if r != '{' {
+			continue
+		}
+		var out T
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		if err := dec.Decode(&out); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := validate(out); err != nil {
+			lastErr = err
+			continue
+		}
+		return out, nil
+	}
+	var zero T
+	if lastErr != nil {
+		return zero, lastErr
+	}
+	return zero, json.Unmarshal([]byte(s), &zero)
+}
+
+func extractWriterOutput(s string) (WriterOutput, error) {
+	return extractValidJSON(s, validateWriterOutput)
+}
+
+func extractQAOutput(s string) (QAOutput, error) {
+	return extractValidJSON(s, validateQAOutput)
+}
+
+func validateWriterOutput(out WriterOutput) error {
+	if strings.TrimSpace(out.ContentMD) == "" {
+		return fmt.Errorf("missing content_md")
+	}
+	if strings.Count(out.ContentMD, "```")%2 != 0 {
+		return fmt.Errorf("unclosed markdown code fence")
+	}
+	if strings.TrimSpace(out.SEOMeta.Title) == "" {
+		return fmt.Errorf("missing seo_meta.title")
+	}
+	if strings.TrimSpace(out.SEOMeta.MetaDescription) == "" {
+		return fmt.Errorf("missing seo_meta.meta_description")
+	}
+	if strings.TrimSpace(out.SEOMeta.Slug) == "" {
+		return fmt.Errorf("missing seo_meta.slug")
+	}
+	if strings.TrimSpace(out.SEOMeta.H1) == "" {
+		return fmt.Errorf("missing seo_meta.h1")
+	}
+	return nil
+}
+
+func validateQAOutput(out QAOutput) error {
+	if out.Claims == nil {
+		return fmt.Errorf("missing claims")
+	}
+	if out.Issues == nil {
+		return fmt.Errorf("missing issues")
+	}
+	if out.GeoScore < 0 || out.GeoScore > 1 {
+		return fmt.Errorf("geo_score out of range")
+	}
+	if out.SeoScore < 0 || out.SeoScore > 1 {
+		return fmt.Errorf("seo_score out of range")
+	}
+	return nil
 }
 
 func toJSON(v any) json.RawMessage {

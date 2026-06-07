@@ -109,6 +109,9 @@ func TestPublishingQueriesRequireVerifiedCanonicalURL(t *testing.T) {
 	if !strings.Contains(retryPublishArticle, "where id = $1") || !strings.Contains(retryPublishArticle, "and project_id = $2") || !strings.Contains(retryPublishArticle, "status = 'publish_failed'") {
 		t.Fatal("RetryPublishArticle must be project-scoped and limited to publish_failed articles")
 	}
+	if !strings.Contains(retryPublishArticle, "next_publish_retry_at = now()") {
+		t.Fatal("RetryPublishArticle must make publish_failed articles immediately due")
+	}
 	if !strings.Contains(selectUnlockableVariants, "c.canonical_url_verified_at is not null") {
 		t.Fatal("SelectUnlockableVariants must require verified canonical URL")
 	}

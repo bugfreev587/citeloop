@@ -950,7 +950,7 @@ func (q *Queries) RejectArticleForProject(ctx context.Context, arg RejectArticle
 
 const retryPublishArticle = `-- name: RetryPublishArticle :one
 update articles set
-  next_publish_retry_at = null,
+  next_publish_retry_at = now(),
   last_publish_error = null
 where id = $1
   and project_id = $2

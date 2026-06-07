@@ -7,18 +7,22 @@ func TestExtractJSON(t *testing.T) {
 		A string `json:"a"`
 		B int    `json:"b"`
 	}
-	inputs := []string{
-		`{"a":"x","b":2}`,
-		"Here you go:\n```json\n{\"a\":\"x\",\"b\":2}\n```",
-		"prose before {\"a\":\"x\",\"b\":2} prose after",
+	inputs := []struct {
+		raw   string
+		wantA string
+	}{
+		{`{"a":"x","b":2}`, "x"},
+		{"Here you go:\n```json\n{\"a\":\"x\",\"b\":2}\n```", "x"},
+		{"prose before {\"a\":\"x\",\"b\":2} prose after", "x"},
+		{"```json\n{\"a\":\"x {template\",\"b\":2}\n```", "x {template"},
 	}
 	for _, in := range inputs {
 		var o obj
-		if err := extractJSON(in, &o); err != nil {
-			t.Fatalf("extractJSON(%q): %v", in, err)
+		if err := extractJSON(in.raw, &o); err != nil {
+			t.Fatalf("extractJSON(%q): %v", in.raw, err)
 		}
-		if o.A != "x" || o.B != 2 {
-			t.Errorf("extractJSON(%q) = %+v", in, o)
+		if o.A != in.wantA || o.B != 2 {
+			t.Errorf("extractJSON(%q) = %+v", in.raw, o)
 		}
 	}
 }
