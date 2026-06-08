@@ -33,6 +33,10 @@ func TestSchedulerExposesReviewOverdueTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickReviewOverdue
 }
 
+func TestSchedulerExposesGEOTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickGEO
+}
+
 func TestStartRegistersNotificationTick(t *testing.T) {
 	raw, err := os.ReadFile("helpers.go")
 	if err != nil {
@@ -44,5 +48,8 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	}
 	if !strings.Contains(source, "TickReviewOverdue") || !strings.Contains(source, "@every 30m") {
 		t.Fatal("Start must register TickReviewOverdue every 30 minutes")
+	}
+	if !strings.Contains(source, "TickGEO") || !strings.Contains(source, "@weekly") {
+		t.Fatal("Start must register TickGEO weekly")
 	}
 }

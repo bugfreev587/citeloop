@@ -116,11 +116,25 @@ type geoStoreStub struct {
 	property         db.SeoProperty
 	articles         []db.Article
 	runID            uuid.UUID
+	promptSetID      uuid.UUID
 	started          bool
 	finishedStatus   string
+	finishedOutput   json.RawMessage
 	snapshots        []db.AiCrawlerAccessSnapshot
 	opportunityCount int
 	latestSnapshots  []db.AiCrawlerAccessSnapshot
+	profile          db.ProductProfile
+	topics           []db.Topic
+	promptSets       []db.GeoPromptSet
+	prompts          []db.GeoPrompt
+	competitors      []db.GeoCompetitor
+	surfaces         []db.GeoExternalSurface
+	observations     []db.GeoObservation
+	visibilityScores []db.GeoVisibilityScore
+	opportunities    []db.UpsertGEOObservationOpportunityRow
+	assetBriefID     uuid.UUID
+	assetBriefs      []db.GeoAssetBrief
+	createdTopics    []db.Topic
 }
 
 func (s *geoStoreStub) GetSEOPropertyForProject(_ context.Context, projectID uuid.UUID) (db.SeoProperty, error) {
@@ -139,6 +153,7 @@ func (s *geoStoreStub) StartGEORun(_ context.Context, arg db.StartGEORunParams) 
 
 func (s *geoStoreStub) FinishGEORun(_ context.Context, arg db.FinishGEORunParams) (db.GeoRun, error) {
 	s.finishedStatus = arg.Status
+	s.finishedOutput = append(json.RawMessage{}, arg.Output...)
 	return db.GeoRun{ID: arg.ID, ProjectID: arg.ProjectID, Status: arg.Status, FinishedAt: arg.FinishedAt, Output: arg.Output}, nil
 }
 

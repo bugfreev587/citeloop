@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 )
 
 // Env is process-level configuration sourced from the environment.
@@ -27,6 +28,10 @@ type Env struct {
 	UniPostDeployHookURL     string // Vercel deploy hook for UniPost build-time content fetch
 	NotificationSecretKey    string // AEAD key material for webhook URL encryption
 	GoogleServiceAccountJSON string // service account JSON for GSC/GA4 read-only ingestion
+	PerplexityAPIKey         string // Perplexity Sonar API key for legal answer-engine observation
+	PerplexityBaseURL        string // Perplexity API base URL
+	PerplexityModel          string // Perplexity Sonar model
+	GEOProviderRunBudgetUSD  float64
 }
 
 func FromEnv() Env {
@@ -49,12 +54,26 @@ func FromEnv() Env {
 		UniPostDeployHookURL:     os.Getenv("UNIPOST_DEPLOY_HOOK_URL"),
 		NotificationSecretKey:    os.Getenv("NOTIFICATION_SECRET_KEY"),
 		GoogleServiceAccountJSON: os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON"),
+		PerplexityAPIKey:         os.Getenv("PERPLEXITY_API_KEY"),
+		PerplexityBaseURL:        getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
+		PerplexityModel:          getenv("PERPLEXITY_MODEL", "sonar-pro"),
+		GEOProviderRunBudgetUSD:  getenvFloat("GEO_PROVIDER_RUN_BUDGET_USD", 1),
 	}
 }
 
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func getenvFloat(k string, def float64) float64 {
+	if v := os.Getenv(k); v != "" {
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			return parsed
+		}
 	}
 	return def
 }

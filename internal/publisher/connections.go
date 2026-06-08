@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
 	ConnectionKindGitHubNextJS = "github_nextjs"
+
+	CredentialKindGitHubToken = "github_token"
 
 	CapabilityCreateArticle  = "create_article"
 	CapabilityUpdateArticle  = "update_article"
@@ -19,6 +23,8 @@ const (
 	CapabilityDelete         = "delete"
 	CapabilityRollback       = "rollback"
 )
+
+const publisherCredentialPrefix = "publisher_credential:"
 
 type Capabilities map[string]bool
 
@@ -75,4 +81,34 @@ func ParseGitHubNextJSConfig(raw json.RawMessage) (GitHubNextJSConfig, error) {
 func (c Capabilities) JSON() json.RawMessage {
 	b, _ := json.Marshal(c)
 	return b
+}
+
+func PublisherCredentialRef(id uuid.UUID) string {
+	return publisherCredentialPrefix + id.String()
+}
+
+func ParsePublisherCredentialRef(ref string) (uuid.UUID, bool) {
+	trimmed := strings.TrimSpace(ref)
+	if !strings.HasPrefix(trimmed, publisherCredentialPrefix) {
+		return uuid.UUID{}, false
+	}
+	id, err := uuid.Parse(strings.TrimPrefix(trimmed, publisherCredentialPrefix))
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+	return id, true
+}
+
+func RedactCredentialValue(kind, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) <= 4 {
+		return "****"
+	}
+	tail := trimmed[len(trimmed)-4:]
+	switch kind {
+	case CredentialKindGitHubToken:
+		return "gh_****" + tail
+	default:
+		return "****" + tail
+	}
 }

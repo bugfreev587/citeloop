@@ -85,3 +85,246 @@ with updated as (
 select * from updated
 union all
 select * from inserted;
+
+-- name: CreateGEOPromptSet :one
+insert into geo_prompt_sets (project_id, name, status, locale, created_by_run_id)
+values ($1, $2, $3, $4, $5)
+returning *;
+
+-- name: ListGEOPromptSets :many
+select * from geo_prompt_sets
+where project_id = sqlc.arg(project_id)
+  and (sqlc.arg(status)::text = '' or status = sqlc.arg(status))
+order by updated_at desc, created_at desc;
+
+-- name: GetGEOPromptSetForProject :one
+select * from geo_prompt_sets
+where id = $1 and project_id = $2;
+
+-- name: UpdateGEOPromptSet :one
+update geo_prompt_sets set
+  name = $3,
+  status = $4,
+  locale = $5,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- name: CreateGEOPrompt :one
+insert into geo_prompts
+  (project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic,
+   locale, target_engines, priority, source, status)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+on conflict (project_id, prompt_set_id, prompt_text, locale) do update set
+  intent_type = excluded.intent_type,
+  target_persona = excluded.target_persona,
+  target_topic = excluded.target_topic,
+  target_engines = excluded.target_engines,
+  priority = excluded.priority,
+  source = excluded.source,
+  status = excluded.status,
+  updated_at = now()
+returning *;
+
+-- name: ListGEOPrompts :many
+select * from geo_prompts
+where project_id = sqlc.arg(project_id)
+  and (sqlc.narg(prompt_set_id)::uuid is null or prompt_set_id = sqlc.narg(prompt_set_id))
+  and (sqlc.arg(status)::text = '' or status = sqlc.arg(status))
+order by priority desc, created_at asc;
+
+-- name: ListActiveGEOPrompts :many
+select p.*
+from geo_prompts p
+join geo_prompt_sets ps on ps.id = p.prompt_set_id
+where p.project_id = $1
+  and p.status = 'active'
+  and ps.status = 'active'
+order by p.priority desc, p.created_at asc;
+
+-- name: GetGEOPromptForProject :one
+select * from geo_prompts
+where id = $1 and project_id = $2;
+
+-- name: UpdateGEOPrompt :one
+update geo_prompts set
+  prompt_text = $3,
+  intent_type = $4,
+  target_persona = $5,
+  target_topic = $6,
+  locale = $7,
+  target_engines = $8,
+  priority = $9,
+  source = $10,
+  status = $11,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- name: UpsertGEOCompetitor :one
+insert into geo_competitors (project_id, name, domains, aliases, source, status)
+values ($1, $2, $3, $4, $5, $6)
+on conflict (project_id, name_key) do update set
+  domains = excluded.domains,
+  aliases = excluded.aliases,
+  source = excluded.source,
+  status = excluded.status,
+  updated_at = now()
+returning *;
+
+-- name: ListGEOCompetitors :many
+select * from geo_competitors
+where project_id = sqlc.arg(project_id)
+  and (sqlc.arg(status)::text = '' or status = sqlc.arg(status))
+order by status asc, name asc;
+
+-- name: GetGEOCompetitorForProject :one
+select * from geo_competitors
+where id = $1 and project_id = $2;
+
+-- name: UpdateGEOCompetitor :one
+update geo_competitors set
+  name = $3,
+  domains = $4,
+  aliases = $5,
+  source = $6,
+  status = $7,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- name: UpsertGEOExternalSurface :one
+insert into geo_external_surfaces
+  (project_id, url, normalized_url, platform, surface_type, owner_type,
+   canonical_target_url, backlink_state, last_http_status, last_cited_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+on conflict (project_id, normalized_url) do update set
+  url = excluded.url,
+  platform = excluded.platform,
+  surface_type = excluded.surface_type,
+  owner_type = excluded.owner_type,
+  canonical_target_url = excluded.canonical_target_url,
+  backlink_state = excluded.backlink_state,
+  last_http_status = excluded.last_http_status,
+  last_cited_at = coalesce(excluded.last_cited_at, geo_external_surfaces.last_cited_at),
+  updated_at = now()
+returning *;
+
+-- name: ListGEOExternalSurfaces :many
+select * from geo_external_surfaces
+where project_id = sqlc.arg(project_id)
+  and (sqlc.arg(owner_type)::text = '' or owner_type = sqlc.arg(owner_type))
+order by owner_type asc, updated_at desc;
+
+-- name: ListProjectOwnedGEOExternalSurfaces :many
+select * from geo_external_surfaces
+where project_id = $1 and owner_type = 'project'
+order by updated_at desc;
+
+-- name: CreateGEOObservation :one
+insert into geo_observations
+  (project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned,
+   brand_position, project_citation_count, project_citation_rank_best,
+   project_cited_surface_ids, cited_urls, competitor_mentions, competitor_citations,
+   observation_state, answer_summary, evidence_snippets, confidence, observed_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+returning *;
+
+-- name: ListGEOObservations :many
+select * from geo_observations
+where project_id = sqlc.arg(project_id)
+  and (sqlc.narg(prompt_id)::uuid is null or prompt_id = sqlc.narg(prompt_id))
+  and (sqlc.arg(engine)::text = '' or engine = sqlc.arg(engine))
+  and (sqlc.arg(source_type)::text = '' or source_type = sqlc.arg(source_type))
+order by observed_at desc
+limit sqlc.arg(limit_rows);
+
+-- name: ListGEOObservationsForRun :many
+select * from geo_observations
+where project_id = $1 and run_id = $2
+order by observed_at asc;
+
+-- name: CreateGEOVisibilityScore :one
+insert into geo_visibility_scores
+  (project_id, run_id, score, coverage, confidence, breakdown,
+   prompt_count_total, prompt_count_observed, engine_count_observed, computed_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+returning *;
+
+-- name: GetLatestGEOVisibilityScore :one
+select * from geo_visibility_scores
+where project_id = $1
+order by computed_at desc
+limit 1;
+
+-- name: ListGEOVisibilityScores :many
+select * from geo_visibility_scores
+where project_id = $1
+order by computed_at desc
+limit $2;
+
+-- name: UpsertGEOObservationOpportunity :one
+with updated as (
+  update seo_opportunities so set
+    priority_score = $4,
+    confidence = $5,
+    page_url = $6,
+    normalized_page_url = $7,
+    evidence = so.evidence || $9,
+    recommended_action = $10,
+    expected_impact = $11,
+    effort = $12,
+    risk_level = $13,
+    updated_at = now()
+  where so.project_id = $1
+    and so.type = $2
+    and so.status in ('open','accepted','converted')
+    and so.normalized_page_url = $7
+    and coalesce(so.query, '') = coalesce($8, '')
+  returning *
+), inserted as (
+  insert into seo_opportunities
+    (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
+     query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
+  select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
+  where not exists (select 1 from updated)
+  returning *
+)
+select * from updated
+union all
+select * from inserted;
+
+-- name: CreateGEOAssetBrief :one
+insert into geo_asset_briefs
+  (project_id, opportunity_id, asset_type, status, target_prompts, required_evidence,
+   recommended_outline, internal_link_plan, publication_surface, created_by_run_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+on conflict (project_id, opportunity_id) do update set
+  asset_type = excluded.asset_type,
+  status = excluded.status,
+  target_prompts = excluded.target_prompts,
+  required_evidence = excluded.required_evidence,
+  recommended_outline = excluded.recommended_outline,
+  internal_link_plan = excluded.internal_link_plan,
+  publication_surface = excluded.publication_surface,
+  created_by_run_id = coalesce(geo_asset_briefs.created_by_run_id, excluded.created_by_run_id),
+  updated_at = now()
+returning *;
+
+-- name: ListGEOAssetBriefs :many
+select * from geo_asset_briefs
+where project_id = sqlc.arg(project_id)
+  and (sqlc.arg(status)::text = '' or status = sqlc.arg(status))
+order by updated_at desc
+limit sqlc.arg(limit_rows);
+
+-- name: GetGEOAssetBriefForProject :one
+select * from geo_asset_briefs
+where id = $1 and project_id = $2;
+
+-- name: UpdateGEOAssetBriefStatus :one
+update geo_asset_briefs set
+  status = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;

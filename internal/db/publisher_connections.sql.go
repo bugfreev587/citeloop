@@ -13,6 +13,109 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearPublisherConnectionCredentialRef = `-- name: ClearPublisherConnectionCredentialRef :one
+update publisher_connections
+set credential_ref = null,
+    status = 'missing',
+    last_error = null,
+    updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+`
+
+type ClearPublisherConnectionCredentialRefParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, clearPublisherConnectionCredentialRef, arg.ID, arg.ProjectID)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActivePublisherCredential = `-- name: GetActivePublisherCredential :one
+select id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at from publisher_credentials
+where id = $1
+  and project_id = $2
+  and connection_id = $3
+  and revoked_at is null
+`
+
+type GetActivePublisherCredentialParams struct {
+	ID           uuid.UUID `json:"id"`
+	ProjectID    uuid.UUID `json:"project_id"`
+	ConnectionID uuid.UUID `json:"connection_id"`
+}
+
+func (q *Queries) GetActivePublisherCredential(ctx context.Context, arg GetActivePublisherCredentialParams) (PublisherCredential, error) {
+	row := q.db.QueryRow(ctx, getActivePublisherCredential, arg.ID, arg.ProjectID, arg.ConnectionID)
+	var i PublisherCredential
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConnectionID,
+		&i.Kind,
+		&i.EncryptedValue,
+		&i.RedactedValue,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getActivePublisherCredentialForConnection = `-- name: GetActivePublisherCredentialForConnection :one
+select id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at from publisher_credentials
+where project_id = $1
+  and connection_id = $2
+  and kind = $3
+  and revoked_at is null
+limit 1
+`
+
+type GetActivePublisherCredentialForConnectionParams struct {
+	ProjectID    uuid.UUID `json:"project_id"`
+	ConnectionID uuid.UUID `json:"connection_id"`
+	Kind         string    `json:"kind"`
+}
+
+func (q *Queries) GetActivePublisherCredentialForConnection(ctx context.Context, arg GetActivePublisherCredentialForConnectionParams) (PublisherCredential, error) {
+	row := q.db.QueryRow(ctx, getActivePublisherCredentialForConnection, arg.ProjectID, arg.ConnectionID, arg.Kind)
+	var i PublisherCredential
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConnectionID,
+		&i.Kind,
+		&i.EncryptedValue,
+		&i.RedactedValue,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getDefaultPublisherConnectionForProject = `-- name: GetDefaultPublisherConnectionForProject :one
 select id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
 where project_id = $1 and kind = $2 and is_default
@@ -208,6 +311,81 @@ func (q *Queries) MarkPublisherConnectionVerified(ctx context.Context, arg MarkP
 	return i, err
 }
 
+const revokePublisherCredentialForConnection = `-- name: RevokePublisherCredentialForConnection :one
+update publisher_credentials
+set revoked_at = now(),
+    updated_at = now()
+where project_id = $1
+  and connection_id = $2
+  and kind = $3
+  and revoked_at is null
+returning id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at
+`
+
+type RevokePublisherCredentialForConnectionParams struct {
+	ProjectID    uuid.UUID `json:"project_id"`
+	ConnectionID uuid.UUID `json:"connection_id"`
+	Kind         string    `json:"kind"`
+}
+
+func (q *Queries) RevokePublisherCredentialForConnection(ctx context.Context, arg RevokePublisherCredentialForConnectionParams) (PublisherCredential, error) {
+	row := q.db.QueryRow(ctx, revokePublisherCredentialForConnection, arg.ProjectID, arg.ConnectionID, arg.Kind)
+	var i PublisherCredential
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConnectionID,
+		&i.Kind,
+		&i.EncryptedValue,
+		&i.RedactedValue,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const setPublisherConnectionCredentialRef = `-- name: SetPublisherConnectionCredentialRef :one
+update publisher_connections
+set credential_ref = $3,
+    status = 'missing',
+    last_error = null,
+    updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+`
+
+type SetPublisherConnectionCredentialRefParams struct {
+	ID            uuid.UUID `json:"id"`
+	ProjectID     uuid.UUID `json:"project_id"`
+	CredentialRef *string   `json:"credential_ref"`
+}
+
+func (q *Queries) SetPublisherConnectionCredentialRef(ctx context.Context, arg SetPublisherConnectionCredentialRefParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, setPublisherConnectionCredentialRef, arg.ID, arg.ProjectID, arg.CredentialRef)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertDefaultPublisherConnection = `-- name: UpsertDefaultPublisherConnection :one
 insert into publisher_connections
   (project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, last_verified_at, last_error)
@@ -272,6 +450,51 @@ func (q *Queries) UpsertDefaultPublisherConnection(ctx context.Context, arg Upse
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertPublisherCredential = `-- name: UpsertPublisherCredential :one
+insert into publisher_credentials
+  (project_id, connection_id, kind, encrypted_value, redacted_value)
+values
+  ($1, $2, $3, $4, $5)
+on conflict (project_id, connection_id, kind)
+do update set
+  encrypted_value = excluded.encrypted_value,
+  redacted_value = excluded.redacted_value,
+  revoked_at = null,
+  updated_at = now()
+returning id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at
+`
+
+type UpsertPublisherCredentialParams struct {
+	ProjectID      uuid.UUID `json:"project_id"`
+	ConnectionID   uuid.UUID `json:"connection_id"`
+	Kind           string    `json:"kind"`
+	EncryptedValue string    `json:"encrypted_value"`
+	RedactedValue  string    `json:"redacted_value"`
+}
+
+func (q *Queries) UpsertPublisherCredential(ctx context.Context, arg UpsertPublisherCredentialParams) (PublisherCredential, error) {
+	row := q.db.QueryRow(ctx, upsertPublisherCredential,
+		arg.ProjectID,
+		arg.ConnectionID,
+		arg.Kind,
+		arg.EncryptedValue,
+		arg.RedactedValue,
+	)
+	var i PublisherCredential
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConnectionID,
+		&i.Kind,
+		&i.EncryptedValue,
+		&i.RedactedValue,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }

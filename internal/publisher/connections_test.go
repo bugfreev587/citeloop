@@ -2,7 +2,10 @@ package publisher
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestGitHubNextJSCapabilitiesExposeSafePublishSurface(t *testing.T) {
@@ -63,5 +66,25 @@ func TestParseGitHubNextJSConfigRejectsMissingRequiredFields(t *testing.T) {
 	_, err = ParseGitHubNextJSConfig(json.RawMessage(`{"base_url":"https://example.com/blog"}`))
 	if err == nil {
 		t.Fatal("expected missing repo to fail")
+	}
+}
+
+func TestPublisherCredentialRefAndRedaction(t *testing.T) {
+	id := uuid.New()
+	ref := PublisherCredentialRef(id)
+	if ref != "publisher_credential:"+id.String() {
+		t.Fatalf("ref = %q", ref)
+	}
+	parsed, ok := ParsePublisherCredentialRef(ref)
+	if !ok || parsed != id {
+		t.Fatalf("parsed ref = %s, ok=%v", parsed, ok)
+	}
+
+	redacted := RedactCredentialValue(CredentialKindGitHubToken, "ghp_abcdefghijklmnopqrstuvwxyz")
+	if strings.Contains(redacted, "abcdefghijklmnopqrstuv") {
+		t.Fatalf("redaction leaked too much secret: %s", redacted)
+	}
+	if !strings.HasSuffix(redacted, "wxyz") {
+		t.Fatalf("redaction should preserve tail for recognition: %s", redacted)
 	}
 }

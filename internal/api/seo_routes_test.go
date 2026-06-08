@@ -41,6 +41,9 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "safe mode exit", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/autopilot/safe-mode/not-an-id/exit"},
 		{name: "geo crawler audit", method: http.MethodPost, path: "/api/projects/not-a-uuid/geo/crawler-audit"},
 		{name: "geo crawler latest", method: http.MethodGet, path: "/api/projects/not-a-uuid/geo/crawler-audit/latest"},
+		{name: "geo observe provider", method: http.MethodPost, path: "/api/projects/not-a-uuid/geo/runs/observe-provider"},
+		{name: "geo runs", method: http.MethodGet, path: "/api/projects/not-a-uuid/geo/runs"},
+		{name: "geo surface monitor", method: http.MethodPost, path: "/api/projects/not-a-uuid/geo/external-surfaces/monitor"},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +69,22 @@ func TestGEORoutesAreRegisteredForValidProject(t *testing.T) {
 	}{
 		{name: "crawler audit", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/crawler-audit"},
 		{name: "crawler latest", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/crawler-audit/latest"},
+		{name: "geo overview", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/overview"},
+		{name: "generate prompt set", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/prompt-sets/generate"},
+		{name: "prompt sets", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/prompt-sets"},
+		{name: "update prompt set", method: http.MethodPut, path: "/api/projects/" + projectID + "/geo/prompt-sets/" + uuid.New().String()},
+		{name: "update geo prompt", method: http.MethodPut, path: "/api/projects/" + projectID + "/geo/prompts/" + uuid.New().String()},
+		{name: "update geo competitor", method: http.MethodPut, path: "/api/projects/" + projectID + "/geo/competitors/" + uuid.New().String()},
+		{name: "observe fixtures", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/runs/observe"},
+		{name: "observe provider", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/runs/observe-provider"},
+		{name: "geo runs", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/runs"},
+		{name: "observations", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/observations"},
+		{name: "external surfaces", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/external-surfaces"},
+		{name: "create external surface", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/external-surfaces"},
+		{name: "monitor external surfaces", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/external-surfaces/monitor"},
+		{name: "analyze geo opportunities", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/opportunities/analyze"},
+		{name: "asset briefs", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/asset-briefs"},
+		{name: "accept asset brief", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/asset-briefs/" + uuid.New().String() + "/accept"},
 	}
 
 	for _, tt := range tests {
