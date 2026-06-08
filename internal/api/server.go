@@ -31,6 +31,8 @@ type Server struct {
 	Env     config.Env
 	Log     *slog.Logger
 	SEOData seo.GoogleDataProvider
+
+	OnboardingRunner projectOnboardingRunner
 }
 
 func (s *Server) Router() http.Handler {

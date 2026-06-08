@@ -95,6 +95,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.startProjectOnboarding(p.ID, normalizedSiteURL)
 	writeJSON(w, 201, p)
 }
 

@@ -18,8 +18,8 @@ type OnboardingStep = {
 
 const initialSteps: OnboardingStep[] = [
   { key: "project", label: "Create project", state: "pending" },
-  { key: "insight", label: "Build product profile", state: "pending" },
-  { key: "seo", label: "Prepare SEO baseline", state: "pending" },
+  { key: "insight", label: "Start product profile job", state: "pending" },
+  { key: "seo", label: "Start SEO baseline job", state: "pending" },
 ];
 
 function normalizeSiteURL(value: string) {
@@ -72,11 +72,9 @@ export function ProjectCreateForm() {
     try {
       project = await api.createProject({ site_url: normalizedURL });
       setCreatedProject(project);
-      setSteps((current) => updateStep(updateStep(current, "project", "done"), "insight", "active"));
-      await api.runInsight(project.id, normalizedURL);
-      setSteps((current) => updateStep(updateStep(current, "insight", "done"), "seo", "active"));
-      await api.syncSEO(project.id, normalizedURL);
-      setSteps((current) => updateStep(current, "seo", "done"));
+      setSteps((current) =>
+        updateStep(updateStep(updateStep(current, "project", "done"), "insight", "done"), "seo", "done"),
+      );
       router.push(`/projects/${project.id}`);
     } catch (e: any) {
       setSteps((current) => current.map((step) => (step.state === "active" ? { ...step, state: "error" } : step)));
