@@ -25,6 +25,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
+	"github.com/citeloop/citeloop/internal/secretbox"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -57,6 +58,11 @@ type Scheduler struct {
 	seoRunnerFactory     func(q *db.Queries) seoRunner
 	NotificationSecret   string
 	UniPostDeployHookURL string
+}
+
+type publisherConnectionQuerier interface {
+	GetDefaultPublisherConnectionForProject(context.Context, db.GetDefaultPublisherConnectionForProjectParams) (db.PublisherConnection, error)
+	GetActivePublisherCredential(context.Context, db.GetActivePublisherCredentialParams) (db.PublisherCredential, error)
 }
 
 func New(pool *pgxpool.Pool, llmP llm.Provider, searchP search.Provider, blog *publisher.BlogPublisher, log *slog.Logger) *Scheduler {
@@ -548,7 +554,7 @@ func (s *Scheduler) verifyPublishedPathForProject(ctx context.Context, q *db.Que
 	return blog.PublishedPathExists(ctx, publishPath)
 }
 
-func (s *Scheduler) blogPublisherForProject(ctx context.Context, q *db.Queries, p db.Project) (*publisher.BlogPublisher, error) {
+func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConnectionQuerier, p db.Project) (*publisher.BlogPublisher, error) {
 	if q == nil {
 		return s.Blog, nil
 	}
@@ -562,7 +568,10 @@ func (s *Scheduler) blogPublisherForProject(ctx context.Context, q *db.Queries, 
 		}
 		return nil, err
 	}
-	token := s.publisherCredentialToken(conn.CredentialRef)
+	token, err := s.publisherCredentialToken(ctx, q, conn)
+	if err != nil {
+		return nil, err
+	}
 	blog, _, err := blogPublisherFromConnection(s.Blog, token, conn, s.Log)
 	return blog, err
 }
@@ -578,15 +587,37 @@ func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string
 	return publisher.NewBlog(token, cfg.Repo, cfg.Branch, cfg.BaseURL, cfg.ContentDir, log), true, nil
 }
 
-func (s *Scheduler) publisherCredentialToken(ref *string) string {
-	if ref == nil || s.Blog == nil {
-		return ""
+func (s *Scheduler) publisherCredentialToken(ctx context.Context, q publisherConnectionQuerier, conn db.PublisherConnection) (string, error) {
+	if conn.CredentialRef == nil {
+		return "", nil
 	}
-	switch strings.TrimSpace(*ref) {
+	ref := strings.TrimSpace(*conn.CredentialRef)
+	switch ref {
 	case "env:GITHUB_TOKEN", "GITHUB_TOKEN":
-		return strings.TrimSpace(s.Blog.Token)
+		if s.Blog == nil {
+			return "", nil
+		}
+		return strings.TrimSpace(s.Blog.Token), nil
 	default:
-		return ""
+		credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
+		if !ok {
+			return "", nil
+		}
+		if q == nil {
+			return "", errors.New("publisher credential store unavailable")
+		}
+		if strings.TrimSpace(s.NotificationSecret) == "" {
+			return "", errors.New("NOTIFICATION_SECRET_KEY is required")
+		}
+		cred, err := q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
+			ID:           credentialID,
+			ProjectID:    conn.ProjectID,
+			ConnectionID: conn.ID,
+		})
+		if err != nil {
+			return "", err
+		}
+		return secretbox.DecryptString(cred.EncryptedValue, s.NotificationSecret)
 	}
 }
 

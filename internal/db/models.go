@@ -295,6 +295,18 @@ type PublisherConnection struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PublisherCredential struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	ConnectionID   uuid.UUID          `json:"connection_id"`
+	Kind           string             `json:"kind"`
+	EncryptedValue string             `json:"encrypted_value"`
+	RedactedValue  string             `json:"redacted_value"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type RiskClassificationRule struct {
 	ID        uuid.UUID          `json:"id"`
 	ProjectID uuid.UUID          `json:"project_id"`

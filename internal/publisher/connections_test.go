@@ -3,6 +3,8 @@ package publisher
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestGitHubNextJSCapabilitiesExposeSafePublishSurface(t *testing.T) {
@@ -63,5 +65,22 @@ func TestParseGitHubNextJSConfigRejectsMissingRequiredFields(t *testing.T) {
 	_, err = ParseGitHubNextJSConfig(json.RawMessage(`{"base_url":"https://example.com/blog"}`))
 	if err == nil {
 		t.Fatal("expected missing repo to fail")
+	}
+}
+
+func TestPublisherCredentialRefAndRedaction(t *testing.T) {
+	id := uuid.New()
+	ref := PublisherCredentialRef(id)
+	parsed, ok := ParsePublisherCredentialRef(ref)
+	if !ok {
+		t.Fatalf("expected credential ref to parse: %s", ref)
+	}
+	if parsed != id {
+		t.Fatalf("parsed id = %s, want %s", parsed, id)
+	}
+
+	redacted := RedactCredentialValue(CredentialKindGitHubToken, "ghp_abcdefghijklmnopqrstuvwxyz")
+	if redacted != "gh_****wxyz" {
+		t.Fatalf("redacted = %q", redacted)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -54,6 +55,8 @@ type SyncResult struct {
 type Overview struct {
 	Property            *db.SeoProperty              `json:"property"`
 	Integrations        []db.SeoIntegration          `json:"integrations"`
+	SetupChecklist      []SetupChecklistItem         `json:"setup_checklist"`
+	CapabilityMode      string                       `json:"capability_mode"`
 	Last28Days          db.SEOOverviewStatsRow       `json:"last_28_days"`
 	Technical           db.SEOTechnicalSummaryRow    `json:"technical"`
 	OpportunitiesByType []db.SEOOpportunityCountsRow `json:"opportunities_by_type"`
@@ -61,6 +64,21 @@ type Overview struct {
 	ColdStart           bool                         `json:"cold_start"`
 	HandoffReadyForAuto bool                         `json:"handoff_ready_for_autopilot"`
 	DataSourceWarnings  []string                     `json:"data_source_warnings"`
+}
+
+type SetupChecklistItem struct {
+	Key              string `json:"key"`
+	Label            string `json:"label"`
+	Status           string `json:"status"`
+	WhyNeeded        string `json:"why_needed"`
+	NextAction       string `json:"next_action"`
+	CapabilityImpact string `json:"capability_impact"`
+}
+
+type setupChecklistInput struct {
+	Integrations         []db.SeoIntegration
+	PublisherConnections []db.PublisherConnection
+	ColdStart            bool
 }
 
 type Brief struct {
@@ -96,6 +114,10 @@ func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, e
 	if err != nil {
 		return out, err
 	}
+	publisherConnections, err := s.Q.ListPublisherConnections(ctx, projectID)
+	if err != nil {
+		return out, err
+	}
 	stats, err := s.Q.SEOOverviewStats(ctx, projectID)
 	if err != nil {
 		return out, err
@@ -118,9 +140,16 @@ func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, e
 	out.OpportunitiesByType = nonNilSlice(opps)
 	out.ActionsByStatus = nonNilSlice(actions)
 	out.ColdStart = isColdStart(stats)
-	out.HandoffReadyForAuto = !out.ColdStart && hasConnectedGSC(integrations)
+	out.SetupChecklist, out.CapabilityMode, out.HandoffReadyForAuto = buildSetupChecklist(setupChecklistInput{
+		Integrations:         integrations,
+		PublisherConnections: publisherConnections,
+		ColdStart:            out.ColdStart,
+	})
 	if !hasConnectedGSC(integrations) {
 		out.DataSourceWarnings = append(out.DataSourceWarnings, "Google Search Console service account is not connected; search metrics are unavailable.")
+	}
+	if !hasConnectedPublisher(publisherConnections) {
+		out.DataSourceWarnings = append(out.DataSourceWarnings, "Publisher connection is not ready; CiteLoop can draft content but cannot auto-publish for this project.")
 	}
 	if out.ColdStart {
 		out.DataSourceWarnings = append(out.DataSourceWarnings, "SEO data is below the Operations Loop minimum threshold; brief uses cold-start mode.")
@@ -700,6 +729,108 @@ func finishRunContext(ctx context.Context) (context.Context, context.CancelFunc)
 
 func hasConnectedGSC(integrations []db.SeoIntegration) bool {
 	return isProviderConnected(integrations, ProviderGSC)
+}
+
+func buildSetupChecklist(in setupChecklistInput) ([]SetupChecklistItem, string, bool) {
+	searchConnected := hasConnectedGSC(in.Integrations)
+	analyticsConnected := isProviderConnected(in.Integrations, ProviderGA4)
+	publisherConnected := hasConnectedPublisher(in.PublisherConnections)
+	publisherExists := len(in.PublisherConnections) > 0
+
+	mode := "public_only"
+	if searchConnected && publisherConnected {
+		mode = "customer_site_connected"
+	} else if searchConnected && publisherExists {
+		mode = "customer_site_pending_verification"
+	}
+	ready := searchConnected && publisherConnected && !in.ColdStart
+
+	publisherStatus := "blocked"
+	publisherNextAction := "Connect a publisher target and save a scoped credential."
+	if publisherConnected {
+		publisherStatus = "connected"
+		publisherNextAction = "No action needed."
+	} else if publisherExists {
+		publisherStatus = "in_progress"
+		publisherNextAction = "Save the publisher credential, then run Test."
+	}
+
+	searchStatus := "blocked"
+	searchNextAction := "Connect first-party Search Console data or continue in public-only mode."
+	if searchConnected {
+		searchStatus = "connected"
+		searchNextAction = "No action needed."
+	}
+
+	analyticsStatus := "optional"
+	analyticsNextAction := "Connect Analytics when conversion and engagement attribution is needed."
+	if analyticsConnected {
+		analyticsStatus = "connected"
+		analyticsNextAction = "No action needed."
+	}
+
+	return []SetupChecklistItem{
+		{
+			Key:              "public_crawl",
+			Label:            "Public crawl",
+			Status:           "connected",
+			WhyNeeded:        "CiteLoop needs public pages, robots, sitemap, and metadata before it can draft recommendations.",
+			NextAction:       "No action needed.",
+			CapabilityImpact: "Enables public-only crawl, technical checks, and cold-start briefs.",
+		},
+		{
+			Key:              "search_data",
+			Label:            "Search data",
+			Status:           searchStatus,
+			WhyNeeded:        "First-party search data lets CiteLoop prioritize opportunities using real queries, impressions, CTR, and position.",
+			NextAction:       searchNextAction,
+			CapabilityImpact: "Missing search data limits planning to public crawl and SERP signals.",
+		},
+		{
+			Key:              "analytics_data",
+			Label:            "Analytics data",
+			Status:           analyticsStatus,
+			WhyNeeded:        "Analytics data connects SEO actions to engagement and conversion outcomes.",
+			NextAction:       analyticsNextAction,
+			CapabilityImpact: "Missing analytics data removes conversion signals but does not block SEO drafting.",
+		},
+		{
+			Key:              "publisher_write",
+			Label:            "Publishing",
+			Status:           publisherStatus,
+			WhyNeeded:        "CiteLoop needs a scoped publisher connection before it can create or update content automatically.",
+			NextAction:       publisherNextAction,
+			CapabilityImpact: "Missing publishing keeps generated work in review/draft mode.",
+		},
+		{
+			Key:              "policy",
+			Label:            "Autopilot policy",
+			Status:           "connected",
+			WhyNeeded:        "Policy defines which low-risk actions can run automatically and which require review.",
+			NextAction:       "Review policy before raising automation level.",
+			CapabilityImpact: "Required before enabling higher automation levels.",
+		},
+		{
+			Key:              "dry_run",
+			Label:            "Dry run",
+			Status:           "not_started",
+			WhyNeeded:        "A dry run verifies permissions and publishing behavior before real writes.",
+			NextAction:       "Run a dry-run publish check after connections are ready.",
+			CapabilityImpact: "Blocks hands-off execution until permissions are proven.",
+		},
+	}, mode, ready
+}
+
+func hasConnectedPublisher(connections []db.PublisherConnection) bool {
+	for _, connection := range connections {
+		if connection.Kind == publisher.ConnectionKindGitHubNextJS &&
+			connection.Status == "connected" &&
+			connection.CredentialRef != nil &&
+			strings.TrimSpace(*connection.CredentialRef) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func isProviderConnected(integrations []db.SeoIntegration, provider string) bool {

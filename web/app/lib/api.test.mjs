@@ -475,9 +475,13 @@ test("publisher connection APIs call project scoped endpoints without raw token 
       content_dir: "content/blog",
       base_url: "https://example.com/blog",
       publish_mode: "publish",
-      credential_ref: "env:GITHUB_TOKEN",
+    });
+    await client.upsertPublisherCredential("project-1", "publisher-1", {
+      kind: "github_token",
+      value: "ghp_customer_token",
     });
     await client.testPublisherConnection("project-1", "publisher-1");
+    await client.revokePublisherCredential("project-1", "publisher-1");
 
     assert.equal(connections[0].capabilities.create_article, true);
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publisher-connections");
@@ -485,10 +489,15 @@ test("publisher connection APIs call project scoped endpoints without raw token 
     assert.equal(calls[1].init.method, "PUT");
     const body = JSON.parse(calls[1].init.body);
     assert.equal(body.repo, "owner/site");
-    assert.equal(body.credential_ref, "env:GITHUB_TOKEN");
+    assert.equal(Object.hasOwn(body, "credential_ref"), false);
     assert.equal(Object.hasOwn(body, "token"), false);
-    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/test");
-    assert.equal(calls[2].init.method, "POST");
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/credential");
+    assert.equal(calls[2].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[2].init.body), { kind: "github_token", value: "ghp_customer_token" });
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/test");
+    assert.equal(calls[3].init.method, "POST");
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/credential");
+    assert.equal(calls[4].init.method, "DELETE");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -512,6 +521,10 @@ test("SEO APIs call project scoped endpoints", async () => {
             actions_by_status: [],
             cold_start: true,
             handoff_ready_for_autopilot: false,
+            setup_checklist: [
+              { key: "publisher_write", label: "Publishing", status: "in_progress", next_action: "Save token" },
+            ],
+            capability_mode: "customer_site_pending_verification",
           };
         }
         if (url.endsWith("/seo/settings")) {
@@ -550,7 +563,7 @@ test("SEO APIs call project scoped endpoints", async () => {
     const { createApi } = await loadApiModule();
     const client = createApi();
 
-    await client.getSEOOverview("project-1");
+    const overview = await client.getSEOOverview("project-1");
     await client.getSEOSettings("project-1");
     await client.updateSEOSettings("project-1", {
       site_url: "https://dev.unipost.dev",
@@ -572,6 +585,8 @@ test("SEO APIs call project scoped endpoints", async () => {
     await client.enterSafeMode("project-1", { reason: "manual" });
 
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/overview");
+    assert.equal(overview.capability_mode, "customer_site_pending_verification");
+    assert.equal(overview.setup_checklist[0].key, "publisher_write");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/settings");
     assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/seo/settings");
     assert.equal(calls[2].init.method, "PUT");

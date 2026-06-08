@@ -61,7 +61,7 @@ const defaultPublisherDraft: GitHubNextJSPublisherInput = {
   content_dir: "content/citeloop/blog",
   base_url: "",
   publish_mode: "publish",
-  credential_ref: "env:GITHUB_TOKEN",
+  credential_ref: "",
 };
 
 export function SettingsClient({ projectId }: { projectId: string }) {
@@ -69,6 +69,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
   const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
+  const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
@@ -109,7 +110,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           content_dir: github.config?.content_dir ?? "content/citeloop/blog",
           base_url: github.config?.base_url ?? "",
           publish_mode: github.config?.publish_mode ?? "publish",
-          credential_ref: github.credential_configured ? "env:GITHUB_TOKEN" : "",
+          credential_ref: "",
         });
       }
     } catch (e: any) {
@@ -222,15 +223,22 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     setNotificationBusy("save-publisher");
     setMessage(null);
     try {
-      const saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
+      let saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
         ...publisherDraft,
         repo: publisherDraft.repo.trim(),
         branch: publisherDraft.branch?.trim() || "citeloop-content",
         content_dir: publisherDraft.content_dir?.trim() || "content/citeloop/blog",
         base_url: publisherDraft.base_url.trim(),
         publish_mode: publisherDraft.publish_mode?.trim() || "publish",
-        credential_ref: publisherDraft.credential_ref?.trim() || undefined,
+        credential_ref: undefined,
       });
+      if (publisherCredentialDraft.trim()) {
+        saved = await api.upsertPublisherCredential(projectId, saved.id, {
+          kind: "github_token",
+          value: publisherCredentialDraft.trim(),
+        });
+        setPublisherCredentialDraft("");
+      }
       setPublisherConnections((current) => {
         const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
         return [saved, ...rest];
@@ -238,6 +246,48 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Publisher connection saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher save failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function savePublisherCredential() {
+    if (!githubPublisher) {
+      setMessage({ title: "Save publisher first", detail: "Create the GitHub/Next.js connection before saving a token.", tone: "amber" });
+      return;
+    }
+    const token = publisherCredentialDraft.trim();
+    if (!token) {
+      setMessage({ title: "GitHub token required", tone: "amber" });
+      return;
+    }
+    setNotificationBusy(`credential-publisher-${githubPublisher.id}`);
+    setMessage(null);
+    try {
+      const saved = await api.upsertPublisherCredential(projectId, githubPublisher.id, {
+        kind: "github_token",
+        value: token,
+      });
+      setPublisherCredentialDraft("");
+      setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      setMessage({ title: "Publisher token saved", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Publisher token save failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function revokePublisherCredential() {
+    if (!githubPublisher) return;
+    setNotificationBusy(`revoke-publisher-${githubPublisher.id}`);
+    setMessage(null);
+    try {
+      const saved = await api.revokePublisherCredential(projectId, githubPublisher.id);
+      setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      setMessage({ title: "Publisher token revoked", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Publisher token revoke failed", detail: e.message, tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -411,20 +461,26 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 placeholder="https://example.com/blog"
               />
             </Field>
-            <Field label="Credential ref">
-              <TextInput
-                value={publisherDraft.credential_ref ?? ""}
-                onChange={(event) => setPublisherDraft((current) => ({ ...current, credential_ref: event.target.value }))}
-                placeholder="env:GITHUB_TOKEN"
-                autoComplete="off"
-              />
-            </Field>
             <Field label="Publish mode">
               <TextInput
                 value={publisherDraft.publish_mode ?? "publish"}
                 onChange={(event) => setPublisherDraft((current) => ({ ...current, publish_mode: event.target.value }))}
                 placeholder="publish"
               />
+            </Field>
+            <Field label="GitHub token">
+              <div className="grid gap-2">
+                <TextInput
+                  type="password"
+                  value={publisherCredentialDraft}
+                  onChange={(event) => setPublisherCredentialDraft(event.target.value)}
+                  placeholder={githubPublisher?.credential_configured ? "Saved" : "ghp_..."}
+                  autoComplete="off"
+                />
+                <Badge tone={githubPublisher?.credential_configured ? "green" : "amber"}>
+                  {githubPublisher?.credential_configured ? "Credential saved" : "Credential missing"}
+                </Badge>
+              </div>
             </Field>
           </div>
 
@@ -434,6 +490,22 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <Button variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>
               <Save size={16} />
               Save publisher
+            </Button>
+            <Button
+              variant="outline"
+              onClick={savePublisherCredential}
+              disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `credential-publisher-${githubPublisher?.id}`}
+            >
+              <Save size={16} />
+              Save token
+            </Button>
+            <Button
+              variant="outline"
+              onClick={revokePublisherCredential}
+              disabled={!githubPublisher?.credential_configured || notificationBusy === `revoke-publisher-${githubPublisher?.id}`}
+            >
+              <Trash2 size={16} />
+              Revoke token
             </Button>
             <Button
               variant="outline"

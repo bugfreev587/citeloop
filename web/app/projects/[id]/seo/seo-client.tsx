@@ -45,6 +45,13 @@ function toneForStatus(status: string): "green" | "amber" | "red" | "neutral" {
   return "neutral";
 }
 
+function toneForSetupStatus(status?: string): "green" | "amber" | "red" | "neutral" {
+  if (status === "connected") return "green";
+  if (["not_started", "in_progress", "optional"].includes(status ?? "")) return "amber";
+  if (["blocked", "error", "expired"].includes(status ?? "")) return "red";
+  return "neutral";
+}
+
 function toneForRobots(state?: string): "green" | "amber" | "red" | "neutral" {
   if (state === "allowed") return "green";
   if (state === "disallowed") return "red";
@@ -277,6 +284,36 @@ export function SEOClient({ projectId }: { projectId: string }) {
       {overview?.data_source_warnings?.map((warning) => (
         <Notice key={warning} title="SEO data warning" detail={warning} tone="amber" />
       ))}
+
+      <section>
+        <SectionHeader
+          title="Setup"
+          eyebrow={overview?.capability_mode ?? "public_only"}
+          action={
+            <Badge tone={overview?.handoff_ready_for_autopilot ? "green" : "amber"}>
+              {overview?.handoff_ready_for_autopilot ? "ready" : "limited"}
+            </Badge>
+          }
+        />
+        {overview?.setup_checklist?.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {overview.setup_checklist.map((item) => (
+              <div key={item.key} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                    {item.capability_impact && <p className="mt-1 text-sm leading-5 text-slate-500">{item.capability_impact}</p>}
+                  </div>
+                  <Badge tone={toneForSetupStatus(item.status)}>{item.status}</Badge>
+                </div>
+                {item.next_action && <p className="mt-3 text-sm font-semibold leading-5 text-slate-700">{item.next_action}</p>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No setup checklist" detail="Refresh SEO data after creating the project." />
+        )}
+      </section>
 
       <div className="grid gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4">

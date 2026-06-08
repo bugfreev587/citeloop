@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,8 +12,10 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/publisher"
+	"github.com/citeloop/citeloop/internal/secretbox"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -152,7 +156,18 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if s.publisherCredentialToken(conn.CredentialRef) == "" {
+	token, err := s.publisherCredentialToken(r.Context(), projectID, conn)
+	if err != nil {
+		msg := "publisher credential cannot be resolved"
+		updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{ID: connectionID, ProjectID: projectID, LastError: &msg})
+		if markErr == nil {
+			writeJSON(w, http.StatusFailedDependency, publisherConnectionResponse(updated))
+			return
+		}
+		writeErr(w, http.StatusFailedDependency, msg)
+		return
+	}
+	if token == "" {
 		msg := "publisher credential unavailable"
 		updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{ID: connectionID, ProjectID: projectID, LastError: &msg})
 		if markErr == nil {
@@ -168,6 +183,126 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
+}
+
+func (s *Server) upsertPublisherCredential(w http.ResponseWriter, r *http.Request) {
+	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
+	if !ok {
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	if s.Env.NotificationSecretKey == "" {
+		writeErr(w, http.StatusInternalServerError, "NOTIFICATION_SECRET_KEY is required")
+		return
+	}
+	var in struct {
+		Kind  string `json:"kind"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	kind := strings.TrimSpace(in.Kind)
+	if kind == "" {
+		kind = publisher.CredentialKindGitHubToken
+	}
+	if kind != publisher.CredentialKindGitHubToken {
+		writeErr(w, http.StatusBadRequest, "publisher credential kind not supported")
+		return
+	}
+	value := strings.TrimSpace(in.Value)
+	if value == "" {
+		writeErr(w, http.StatusBadRequest, "publisher credential value is required")
+		return
+	}
+	conn, err := s.Q.GetPublisherConnectionForProject(r.Context(), db.GetPublisherConnectionForProjectParams{ID: connectionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "publisher connection not found")
+		return
+	}
+	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
+		writeErr(w, http.StatusBadRequest, "publisher credential not supported for "+conn.Kind)
+		return
+	}
+	encrypted, err := secretbox.EncryptString(value, s.Env.NotificationSecretKey)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "publisher credential cannot be encrypted")
+		return
+	}
+	cred, err := s.Q.UpsertPublisherCredential(r.Context(), db.UpsertPublisherCredentialParams{
+		ProjectID:      projectID,
+		ConnectionID:   connectionID,
+		Kind:           kind,
+		EncryptedValue: encrypted,
+		RedactedValue:  publisher.RedactCredentialValue(kind, value),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ref := publisher.PublisherCredentialRef(cred.ID)
+	updated, err := s.Q.SetPublisherConnectionCredentialRef(r.Context(), db.SetPublisherConnectionCredentialRefParams{
+		ID:            connectionID,
+		ProjectID:     projectID,
+		CredentialRef: &ref,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
+}
+
+func (s *Server) revokePublisherCredential(w http.ResponseWriter, r *http.Request) {
+	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
+	if !ok {
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	conn, err := s.Q.GetPublisherConnectionForProject(r.Context(), db.GetPublisherConnectionForProjectParams{ID: connectionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "publisher connection not found")
+		return
+	}
+	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
+		writeErr(w, http.StatusBadRequest, "publisher credential not supported for "+conn.Kind)
+		return
+	}
+	if _, err := s.Q.RevokePublisherCredentialForConnection(r.Context(), db.RevokePublisherCredentialForConnectionParams{
+		ProjectID:    projectID,
+		ConnectionID: connectionID,
+		Kind:         publisher.CredentialKindGitHubToken,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	updated, err := s.Q.ClearPublisherConnectionCredentialRef(r.Context(), db.ClearPublisherConnectionCredentialRefParams{ID: connectionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
+}
+
+func (s *Server) publisherConnectionPathIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return uuid.UUID{}, uuid.UUID{}, false
+	}
+	connectionID, err := uuid.Parse(chi.URLParam(r, "connectionID"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad publisher connection id")
+		return uuid.UUID{}, uuid.UUID{}, false
+	}
+	return projectID, connectionID, true
 }
 
 func publisherConnectionResponse(row db.PublisherConnection) publisherConnectionDTO {
@@ -251,15 +386,34 @@ func safeJSON(raw json.RawMessage, fallback string) json.RawMessage {
 	return raw
 }
 
-func (s *Server) publisherCredentialToken(ref *string) string {
-	if ref == nil {
-		return ""
+func (s *Server) publisherCredentialToken(ctx context.Context, projectID uuid.UUID, conn db.PublisherConnection) (string, error) {
+	if conn.CredentialRef == nil {
+		return "", nil
 	}
-	switch strings.TrimSpace(*ref) {
+	ref := strings.TrimSpace(*conn.CredentialRef)
+	switch ref {
 	case "env:GITHUB_TOKEN", "GITHUB_TOKEN":
-		return strings.TrimSpace(s.Env.GitHubToken)
+		return strings.TrimSpace(s.Env.GitHubToken), nil
 	default:
-		return ""
+		credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
+		if !ok {
+			return "", nil
+		}
+		if s.Q == nil {
+			return "", errors.New("database unavailable")
+		}
+		if s.Env.NotificationSecretKey == "" {
+			return "", errors.New("NOTIFICATION_SECRET_KEY is required")
+		}
+		cred, err := s.Q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
+			ID:           credentialID,
+			ProjectID:    projectID,
+			ConnectionID: conn.ID,
+		})
+		if err != nil {
+			return "", err
+		}
+		return secretbox.DecryptString(cred.EncryptedValue, s.Env.NotificationSecretKey)
 	}
 }
 

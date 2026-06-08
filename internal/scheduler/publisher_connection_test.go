@@ -8,6 +8,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/publisher"
+	"github.com/citeloop/citeloop/internal/secretbox"
 	"github.com/google/uuid"
 )
 
@@ -81,6 +82,64 @@ func TestBlogPublisherFromConnectionWithoutCredentialDoesNotUseFallbackToken(t *
 	if blogConfiguredWithToken(blog) {
 		t.Fatal("connection publisher without credential must not reuse fallback token")
 	}
+}
+
+func TestBlogPublisherForProjectUsesEncryptedPublisherCredential(t *testing.T) {
+	secret := "test-secret"
+	token := "ghp_customer_token"
+	encrypted, err := secretbox.EncryptString(token, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := uuid.New()
+	connectionID := uuid.New()
+	credentialID := uuid.New()
+	store := &publisherConnectionStoreFake{
+		conn: db.PublisherConnection{
+			ID:            connectionID,
+			ProjectID:     projectID,
+			Kind:          publisher.ConnectionKindGitHubNextJS,
+			Status:        "connected",
+			CredentialRef: ptr(publisher.PublisherCredentialRef(credentialID)),
+			Config: json.RawMessage(`{
+				"repo":"customer/site",
+				"branch":"content",
+				"content_dir":"content/blog",
+				"base_url":"https://customer.example/blog"
+			}`),
+		},
+		cred: db.PublisherCredential{
+			ID:             credentialID,
+			ProjectID:      projectID,
+			ConnectionID:   connectionID,
+			Kind:           publisher.CredentialKindGitHubToken,
+			EncryptedValue: encrypted,
+			RedactedValue:  "gh_****oken",
+		},
+	}
+	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
+	s := &Scheduler{Blog: fallback, NotificationSecret: secret, Log: slog.Default()}
+
+	blog, err := s.blogPublisherForProject(context.Background(), store, db.Project{ID: projectID})
+	if err != nil {
+		t.Fatalf("blogPublisherForProject returned error: %v", err)
+	}
+	if blog.Token != token {
+		t.Fatalf("token = %q, want encrypted project credential", blog.Token)
+	}
+}
+
+type publisherConnectionStoreFake struct {
+	conn db.PublisherConnection
+	cred db.PublisherCredential
+}
+
+func (f *publisherConnectionStoreFake) GetDefaultPublisherConnectionForProject(context.Context, db.GetDefaultPublisherConnectionForProjectParams) (db.PublisherConnection, error) {
+	return f.conn, nil
+}
+
+func (f *publisherConnectionStoreFake) GetActivePublisherCredential(context.Context, db.GetActivePublisherCredentialParams) (db.PublisherCredential, error) {
+	return f.cred, nil
 }
 
 func blogConfiguredWithToken(blog *publisher.BlogPublisher) bool {

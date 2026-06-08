@@ -22,6 +22,28 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 		{http.MethodGet, "/api/projects/not-a-uuid/publisher-connections"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/github-nextjs"},
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
+		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
+		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, res.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestPublisherCredentialRoutesAreRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.New().String()
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPut, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
+		{http.MethodDelete, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
 		res := httptest.NewRecorder()

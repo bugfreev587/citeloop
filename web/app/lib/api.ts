@@ -178,6 +178,11 @@ export type GitHubNextJSPublisherInput = {
   credential_ref?: string;
 };
 
+export type PublisherCredentialInput = {
+  kind: "github_token";
+  value: string;
+};
+
 export type SEOIntegration = {
   id: string;
   project_id: string;
@@ -199,6 +204,15 @@ export type SEOProperty = {
   default_language?: string | null;
 };
 
+export type SetupChecklistItem = {
+  key: string;
+  label: string;
+  status: "not_started" | "in_progress" | "connected" | "optional" | "blocked" | string;
+  why_needed?: string;
+  next_action?: string;
+  capability_impact?: string;
+};
+
 export type SEOOverview = {
   property?: SEOProperty | null;
   integrations: SEOIntegration[];
@@ -218,6 +232,8 @@ export type SEOOverview = {
   actions_by_status: Array<{ status: string; count: number }>;
   cold_start: boolean;
   handoff_ready_for_autopilot: boolean;
+  setup_checklist: SetupChecklistItem[];
+  capability_mode: "public_only" | "managed_content_connected" | "customer_site_pending_verification" | "customer_site_connected" | string;
   data_source_warnings?: string[];
 };
 
@@ -415,6 +431,8 @@ function normalizeSEOOverview(raw: any): SEOOverview {
     actions_by_status: arrayFrom(data.actions_by_status),
     cold_start: Boolean(data.cold_start),
     handoff_ready_for_autopilot: Boolean(data.handoff_ready_for_autopilot),
+    setup_checklist: arrayFrom<SetupChecklistItem>(data.setup_checklist),
+    capability_mode: data.capability_mode ?? "public_only",
     data_source_warnings: arrayFrom<string>(data.data_source_warnings).map(String),
   };
 }
@@ -636,6 +654,26 @@ export function createApi(auth?: AuthOptions) {
   },
   testPublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
     const raw = await req<any>(`/projects/${id}/publisher-connections/${connectionID}/test`, { method: "POST" }, auth);
+    return normalizePublisherConnection(raw);
+  },
+  upsertPublisherCredential: async (
+    id: string,
+    connectionID: string,
+    body: PublisherCredentialInput,
+  ): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/${connectionID}/credential`,
+      { method: "PUT", body: JSON.stringify(body) },
+      auth,
+    );
+    return normalizePublisherConnection(raw);
+  },
+  revokePublisherCredential: async (id: string, connectionID: string): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/${connectionID}/credential`,
+      { method: "DELETE" },
+      auth,
+    );
     return normalizePublisherConnection(raw);
   },
   getSEOOverview: async (id: string): Promise<SEOOverview> => {

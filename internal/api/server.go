@@ -89,6 +89,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/publisher-connections", s.listPublisherConnections)
 			r.Put("/publisher-connections/github-nextjs", s.upsertGitHubNextJSPublisherConnection)
 			r.Post("/publisher-connections/{connectionID}/test", s.testPublisherConnection)
+			r.Put("/publisher-connections/{connectionID}/credential", s.upsertPublisherCredential)
+			r.Delete("/publisher-connections/{connectionID}/credential", s.revokePublisherCredential)
 			r.Route("/seo", func(r chi.Router) {
 				r.Get("/overview", s.getSEOOverview)
 				r.Post("/sync", s.syncSEO)
