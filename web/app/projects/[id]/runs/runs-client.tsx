@@ -85,58 +85,39 @@ export function RunsClient({ projectId }: { projectId: string }) {
       ) : runs.length === 0 ? (
         <EmptyState title="No run data yet" detail="Insight, Strategist, Writer, QA, Publisher, and Notification runs will appear here." />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Agent</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 font-semibold">Cost</th>
-                <th className="px-4 py-3 font-semibold">Model</th>
-                <th className="px-4 py-3 font-semibold">Created</th>
-                <th className="px-4 py-3 font-semibold">Error</th>
-                <th className="px-4 py-3 font-semibold">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {runs.map((run) => (
-                <tr key={run.id} className="transition-colors hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-900">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {run.agent}
-                      {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
+        <div className="grid gap-2">
+          {runs.map((run) => (
+            <div key={run.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:bg-slate-50">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-slate-900">{run.agent}</span>
                     <Badge tone={statusTone(run.status)}>{run.status}</Badge>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{money(run.cost_usd)}</td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {run.model ?? "-"}
-                    {run.tokens != null && <span className="ml-2 text-xs text-slate-400">{run.tokens} tokens</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{formatDate(run.created_at)}</td>
-                  <td className="max-w-[280px] truncate px-4 py-3 text-slate-500">{run.error ?? "-"}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <a
-                        href={`/projects/${projectId}/runs/${run.id}`}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#d93820]"
-                      >
-                        Detail
-                        <ExternalLink size={12} />
-                      </a>
-                      {run.next_actions[0] && (
-                        <a href={run.next_actions[0].href} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
-                          {run.next_actions[0].label}
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
+                  </div>
+                  <div className="mt-1 break-all text-xs font-semibold text-slate-400">{run.id}</div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <a href={`/projects/${projectId}/runs/${run.id}`} className="inline-flex items-center gap-1 text-xs font-semibold text-[#d93820]">
+                    Detail
+                    <ExternalLink size={12} />
+                  </a>
+                  {run.next_actions[0] && (
+                    <a href={run.next_actions[0].href} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+                      {run.next_actions[0].label}
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 text-xs font-semibold text-slate-500 sm:grid-cols-4">
+                <span>{money(run.cost_usd)}</span>
+                <span>{run.tokens ?? 0} tokens</span>
+                <span>{formatDate(run.created_at)}</span>
+                <span className="truncate">{run.model ?? "-"}</span>
+              </div>
+              {run.error && <div className="mt-3 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-800">{run.error}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>
