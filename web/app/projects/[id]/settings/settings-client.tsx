@@ -18,6 +18,61 @@ import { Badge, Button, Field, Notice, SectionHeader, TextInput, TextArea, cx, f
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
+function readableError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("repo") && normalized.includes("base_url")) {
+    return "Add the GitHub repository and public blog base URL before saving.";
+  }
+  if (normalized.includes("base_url") || normalized.includes("base url")) {
+    return "Add the public blog base URL where published articles will be available.";
+  }
+  if (normalized.includes("repo") || normalized.includes("repository")) {
+    return "Add the GitHub repository in owner/repo format.";
+  }
+  if (normalized.includes("webhook") && (normalized.includes("url") || normalized.includes("invalid"))) {
+    return "Paste a valid Slack or Discord webhook URL for the selected channel type.";
+  }
+  if (normalized.includes("token") || normalized.includes("credential")) {
+    return "Save a GitHub token with repository write access, then test the publisher connection.";
+  }
+  if (normalized.includes("permission") || normalized.includes("forbidden") || normalized.includes("403")) {
+    return "This account or token does not have permission for that action.";
+  }
+  if (normalized.includes("notification_secret_key")) {
+    return "Notification encryption is not configured for this environment.";
+  }
+  return raw || "Something went wrong. Please try again.";
+}
+
+function validWebhookURL(kind: NotificationChannelKind, url: string) {
+  if (kind === "slack_webhook") return /^https:\/\/hooks\.slack\.com\/services\/\S+/i.test(url);
+  return /^https:\/\/(?:discord|discordapp)\.com\/api\/webhooks\/\S+/i.test(url);
+}
+
+function webhookURLHint(kind: NotificationChannelKind) {
+  return kind === "slack_webhook"
+    ? "Paste a Slack incoming webhook URL that starts with https://hooks.slack.com/services/."
+    : "Paste a Discord webhook URL that starts with https://discord.com/api/webhooks/.";
+}
+
+function summarizeConfigChanges(previous: ProjectConfig | null, next: ProjectConfig) {
+  if (!previous) return "Saved cadence, budget, channel mix, crawl policy, and brand voice.";
+  const changes: string[] = [];
+  if (previous.cadence_per_week !== next.cadence_per_week) changes.push("cadence");
+  if (previous.buffer_days !== next.buffer_days) changes.push("buffer days");
+  if (previous.monthly_budget_usd !== next.monthly_budget_usd) changes.push("monthly budget");
+  if (previous.channel_mix.blog !== next.channel_mix.blog || previous.channel_mix.syndication !== next.channel_mix.syndication) {
+    changes.push("channel mix");
+  }
+  if ((previous.brand_voice ?? "") !== (next.brand_voice ?? "")) changes.push("brand voice");
+  if (JSON.stringify(previous.crawl) !== JSON.stringify(next.crawl)) changes.push("crawl policy");
+  if (changes.length === 0) return "No setting values changed.";
+  const shown = changes.slice(0, 4);
+  const suffix = changes.length > shown.length ? ` and ${changes.length - shown.length} more` : "";
+  return `Updated ${shown.join(", ")}${suffix}.`;
+}
+
 function toInt(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -67,9 +122,11 @@ const defaultPublisherDraft: GitHubNextJSPublisherInput = {
 export function SettingsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
+  const [savedConfig, setSavedConfig] = useState<ProjectConfig | null>(null);
   const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
+  const [showPublisherAdvanced, setShowPublisherAdvanced] = useState(false);
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
@@ -88,8 +145,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const project = await api.getProject(projectId);
       setConfig(project.config);
+      setSavedConfig(project.config);
     } catch (e: any) {
-      setMessage({ title: "Settings unavailable", detail: e.message, tone: "amber" });
+      setMessage({ title: "Settings unavailable", detail: readableError(e), tone: "amber" });
     }
   }, [api, projectId]);
 
@@ -114,7 +172,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         });
       }
     } catch (e: any) {
-      setMessage({ title: "Publisher connections unavailable", detail: e.message, tone: "amber" });
+      setMessage({ title: "Publisher connections unavailable", detail: readableError(e), tone: "amber" });
     }
   }, [api, projectId]);
 
@@ -135,7 +193,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setSubscriptions(nextSubscriptions);
       setDeliveries(nextDeliveries);
     } catch (e: any) {
-      setMessage({ title: "Notifications unavailable", detail: e.message, tone: "amber" });
+      setMessage({ title: "Notifications unavailable", detail: readableError(e), tone: "amber" });
     }
   }, [api, deliveryStatus, projectId]);
 
@@ -157,11 +215,21 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         crawl: { ...defaultProjectConfig().crawl, ...config.crawl },
         channel_mix: { ...defaultProjectConfig().channel_mix, ...config.channel_mix },
       };
+      if (
+        savedConfig &&
+        fullPayload.monthly_budget_usd < savedConfig.monthly_budget_usd &&
+        !window.confirm("Lowering the monthly budget can stop future automation earlier. Save this lower budget?")
+      ) {
+        setMessage({ title: "Save cancelled", detail: "Monthly budget was not changed.", tone: "amber" });
+        return;
+      }
+      const summary = summarizeConfigChanges(savedConfig, fullPayload);
       await api.updateConfig(projectId, fullPayload);
       setConfig(fullPayload);
-      setMessage({ title: "Settings saved", detail: "Full config payload was sent to avoid zeroing omitted fields.", tone: "green" });
+      setSavedConfig(fullPayload);
+      setMessage({ title: "Settings saved", detail: summary, tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Settings save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Settings save failed", detail: readableError(e), tone: "red" });
     } finally {
       setBusy(false);
     }
@@ -170,7 +238,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   async function createChannel() {
     const url = channelDraft.url.trim();
     if (!url) {
-      setMessage({ title: "Webhook URL required", tone: "amber" });
+      setMessage({ title: "Webhook URL required", detail: webhookURLHint(channelDraft.kind), tone: "amber" });
+      return;
+    }
+    if (!validWebhookURL(channelDraft.kind, url)) {
+      setMessage({ title: "Webhook URL format looks wrong", detail: webhookURLHint(channelDraft.kind), tone: "amber" });
       return;
     }
     setNotificationBusy("create-channel");
@@ -185,7 +257,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Notification channel saved", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Channel save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Channel save failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -199,7 +271,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Notification channel deleted", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Channel delete failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Channel delete failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -213,7 +285,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Test notification sent", detail: "Channel is now verified.", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Test notification failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Test notification failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -222,10 +294,26 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   async function savePublisherConnection() {
     const repo = publisherDraft.repo.trim();
     const baseURL = publisherDraft.base_url.trim();
-    if (!repo || !baseURL) {
+    if (!repo && !baseURL) {
       setMessage({
         title: "Publisher settings incomplete",
-        detail: "Repository and Base URL are required before saving publisher.",
+        detail: "Add the GitHub repository and public blog base URL before saving.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (!repo) {
+      setMessage({
+        title: "Repository required",
+        detail: "Add the GitHub repository in owner/repo format.",
+        tone: "amber",
+      });
+      return;
+    }
+    if (!baseURL) {
+      setMessage({
+        title: "Base URL required",
+        detail: "Add the public blog base URL where published articles will be available.",
         tone: "amber",
       });
       return;
@@ -253,9 +341,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
         return [saved, ...rest];
       });
-      setMessage({ title: "Publisher connection saved", tone: "green" });
+      setMessage({
+        title: "Publisher connection saved",
+        detail: publisherCredentialDraft.trim() ? "Connection details and GitHub token were saved." : "Connection details were saved.",
+        tone: "green",
+      });
     } catch (e: any) {
-      setMessage({ title: "Publisher save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Publisher save failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -279,7 +371,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
       setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Credential save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Credential save failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -294,7 +386,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
       setMessage({ title: "Publisher credential revoked", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Credential revoke failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Credential revoke failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -308,7 +400,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
       setMessage({ title: "Publisher connection verified", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Publisher test failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Publisher test failed", detail: readableError(e), tone: "red" });
       await refreshPublisherConnections();
     } finally {
       setNotificationBusy(null);
@@ -322,7 +414,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       await api.upsertNotificationSubscription(projectId, { event_type: eventType, channel_id: channelID, enabled });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Subscription update failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Subscription update failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -336,7 +428,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Delivery queued", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Delivery retry failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Delivery retry failed", detail: readableError(e), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -350,15 +442,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-7">
-      <SectionHeader title="Settings" eyebrow="Project config" />
+      <SectionHeader title="Settings" eyebrow="Project controls" />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <Notice
-        title="Config update is full-payload"
-        detail="The current backend PUT /config replaces the entire config. This form always submits a complete payload and validates numeric fields through controlled inputs."
-        tone="amber"
-      />
-
+      <SectionHeader title="General" eyebrow="Cadence and budget" />
       <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Cadence per week">
@@ -453,20 +540,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 placeholder="owner/repo"
               />
             </Field>
-            <Field label="Branch">
-              <TextInput
-                value={publisherDraft.branch ?? ""}
-                onChange={(event) => setPublisherDraft((current) => ({ ...current, branch: event.target.value }))}
-                placeholder="citeloop-content"
-              />
-            </Field>
-            <Field label="Content path">
-              <TextInput
-                value={publisherDraft.content_dir ?? ""}
-                onChange={(event) => setPublisherDraft((current) => ({ ...current, content_dir: event.target.value }))}
-                placeholder="content/citeloop/blog"
-              />
-            </Field>
             <Field label="Base URL">
               <TextInput
                 value={publisherDraft.base_url}
@@ -474,14 +547,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 placeholder="https://example.com/blog"
               />
             </Field>
-            <Field label="Publish mode">
-              <TextInput
-                value={publisherDraft.publish_mode ?? "publish"}
-                onChange={(event) => setPublisherDraft((current) => ({ ...current, publish_mode: event.target.value }))}
-                placeholder="publish"
-              />
-            </Field>
-            <Field label="GitHub token">
+            <Field label="GitHub access token" helper="Used only to write generated articles to the selected repository. The saved token is never shown again.">
               <TextInput
                 value={publisherCredentialDraft}
                 onChange={(event) => setPublisherCredentialDraft(event.target.value)}
@@ -497,7 +563,43 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {githubPublisher?.last_error && <Notice title="Publisher health check failed" detail={githubPublisher.last_error} tone="red" />}
+          <div className="border-t border-slate-200 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowPublisherAdvanced((current) => !current)}
+              className="flex w-full items-center justify-between py-2 text-left text-sm font-semibold text-slate-700"
+            >
+              Advanced publishing fields
+              <span className="text-xs text-slate-500">{showPublisherAdvanced ? "Hide" : "Show"}</span>
+            </button>
+            {showPublisherAdvanced && (
+              <div className="grid gap-4 pt-3 lg:grid-cols-3">
+                <Field label="Branch">
+                  <TextInput
+                    value={publisherDraft.branch ?? ""}
+                    onChange={(event) => setPublisherDraft((current) => ({ ...current, branch: event.target.value }))}
+                    placeholder="citeloop-content"
+                  />
+                </Field>
+                <Field label="Content path">
+                  <TextInput
+                    value={publisherDraft.content_dir ?? ""}
+                    onChange={(event) => setPublisherDraft((current) => ({ ...current, content_dir: event.target.value }))}
+                    placeholder="content/citeloop/blog"
+                  />
+                </Field>
+                <Field label="Publish mode">
+                  <TextInput
+                    value={publisherDraft.publish_mode ?? "publish"}
+                    onChange={(event) => setPublisherDraft((current) => ({ ...current, publish_mode: event.target.value }))}
+                    placeholder="publish"
+                  />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          {githubPublisher?.last_error && <Notice title="Publisher health check failed" detail={readableError(githubPublisher.last_error)} tone="red" />}
 
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>
@@ -533,7 +635,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       </section>
 
       <section>
-        <SectionHeader title="Crawl config" />
+        <SectionHeader title="Crawl policy" />
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Max pages">
@@ -651,15 +753,16 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <TextInput
               value={channelDraft.url}
               onChange={(event) => setChannelDraft((current) => ({ ...current, url: event.target.value }))}
-              placeholder="Webhook URL"
+              placeholder={channelDraft.kind === "slack_webhook" ? "https://hooks.slack.com/services/..." : "https://discord.com/api/webhooks/..."}
               type="password"
               autoComplete="off"
             />
             <Button variant="primary" onClick={createChannel} disabled={notificationBusy === "create-channel"}>
               <Plus size={16} />
-              Add
+              Add channel
             </Button>
           </div>
+          <div className="text-xs font-medium text-slate-500">{webhookURLHint(channelDraft.kind)} Use Test after saving to verify delivery.</div>
 
           {channels.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 px-4 py-5 text-sm font-semibold text-slate-500">
@@ -702,6 +805,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                             title={channel.verified_at ? `Verified ${formatDate(channel.verified_at)}` : "Send test notification"}
                           >
                             <Send size={14} />
+                            Test
                           </Button>
                           <Button
                             size="sm"
@@ -711,6 +815,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                             title="Delete channel"
                           >
                             <Trash2 size={14} />
+                            Delete
                           </Button>
                         </div>
                       </td>
