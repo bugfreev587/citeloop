@@ -43,7 +43,14 @@ func (qa *QA) Check(ctx context.Context, projectID uuid.UUID, contentMD string, 
 	prompt := fmt.Sprintf(`[[QA]] Audit this article. Two layers:
 1) EVIDENCE MAPPING (blocking): extract every factual claim about the product. Each must map to the profile.features, source content, or evidence snippets. Any claim that cannot be mapped sets qa_blocking=true.
 2) SCORING: geo_score and seo_score in [0,1], plus issues[].
-Return JSON: {claims:[{claim,mapped,evidence}], qa_blocking, geo_score, seo_score, issues[]}.
+3) EDITOR FEEDBACK: if qa_blocking=true, provide exact fix_instructions for the AI editor and human_decision_options for unresolved cases.
+Return JSON: {claims:[{claim,mapped,evidence}], qa_blocking, geo_score, seo_score, issues[], blocking_issues:[{code,severity,message,claim?}], fix_instructions[], human_decision_options:[{label,description}], blocking_reason, can_auto_fix}.
+
+Blocking standards:
+- Block only factual product claims that cannot be mapped to profile/features/source/evidence, malformed content that prevents review, or missing required SEO metadata.
+- Do not block for style preferences, internal-link opportunities, or non-critical SEO improvements.
+- can_auto_fix=true when the editor can safely remove, rewrite, or normalize the draft using the available evidence.
+- can_auto_fix=false only when the product evidence itself is missing or a human must choose a positioning decision.
 
 PROFILE:
 %s
@@ -82,13 +89,15 @@ ARTICLE:
 
 func (qa *QA) compactCheck(ctx context.Context, profileJSON json.RawMessage, evidence, contentMD string) (*QAOutput, llm.CompletionResp, error) {
 	prompt := fmt.Sprintf(`[[QA_COMPACT]] Audit this article. Return only this compact JSON object shape:
-{"claims":[{"claim":"short product claim","mapped":true,"evidence":"profile or evidence snippet"}],"qa_blocking":false,"geo_score":0.5,"seo_score":0.5,"issues":[]}
+{"claims":[{"claim":"short product claim","mapped":true,"evidence":"profile or evidence snippet"}],"qa_blocking":false,"geo_score":0.5,"seo_score":0.5,"issues":[],"blocking_issues":[],"fix_instructions":[],"human_decision_options":[],"blocking_reason":"","can_auto_fix":false}
 
 Rules:
 - claims must be an array, even if empty.
 - issues must be an array, even if empty.
+- blocking_issues, fix_instructions, and human_decision_options must be arrays.
 - scores must be numbers from 0 to 1.
 - Set qa_blocking=true if an important product claim cannot be mapped.
+- Set can_auto_fix=true only when a safe editor rewrite can resolve the blocking issue using available evidence.
 - Keep each claim under 120 characters.
 
 PROFILE:
@@ -140,6 +149,7 @@ func (qa *QA) Requalify(ctx context.Context, projectID, articleID uuid.UUID) (db
 		QaIssues:   toJSON(qaIssues(out)),
 		QaBlocking: out.QABlocking,
 		Status:     art.Status,
+		QaFeedback: toJSON(out),
 	})
 }
 

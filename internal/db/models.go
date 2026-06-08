@@ -48,6 +48,13 @@ type Article struct {
 	LastPublishRunID       pgtype.UUID        `json:"last_publish_run_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	ContentHash            *string            `json:"content_hash"`
+	RepairAttempts         int32              `json:"repair_attempts"`
+	LastRepairAt           pgtype.Timestamptz `json:"last_repair_at"`
+	RepairStatus           string             `json:"repair_status"`
+	RepairFailureReason    *string            `json:"repair_failure_reason"`
+	RequiresHumanDecision  bool               `json:"requires_human_decision"`
+	HumanDecisionOptions   json.RawMessage    `json:"human_decision_options"`
+	QaFeedback             json.RawMessage    `json:"qa_feedback"`
 }
 
 type AutopilotAuditEvent struct {

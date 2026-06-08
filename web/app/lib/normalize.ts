@@ -42,6 +42,12 @@ export type Article = {
   publish_path: string | null;
   canonical_url_verified_at: string | null;
   content_hash: string | null;
+  repair_attempts: number;
+  repair_status: string;
+  repair_failure_reason: string | null;
+  requires_human_decision: boolean;
+  human_decision_options: Array<{ label?: string; description?: string }>;
+  qa_feedback: Record<string, any>;
   created_at: string | null;
 };
 
@@ -167,6 +173,12 @@ export function normalizeArticle(raw: any): Article {
     publish_path: raw.publish_path ?? null,
     canonical_url_verified_at: normalizeTime(raw.canonical_url_verified_at),
     content_hash: raw.content_hash ?? null,
+    repair_attempts: Number(raw.repair_attempts ?? 0),
+    repair_status: raw.repair_status ?? "idle",
+    repair_failure_reason: raw.repair_failure_reason ?? null,
+    requires_human_decision: Boolean(raw.requires_human_decision),
+    human_decision_options: normalizeArray(raw.human_decision_options),
+    qa_feedback: normalizeObject(raw.qa_feedback),
     created_at: normalizeTime(raw.created_at),
   };
 }

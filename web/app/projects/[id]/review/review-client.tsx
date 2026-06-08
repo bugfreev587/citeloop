@@ -184,9 +184,13 @@ function ReviewArticle({
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
             {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+            {article.requires_human_decision && <Badge tone="amber">human decision</Badge>}
             <span className="text-xs font-semibold text-slate-400">
               geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
             </span>
+            {article.repair_attempts > 0 && (
+              <span className="text-xs font-semibold text-slate-400">repair {article.repair_attempts}/2</span>
+            )}
           </div>
           <h3 className="content-font text-[17px] font-semibold leading-6 text-slate-950">{title}</h3>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
@@ -229,6 +233,7 @@ function ReviewArticle({
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.95fr)] 2xl:grid-cols-[minmax(560px,1fr)_minmax(560px,1fr)]">
         <div className="min-w-0 space-y-4">
           {(repairing || repairFailure) && <AutoRepairStatus repairing={repairing} error={repairFailure} />}
+          {article.requires_human_decision && <HumanDecisionPanel article={article} />}
 
           <OriginalArticlePanel
             content={content}
@@ -246,6 +251,29 @@ function ReviewArticle({
         <ArticleWebPreview article={article} />
       </div>
     </article>
+  );
+}
+
+function HumanDecisionPanel({ article }: { article: Article }) {
+  const options = article.human_decision_options.filter((option) => option?.label || option?.description);
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
+      <div className="text-sm font-bold">Human decision needed</div>
+      <div className="mt-1 text-xs leading-5 text-amber-900">
+        CiteLoop already used the automatic repair budget for this draft. Choose one path instead of editing blindly.
+      </div>
+      {article.repair_failure_reason && <div className="mt-2 text-xs font-semibold text-amber-950">{article.repair_failure_reason}</div>}
+      {options.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {options.map((option, index) => (
+            <div key={`${option.label ?? "option"}-${index}`} className="rounded-md border border-amber-200 bg-white/70 p-3">
+              <div className="text-xs font-bold text-amber-950">{option.label || `Option ${index + 1}`}</div>
+              {option.description && <div className="mt-1 text-xs leading-5 text-amber-900">{option.description}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

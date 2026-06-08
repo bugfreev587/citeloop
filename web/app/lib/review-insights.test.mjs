@@ -82,9 +82,13 @@ test("shouldAutoRepairArticle catches QA and SEO repairable drafts", async () =>
     canonical_url: null,
     resolved_slug: null,
     qa_blocking: false,
+    repair_attempts: 0,
+    requires_human_decision: false,
   };
 
   assert.equal(shouldAutoRepairArticle(baseArticle), false);
   assert.equal(shouldAutoRepairArticle({ ...baseArticle, qa_blocking: true }), true);
   assert.equal(shouldAutoRepairArticle({ ...baseArticle, seo_meta: { ...baseArticle.seo_meta, target_keyword: "" } }), true);
+  assert.equal(shouldAutoRepairArticle({ ...baseArticle, qa_blocking: true, repair_attempts: 2 }), false);
+  assert.equal(shouldAutoRepairArticle({ ...baseArticle, qa_blocking: true, requires_human_decision: true }), false);
 });

@@ -7,6 +7,9 @@ type ReviewArticleLike = {
 
 type RepairableArticleLike = ReviewArticleLike & {
   qa_blocking: boolean;
+  repair_attempts?: number;
+  repair_status?: string;
+  requires_human_decision?: boolean;
 };
 
 export type SEOContribution = {
@@ -128,6 +131,9 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
 }
 
 export function shouldAutoRepairArticle(article: RepairableArticleLike) {
+  if (article.requires_human_decision) return false;
+  if ((article.repair_attempts ?? 0) >= 2) return false;
+  if (article.repair_status === "repairing" || article.repair_status === "exhausted" || article.repair_status === "human_decision") return false;
   if (article.qa_blocking) return true;
   return buildSEOContributions(article).some((row) => row.status === "missing" || (row.label === "Search intent" && row.status !== "ready"));
 }
