@@ -209,6 +209,10 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
         return {
           property: null,
           integrations: null,
+          setup_checklist: [
+            { key: "publisher_write", label: "Publishing", status: "in_progress", next_action: "Save token" },
+          ],
+          capability_mode: "customer_site_pending_verification",
           last_28_days: null,
           technical: null,
           opportunities_by_type: null,
@@ -221,7 +225,7 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
         return { property: null, integrations: null };
       }
       if (url.endsWith("/seo/briefs/latest")) {
-        return { mode: "cold_start", title: "Brief", actions: null, blockers: null, measurement_updates: null };
+        return { mode: "cold_start", title: "Brief", actions: null, blockers: null, geo_blockers: null, geo_opportunities: null, measurement_updates: null };
       }
       return null;
     },
@@ -236,6 +240,8 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
     assert.deepEqual(overview.opportunities_by_type, []);
     assert.deepEqual(overview.actions_by_status, []);
     assert.deepEqual(overview.data_source_warnings, []);
+    assert.equal(overview.capability_mode, "customer_site_pending_verification");
+    assert.equal(overview.setup_checklist[0].key, "publisher_write");
 
     const settings = await client.getSEOSettings("project-1");
     assert.deepEqual(settings.integrations, []);
@@ -243,6 +249,8 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
     const brief = await client.getSEOBrief("project-1");
     assert.deepEqual(brief.actions, []);
     assert.deepEqual(brief.blockers, []);
+    assert.deepEqual(brief.geo_blockers, []);
+    assert.deepEqual(brief.geo_opportunities, []);
     assert.deepEqual(brief.measurement_updates, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -648,6 +656,166 @@ test("GEO crawler APIs call project scoped endpoints", async () => {
     assert.equal(calls[0].init.method, "POST");
     assert.deepEqual(JSON.parse(calls[0].init.body), { target_user_agents: ["OAI-SearchBot"] });
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/geo/crawler-audit/latest");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GEO PR2 APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/geo/overview")) {
+          return { score: null, prompt_sets: [], prompts: [], competitors: [], external_surfaces: [], observations: [] };
+        }
+        if (url.endsWith("/geo/prompt-sets")) {
+          return { prompt_sets: [], prompts: [], competitors: [] };
+        }
+        if (url.endsWith("/geo/observations")) {
+          return [];
+        }
+        if (url.endsWith("/geo/external-surfaces")) {
+          return [];
+        }
+        return { id: "geo-row-1", prompts: [], observations: [], score: null };
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    await client.getGEOOverview("project-1");
+    await client.generateGEOPromptSet("project-1", { locale: "en-US" });
+    await client.listGEOPromptSets("project-1");
+    await client.updateGEOPromptSet("project-1", "set-1", { status: "active" });
+    await client.updateGEOPrompt("project-1", "prompt-1", { status: "paused" });
+    await client.updateGEOCompetitor("project-1", "competitor-1", { status: "paused" });
+    await client.observeGEOManualFixtures("project-1", {
+      engine: "Perplexity",
+      observations: [{ prompt_id: "prompt-1", brand_mentioned: true, cited_urls: ["https://unipost.dev/blog"] }],
+    });
+    await client.listGEOObservations("project-1", { limit: 10 });
+    await client.listGEOExternalSurfaces("project-1");
+    await client.createGEOExternalSurface("project-1", { url: "https://dev.to/unipost/guide", owner_type: "project" });
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/geo/overview");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/geo/prompt-sets/generate");
+    assert.equal(calls[1].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[1].init.body), { locale: "en-US" });
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/geo/prompt-sets");
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/geo/prompt-sets/set-1");
+    assert.equal(calls[3].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[3].init.body), { status: "active" });
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/geo/prompts/prompt-1");
+    assert.equal(calls[4].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[4].init.body), { status: "paused" });
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/geo/competitors/competitor-1");
+    assert.equal(calls[5].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[5].init.body), { status: "paused" });
+    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/geo/runs/observe");
+    assert.equal(calls[6].init.method, "POST");
+    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/geo/observations?limit=10");
+    assert.equal(calls[8].url, "https://api.example.test/api/projects/project-1/geo/external-surfaces");
+    assert.equal(calls[9].url, "https://api.example.test/api/projects/project-1/geo/external-surfaces");
+    assert.equal(calls[9].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GEO PR3 APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/geo/asset-briefs")) {
+          return [];
+        }
+        return { opportunities: [], asset_briefs: [], brief: { id: "brief-1" }, topic: { id: "topic-1" } };
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    await client.analyzeGEOOpportunities("project-1", { limit: 25 });
+    await client.listGEOAssetBriefs("project-1");
+    await client.acceptGEOAssetBrief("project-1", "brief-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/geo/opportunities/analyze");
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { limit: 25 });
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/geo/asset-briefs");
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/geo/asset-briefs/brief-1/accept");
+    assert.equal(calls[2].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GEO PR4 provider and surface monitor APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ run: { id: "run-1" }, observations: [], surfaces: [], checked: 0 }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    await client.observeGEOProvider("project-1", { engine: "Perplexity", max_prompts: 5 });
+    await client.monitorGEOExternalSurfaces("project-1", { limit: 10 });
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/geo/runs/observe-provider");
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { engine: "Perplexity", max_prompts: 5 });
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/geo/external-surfaces/monitor");
+    assert.equal(calls[1].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[1].init.body), { limit: 10 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GEO runs API calls project scoped endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [{ id: "geo-run-1", agent: "geo_observer", status: "degraded" }],
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const runs = await client.listGEORuns("project-1", { agent: "geo_observer", status: "degraded", limit: 10 });
+
+    assert.equal(runs[0].id, "geo-run-1");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/geo/runs?agent=geo_observer&status=degraded&limit=10");
   } finally {
     globalThis.fetch = originalFetch;
   }

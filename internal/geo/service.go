@@ -22,19 +22,48 @@ const (
 )
 
 type Store interface {
+	GetActiveProfile(ctx context.Context, projectID uuid.UUID) (db.ProductProfile, error)
 	GetSEOPropertyForProject(ctx context.Context, projectID uuid.UUID) (db.SeoProperty, error)
+	ListTopics(ctx context.Context, projectID uuid.UUID) ([]db.Topic, error)
 	ListPublishedCanonicalArticlesForSEO(ctx context.Context, projectID uuid.UUID) ([]db.Article, error)
 	StartGEORun(ctx context.Context, arg db.StartGEORunParams) (db.GeoRun, error)
 	FinishGEORun(ctx context.Context, arg db.FinishGEORunParams) (db.GeoRun, error)
 	UpsertAICrawlerAccessSnapshot(ctx context.Context, arg db.UpsertAICrawlerAccessSnapshotParams) (db.AiCrawlerAccessSnapshot, error)
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]db.AiCrawlerAccessSnapshot, error)
 	UpsertCrawlerAccessOpportunity(ctx context.Context, arg db.UpsertCrawlerAccessOpportunityParams) (db.UpsertCrawlerAccessOpportunityRow, error)
+	CreateGEOPromptSet(ctx context.Context, arg db.CreateGEOPromptSetParams) (db.GeoPromptSet, error)
+	ListGEOPromptSets(ctx context.Context, arg db.ListGEOPromptSetsParams) ([]db.GeoPromptSet, error)
+	GetGEOPromptSetForProject(ctx context.Context, arg db.GetGEOPromptSetForProjectParams) (db.GeoPromptSet, error)
+	UpdateGEOPromptSet(ctx context.Context, arg db.UpdateGEOPromptSetParams) (db.GeoPromptSet, error)
+	CreateGEOPrompt(ctx context.Context, arg db.CreateGEOPromptParams) (db.GeoPrompt, error)
+	ListGEOPrompts(ctx context.Context, arg db.ListGEOPromptsParams) ([]db.GeoPrompt, error)
+	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]db.GeoPrompt, error)
+	UpdateGEOPrompt(ctx context.Context, arg db.UpdateGEOPromptParams) (db.GeoPrompt, error)
+	UpsertGEOCompetitor(ctx context.Context, arg db.UpsertGEOCompetitorParams) (db.GeoCompetitor, error)
+	ListGEOCompetitors(ctx context.Context, arg db.ListGEOCompetitorsParams) ([]db.GeoCompetitor, error)
+	UpdateGEOCompetitor(ctx context.Context, arg db.UpdateGEOCompetitorParams) (db.GeoCompetitor, error)
+	UpsertGEOExternalSurface(ctx context.Context, arg db.UpsertGEOExternalSurfaceParams) (db.GeoExternalSurface, error)
+	ListGEOExternalSurfaces(ctx context.Context, arg db.ListGEOExternalSurfacesParams) ([]db.GeoExternalSurface, error)
+	ListProjectOwnedGEOExternalSurfaces(ctx context.Context, projectID uuid.UUID) ([]db.GeoExternalSurface, error)
+	CreateGEOObservation(ctx context.Context, arg db.CreateGEOObservationParams) (db.GeoObservation, error)
+	ListGEOObservations(ctx context.Context, arg db.ListGEOObservationsParams) ([]db.GeoObservation, error)
+	ListGEOObservationsForRun(ctx context.Context, arg db.ListGEOObservationsForRunParams) ([]db.GeoObservation, error)
+	CreateGEOVisibilityScore(ctx context.Context, arg db.CreateGEOVisibilityScoreParams) (db.GeoVisibilityScore, error)
+	GetLatestGEOVisibilityScore(ctx context.Context, projectID uuid.UUID) (db.GeoVisibilityScore, error)
+	ListGEOVisibilityScores(ctx context.Context, arg db.ListGEOVisibilityScoresParams) ([]db.GeoVisibilityScore, error)
+	UpsertGEOObservationOpportunity(ctx context.Context, arg db.UpsertGEOObservationOpportunityParams) (db.UpsertGEOObservationOpportunityRow, error)
+	CreateGEOAssetBrief(ctx context.Context, arg db.CreateGEOAssetBriefParams) (db.GeoAssetBrief, error)
+	ListGEOAssetBriefs(ctx context.Context, arg db.ListGEOAssetBriefsParams) ([]db.GeoAssetBrief, error)
+	GetGEOAssetBriefForProject(ctx context.Context, arg db.GetGEOAssetBriefForProjectParams) (db.GeoAssetBrief, error)
+	UpdateGEOAssetBriefStatus(ctx context.Context, arg db.UpdateGEOAssetBriefStatusParams) (db.GeoAssetBrief, error)
+	CreateTopic(ctx context.Context, arg db.CreateTopicParams) (db.Topic, error)
 }
 
 type Service struct {
-	Q          Store
-	HTTPClient *http.Client
-	Now        func() time.Time
+	Q              Store
+	HTTPClient     *http.Client
+	AnswerProvider AnswerProvider
+	Now            func() time.Time
 }
 
 type CrawlerAuditRequest struct {

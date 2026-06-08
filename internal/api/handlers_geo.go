@@ -10,7 +10,11 @@ import (
 )
 
 func (s *Server) geoService() geopkg.Service {
-	return geopkg.Service{Q: s.Q}
+	service := geopkg.Service{Q: s.Q}
+	if s.Env.PerplexityAPIKey != "" {
+		service.AnswerProvider = geopkg.NewPerplexityProvider(s.Env.PerplexityAPIKey, s.Env.PerplexityBaseURL, s.Env.PerplexityModel, nil)
+	}
+	return service
 }
 
 func (s *Server) runGEOCrawlerAudit(w http.ResponseWriter, r *http.Request) {

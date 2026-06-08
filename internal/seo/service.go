@@ -82,12 +82,14 @@ type setupChecklistInput struct {
 }
 
 type Brief struct {
-	Mode        string              `json:"mode"`
-	Title       string              `json:"title"`
-	GeneratedAt time.Time           `json:"generated_at"`
-	Actions     []db.SeoOpportunity `json:"actions"`
-	Blockers    []string            `json:"blockers"`
-	Measurement []string            `json:"measurement_updates"`
+	Mode             string              `json:"mode"`
+	Title            string              `json:"title"`
+	GeneratedAt      time.Time           `json:"generated_at"`
+	Actions          []db.SeoOpportunity `json:"actions"`
+	Blockers         []string            `json:"blockers"`
+	GEOBlockers      []string            `json:"geo_blockers"`
+	GEOOpportunities []db.SeoOpportunity `json:"geo_opportunities"`
+	Measurement      []string            `json:"measurement_updates"`
 }
 
 type TechnicalResult struct {
@@ -539,7 +541,7 @@ func (s Service) Brief(ctx context.Context, projectID uuid.UUID) (Brief, error) 
 	opps, err := s.Q.ListSEOOpportunities(ctx, db.ListSEOOpportunitiesParams{
 		ProjectID: projectID,
 		Status:    "open",
-		LimitRows: DefaultBriefLimit,
+		LimitRows: 50,
 	})
 	if err != nil {
 		return Brief{}, err
@@ -555,14 +557,60 @@ func (s Service) Brief(ctx context.Context, projectID uuid.UUID) (Brief, error) 
 	if !hasConnectedGSC(overview.Integrations) {
 		blockers = append(blockers, "Google Search Console service account is not connected.")
 	}
+	geoBlockers, geoOpps := briefGEOSections(opps)
 	return Brief{
-		Mode:        mode,
-		Title:       title,
-		GeneratedAt: s.now(),
-		Actions:     nonNilSlice(opps),
-		Blockers:    blockers,
-		Measurement: []string{"No completed SEO measurement windows yet."},
+		Mode:             mode,
+		Title:            title,
+		GeneratedAt:      s.now(),
+		Actions:          firstSEOOpportunities(opps, DefaultBriefLimit),
+		Blockers:         blockers,
+		GEOBlockers:      geoBlockers,
+		GEOOpportunities: geoOpps,
+		Measurement:      []string{"No completed SEO measurement windows yet."},
 	}, nil
+}
+
+func briefGEOSections(opps []db.SeoOpportunity) ([]string, []db.SeoOpportunity) {
+	blockers := []string{}
+	geoOpps := []db.SeoOpportunity{}
+	for _, opp := range opps {
+		if !strings.HasPrefix(opp.Type, "geo_") {
+			continue
+		}
+		if opp.Type == "geo_crawler_access_blocked" {
+			blockers = append(blockers, geoBlockerText(opp))
+			continue
+		}
+		if len(geoOpps) < 5 {
+			geoOpps = append(geoOpps, opp)
+		}
+	}
+	return blockers, geoOpps
+}
+
+func geoBlockerText(opp db.SeoOpportunity) string {
+	target := ""
+	if opp.PageUrl != nil && strings.TrimSpace(*opp.PageUrl) != "" {
+		target = strings.TrimSpace(*opp.PageUrl)
+	} else if opp.Query != nil && strings.TrimSpace(*opp.Query) != "" {
+		target = strings.TrimSpace(*opp.Query)
+	} else {
+		target = opp.Type
+	}
+	if opp.RecommendedAction != nil && strings.TrimSpace(*opp.RecommendedAction) != "" {
+		return fmt.Sprintf("GEO crawler access blocker on %s: %s", target, strings.TrimSpace(*opp.RecommendedAction))
+	}
+	return "GEO crawler access blocker on " + target
+}
+
+func firstSEOOpportunities(opps []db.SeoOpportunity, limit int) []db.SeoOpportunity {
+	if opps == nil {
+		return []db.SeoOpportunity{}
+	}
+	if limit <= 0 || len(opps) <= limit {
+		return opps
+	}
+	return opps[:limit]
 }
 
 func (s Service) recordTechnicalCheck(

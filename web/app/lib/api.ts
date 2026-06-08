@@ -216,6 +216,8 @@ export type SetupChecklistItem = {
 export type SEOOverview = {
   property?: SEOProperty | null;
   integrations: SEOIntegration[];
+  setup_checklist: SetupChecklistItem[];
+  capability_mode: "public_only" | "managed_content_connected" | "customer_site_pending_verification" | "customer_site_connected" | string;
   last_28_days: {
     clicks_28d?: RawPgNumeric;
     impressions_28d?: RawPgNumeric;
@@ -232,8 +234,6 @@ export type SEOOverview = {
   actions_by_status: Array<{ status: string; count: number }>;
   cold_start: boolean;
   handoff_ready_for_autopilot: boolean;
-  setup_checklist: SetupChecklistItem[];
-  capability_mode: "public_only" | "managed_content_connected" | "customer_site_pending_verification" | "customer_site_connected" | string;
   data_source_warnings?: string[];
 };
 
@@ -271,6 +271,8 @@ export type SEOBrief = {
   generated_at: string;
   actions: SEOOpportunity[];
   blockers: string[];
+  geo_blockers: string[];
+  geo_opportunities: SEOOpportunity[];
   measurement_updates: string[];
 };
 
@@ -359,6 +361,208 @@ export type GEOCrawlerAuditResult = {
   data_source_notes: string[];
 };
 
+export type GEORun = {
+  id: string;
+  project_id?: string;
+  agent: string;
+  status: string;
+  provider?: string;
+  started_at?: any;
+  finished_at?: any;
+  input?: any;
+  output?: any;
+  error?: string | null;
+  cost_usd?: RawPgNumeric;
+};
+
+export type GEOPromptSet = {
+  id: string;
+  project_id: string;
+  name: string;
+  status: "draft" | "active" | "paused" | "archived" | string;
+  locale: string;
+  created_by_run_id?: any;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type GEOPrompt = {
+  id: string;
+  project_id: string;
+  prompt_set_id: string;
+  prompt_text: string;
+  intent_type: string;
+  target_persona: string;
+  target_topic: string;
+  locale: string;
+  target_engines: string[];
+  priority: number;
+  source: string;
+  status: string;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type GEOPromptUpdateInput = {
+  prompt_text?: string;
+  intent_type?: string;
+  target_persona?: string;
+  target_topic?: string;
+  locale?: string;
+  target_engines?: string[];
+  priority?: number;
+  source?: string;
+  status?: string;
+};
+
+export type GEOCompetitor = {
+  id: string;
+  project_id: string;
+  name: string;
+  domains: string[];
+  aliases: string[];
+  source: string;
+  status: string;
+};
+
+export type GEOCompetitorUpdateInput = {
+  name?: string;
+  domains?: string[];
+  aliases?: string[];
+  source?: string;
+  status?: string;
+};
+
+export type GEOExternalSurface = {
+  id: string;
+  project_id: string;
+  url: string;
+  normalized_url: string;
+  platform: string;
+  surface_type: string;
+  owner_type: "project" | "user" | "third_party" | string;
+  canonical_target_url?: string | null;
+  backlink_state: string;
+  last_http_status?: number | null;
+  last_cited_at?: any;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type GEOObservation = {
+  id: string;
+  project_id: string;
+  run_id: string;
+  prompt_id?: any;
+  engine: string;
+  locale: string;
+  source_type: string;
+  brand_mentioned: boolean;
+  brand_position?: number | null;
+  project_citation_count: number;
+  project_citation_rank_best?: number | null;
+  project_cited_surface_ids: string[];
+  cited_urls: string[];
+  competitor_mentions: string[];
+  competitor_citations: string[];
+  observation_state: string;
+  answer_summary: string;
+  evidence_snippets: string[];
+  confidence: string;
+  observed_at?: any;
+};
+
+export type GEOVisibilityScore = {
+  id: string;
+  project_id: string;
+  run_id?: any;
+  score?: RawPgNumeric;
+  coverage?: RawPgNumeric;
+  confidence: "high" | "medium" | "low" | "insufficient_data" | string;
+  breakdown: Record<string, any>;
+  prompt_count_total: number;
+  prompt_count_observed: number;
+  engine_count_observed: number;
+  computed_at?: any;
+};
+
+export type GEOAssetBrief = {
+  id: string;
+  project_id: string;
+  opportunity_id: string;
+  asset_type: string;
+  status: "draft" | "ready_for_review" | "accepted" | "converted" | "dismissed" | string;
+  target_prompts: string[];
+  required_evidence: string[];
+  recommended_outline: string[];
+  internal_link_plan: string[];
+  publication_surface: string;
+  created_by_run_id?: any;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type GEOOverview = {
+  score?: GEOVisibilityScore | null;
+  prompt_sets: GEOPromptSet[];
+  prompts: GEOPrompt[];
+  competitors: GEOCompetitor[];
+  external_surfaces: GEOExternalSurface[];
+  observations: GEOObservation[];
+};
+
+export type GEOPromptSetBundle = {
+  prompt_sets: GEOPromptSet[];
+  prompts: GEOPrompt[];
+  competitors: GEOCompetitor[];
+};
+
+export type ManualFixtureObservationInput = {
+  prompt_id: string;
+  answer_summary?: string;
+  cited_urls?: string[];
+  brand_mentioned: boolean;
+  brand_position?: number | null;
+  competitor_mentions?: string[];
+  competitor_citations?: string[];
+  evidence_snippets?: string[];
+  project_citation_rank?: number;
+  confidence?: string;
+};
+
+export type ManualFixtureRequest = {
+  engine: string;
+  locale?: string;
+  observations: ManualFixtureObservationInput[];
+};
+
+export type GEOProviderObserveRequest = {
+  engine?: string;
+  locale?: string;
+  max_prompts?: number;
+  budget_usd?: number;
+};
+
+export type GEOProviderObserveResult = {
+  run?: any;
+  observations: GEOObservation[];
+  score?: GEOVisibilityScore | null;
+  cost_usd?: number;
+  data_source_notes?: string[];
+};
+
+export type GEOExternalSurfaceMonitorRequest = {
+  limit?: number;
+};
+
+export type GEOExternalSurfaceMonitorResult = {
+  run?: any;
+  surfaces: GEOExternalSurface[];
+  checked: number;
+  failed: number;
+  data_source_notes?: string[];
+};
+
 export function defaultProjectConfig(): ProjectConfig {
   return {
     cadence_per_week: 3,
@@ -425,14 +629,14 @@ function normalizeSEOOverview(raw: any): SEOOverview {
   return {
     property: data.property ?? null,
     integrations: arrayFrom<SEOIntegration>(data.integrations),
+    setup_checklist: arrayFrom<SetupChecklistItem>(data.setup_checklist),
+    capability_mode: data.capability_mode ?? "public_only",
     last_28_days: data.last_28_days ?? {},
     technical: data.technical ?? {},
     opportunities_by_type: arrayFrom(data.opportunities_by_type),
     actions_by_status: arrayFrom(data.actions_by_status),
     cold_start: Boolean(data.cold_start),
     handoff_ready_for_autopilot: Boolean(data.handoff_ready_for_autopilot),
-    setup_checklist: arrayFrom<SetupChecklistItem>(data.setup_checklist),
-    capability_mode: data.capability_mode ?? "public_only",
     data_source_warnings: arrayFrom<string>(data.data_source_warnings).map(String),
   };
 }
@@ -452,6 +656,8 @@ function normalizeSEOBrief(raw: any): SEOBrief {
     generated_at: data.generated_at ?? "",
     actions: arrayFrom<SEOOpportunity>(data.actions),
     blockers: arrayFrom<string>(data.blockers).map(String),
+    geo_blockers: arrayFrom<string>(data.geo_blockers).map(String),
+    geo_opportunities: arrayFrom<SEOOpportunity>(data.geo_opportunities),
     measurement_updates: arrayFrom<string>(data.measurement_updates).map(String),
   };
 }
@@ -488,6 +694,172 @@ function normalizeGEOCrawlerAuditResult(raw: any): GEOCrawlerAuditResult {
     checked_urls: Number(data.checked_urls ?? 0),
     created_blockers: Number(data.created_blockers ?? 0),
     data_source_notes: arrayFrom<string>(data.data_source_notes).map(String),
+  };
+}
+
+function normalizeGEOPromptSet(raw: any): GEOPromptSet {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    name: data.name ?? "",
+    status: data.status ?? "draft",
+    locale: data.locale ?? "en-US",
+    created_by_run_id: data.created_by_run_id ?? undefined,
+    created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeGEOPrompt(raw: any): GEOPrompt {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    prompt_set_id: data.prompt_set_id ?? "",
+    prompt_text: data.prompt_text ?? "",
+    intent_type: data.intent_type ?? "",
+    target_persona: data.target_persona ?? "",
+    target_topic: data.target_topic ?? "",
+    locale: data.locale ?? "en-US",
+    target_engines: arrayFrom<string>(data.target_engines).map(String),
+    priority: Number(data.priority ?? 0),
+    source: data.source ?? "",
+    status: data.status ?? "active",
+    created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeGEOCompetitor(raw: any): GEOCompetitor {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    name: data.name ?? "",
+    domains: arrayFrom<string>(data.domains).map(String),
+    aliases: arrayFrom<string>(data.aliases).map(String),
+    source: data.source ?? "manual",
+    status: data.status ?? "active",
+  };
+}
+
+function normalizeGEOExternalSurface(raw: any): GEOExternalSurface {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    url: data.url ?? "",
+    normalized_url: data.normalized_url ?? "",
+    platform: data.platform ?? "site",
+    surface_type: data.surface_type ?? "page",
+    owner_type: data.owner_type ?? "project",
+    canonical_target_url: data.canonical_target_url ?? null,
+    backlink_state: data.backlink_state ?? "unknown",
+    last_http_status: data.last_http_status ?? null,
+    last_cited_at: data.last_cited_at ?? undefined,
+    created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeGEOObservation(raw: any): GEOObservation {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    run_id: data.run_id ?? "",
+    prompt_id: data.prompt_id ?? undefined,
+    engine: data.engine ?? "",
+    locale: data.locale ?? "en-US",
+    source_type: data.source_type ?? "",
+    brand_mentioned: Boolean(data.brand_mentioned),
+    brand_position: data.brand_position ?? null,
+    project_citation_count: Number(data.project_citation_count ?? 0),
+    project_citation_rank_best: data.project_citation_rank_best ?? null,
+    project_cited_surface_ids: arrayFrom<string>(data.project_cited_surface_ids).map(String),
+    cited_urls: arrayFrom<string>(data.cited_urls).map(String),
+    competitor_mentions: arrayFrom<string>(data.competitor_mentions).map(String),
+    competitor_citations: arrayFrom<string>(data.competitor_citations).map(String),
+    observation_state: data.observation_state ?? "observed",
+    answer_summary: data.answer_summary ?? "",
+    evidence_snippets: arrayFrom<string>(data.evidence_snippets).map(String),
+    confidence: data.confidence ?? "medium",
+    observed_at: data.observed_at ?? undefined,
+  };
+}
+
+function normalizeGEOVisibilityScore(raw: any): GEOVisibilityScore | null {
+  if (!raw) return null;
+  return {
+    id: raw.id ?? "",
+    project_id: raw.project_id ?? "",
+    run_id: raw.run_id ?? undefined,
+    score: raw.score,
+    coverage: raw.coverage,
+    confidence: raw.confidence ?? "insufficient_data",
+    breakdown: raw.breakdown ?? {},
+    prompt_count_total: Number(raw.prompt_count_total ?? 0),
+    prompt_count_observed: Number(raw.prompt_count_observed ?? 0),
+    engine_count_observed: Number(raw.engine_count_observed ?? 0),
+    computed_at: raw.computed_at ?? undefined,
+  };
+}
+
+function normalizeGEORun(raw: any): GEORun {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? undefined,
+    agent: data.agent ?? "",
+    status: data.status ?? "",
+    provider: data.provider ?? undefined,
+    started_at: data.started_at ?? undefined,
+    finished_at: data.finished_at ?? undefined,
+    input: data.input ?? undefined,
+    output: data.output ?? undefined,
+    error: data.error ?? null,
+    cost_usd: data.cost_usd ?? undefined,
+  };
+}
+
+function normalizeGEOAssetBrief(raw: any): GEOAssetBrief {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    opportunity_id: data.opportunity_id ?? "",
+    asset_type: data.asset_type ?? "",
+    status: data.status ?? "draft",
+    target_prompts: arrayFrom<string>(data.target_prompts).map(String),
+    required_evidence: arrayFrom<string>(data.required_evidence).map(String),
+    recommended_outline: arrayFrom<string>(data.recommended_outline).map(String),
+    internal_link_plan: arrayFrom<string>(data.internal_link_plan).map(String),
+    publication_surface: data.publication_surface ?? "blog",
+    created_by_run_id: data.created_by_run_id ?? undefined,
+    created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeGEOOverview(raw: any): GEOOverview {
+  const data = raw ?? {};
+  return {
+    score: normalizeGEOVisibilityScore(data.score),
+    prompt_sets: arrayFrom(data.prompt_sets).map(normalizeGEOPromptSet),
+    prompts: arrayFrom(data.prompts).map(normalizeGEOPrompt),
+    competitors: arrayFrom(data.competitors).map(normalizeGEOCompetitor),
+    external_surfaces: arrayFrom(data.external_surfaces).map(normalizeGEOExternalSurface),
+    observations: arrayFrom(data.observations).map(normalizeGEOObservation),
+  };
+}
+
+function normalizeGEOPromptSetBundle(raw: any): GEOPromptSetBundle {
+  const data = raw ?? {};
+  return {
+    prompt_sets: arrayFrom(data.prompt_sets).map(normalizeGEOPromptSet),
+    prompts: arrayFrom(data.prompts).map(normalizeGEOPrompt),
+    competitors: arrayFrom(data.competitors).map(normalizeGEOCompetitor),
   };
 }
 
@@ -652,10 +1024,6 @@ export function createApi(auth?: AuthOptions) {
     );
     return normalizePublisherConnection(raw);
   },
-  testPublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
-    const raw = await req<any>(`/projects/${id}/publisher-connections/${connectionID}/test`, { method: "POST" }, auth);
-    return normalizePublisherConnection(raw);
-  },
   upsertPublisherCredential: async (
     id: string,
     connectionID: string,
@@ -666,6 +1034,10 @@ export function createApi(auth?: AuthOptions) {
       { method: "PUT", body: JSON.stringify(body) },
       auth,
     );
+    return normalizePublisherConnection(raw);
+  },
+  testPublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
+    const raw = await req<any>(`/projects/${id}/publisher-connections/${connectionID}/test`, { method: "POST" }, auth);
     return normalizePublisherConnection(raw);
   },
   revokePublisherCredential: async (id: string, connectionID: string): Promise<PublisherConnection> => {
@@ -715,6 +1087,104 @@ export function createApi(auth?: AuthOptions) {
   getLatestGEOCrawlerAudit: async (id: string): Promise<{ snapshots: AICrawlerAccessSnapshot[] }> => {
     const raw = await req<any>(`/projects/${id}/geo/crawler-audit/latest`, undefined, auth);
     return { snapshots: arrayFrom(raw?.snapshots).map(normalizeAICrawlerAccessSnapshot) };
+  },
+  getGEOOverview: async (id: string): Promise<GEOOverview> => {
+    const raw = await req<any>(`/projects/${id}/geo/overview`, undefined, auth);
+    return normalizeGEOOverview(raw);
+  },
+  listGEORuns: async (id: string, options: RunListOptions = {}): Promise<GEORun[]> => {
+    const params = new URLSearchParams();
+    if (options.agent) params.set("agent", options.agent);
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.cursor) params.set("cursor", options.cursor);
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any[]>(`/projects/${id}/geo/runs${suffix}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeGEORun);
+  },
+  generateGEOPromptSet: async (id: string, body: { name?: string; locale?: string; status?: string; target_engines?: string[] } = {}) => {
+    return req<any>(`/projects/${id}/geo/prompt-sets/generate`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  listGEOPromptSets: async (id: string, options: { status?: string; prompt_status?: string } = {}): Promise<GEOPromptSetBundle> => {
+    const params = new URLSearchParams();
+    if (options.status) params.set("status", options.status);
+    if (options.prompt_status) params.set("prompt_status", options.prompt_status);
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any>(`/projects/${id}/geo/prompt-sets${suffix}`, undefined, auth);
+    return normalizeGEOPromptSetBundle(raw);
+  },
+  updateGEOPromptSet: async (id: string, promptSetID: string, body: { name?: string; status?: string; locale?: string }): Promise<GEOPromptSet> => {
+    const raw = await req<any>(`/projects/${id}/geo/prompt-sets/${promptSetID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+    return normalizeGEOPromptSet(raw);
+  },
+  updateGEOPrompt: async (id: string, promptID: string, body: GEOPromptUpdateInput): Promise<GEOPrompt> => {
+    const raw = await req<any>(`/projects/${id}/geo/prompts/${promptID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+    return normalizeGEOPrompt(raw);
+  },
+  updateGEOCompetitor: async (id: string, competitorID: string, body: GEOCompetitorUpdateInput): Promise<GEOCompetitor> => {
+    const raw = await req<any>(`/projects/${id}/geo/competitors/${competitorID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+    return normalizeGEOCompetitor(raw);
+  },
+  observeGEOManualFixtures: async (id: string, body: ManualFixtureRequest) => {
+    return req<any>(`/projects/${id}/geo/runs/observe`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  observeGEOProvider: async (id: string, body: GEOProviderObserveRequest = {}): Promise<GEOProviderObserveResult> => {
+    const raw = await req<any>(`/projects/${id}/geo/runs/observe-provider`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return {
+      run: raw?.run,
+      observations: arrayFrom(raw?.observations).map(normalizeGEOObservation),
+      score: normalizeGEOVisibilityScore(raw?.score),
+      cost_usd: Number(raw?.cost_usd ?? 0),
+      data_source_notes: arrayFrom<string>(raw?.data_source_notes).map(String),
+    };
+  },
+  listGEOObservations: async (id: string, options: { prompt_id?: string; engine?: string; source_type?: string; limit?: number } = {}): Promise<GEOObservation[]> => {
+    const params = new URLSearchParams();
+    if (options.prompt_id) params.set("prompt_id", options.prompt_id);
+    if (options.engine) params.set("engine", options.engine);
+    if (options.source_type) params.set("source_type", options.source_type);
+    if (options.limit) params.set("limit", String(options.limit));
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any[]>(`/projects/${id}/geo/observations${suffix}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeGEOObservation);
+  },
+  listGEOExternalSurfaces: async (id: string, options: { owner_type?: string } = {}): Promise<GEOExternalSurface[]> => {
+    const params = new URLSearchParams();
+    if (options.owner_type) params.set("owner_type", options.owner_type);
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any[]>(`/projects/${id}/geo/external-surfaces${suffix}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeGEOExternalSurface);
+  },
+  createGEOExternalSurface: async (
+    id: string,
+    body: { url: string; normalized_url?: string; platform?: string; surface_type?: string; owner_type?: string; canonical_target_url?: string; backlink_state?: string },
+  ): Promise<GEOExternalSurface> => {
+    const raw = await req<any>(`/projects/${id}/geo/external-surfaces`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return normalizeGEOExternalSurface(raw);
+  },
+  monitorGEOExternalSurfaces: async (id: string, body: GEOExternalSurfaceMonitorRequest = {}): Promise<GEOExternalSurfaceMonitorResult> => {
+    const raw = await req<any>(`/projects/${id}/geo/external-surfaces/monitor`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return {
+      run: raw?.run,
+      surfaces: arrayFrom(raw?.surfaces).map(normalizeGEOExternalSurface),
+      checked: Number(raw?.checked ?? 0),
+      failed: Number(raw?.failed ?? 0),
+      data_source_notes: arrayFrom<string>(raw?.data_source_notes).map(String),
+    };
+  },
+  analyzeGEOOpportunities: async (id: string, body: { limit?: number } = {}) => {
+    return req<any>(`/projects/${id}/geo/opportunities/analyze`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  listGEOAssetBriefs: async (id: string, options: { status?: string; limit?: number } = {}): Promise<GEOAssetBrief[]> => {
+    const params = new URLSearchParams();
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any[]>(`/projects/${id}/geo/asset-briefs${suffix}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeGEOAssetBrief);
+  },
+  acceptGEOAssetBrief: async (id: string, briefID: string) => {
+    return req<any>(`/projects/${id}/geo/asset-briefs/${briefID}/accept`, { method: "POST" }, auth);
   },
   listSEOOpportunities: async (id: string, options: SEOListOptions = {}): Promise<SEOOpportunity[]> => {
     const params = new URLSearchParams();

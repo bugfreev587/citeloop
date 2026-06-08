@@ -37,6 +37,10 @@ func TestSchedulerExposesSEOTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickSEO
 }
 
+func TestSchedulerExposesGEOTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickGEO
+}
+
 func TestStartRegistersNotificationTick(t *testing.T) {
 	raw, err := os.ReadFile("helpers.go")
 	if err != nil {
@@ -51,5 +55,8 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	}
 	if !strings.Contains(source, "TickSEO") || !strings.Contains(source, "0 3 * * *") {
 		t.Fatal("Start must register TickSEO daily after generation")
+	}
+	if !strings.Contains(source, "TickGEO") || !strings.Contains(source, "@weekly") {
+		t.Fatal("Start must register TickGEO weekly")
 	}
 }

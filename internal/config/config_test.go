@@ -105,3 +105,24 @@ func TestFromEnvReadsNotificationSecretKey(t *testing.T) {
 		t.Fatalf("NotificationSecretKey = %q", env.NotificationSecretKey)
 	}
 }
+
+func TestFromEnvReadsGEOProviderConfig(t *testing.T) {
+	t.Setenv("PERPLEXITY_API_KEY", "pplx-test")
+	t.Setenv("PERPLEXITY_BASE_URL", "")
+	t.Setenv("PERPLEXITY_MODEL", "")
+	t.Setenv("GEO_PROVIDER_RUN_BUDGET_USD", "")
+
+	env := FromEnv()
+	if env.PerplexityAPIKey != "pplx-test" {
+		t.Fatalf("PerplexityAPIKey = %q", env.PerplexityAPIKey)
+	}
+	if env.PerplexityBaseURL != "https://api.perplexity.ai" {
+		t.Fatalf("PerplexityBaseURL = %q", env.PerplexityBaseURL)
+	}
+	if env.PerplexityModel != "sonar-pro" {
+		t.Fatalf("PerplexityModel = %q", env.PerplexityModel)
+	}
+	if env.GEOProviderRunBudgetUSD != 1 {
+		t.Fatalf("GEOProviderRunBudgetUSD = %f, want 1", env.GEOProviderRunBudgetUSD)
+	}
+}

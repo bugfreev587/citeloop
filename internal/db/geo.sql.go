@@ -13,6 +13,301 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createGEOAssetBrief = `-- name: CreateGEOAssetBrief :one
+insert into geo_asset_briefs
+  (project_id, opportunity_id, asset_type, status, target_prompts, required_evidence,
+   recommended_outline, internal_link_plan, publication_surface, created_by_run_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+on conflict (project_id, opportunity_id) do update set
+  asset_type = excluded.asset_type,
+  status = excluded.status,
+  target_prompts = excluded.target_prompts,
+  required_evidence = excluded.required_evidence,
+  recommended_outline = excluded.recommended_outline,
+  internal_link_plan = excluded.internal_link_plan,
+  publication_surface = excluded.publication_surface,
+  created_by_run_id = coalesce(geo_asset_briefs.created_by_run_id, excluded.created_by_run_id),
+  updated_at = now()
+returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at
+`
+
+type CreateGEOAssetBriefParams struct {
+	ProjectID          uuid.UUID       `json:"project_id"`
+	OpportunityID      uuid.UUID       `json:"opportunity_id"`
+	AssetType          string          `json:"asset_type"`
+	Status             string          `json:"status"`
+	TargetPrompts      json.RawMessage `json:"target_prompts"`
+	RequiredEvidence   json.RawMessage `json:"required_evidence"`
+	RecommendedOutline json.RawMessage `json:"recommended_outline"`
+	InternalLinkPlan   json.RawMessage `json:"internal_link_plan"`
+	PublicationSurface string          `json:"publication_surface"`
+	CreatedByRunID     pgtype.UUID     `json:"created_by_run_id"`
+}
+
+func (q *Queries) CreateGEOAssetBrief(ctx context.Context, arg CreateGEOAssetBriefParams) (GeoAssetBrief, error) {
+	row := q.db.QueryRow(ctx, createGEOAssetBrief,
+		arg.ProjectID,
+		arg.OpportunityID,
+		arg.AssetType,
+		arg.Status,
+		arg.TargetPrompts,
+		arg.RequiredEvidence,
+		arg.RecommendedOutline,
+		arg.InternalLinkPlan,
+		arg.PublicationSurface,
+		arg.CreatedByRunID,
+	)
+	var i GeoAssetBrief
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.AssetType,
+		&i.Status,
+		&i.TargetPrompts,
+		&i.RequiredEvidence,
+		&i.RecommendedOutline,
+		&i.InternalLinkPlan,
+		&i.PublicationSurface,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createGEOObservation = `-- name: CreateGEOObservation :one
+insert into geo_observations
+  (project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned,
+   brand_position, project_citation_count, project_citation_rank_best,
+   project_cited_surface_ids, cited_urls, competitor_mentions, competitor_citations,
+   observation_state, answer_summary, evidence_snippets, confidence, observed_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+returning id, project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned, brand_position, project_citation_count, project_citation_rank_best, project_cited_surface_ids, cited_urls, competitor_mentions, competitor_citations, observation_state, answer_summary, evidence_snippets, confidence, observed_at
+`
+
+type CreateGEOObservationParams struct {
+	ProjectID               uuid.UUID          `json:"project_id"`
+	RunID                   uuid.UUID          `json:"run_id"`
+	PromptID                pgtype.UUID        `json:"prompt_id"`
+	Engine                  string             `json:"engine"`
+	Locale                  string             `json:"locale"`
+	SourceType              string             `json:"source_type"`
+	BrandMentioned          bool               `json:"brand_mentioned"`
+	BrandPosition           *int32             `json:"brand_position"`
+	ProjectCitationCount    int32              `json:"project_citation_count"`
+	ProjectCitationRankBest *int32             `json:"project_citation_rank_best"`
+	ProjectCitedSurfaceIds  json.RawMessage    `json:"project_cited_surface_ids"`
+	CitedUrls               json.RawMessage    `json:"cited_urls"`
+	CompetitorMentions      json.RawMessage    `json:"competitor_mentions"`
+	CompetitorCitations     json.RawMessage    `json:"competitor_citations"`
+	ObservationState        string             `json:"observation_state"`
+	AnswerSummary           string             `json:"answer_summary"`
+	EvidenceSnippets        json.RawMessage    `json:"evidence_snippets"`
+	Confidence              string             `json:"confidence"`
+	ObservedAt              pgtype.Timestamptz `json:"observed_at"`
+}
+
+func (q *Queries) CreateGEOObservation(ctx context.Context, arg CreateGEOObservationParams) (GeoObservation, error) {
+	row := q.db.QueryRow(ctx, createGEOObservation,
+		arg.ProjectID,
+		arg.RunID,
+		arg.PromptID,
+		arg.Engine,
+		arg.Locale,
+		arg.SourceType,
+		arg.BrandMentioned,
+		arg.BrandPosition,
+		arg.ProjectCitationCount,
+		arg.ProjectCitationRankBest,
+		arg.ProjectCitedSurfaceIds,
+		arg.CitedUrls,
+		arg.CompetitorMentions,
+		arg.CompetitorCitations,
+		arg.ObservationState,
+		arg.AnswerSummary,
+		arg.EvidenceSnippets,
+		arg.Confidence,
+		arg.ObservedAt,
+	)
+	var i GeoObservation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.PromptID,
+		&i.Engine,
+		&i.Locale,
+		&i.SourceType,
+		&i.BrandMentioned,
+		&i.BrandPosition,
+		&i.ProjectCitationCount,
+		&i.ProjectCitationRankBest,
+		&i.ProjectCitedSurfaceIds,
+		&i.CitedUrls,
+		&i.CompetitorMentions,
+		&i.CompetitorCitations,
+		&i.ObservationState,
+		&i.AnswerSummary,
+		&i.EvidenceSnippets,
+		&i.Confidence,
+		&i.ObservedAt,
+	)
+	return i, err
+}
+
+const createGEOPrompt = `-- name: CreateGEOPrompt :one
+insert into geo_prompts
+  (project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic,
+   locale, target_engines, priority, source, status)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+on conflict (project_id, prompt_set_id, prompt_text, locale) do update set
+  intent_type = excluded.intent_type,
+  target_persona = excluded.target_persona,
+  target_topic = excluded.target_topic,
+  target_engines = excluded.target_engines,
+  priority = excluded.priority,
+  source = excluded.source,
+  status = excluded.status,
+  updated_at = now()
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at
+`
+
+type CreateGEOPromptParams struct {
+	ProjectID     uuid.UUID       `json:"project_id"`
+	PromptSetID   uuid.UUID       `json:"prompt_set_id"`
+	PromptText    string          `json:"prompt_text"`
+	IntentType    string          `json:"intent_type"`
+	TargetPersona string          `json:"target_persona"`
+	TargetTopic   string          `json:"target_topic"`
+	Locale        string          `json:"locale"`
+	TargetEngines json.RawMessage `json:"target_engines"`
+	Priority      int32           `json:"priority"`
+	Source        string          `json:"source"`
+	Status        string          `json:"status"`
+}
+
+func (q *Queries) CreateGEOPrompt(ctx context.Context, arg CreateGEOPromptParams) (GeoPrompt, error) {
+	row := q.db.QueryRow(ctx, createGEOPrompt,
+		arg.ProjectID,
+		arg.PromptSetID,
+		arg.PromptText,
+		arg.IntentType,
+		arg.TargetPersona,
+		arg.TargetTopic,
+		arg.Locale,
+		arg.TargetEngines,
+		arg.Priority,
+		arg.Source,
+		arg.Status,
+	)
+	var i GeoPrompt
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PromptSetID,
+		&i.PromptText,
+		&i.IntentType,
+		&i.TargetPersona,
+		&i.TargetTopic,
+		&i.Locale,
+		&i.TargetEngines,
+		&i.Priority,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createGEOPromptSet = `-- name: CreateGEOPromptSet :one
+insert into geo_prompt_sets (project_id, name, status, locale, created_by_run_id)
+values ($1, $2, $3, $4, $5)
+returning id, project_id, name, status, locale, created_by_run_id, created_at, updated_at
+`
+
+type CreateGEOPromptSetParams struct {
+	ProjectID      uuid.UUID   `json:"project_id"`
+	Name           string      `json:"name"`
+	Status         string      `json:"status"`
+	Locale         string      `json:"locale"`
+	CreatedByRunID pgtype.UUID `json:"created_by_run_id"`
+}
+
+func (q *Queries) CreateGEOPromptSet(ctx context.Context, arg CreateGEOPromptSetParams) (GeoPromptSet, error) {
+	row := q.db.QueryRow(ctx, createGEOPromptSet,
+		arg.ProjectID,
+		arg.Name,
+		arg.Status,
+		arg.Locale,
+		arg.CreatedByRunID,
+	)
+	var i GeoPromptSet
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Status,
+		&i.Locale,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createGEOVisibilityScore = `-- name: CreateGEOVisibilityScore :one
+insert into geo_visibility_scores
+  (project_id, run_id, score, coverage, confidence, breakdown,
+   prompt_count_total, prompt_count_observed, engine_count_observed, computed_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+returning id, project_id, run_id, score, coverage, confidence, breakdown, prompt_count_total, prompt_count_observed, engine_count_observed, computed_at
+`
+
+type CreateGEOVisibilityScoreParams struct {
+	ProjectID           uuid.UUID          `json:"project_id"`
+	RunID               pgtype.UUID        `json:"run_id"`
+	Score               pgtype.Numeric     `json:"score"`
+	Coverage            pgtype.Numeric     `json:"coverage"`
+	Confidence          string             `json:"confidence"`
+	Breakdown           json.RawMessage    `json:"breakdown"`
+	PromptCountTotal    int32              `json:"prompt_count_total"`
+	PromptCountObserved int32              `json:"prompt_count_observed"`
+	EngineCountObserved int32              `json:"engine_count_observed"`
+	ComputedAt          pgtype.Timestamptz `json:"computed_at"`
+}
+
+func (q *Queries) CreateGEOVisibilityScore(ctx context.Context, arg CreateGEOVisibilityScoreParams) (GeoVisibilityScore, error) {
+	row := q.db.QueryRow(ctx, createGEOVisibilityScore,
+		arg.ProjectID,
+		arg.RunID,
+		arg.Score,
+		arg.Coverage,
+		arg.Confidence,
+		arg.Breakdown,
+		arg.PromptCountTotal,
+		arg.PromptCountObserved,
+		arg.EngineCountObserved,
+		arg.ComputedAt,
+	)
+	var i GeoVisibilityScore
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Score,
+		&i.Coverage,
+		&i.Confidence,
+		&i.Breakdown,
+		&i.PromptCountTotal,
+		&i.PromptCountObserved,
+		&i.EngineCountObserved,
+		&i.ComputedAt,
+	)
+	return i, err
+}
+
 const finishGEORun = `-- name: FinishGEORun :one
 update geo_runs set
   status = $3,
@@ -61,6 +356,538 @@ func (q *Queries) FinishGEORun(ctx context.Context, arg FinishGEORunParams) (Geo
 	return i, err
 }
 
+const getGEOAssetBriefForProject = `-- name: GetGEOAssetBriefForProject :one
+select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at from geo_asset_briefs
+where id = $1 and project_id = $2
+`
+
+type GetGEOAssetBriefForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetGEOAssetBriefForProject(ctx context.Context, arg GetGEOAssetBriefForProjectParams) (GeoAssetBrief, error) {
+	row := q.db.QueryRow(ctx, getGEOAssetBriefForProject, arg.ID, arg.ProjectID)
+	var i GeoAssetBrief
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.AssetType,
+		&i.Status,
+		&i.TargetPrompts,
+		&i.RequiredEvidence,
+		&i.RecommendedOutline,
+		&i.InternalLinkPlan,
+		&i.PublicationSurface,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGEOCompetitorForProject = `-- name: GetGEOCompetitorForProject :one
+select id, project_id, name, name_key, domains, aliases, source, status, created_at, updated_at from geo_competitors
+where id = $1 and project_id = $2
+`
+
+type GetGEOCompetitorForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetGEOCompetitorForProject(ctx context.Context, arg GetGEOCompetitorForProjectParams) (GeoCompetitor, error) {
+	row := q.db.QueryRow(ctx, getGEOCompetitorForProject, arg.ID, arg.ProjectID)
+	var i GeoCompetitor
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.NameKey,
+		&i.Domains,
+		&i.Aliases,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGEOPromptForProject = `-- name: GetGEOPromptForProject :one
+select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at from geo_prompts
+where id = $1 and project_id = $2
+`
+
+type GetGEOPromptForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetGEOPromptForProject(ctx context.Context, arg GetGEOPromptForProjectParams) (GeoPrompt, error) {
+	row := q.db.QueryRow(ctx, getGEOPromptForProject, arg.ID, arg.ProjectID)
+	var i GeoPrompt
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PromptSetID,
+		&i.PromptText,
+		&i.IntentType,
+		&i.TargetPersona,
+		&i.TargetTopic,
+		&i.Locale,
+		&i.TargetEngines,
+		&i.Priority,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGEOPromptSetForProject = `-- name: GetGEOPromptSetForProject :one
+select id, project_id, name, status, locale, created_by_run_id, created_at, updated_at from geo_prompt_sets
+where id = $1 and project_id = $2
+`
+
+type GetGEOPromptSetForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error) {
+	row := q.db.QueryRow(ctx, getGEOPromptSetForProject, arg.ID, arg.ProjectID)
+	var i GeoPromptSet
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Status,
+		&i.Locale,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestGEOVisibilityScore = `-- name: GetLatestGEOVisibilityScore :one
+select id, project_id, run_id, score, coverage, confidence, breakdown, prompt_count_total, prompt_count_observed, engine_count_observed, computed_at from geo_visibility_scores
+where project_id = $1
+order by computed_at desc
+limit 1
+`
+
+func (q *Queries) GetLatestGEOVisibilityScore(ctx context.Context, projectID uuid.UUID) (GeoVisibilityScore, error) {
+	row := q.db.QueryRow(ctx, getLatestGEOVisibilityScore, projectID)
+	var i GeoVisibilityScore
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Score,
+		&i.Coverage,
+		&i.Confidence,
+		&i.Breakdown,
+		&i.PromptCountTotal,
+		&i.PromptCountObserved,
+		&i.EngineCountObserved,
+		&i.ComputedAt,
+	)
+	return i, err
+}
+
+const listActiveGEOPrompts = `-- name: ListActiveGEOPrompts :many
+select p.id, p.project_id, p.prompt_set_id, p.prompt_text, p.intent_type, p.target_persona, p.target_topic, p.locale, p.target_engines, p.priority, p.source, p.status, p.created_at, p.updated_at
+from geo_prompts p
+join geo_prompt_sets ps on ps.id = p.prompt_set_id
+where p.project_id = $1
+  and p.status = 'active'
+  and ps.status = 'active'
+order by p.priority desc, p.created_at asc
+`
+
+func (q *Queries) ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error) {
+	rows, err := q.db.Query(ctx, listActiveGEOPrompts, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoPrompt
+	for rows.Next() {
+		var i GeoPrompt
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.PromptSetID,
+			&i.PromptText,
+			&i.IntentType,
+			&i.TargetPersona,
+			&i.TargetTopic,
+			&i.Locale,
+			&i.TargetEngines,
+			&i.Priority,
+			&i.Source,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOAssetBriefs = `-- name: ListGEOAssetBriefs :many
+select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at from geo_asset_briefs
+where project_id = $1
+  and ($2::text = '' or status = $2)
+order by updated_at desc
+limit $3
+`
+
+type ListGEOAssetBriefsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+func (q *Queries) ListGEOAssetBriefs(ctx context.Context, arg ListGEOAssetBriefsParams) ([]GeoAssetBrief, error) {
+	rows, err := q.db.Query(ctx, listGEOAssetBriefs, arg.ProjectID, arg.Status, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoAssetBrief
+	for rows.Next() {
+		var i GeoAssetBrief
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.AssetType,
+			&i.Status,
+			&i.TargetPrompts,
+			&i.RequiredEvidence,
+			&i.RecommendedOutline,
+			&i.InternalLinkPlan,
+			&i.PublicationSurface,
+			&i.CreatedByRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOCompetitors = `-- name: ListGEOCompetitors :many
+select id, project_id, name, name_key, domains, aliases, source, status, created_at, updated_at from geo_competitors
+where project_id = $1
+  and ($2::text = '' or status = $2)
+order by status asc, name asc
+`
+
+type ListGEOCompetitorsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) ListGEOCompetitors(ctx context.Context, arg ListGEOCompetitorsParams) ([]GeoCompetitor, error) {
+	rows, err := q.db.Query(ctx, listGEOCompetitors, arg.ProjectID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoCompetitor
+	for rows.Next() {
+		var i GeoCompetitor
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.NameKey,
+			&i.Domains,
+			&i.Aliases,
+			&i.Source,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOExternalSurfaces = `-- name: ListGEOExternalSurfaces :many
+select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at from geo_external_surfaces
+where project_id = $1
+  and ($2::text = '' or owner_type = $2)
+order by owner_type asc, updated_at desc
+`
+
+type ListGEOExternalSurfacesParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	OwnerType string    `json:"owner_type"`
+}
+
+func (q *Queries) ListGEOExternalSurfaces(ctx context.Context, arg ListGEOExternalSurfacesParams) ([]GeoExternalSurface, error) {
+	rows, err := q.db.Query(ctx, listGEOExternalSurfaces, arg.ProjectID, arg.OwnerType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoExternalSurface
+	for rows.Next() {
+		var i GeoExternalSurface
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Url,
+			&i.NormalizedUrl,
+			&i.Platform,
+			&i.SurfaceType,
+			&i.OwnerType,
+			&i.CanonicalTargetUrl,
+			&i.BacklinkState,
+			&i.LastHttpStatus,
+			&i.LastCitedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOObservations = `-- name: ListGEOObservations :many
+select id, project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned, brand_position, project_citation_count, project_citation_rank_best, project_cited_surface_ids, cited_urls, competitor_mentions, competitor_citations, observation_state, answer_summary, evidence_snippets, confidence, observed_at from geo_observations
+where project_id = $1
+  and ($2::uuid is null or prompt_id = $2)
+  and ($3::text = '' or engine = $3)
+  and ($4::text = '' or source_type = $4)
+order by observed_at desc
+limit $5
+`
+
+type ListGEOObservationsParams struct {
+	ProjectID  uuid.UUID   `json:"project_id"`
+	PromptID   pgtype.UUID `json:"prompt_id"`
+	Engine     string      `json:"engine"`
+	SourceType string      `json:"source_type"`
+	LimitRows  int32       `json:"limit_rows"`
+}
+
+func (q *Queries) ListGEOObservations(ctx context.Context, arg ListGEOObservationsParams) ([]GeoObservation, error) {
+	rows, err := q.db.Query(ctx, listGEOObservations,
+		arg.ProjectID,
+		arg.PromptID,
+		arg.Engine,
+		arg.SourceType,
+		arg.LimitRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoObservation
+	for rows.Next() {
+		var i GeoObservation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.PromptID,
+			&i.Engine,
+			&i.Locale,
+			&i.SourceType,
+			&i.BrandMentioned,
+			&i.BrandPosition,
+			&i.ProjectCitationCount,
+			&i.ProjectCitationRankBest,
+			&i.ProjectCitedSurfaceIds,
+			&i.CitedUrls,
+			&i.CompetitorMentions,
+			&i.CompetitorCitations,
+			&i.ObservationState,
+			&i.AnswerSummary,
+			&i.EvidenceSnippets,
+			&i.Confidence,
+			&i.ObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOObservationsForRun = `-- name: ListGEOObservationsForRun :many
+select id, project_id, run_id, prompt_id, engine, locale, source_type, brand_mentioned, brand_position, project_citation_count, project_citation_rank_best, project_cited_surface_ids, cited_urls, competitor_mentions, competitor_citations, observation_state, answer_summary, evidence_snippets, confidence, observed_at from geo_observations
+where project_id = $1 and run_id = $2
+order by observed_at asc
+`
+
+type ListGEOObservationsForRunParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	RunID     uuid.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListGEOObservationsForRun(ctx context.Context, arg ListGEOObservationsForRunParams) ([]GeoObservation, error) {
+	rows, err := q.db.Query(ctx, listGEOObservationsForRun, arg.ProjectID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoObservation
+	for rows.Next() {
+		var i GeoObservation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.PromptID,
+			&i.Engine,
+			&i.Locale,
+			&i.SourceType,
+			&i.BrandMentioned,
+			&i.BrandPosition,
+			&i.ProjectCitationCount,
+			&i.ProjectCitationRankBest,
+			&i.ProjectCitedSurfaceIds,
+			&i.CitedUrls,
+			&i.CompetitorMentions,
+			&i.CompetitorCitations,
+			&i.ObservationState,
+			&i.AnswerSummary,
+			&i.EvidenceSnippets,
+			&i.Confidence,
+			&i.ObservedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOPromptSets = `-- name: ListGEOPromptSets :many
+select id, project_id, name, status, locale, created_by_run_id, created_at, updated_at from geo_prompt_sets
+where project_id = $1
+  and ($2::text = '' or status = $2)
+order by updated_at desc, created_at desc
+`
+
+type ListGEOPromptSetsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) ListGEOPromptSets(ctx context.Context, arg ListGEOPromptSetsParams) ([]GeoPromptSet, error) {
+	rows, err := q.db.Query(ctx, listGEOPromptSets, arg.ProjectID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoPromptSet
+	for rows.Next() {
+		var i GeoPromptSet
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Status,
+			&i.Locale,
+			&i.CreatedByRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOPrompts = `-- name: ListGEOPrompts :many
+select id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at from geo_prompts
+where project_id = $1
+  and ($2::uuid is null or prompt_set_id = $2)
+  and ($3::text = '' or status = $3)
+order by priority desc, created_at asc
+`
+
+type ListGEOPromptsParams struct {
+	ProjectID   uuid.UUID   `json:"project_id"`
+	PromptSetID pgtype.UUID `json:"prompt_set_id"`
+	Status      string      `json:"status"`
+}
+
+func (q *Queries) ListGEOPrompts(ctx context.Context, arg ListGEOPromptsParams) ([]GeoPrompt, error) {
+	rows, err := q.db.Query(ctx, listGEOPrompts, arg.ProjectID, arg.PromptSetID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoPrompt
+	for rows.Next() {
+		var i GeoPrompt
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.PromptSetID,
+			&i.PromptText,
+			&i.IntentType,
+			&i.TargetPersona,
+			&i.TargetTopic,
+			&i.Locale,
+			&i.TargetEngines,
+			&i.Priority,
+			&i.Source,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGEORuns = `-- name: ListGEORuns :many
 select id, project_id, agent, status, provider, started_at, finished_at, input, output, error, cost_usd from geo_runs
 where project_id = $1
@@ -106,6 +933,50 @@ func (q *Queries) ListGEORuns(ctx context.Context, arg ListGEORunsParams) ([]Geo
 			&i.Output,
 			&i.Error,
 			&i.CostUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGEOVisibilityScores = `-- name: ListGEOVisibilityScores :many
+select id, project_id, run_id, score, coverage, confidence, breakdown, prompt_count_total, prompt_count_observed, engine_count_observed, computed_at from geo_visibility_scores
+where project_id = $1
+order by computed_at desc
+limit $2
+`
+
+type ListGEOVisibilityScoresParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Limit     int32     `json:"limit"`
+}
+
+func (q *Queries) ListGEOVisibilityScores(ctx context.Context, arg ListGEOVisibilityScoresParams) ([]GeoVisibilityScore, error) {
+	rows, err := q.db.Query(ctx, listGEOVisibilityScores, arg.ProjectID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoVisibilityScore
+	for rows.Next() {
+		var i GeoVisibilityScore
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.Score,
+			&i.Coverage,
+			&i.Confidence,
+			&i.Breakdown,
+			&i.PromptCountTotal,
+			&i.PromptCountObserved,
+			&i.EngineCountObserved,
+			&i.ComputedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -169,6 +1040,46 @@ func (q *Queries) ListLatestAICrawlerAccessSnapshots(ctx context.Context, projec
 	return items, nil
 }
 
+const listProjectOwnedGEOExternalSurfaces = `-- name: ListProjectOwnedGEOExternalSurfaces :many
+select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at from geo_external_surfaces
+where project_id = $1 and owner_type = 'project'
+order by updated_at desc
+`
+
+func (q *Queries) ListProjectOwnedGEOExternalSurfaces(ctx context.Context, projectID uuid.UUID) ([]GeoExternalSurface, error) {
+	rows, err := q.db.Query(ctx, listProjectOwnedGEOExternalSurfaces, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GeoExternalSurface
+	for rows.Next() {
+		var i GeoExternalSurface
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Url,
+			&i.NormalizedUrl,
+			&i.Platform,
+			&i.SurfaceType,
+			&i.OwnerType,
+			&i.CanonicalTargetUrl,
+			&i.BacklinkState,
+			&i.LastHttpStatus,
+			&i.LastCitedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const startGEORun = `-- name: StartGEORun :one
 insert into geo_runs (project_id, agent, status, provider, started_at, input)
 values ($1, $2, 'degraded', $3, $4, $5)
@@ -204,6 +1115,193 @@ func (q *Queries) StartGEORun(ctx context.Context, arg StartGEORunParams) (GeoRu
 		&i.Output,
 		&i.Error,
 		&i.CostUsd,
+	)
+	return i, err
+}
+
+const updateGEOAssetBriefStatus = `-- name: UpdateGEOAssetBriefStatus :one
+update geo_asset_briefs set
+  status = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at
+`
+
+type UpdateGEOAssetBriefStatusParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) UpdateGEOAssetBriefStatus(ctx context.Context, arg UpdateGEOAssetBriefStatusParams) (GeoAssetBrief, error) {
+	row := q.db.QueryRow(ctx, updateGEOAssetBriefStatus, arg.ID, arg.ProjectID, arg.Status)
+	var i GeoAssetBrief
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.AssetType,
+		&i.Status,
+		&i.TargetPrompts,
+		&i.RequiredEvidence,
+		&i.RecommendedOutline,
+		&i.InternalLinkPlan,
+		&i.PublicationSurface,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateGEOCompetitor = `-- name: UpdateGEOCompetitor :one
+update geo_competitors set
+  name = $3,
+  domains = $4,
+  aliases = $5,
+  source = $6,
+  status = $7,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, name, name_key, domains, aliases, source, status, created_at, updated_at
+`
+
+type UpdateGEOCompetitorParams struct {
+	ID        uuid.UUID       `json:"id"`
+	ProjectID uuid.UUID       `json:"project_id"`
+	Name      string          `json:"name"`
+	Domains   json.RawMessage `json:"domains"`
+	Aliases   json.RawMessage `json:"aliases"`
+	Source    string          `json:"source"`
+	Status    string          `json:"status"`
+}
+
+func (q *Queries) UpdateGEOCompetitor(ctx context.Context, arg UpdateGEOCompetitorParams) (GeoCompetitor, error) {
+	row := q.db.QueryRow(ctx, updateGEOCompetitor,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Domains,
+		arg.Aliases,
+		arg.Source,
+		arg.Status,
+	)
+	var i GeoCompetitor
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.NameKey,
+		&i.Domains,
+		&i.Aliases,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateGEOPrompt = `-- name: UpdateGEOPrompt :one
+update geo_prompts set
+  prompt_text = $3,
+  intent_type = $4,
+  target_persona = $5,
+  target_topic = $6,
+  locale = $7,
+  target_engines = $8,
+  priority = $9,
+  source = $10,
+  status = $11,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, prompt_set_id, prompt_text, intent_type, target_persona, target_topic, locale, target_engines, priority, source, status, created_at, updated_at
+`
+
+type UpdateGEOPromptParams struct {
+	ID            uuid.UUID       `json:"id"`
+	ProjectID     uuid.UUID       `json:"project_id"`
+	PromptText    string          `json:"prompt_text"`
+	IntentType    string          `json:"intent_type"`
+	TargetPersona string          `json:"target_persona"`
+	TargetTopic   string          `json:"target_topic"`
+	Locale        string          `json:"locale"`
+	TargetEngines json.RawMessage `json:"target_engines"`
+	Priority      int32           `json:"priority"`
+	Source        string          `json:"source"`
+	Status        string          `json:"status"`
+}
+
+func (q *Queries) UpdateGEOPrompt(ctx context.Context, arg UpdateGEOPromptParams) (GeoPrompt, error) {
+	row := q.db.QueryRow(ctx, updateGEOPrompt,
+		arg.ID,
+		arg.ProjectID,
+		arg.PromptText,
+		arg.IntentType,
+		arg.TargetPersona,
+		arg.TargetTopic,
+		arg.Locale,
+		arg.TargetEngines,
+		arg.Priority,
+		arg.Source,
+		arg.Status,
+	)
+	var i GeoPrompt
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.PromptSetID,
+		&i.PromptText,
+		&i.IntentType,
+		&i.TargetPersona,
+		&i.TargetTopic,
+		&i.Locale,
+		&i.TargetEngines,
+		&i.Priority,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateGEOPromptSet = `-- name: UpdateGEOPromptSet :one
+update geo_prompt_sets set
+  name = $3,
+  status = $4,
+  locale = $5,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, name, status, locale, created_by_run_id, created_at, updated_at
+`
+
+type UpdateGEOPromptSetParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	Locale    string    `json:"locale"`
+}
+
+func (q *Queries) UpdateGEOPromptSet(ctx context.Context, arg UpdateGEOPromptSetParams) (GeoPromptSet, error) {
+	row := q.db.QueryRow(ctx, updateGEOPromptSet,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Status,
+		arg.Locale,
+	)
+	var i GeoPromptSet
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Status,
+		&i.Locale,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -379,6 +1477,226 @@ func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg Upsert
 		arg.RiskLevel,
 	)
 	var i UpsertCrawlerAccessOpportunityRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertGEOCompetitor = `-- name: UpsertGEOCompetitor :one
+insert into geo_competitors (project_id, name, domains, aliases, source, status)
+values ($1, $2, $3, $4, $5, $6)
+on conflict (project_id, name_key) do update set
+  domains = excluded.domains,
+  aliases = excluded.aliases,
+  source = excluded.source,
+  status = excluded.status,
+  updated_at = now()
+returning id, project_id, name, name_key, domains, aliases, source, status, created_at, updated_at
+`
+
+type UpsertGEOCompetitorParams struct {
+	ProjectID uuid.UUID       `json:"project_id"`
+	Name      string          `json:"name"`
+	Domains   json.RawMessage `json:"domains"`
+	Aliases   json.RawMessage `json:"aliases"`
+	Source    string          `json:"source"`
+	Status    string          `json:"status"`
+}
+
+func (q *Queries) UpsertGEOCompetitor(ctx context.Context, arg UpsertGEOCompetitorParams) (GeoCompetitor, error) {
+	row := q.db.QueryRow(ctx, upsertGEOCompetitor,
+		arg.ProjectID,
+		arg.Name,
+		arg.Domains,
+		arg.Aliases,
+		arg.Source,
+		arg.Status,
+	)
+	var i GeoCompetitor
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.NameKey,
+		&i.Domains,
+		&i.Aliases,
+		&i.Source,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertGEOExternalSurface = `-- name: UpsertGEOExternalSurface :one
+insert into geo_external_surfaces
+  (project_id, url, normalized_url, platform, surface_type, owner_type,
+   canonical_target_url, backlink_state, last_http_status, last_cited_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+on conflict (project_id, normalized_url) do update set
+  url = excluded.url,
+  platform = excluded.platform,
+  surface_type = excluded.surface_type,
+  owner_type = excluded.owner_type,
+  canonical_target_url = excluded.canonical_target_url,
+  backlink_state = excluded.backlink_state,
+  last_http_status = excluded.last_http_status,
+  last_cited_at = coalesce(excluded.last_cited_at, geo_external_surfaces.last_cited_at),
+  updated_at = now()
+returning id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at
+`
+
+type UpsertGEOExternalSurfaceParams struct {
+	ProjectID          uuid.UUID          `json:"project_id"`
+	Url                string             `json:"url"`
+	NormalizedUrl      string             `json:"normalized_url"`
+	Platform           string             `json:"platform"`
+	SurfaceType        string             `json:"surface_type"`
+	OwnerType          string             `json:"owner_type"`
+	CanonicalTargetUrl *string            `json:"canonical_target_url"`
+	BacklinkState      string             `json:"backlink_state"`
+	LastHttpStatus     *int32             `json:"last_http_status"`
+	LastCitedAt        pgtype.Timestamptz `json:"last_cited_at"`
+}
+
+func (q *Queries) UpsertGEOExternalSurface(ctx context.Context, arg UpsertGEOExternalSurfaceParams) (GeoExternalSurface, error) {
+	row := q.db.QueryRow(ctx, upsertGEOExternalSurface,
+		arg.ProjectID,
+		arg.Url,
+		arg.NormalizedUrl,
+		arg.Platform,
+		arg.SurfaceType,
+		arg.OwnerType,
+		arg.CanonicalTargetUrl,
+		arg.BacklinkState,
+		arg.LastHttpStatus,
+		arg.LastCitedAt,
+	)
+	var i GeoExternalSurface
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Url,
+		&i.NormalizedUrl,
+		&i.Platform,
+		&i.SurfaceType,
+		&i.OwnerType,
+		&i.CanonicalTargetUrl,
+		&i.BacklinkState,
+		&i.LastHttpStatus,
+		&i.LastCitedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertGEOObservationOpportunity = `-- name: UpsertGEOObservationOpportunity :one
+with updated as (
+  update seo_opportunities so set
+    priority_score = $4,
+    confidence = $5,
+    page_url = $6,
+    normalized_page_url = $7,
+    evidence = so.evidence || $9,
+    recommended_action = $10,
+    expected_impact = $11,
+    effort = $12,
+    risk_level = $13,
+    updated_at = now()
+  where so.project_id = $1
+    and so.type = $2
+    and so.status in ('open','accepted','converted')
+    and so.normalized_page_url = $7
+    and coalesce(so.query, '') = coalesce($8, '')
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+), inserted as (
+  insert into seo_opportunities
+    (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
+     query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
+  select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
+  where not exists (select 1 from updated)
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+)
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from updated
+union all
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from inserted
+`
+
+type UpsertGEOObservationOpportunityParams struct {
+	ProjectID         uuid.UUID       `json:"project_id"`
+	Type              string          `json:"type"`
+	Status            string          `json:"status"`
+	PriorityScore     pgtype.Numeric  `json:"priority_score"`
+	Confidence        pgtype.Numeric  `json:"confidence"`
+	PageUrl           *string         `json:"page_url"`
+	NormalizedPageUrl string          `json:"normalized_page_url"`
+	Query             *string         `json:"query"`
+	Evidence          json.RawMessage `json:"evidence"`
+	RecommendedAction *string         `json:"recommended_action"`
+	ExpectedImpact    *string         `json:"expected_impact"`
+	Effort            int32           `json:"effort"`
+	RiskLevel         string          `json:"risk_level"`
+}
+
+type UpsertGEOObservationOpportunityRow struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	Type              string             `json:"type"`
+	Status            string             `json:"status"`
+	PriorityScore     pgtype.Numeric     `json:"priority_score"`
+	Confidence        pgtype.Numeric     `json:"confidence"`
+	PageUrl           *string            `json:"page_url"`
+	NormalizedPageUrl string             `json:"normalized_page_url"`
+	ArticleID         pgtype.UUID        `json:"article_id"`
+	TopicID           pgtype.UUID        `json:"topic_id"`
+	Query             *string            `json:"query"`
+	Evidence          json.RawMessage    `json:"evidence"`
+	RecommendedAction *string            `json:"recommended_action"`
+	ExpectedImpact    *string            `json:"expected_impact"`
+	Effort            int32              `json:"effort"`
+	RiskLevel         string             `json:"risk_level"`
+	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error) {
+	row := q.db.QueryRow(ctx, upsertGEOObservationOpportunity,
+		arg.ProjectID,
+		arg.Type,
+		arg.Status,
+		arg.PriorityScore,
+		arg.Confidence,
+		arg.PageUrl,
+		arg.NormalizedPageUrl,
+		arg.Query,
+		arg.Evidence,
+		arg.RecommendedAction,
+		arg.ExpectedImpact,
+		arg.Effort,
+		arg.RiskLevel,
+	)
+	var i UpsertGEOObservationOpportunityRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,

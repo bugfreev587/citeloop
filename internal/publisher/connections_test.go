@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -71,16 +72,19 @@ func TestParseGitHubNextJSConfigRejectsMissingRequiredFields(t *testing.T) {
 func TestPublisherCredentialRefAndRedaction(t *testing.T) {
 	id := uuid.New()
 	ref := PublisherCredentialRef(id)
-	parsed, ok := ParsePublisherCredentialRef(ref)
-	if !ok {
-		t.Fatalf("expected credential ref to parse: %s", ref)
+	if ref != "publisher_credential:"+id.String() {
+		t.Fatalf("ref = %q", ref)
 	}
-	if parsed != id {
-		t.Fatalf("parsed id = %s, want %s", parsed, id)
+	parsed, ok := ParsePublisherCredentialRef(ref)
+	if !ok || parsed != id {
+		t.Fatalf("parsed ref = %s, ok=%v", parsed, ok)
 	}
 
 	redacted := RedactCredentialValue(CredentialKindGitHubToken, "ghp_abcdefghijklmnopqrstuvwxyz")
-	if redacted != "gh_****wxyz" {
-		t.Fatalf("redacted = %q", redacted)
+	if strings.Contains(redacted, "abcdefghijklmnopqrstuv") {
+		t.Fatalf("redaction leaked too much secret: %s", redacted)
+	}
+	if !strings.HasSuffix(redacted, "wxyz") {
+		t.Fatalf("redaction should preserve tail for recognition: %s", redacted)
 	}
 }

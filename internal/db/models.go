@@ -155,6 +155,102 @@ type GenerationRun struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type GeoAssetBrief struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	OpportunityID      uuid.UUID          `json:"opportunity_id"`
+	AssetType          string             `json:"asset_type"`
+	Status             string             `json:"status"`
+	TargetPrompts      json.RawMessage    `json:"target_prompts"`
+	RequiredEvidence   json.RawMessage    `json:"required_evidence"`
+	RecommendedOutline json.RawMessage    `json:"recommended_outline"`
+	InternalLinkPlan   json.RawMessage    `json:"internal_link_plan"`
+	PublicationSurface string             `json:"publication_surface"`
+	CreatedByRunID     pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GeoCompetitor struct {
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	Name      string             `json:"name"`
+	NameKey   *string            `json:"name_key"`
+	Domains   json.RawMessage    `json:"domains"`
+	Aliases   json.RawMessage    `json:"aliases"`
+	Source    string             `json:"source"`
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GeoExternalSurface struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	Url                string             `json:"url"`
+	NormalizedUrl      string             `json:"normalized_url"`
+	Platform           string             `json:"platform"`
+	SurfaceType        string             `json:"surface_type"`
+	OwnerType          string             `json:"owner_type"`
+	CanonicalTargetUrl *string            `json:"canonical_target_url"`
+	BacklinkState      string             `json:"backlink_state"`
+	LastHttpStatus     *int32             `json:"last_http_status"`
+	LastCitedAt        pgtype.Timestamptz `json:"last_cited_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GeoObservation struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	RunID                   uuid.UUID          `json:"run_id"`
+	PromptID                pgtype.UUID        `json:"prompt_id"`
+	Engine                  string             `json:"engine"`
+	Locale                  string             `json:"locale"`
+	SourceType              string             `json:"source_type"`
+	BrandMentioned          bool               `json:"brand_mentioned"`
+	BrandPosition           *int32             `json:"brand_position"`
+	ProjectCitationCount    int32              `json:"project_citation_count"`
+	ProjectCitationRankBest *int32             `json:"project_citation_rank_best"`
+	ProjectCitedSurfaceIds  json.RawMessage    `json:"project_cited_surface_ids"`
+	CitedUrls               json.RawMessage    `json:"cited_urls"`
+	CompetitorMentions      json.RawMessage    `json:"competitor_mentions"`
+	CompetitorCitations     json.RawMessage    `json:"competitor_citations"`
+	ObservationState        string             `json:"observation_state"`
+	AnswerSummary           string             `json:"answer_summary"`
+	EvidenceSnippets        json.RawMessage    `json:"evidence_snippets"`
+	Confidence              string             `json:"confidence"`
+	ObservedAt              pgtype.Timestamptz `json:"observed_at"`
+}
+
+type GeoPrompt struct {
+	ID            uuid.UUID          `json:"id"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	PromptSetID   uuid.UUID          `json:"prompt_set_id"`
+	PromptText    string             `json:"prompt_text"`
+	IntentType    string             `json:"intent_type"`
+	TargetPersona string             `json:"target_persona"`
+	TargetTopic   string             `json:"target_topic"`
+	Locale        string             `json:"locale"`
+	TargetEngines json.RawMessage    `json:"target_engines"`
+	Priority      int32              `json:"priority"`
+	Source        string             `json:"source"`
+	Status        string             `json:"status"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GeoPromptSet struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	Name           string             `json:"name"`
+	Status         string             `json:"status"`
+	Locale         string             `json:"locale"`
+	CreatedByRunID pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GeoRun struct {
 	ID         uuid.UUID          `json:"id"`
 	ProjectID  uuid.UUID          `json:"project_id"`
@@ -167,6 +263,20 @@ type GeoRun struct {
 	Output     json.RawMessage    `json:"output"`
 	Error      *string            `json:"error"`
 	CostUsd    pgtype.Numeric     `json:"cost_usd"`
+}
+
+type GeoVisibilityScore struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	RunID               pgtype.UUID        `json:"run_id"`
+	Score               pgtype.Numeric     `json:"score"`
+	Coverage            pgtype.Numeric     `json:"coverage"`
+	Confidence          string             `json:"confidence"`
+	Breakdown           json.RawMessage    `json:"breakdown"`
+	PromptCountTotal    int32              `json:"prompt_count_total"`
+	PromptCountObserved int32              `json:"prompt_count_observed"`
+	EngineCountObserved int32              `json:"engine_count_observed"`
+	ComputedAt          pgtype.Timestamptz `json:"computed_at"`
 }
 
 type GuardrailCheck struct {

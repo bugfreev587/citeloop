@@ -256,23 +256,23 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Save publisher first", detail: "Create the GitHub/Next.js connection before saving a token.", tone: "amber" });
       return;
     }
-    const token = publisherCredentialDraft.trim();
-    if (!token) {
+    const value = publisherCredentialDraft.trim();
+    if (!value) {
       setMessage({ title: "GitHub token required", tone: "amber" });
       return;
     }
-    setNotificationBusy(`credential-publisher-${githubPublisher.id}`);
+    setNotificationBusy(`save-publisher-credential-${githubPublisher.id}`);
     setMessage(null);
     try {
       const saved = await api.upsertPublisherCredential(projectId, githubPublisher.id, {
         kind: "github_token",
-        value: token,
+        value,
       });
       setPublisherCredentialDraft("");
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
-      setMessage({ title: "Publisher token saved", tone: "green" });
+      setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Publisher token save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Credential save failed", detail: e.message, tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -280,14 +280,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   async function revokePublisherCredential() {
     if (!githubPublisher) return;
-    setNotificationBusy(`revoke-publisher-${githubPublisher.id}`);
+    setNotificationBusy(`revoke-publisher-credential-${githubPublisher.id}`);
     setMessage(null);
     try {
       const saved = await api.revokePublisherCredential(projectId, githubPublisher.id);
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
-      setMessage({ title: "Publisher token revoked", tone: "green" });
+      setMessage({ title: "Publisher credential revoked", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Publisher token revoke failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Credential revoke failed", detail: e.message, tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -494,18 +494,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <Button
               variant="outline"
               onClick={savePublisherCredential}
-              disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `credential-publisher-${githubPublisher?.id}`}
+              disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
             >
               <Save size={16} />
               Save token
-            </Button>
-            <Button
-              variant="outline"
-              onClick={revokePublisherCredential}
-              disabled={!githubPublisher?.credential_configured || notificationBusy === `revoke-publisher-${githubPublisher?.id}`}
-            >
-              <Trash2 size={16} />
-              Revoke token
             </Button>
             <Button
               variant="outline"
@@ -514,6 +506,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             >
               <Send size={16} />
               Test
+            </Button>
+            <Button
+              variant="outline"
+              onClick={revokePublisherCredential}
+              disabled={!githubPublisher?.credential_configured || notificationBusy === `revoke-publisher-credential-${githubPublisher?.id}`}
+            >
+              <Trash2 size={16} />
+              Revoke token
             </Button>
           </div>
         </div>

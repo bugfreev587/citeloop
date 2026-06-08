@@ -20,6 +20,7 @@ import (
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -255,6 +256,44 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		s.Log.Info("generated into review queue", "project", p.ID, "topic", t.Title)
 	}
 	return tx.Commit(ctx)
+}
+
+// TickGEO runs the weekly GEO observation loop (§12.3).
+func (s *Scheduler) TickGEO(ctx context.Context) {
+	if s.Pool == nil {
+		s.logger().Warn("geo tick skipped; database pool is not configured")
+		return
+	}
+	q := db.New(s.Pool)
+	projects, err := q.ListProjects(ctx)
+	if err != nil {
+		s.logger().Error("list projects for geo tick", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.geoForProject(ctx, q, p); err != nil {
+			s.logger().Error("geo tick failed", "project", p.ID, "err", err)
+		}
+	}
+}
+
+func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	svc := geo.Service{Q: q, HTTPClient: s.httpClient, Now: s.currentTime}
+	logStep := func(step string, err error) {
+		if err != nil {
+			s.logger().Warn("geo tick step failed", "project", p.ID, "step", step, "err", err)
+		}
+	}
+
+	_, auditErr := svc.RunCrawlerAudit(ctx, p.ID, geo.CrawlerAuditRequest{})
+	logStep("crawler_audit", auditErr)
+	_, observeErr := svc.ObserveAnswerProvider(ctx, p.ID, geo.ObserveAnswerProviderRequest{Engine: "Perplexity", MaxPrompts: 10, BudgetUSD: 1})
+	logStep("observe_provider", observeErr)
+	_, surfaceErr := svc.MonitorExternalSurfaces(ctx, p.ID, geo.MonitorExternalSurfacesRequest{Limit: 25})
+	logStep("external_surfaces", surfaceErr)
+	_, analyzeErr := svc.AnalyzeObservations(ctx, p.ID, geo.AnalyzeObservationsRequest{Limit: 100})
+	logStep("analyze", analyzeErr)
+	return nil
 }
 
 // TickPublish auto-publishes due canonicals and unlocks distributable variants.
