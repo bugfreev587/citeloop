@@ -24,6 +24,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
+	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -35,15 +36,24 @@ const (
 	reviewOverdueLimit = 100
 )
 
+type seoRunner interface {
+	Sync(context.Context, uuid.UUID, string) (seopkg.SyncResult, error)
+	Analyze(context.Context, uuid.UUID) (seopkg.SyncResult, error)
+	Brief(context.Context, uuid.UUID) (seopkg.Brief, error)
+}
+
 type Scheduler struct {
 	Pool                 *pgxpool.Pool
 	LLM                  llm.Provider
 	Search               search.Provider
 	Blog                 *publisher.BlogPublisher
+	SEOData              seopkg.GoogleDataProvider
+	BlogBaseURL          string
 	Log                  *slog.Logger
 	now                  func() time.Time
 	alert                func(projectID uuid.UUID, msg string)
 	httpClient           *http.Client
+	seoRunnerFactory     func(q *db.Queries) seoRunner
 	NotificationSecret   string
 	UniPostDeployHookURL string
 }
@@ -97,6 +107,59 @@ func (s *Scheduler) TickReviewOverdue(ctx context.Context) {
 	}
 	if len(articles) > 0 {
 		s.Log.Info("review overdue sweep dispatched", "count", len(articles))
+	}
+}
+
+// TickSEO runs the SEO Operations Loop across all projects.
+func (s *Scheduler) TickSEO(ctx context.Context) {
+	q := db.New(s.Pool)
+	projects, err := q.ListProjects(ctx)
+	if err != nil {
+		s.logger().Error("list projects for seo tick", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.runSEOForProject(ctx, q, p); err != nil {
+			s.logger().Error("seo tick failed", "project", p.ID, "err", err)
+		}
+	}
+}
+
+func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	runner := s.newSEORunner(q)
+	syncResult, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
+	if err != nil {
+		return fmt.Errorf("seo sync: %w", err)
+	}
+	analyzeResult, err := runner.Analyze(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("seo analyze: %w", err)
+	}
+	brief, err := runner.Brief(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("seo brief: %w", err)
+	}
+	s.logger().Info(
+		"seo tick complete",
+		"project", p.ID,
+		"sync_status", syncResult.Status,
+		"analyze_status", analyzeResult.Status,
+		"brief_mode", brief.Mode,
+		"brief_actions", len(brief.Actions),
+	)
+	return nil
+}
+
+func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
+	if s.seoRunnerFactory != nil {
+		return s.seoRunnerFactory(q)
+	}
+	return seopkg.Service{
+		Q:           q,
+		HTTPClient:  s.httpClient,
+		BlogBaseURL: s.BlogBaseURL,
+		GoogleData:  s.SEOData,
+		Now:         s.now,
 	}
 }
 
@@ -508,6 +571,13 @@ func (s *Scheduler) currentTime() time.Time {
 		return s.now()
 	}
 	return time.Now()
+}
+
+func (s *Scheduler) logger() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
 }
 
 func (s *Scheduler) dispatchBudgetStopped(ctx context.Context, store notification.DispatchStore, projectID uuid.UUID, spentUSD, budgetUSD float64) {

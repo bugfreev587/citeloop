@@ -80,7 +80,19 @@ func TestNotificationSupportedEventsResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, eventType := range []string{"generation.failed", "publish.failed", "budget.stopped", "review.overdue", "webhook.delivery.dead"} {
+	for _, eventType := range []string{
+		"generation.failed",
+		"publish.failed",
+		"budget.stopped",
+		"review.overdue",
+		"webhook.delivery.dead",
+		"seo.sync.failed",
+		"seo.auth.expired",
+		"seo.opportunity.ready",
+		"seo.brief.ready",
+		"seo.action.measurement_ready",
+		"seo.indexing.anomaly",
+	} {
 		if !strings.Contains(string(body), eventType) {
 			t.Fatalf("events response missing %s: %s", eventType, string(body))
 		}

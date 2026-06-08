@@ -1,8 +1,11 @@
 -- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
-   geo_score, seo_score, qa_issues, qa_blocking, status)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+   geo_score, seo_score, qa_issues, qa_blocking, status, content_hash)
+values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+  encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex')
+)
 returning *;
 
 -- name: GetArticle :one
@@ -33,11 +36,18 @@ order by created_at asc
 limit $2;
 
 -- name: UpdateArticleContent :one
-update articles set content_md = $2, seo_meta = $3 where id = $1
+update articles set
+  content_md = $2,
+  seo_meta = $3,
+  content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
+where id = $1
 returning *;
 
 -- name: UpdateArticleContentForProject :one
-update articles set content_md = $2, seo_meta = $3
+update articles set
+  content_md = $2,
+  seo_meta = $3,
+  content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1 and project_id = $4
 returning *;
 
@@ -174,7 +184,8 @@ update articles set
   status = 'ready_to_distribute',
   canonical_url = $2,
   content_md = $3,
-  seo_meta = $4          -- canonical placeholder backfilled in seo_meta too (§5.6)
+  seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
 returning *;
 

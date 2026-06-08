@@ -37,6 +37,12 @@ const eventLabels: Record<string, string> = {
   "budget.stopped": "Budget stopped",
   "review.overdue": "Review overdue",
   "webhook.delivery.dead": "Webhook delivery dead",
+  "seo.sync.failed": "SEO sync failed",
+  "seo.auth.expired": "SEO auth expired",
+  "seo.opportunity.ready": "SEO opportunity ready",
+  "seo.brief.ready": "SEO brief ready",
+  "seo.action.measurement_ready": "SEO measurement ready",
+  "seo.indexing.anomaly": "SEO indexing anomaly",
 };
 
 const deliveryStatuses = [

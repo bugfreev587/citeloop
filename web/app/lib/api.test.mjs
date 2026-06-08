@@ -345,3 +345,112 @@ test("publishing reconcile API calls project scoped endpoint", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("SEO APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/seo/overview")) {
+          return {
+            integrations: [],
+            last_28_days: {},
+            technical: {},
+            opportunities_by_type: [],
+            actions_by_status: [],
+            cold_start: true,
+            handoff_ready_for_autopilot: false,
+          };
+        }
+        if (url.endsWith("/seo/settings")) {
+          return { property: null, integrations: [] };
+        }
+        if (url.endsWith("/seo/briefs/latest")) {
+          return { mode: "cold_start", title: "Brief", actions: [], blockers: [], measurement_updates: [] };
+        }
+        if (url.includes("/seo/opportunities") && !url.endsWith("/actions")) {
+          return [{ id: "opp-1", type: "indexing_anomaly", status: "open" }];
+        }
+        if (url.includes("/seo/actions")) {
+          return [{ id: "action-1", status: "ready_for_review" }];
+        }
+        if (url.endsWith("/seo/autopilot/objectives")) {
+          return [{ id: "objective-1", name: "Grow clicks", status: "active" }];
+        }
+        if (url.endsWith("/seo/autopilot/policy")) {
+          return { id: "policy-1", autopilot_level: 0, weekly_action_limit: 5 };
+        }
+        if (url.endsWith("/seo/autopilot/plans/generate")) {
+          return { plan: { id: "plan-1", actions: [] }, run: { id: "run-1" } };
+        }
+        if (url.endsWith("/seo/autopilot/plans")) {
+          return [{ id: "plan-1", status: "ready_for_review" }];
+        }
+        if (url.endsWith("/seo/autopilot/safe-mode")) {
+          return [{ id: "safe-1", reason: "manual" }];
+        }
+        return { status: "ok" };
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    await client.getSEOOverview("project-1");
+    await client.getSEOSettings("project-1");
+    await client.updateSEOSettings("project-1", {
+      site_url: "https://dev.unipost.dev",
+      gsc_site_url: "sc-domain:unipost.dev",
+      gsc_credential_ref: "GOOGLE_SERVICE_ACCOUNT_JSON",
+    });
+    await client.syncSEO("project-1", "https://dev.unipost.dev");
+    await client.getSEOBrief("project-1");
+    await client.listSEOOpportunities("project-1", { status: "open", limit: 10 });
+    await client.createSEOContentAction("project-1", "opp-1", { action_type: "technical SEO fix task" });
+    await client.listSEOContentActions("project-1", { limit: 10 });
+    await client.listSEOObjectives("project-1");
+    await client.createSEOObjective("project-1", { name: "Grow clicks" });
+    await client.getSEOPolicy("project-1");
+    await client.updateSEOPolicy("project-1", { autopilot_level: 1, weekly_action_limit: 3 });
+    await client.generateAutopilotPlan("project-1");
+    await client.listAutopilotPlans("project-1");
+    await client.listSafeModeEvents("project-1");
+    await client.enterSafeMode("project-1", { reason: "manual" });
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/overview");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/settings");
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/seo/settings");
+    assert.equal(calls[2].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[2].init.body), {
+      site_url: "https://dev.unipost.dev",
+      gsc_site_url: "sc-domain:unipost.dev",
+      gsc_credential_ref: "GOOGLE_SERVICE_ACCOUNT_JSON",
+    });
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/seo/sync");
+    assert.equal(calls[3].init.method, "POST");
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/seo/briefs/latest");
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/seo/opportunities?status=open&limit=10");
+    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/seo/opportunities/opp-1/actions");
+    assert.equal(calls[6].init.method, "POST");
+    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/seo/actions?limit=10");
+    assert.equal(calls[8].url, "https://api.example.test/api/projects/project-1/seo/autopilot/objectives");
+    assert.equal(calls[9].url, "https://api.example.test/api/projects/project-1/seo/autopilot/objectives");
+    assert.equal(calls[9].init.method, "POST");
+    assert.equal(calls[10].url, "https://api.example.test/api/projects/project-1/seo/autopilot/policy");
+    assert.equal(calls[11].url, "https://api.example.test/api/projects/project-1/seo/autopilot/policy");
+    assert.equal(calls[11].init.method, "PUT");
+    assert.equal(calls[12].url, "https://api.example.test/api/projects/project-1/seo/autopilot/plans/generate");
+    assert.equal(calls[13].url, "https://api.example.test/api/projects/project-1/seo/autopilot/plans");
+    assert.equal(calls[14].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
+    assert.equal(calls[15].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
+    assert.equal(calls[15].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

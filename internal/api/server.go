@@ -13,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/scheduler"
 	"github.com/citeloop/citeloop/internal/search"
+	"github.com/citeloop/citeloop/internal/seo"
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/go-chi/chi/v5"
@@ -21,14 +22,15 @@ import (
 )
 
 type Server struct {
-	Pool   *pgxpool.Pool
-	Q      *db.Queries
-	LLM    llm.Provider
-	Search search.Provider
-	Blog   *publisher.BlogPublisher
-	Sched  *scheduler.Scheduler
-	Env    config.Env
-	Log    *slog.Logger
+	Pool    *pgxpool.Pool
+	Q       *db.Queries
+	LLM     llm.Provider
+	Search  search.Provider
+	Blog    *publisher.BlogPublisher
+	Sched   *scheduler.Scheduler
+	Env     config.Env
+	Log     *slog.Logger
+	SEOData seo.GoogleDataProvider
 }
 
 func (s *Server) Router() http.Handler {
@@ -79,6 +81,42 @@ func (s *Server) Router() http.Handler {
 			r.Get("/distribute", s.listDistribute)
 			r.Get("/runs", s.listRuns)
 			r.Get("/runs/{runID}", s.getRun)
+			r.Route("/seo", func(r chi.Router) {
+				r.Get("/overview", s.getSEOOverview)
+				r.Post("/sync", s.syncSEO)
+				r.Post("/analyze", s.analyzeSEO)
+				r.Get("/runs", s.listSEORuns)
+				r.Get("/opportunities", s.listSEOOpportunities)
+				r.Get("/opportunities/{opportunityID}", s.getSEOOpportunity)
+				r.Post("/opportunities/{opportunityID}/accept", s.acceptSEOOpportunity)
+				r.Post("/opportunities/{opportunityID}/dismiss", s.dismissSEOOpportunity)
+				r.Post("/opportunities/{opportunityID}/actions", s.createSEOContentAction)
+				r.Get("/actions", s.listSEOContentActions)
+				r.Get("/actions/{actionID}", s.getSEOContentAction)
+				r.Post("/actions/{actionID}/generate-draft", func(w http.ResponseWriter, r *http.Request) {
+					s.updateSEOContentActionStatus(w, r, "ready_for_review")
+				})
+				r.Post("/actions/{actionID}/approve", func(w http.ResponseWriter, r *http.Request) {
+					s.updateSEOContentActionStatus(w, r, "approved")
+				})
+				r.Post("/actions/{actionID}/publish", func(w http.ResponseWriter, r *http.Request) {
+					s.updateSEOContentActionStatus(w, r, "measuring")
+				})
+				r.Get("/briefs/latest", s.getSEOBrief)
+				r.Get("/settings", s.getSEOSettings)
+				r.Put("/settings", s.updateSEOSettings)
+				r.Route("/autopilot", func(r chi.Router) {
+					r.Get("/objectives", s.listSEOObjectives)
+					r.Post("/objectives", s.createSEOObjective)
+					r.Get("/policy", s.getSEOPolicy)
+					r.Put("/policy", s.updateSEOPolicy)
+					r.Post("/plans/generate", s.generateAutopilotPlan)
+					r.Get("/plans", s.listAutopilotPlans)
+					r.Get("/safe-mode", s.listSafeModeEvents)
+					r.Post("/safe-mode", s.enterSafeMode)
+					r.Post("/safe-mode/{safeModeID}/exit", s.exitSafeMode)
+				})
+			})
 			r.Get("/notifications/channels", s.listNotificationChannels)
 			r.Post("/notifications/channels", s.createNotificationChannel)
 			r.Post("/notifications/channels/{channelID}/test", s.testNotificationChannel)

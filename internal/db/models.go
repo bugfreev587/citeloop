@@ -47,6 +47,57 @@ type Article struct {
 	CanonicalUrlVerifiedAt pgtype.Timestamptz `json:"canonical_url_verified_at"`
 	LastPublishRunID       pgtype.UUID        `json:"last_publish_run_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ContentHash            *string            `json:"content_hash"`
+}
+
+type AutopilotAuditEvent struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	Actor          string             `json:"actor"`
+	EventType      string             `json:"event_type"`
+	EntityType     string             `json:"entity_type"`
+	EntityID       pgtype.UUID        `json:"entity_id"`
+	BeforeSnapshot json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot  json.RawMessage    `json:"after_snapshot"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type AutopilotRun struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	ObjectiveID            pgtype.UUID        `json:"objective_id"`
+	Status                 string             `json:"status"`
+	AutopilotLevelSnapshot int32              `json:"autopilot_level_snapshot"`
+	DerivedMode            string             `json:"derived_mode"`
+	StartedAt              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+	InputSnapshot          json.RawMessage    `json:"input_snapshot"`
+	SelectedActions        json.RawMessage    `json:"selected_actions"`
+	RejectedActions        json.RawMessage    `json:"rejected_actions"`
+	GuardrailResults       json.RawMessage    `json:"guardrail_results"`
+	PublishedChanges       json.RawMessage    `json:"published_changes"`
+	CostUsd                pgtype.Numeric     `json:"cost_usd"`
+	Error                  *string            `json:"error"`
+}
+
+type ContentAction struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	OpportunityID           uuid.UUID          `json:"opportunity_id"`
+	ActionType              string             `json:"action_type"`
+	Status                  string             `json:"status"`
+	TargetArticleID         pgtype.UUID        `json:"target_article_id"`
+	TargetUrl               *string            `json:"target_url"`
+	NormalizedTargetUrl     *string            `json:"normalized_target_url"`
+	TargetContentHashBefore *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter  *string            `json:"target_content_hash_after"`
+	DraftArticleID          pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow          json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow       json.RawMessage    `json:"measurement_window"`
+	PublishedAt             pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary          json.RawMessage    `json:"outcome_summary"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ContentInventory struct {
@@ -74,6 +125,34 @@ type GenerationRun struct {
 	Status    string             `json:"status"`
 	Error     *string            `json:"error"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type GuardrailCheck struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	ActionID                pgtype.UUID        `json:"action_id"`
+	CheckType               string             `json:"check_type"`
+	Status                  string             `json:"status"`
+	Severity                string             `json:"severity"`
+	Details                 json.RawMessage    `json:"details"`
+	ReportedFalsePositiveAt pgtype.Timestamptz `json:"reported_false_positive_at"`
+	ReportedFalseNegativeAt pgtype.Timestamptz `json:"reported_false_negative_at"`
+	ReportedBy              *string            `json:"reported_by"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+type InternalLinkEdge struct {
+	ProjectID           uuid.UUID          `json:"project_id"`
+	SourceUrl           string             `json:"source_url"`
+	NormalizedSourceUrl string             `json:"normalized_source_url"`
+	TargetUrl           string             `json:"target_url"`
+	NormalizedTargetUrl string             `json:"normalized_target_url"`
+	AnchorText          string             `json:"anchor_text"`
+	LinkContext         *string            `json:"link_context"`
+	SourceArticleID     pgtype.UUID        `json:"source_article_id"`
+	TargetArticleID     pgtype.UUID        `json:"target_article_id"`
+	FirstSeenAt         pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt          pgtype.Timestamptz `json:"last_seen_at"`
 }
 
 type NotificationChannel struct {
@@ -113,6 +192,27 @@ type NotificationSubscription struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type PagePerformanceDaily struct {
+	ProjectID          uuid.UUID          `json:"project_id"`
+	PropertyID         uuid.UUID          `json:"property_id"`
+	Date               pgtype.Date        `json:"date"`
+	PageUrl            string             `json:"page_url"`
+	NormalizedPageUrl  string             `json:"normalized_page_url"`
+	ArticleID          pgtype.UUID        `json:"article_id"`
+	TopicID            pgtype.UUID        `json:"topic_id"`
+	Clicks             pgtype.Numeric     `json:"clicks"`
+	Impressions        pgtype.Numeric     `json:"impressions"`
+	WeightedPosition   pgtype.Numeric     `json:"weighted_position"`
+	Ctr                pgtype.Numeric     `json:"ctr"`
+	Ga4Sessions        pgtype.Numeric     `json:"ga4_sessions"`
+	Ga4EngagedSessions pgtype.Numeric     `json:"ga4_engaged_sessions"`
+	Ga4Conversions     pgtype.Numeric     `json:"ga4_conversions"`
+	IndexedState       *string            `json:"indexed_state"`
+	TechnicalStatus    *string            `json:"technical_status"`
+	DataSourceNotes    json.RawMessage    `json:"data_source_notes"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProductProfile struct {
 	ID         uuid.UUID          `json:"id"`
 	ProjectID  uuid.UUID          `json:"project_id"`
@@ -133,6 +233,236 @@ type Project struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type RiskClassificationRule struct {
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
+	Version   string             `json:"version"`
+	Rules     json.RawMessage    `json:"rules"`
+	CreatedBy string             `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	RetiredAt pgtype.Timestamptz `json:"retired_at"`
+}
+
+type RollbackRecord struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	ActionID          pgtype.UUID        `json:"action_id"`
+	RollbackType      string             `json:"rollback_type"`
+	SourceCommitSha   *string            `json:"source_commit_sha"`
+	RollbackCommitSha *string            `json:"rollback_commit_sha"`
+	Reason            *string            `json:"reason"`
+	PerformedBy       *string            `json:"performed_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type SafeModeEvent struct {
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Reason          string             `json:"reason"`
+	TriggerSource   string             `json:"trigger_source"`
+	EnteredAt       pgtype.Timestamptz `json:"entered_at"`
+	EnteredBy       string             `json:"entered_by"`
+	ExitedAt        pgtype.Timestamptz `json:"exited_at"`
+	ExitedBy        *string            `json:"exited_by"`
+	ExitReason      *string            `json:"exit_reason"`
+	RelatedRunID    pgtype.UUID        `json:"related_run_id"`
+	RelatedActionID pgtype.UUID        `json:"related_action_id"`
+}
+
+type SearchAppearanceDaily struct {
+	ProjectID        uuid.UUID          `json:"project_id"`
+	PropertyID       uuid.UUID          `json:"property_id"`
+	Date             pgtype.Date        `json:"date"`
+	SearchAppearance string             `json:"search_appearance"`
+	Clicks           pgtype.Numeric     `json:"clicks"`
+	Impressions      pgtype.Numeric     `json:"impressions"`
+	Ctr              pgtype.Numeric     `json:"ctr"`
+	Position         pgtype.Numeric     `json:"position"`
+	Source           string             `json:"source"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SearchPerformanceDaily struct {
+	ProjectID         uuid.UUID          `json:"project_id"`
+	PropertyID        uuid.UUID          `json:"property_id"`
+	Date              pgtype.Date        `json:"date"`
+	PageUrl           string             `json:"page_url"`
+	NormalizedPageUrl string             `json:"normalized_page_url"`
+	Query             string             `json:"query"`
+	Country           string             `json:"country"`
+	Device            string             `json:"device"`
+	Clicks            pgtype.Numeric     `json:"clicks"`
+	Impressions       pgtype.Numeric     `json:"impressions"`
+	Ctr               pgtype.Numeric     `json:"ctr"`
+	Position          pgtype.Numeric     `json:"position"`
+	QueryDataPartial  bool               `json:"query_data_partial"`
+	Source            string             `json:"source"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoActionPlan struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	AutopilotRunID        pgtype.UUID        `json:"autopilot_run_id"`
+	ObjectiveID           pgtype.UUID        `json:"objective_id"`
+	PlanWindowStart       pgtype.Date        `json:"plan_window_start"`
+	PlanWindowEnd         pgtype.Date        `json:"plan_window_end"`
+	Status                string             `json:"status"`
+	Actions               json.RawMessage    `json:"actions"`
+	ExpectedImpact        json.RawMessage    `json:"expected_impact"`
+	ExpectedEffort        int32              `json:"expected_effort"`
+	AggregateRisk         string             `json:"aggregate_risk"`
+	RiskClassifierVersion string             `json:"risk_classifier_version"`
+	ApprovalRequired      bool               `json:"approval_required"`
+	ApprovedBy            *string            `json:"approved_by"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoExperiment struct {
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	ActionID         pgtype.UUID        `json:"action_id"`
+	Hypothesis       *string            `json:"hypothesis"`
+	BaselineStart    pgtype.Date        `json:"baseline_start"`
+	BaselineEnd      pgtype.Date        `json:"baseline_end"`
+	MeasurementStart pgtype.Date        `json:"measurement_start"`
+	MeasurementEnd   pgtype.Date        `json:"measurement_end"`
+	PrimaryMetric    *string            `json:"primary_metric"`
+	SecondaryMetrics json.RawMessage    `json:"secondary_metrics"`
+	ControlPages     json.RawMessage    `json:"control_pages"`
+	EvidenceLevel    string             `json:"evidence_level"`
+	Result           *string            `json:"result"`
+	Confidence       pgtype.Numeric     `json:"confidence"`
+	Notes            *string            `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoIntegration struct {
+	ID             uuid.UUID          `json:"id"`
+	ProjectID      uuid.UUID          `json:"project_id"`
+	Provider       string             `json:"provider"`
+	Status         string             `json:"status"`
+	CredentialRef  *string            `json:"credential_ref"`
+	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
+	LastError      *string            `json:"last_error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoObjective struct {
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	Name             string             `json:"name"`
+	Status           string             `json:"status"`
+	PrimaryMetric    string             `json:"primary_metric"`
+	SecondaryMetrics json.RawMessage    `json:"secondary_metrics"`
+	TargetPages      json.RawMessage    `json:"target_pages"`
+	TargetTopics     json.RawMessage    `json:"target_topics"`
+	TargetQueries    json.RawMessage    `json:"target_queries"`
+	TimeHorizonDays  int32              `json:"time_horizon_days"`
+	BudgetUsd        pgtype.Numeric     `json:"budget_usd"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoOpportunity struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	Type              string             `json:"type"`
+	Status            string             `json:"status"`
+	PriorityScore     pgtype.Numeric     `json:"priority_score"`
+	Confidence        pgtype.Numeric     `json:"confidence"`
+	PageUrl           *string            `json:"page_url"`
+	NormalizedPageUrl string             `json:"normalized_page_url"`
+	ArticleID         pgtype.UUID        `json:"article_id"`
+	TopicID           pgtype.UUID        `json:"topic_id"`
+	Query             *string            `json:"query"`
+	Evidence          json.RawMessage    `json:"evidence"`
+	RecommendedAction *string            `json:"recommended_action"`
+	ExpectedImpact    *string            `json:"expected_impact"`
+	Effort            int32              `json:"effort"`
+	RiskLevel         string             `json:"risk_level"`
+	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoPolicy struct {
+	ID                                uuid.UUID          `json:"id"`
+	ProjectID                         uuid.UUID          `json:"project_id"`
+	AutopilotLevel                    int32              `json:"autopilot_level"`
+	WeeklyActionLimit                 int32              `json:"weekly_action_limit"`
+	MonthlyBudgetLimit                pgtype.Numeric     `json:"monthly_budget_limit"`
+	AllowedActionTypes                json.RawMessage    `json:"allowed_action_types"`
+	BlockedUrlPatterns                json.RawMessage    `json:"blocked_url_patterns"`
+	RequiresReviewActionTypes         json.RawMessage    `json:"requires_review_action_types"`
+	MaxAutoChangesPerPagePerMonth     int32              `json:"max_auto_changes_per_page_per_month"`
+	LowTrafficClicks28dThreshold      int32              `json:"low_traffic_clicks_28d_threshold"`
+	LowTrafficImpressions28dThreshold int32              `json:"low_traffic_impressions_28d_threshold"`
+	MinConfidenceForAutoPublish       pgtype.Numeric     `json:"min_confidence_for_auto_publish"`
+	QuietHoursStart                   *string            `json:"quiet_hours_start"`
+	QuietHoursEnd                     *string            `json:"quiet_hours_end"`
+	QuietHoursTimezone                string             `json:"quiet_hours_timezone"`
+	QuietHoursBehavior                string             `json:"quiet_hours_behavior"`
+	KillSwitchEnabled                 bool               `json:"kill_switch_enabled"`
+	SafeModeEnabled                   bool               `json:"safe_mode_enabled"`
+	RiskClassifierVersion             string             `json:"risk_classifier_version"`
+	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoProperty struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	SiteUrl                string             `json:"site_url"`
+	GscSiteUrl             *string            `json:"gsc_site_url"`
+	Ga4PropertyID          *string            `json:"ga4_property_id"`
+	UrlNormalizationConfig json.RawMessage    `json:"url_normalization_config"`
+	DefaultCountry         *string            `json:"default_country"`
+	DefaultLanguage        *string            `json:"default_language"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoRun struct {
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	Agent      string             `json:"agent"`
+	Status     string             `json:"status"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	CostUsd    pgtype.Numeric     `json:"cost_usd"`
+	Input      json.RawMessage    `json:"input"`
+	Output     json.RawMessage    `json:"output"`
+	Error      *string            `json:"error"`
+}
+
+type TechnicalCheck struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	RunID                 uuid.UUID          `json:"run_id"`
+	PageUrl               string             `json:"page_url"`
+	NormalizedPageUrl     string             `json:"normalized_page_url"`
+	ArticleID             pgtype.UUID        `json:"article_id"`
+	HttpStatus            *int32             `json:"http_status"`
+	CanonicalStatus       *string            `json:"canonical_status"`
+	RobotsStatus          *string            `json:"robots_status"`
+	TitleStatus           *string            `json:"title_status"`
+	MetaDescriptionStatus *string            `json:"meta_description_status"`
+	H1Status              *string            `json:"h1_status"`
+	StructuredDataStatus  *string            `json:"structured_data_status"`
+	SitemapStatus         *string            `json:"sitemap_status"`
+	InternalLinkCount     *int32             `json:"internal_link_count"`
+	OutboundLinkCount     *int32             `json:"outbound_link_count"`
+	ContentHash           *string            `json:"content_hash"`
+	UnsafeMdxDetected     bool               `json:"unsafe_mdx_detected"`
+	RawDetails            json.RawMessage    `json:"raw_details"`
+	CheckedAt             pgtype.Timestamptz `json:"checked_at"`
+}
+
 type Topic struct {
 	ID            uuid.UUID          `json:"id"`
 	ProjectID     uuid.UUID          `json:"project_id"`
@@ -147,4 +477,22 @@ type Topic struct {
 	Status        string             `json:"status"`
 	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type UrlIndexSnapshot struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	RunID             uuid.UUID          `json:"run_id"`
+	PageUrl           string             `json:"page_url"`
+	NormalizedPageUrl string             `json:"normalized_page_url"`
+	ArticleID         pgtype.UUID        `json:"article_id"`
+	InspectionStatus  *string            `json:"inspection_status"`
+	CoverageState     *string            `json:"coverage_state"`
+	GoogleCanonical   *string            `json:"google_canonical"`
+	UserCanonical     *string            `json:"user_canonical"`
+	LastCrawlTime     pgtype.Timestamptz `json:"last_crawl_time"`
+	RobotsTxtState    *string            `json:"robots_txt_state"`
+	PageFetchState    *string            `json:"page_fetch_state"`
+	RawSummary        json.RawMessage    `json:"raw_summary"`
+	InspectedAt       pgtype.Timestamptz `json:"inspected_at"`
 }
