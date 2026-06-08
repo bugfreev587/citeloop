@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, ExternalLink, Eye, FileText, RefreshCw, Save, Search, ShieldAlert, Sparkles, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Eye, FileText, RefreshCw, Save, Search, ShieldAlert, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
   articlePreviewBlocks,
@@ -9,6 +9,7 @@ import {
   buildSEOContributions,
   explainQAIssue,
   previewPath,
+  shouldAutoRepairArticle,
   type SEOContribution,
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
@@ -20,6 +21,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState<Record<string, boolean>>({});
+  const [repairAttempted, setRepairAttempted] = useState<Record<string, boolean>>({});
+  const [repairFailures, setRepairFailures] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<Message>(null);
 
   const refresh = useCallback(async () => {
@@ -33,6 +37,51 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const candidate = groups
+      .flatMap((group) => group.articles)
+      .find((article) => shouldAutoRepairArticle(article) && !repairAttempted[article.id] && !repairing[article.id]);
+    if (!candidate) return;
+
+    let cancelled = false;
+    setRepairAttempted((current) => ({ ...current, [candidate.id]: true }));
+    setRepairing((current) => ({ ...current, [candidate.id]: true }));
+    setRepairFailures((current) => {
+      const next = { ...current };
+      delete next[candidate.id];
+      return next;
+    });
+
+    api
+      .fixArticle(projectId, candidate.id)
+      .then(async () => {
+        if (cancelled) return;
+        await refresh();
+        setMessage({ title: "CiteLoop repaired a draft and reran QA", tone: "green" });
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        setRepairFailures((current) => ({ ...current, [candidate.id]: e.message }));
+        setMessage({
+          title: "Automatic draft repair failed",
+          detail: e.message,
+          tone: "red",
+        });
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRepairing((current) => {
+          const next = { ...current };
+          delete next[candidate.id];
+          return next;
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, groups, projectId, refresh, repairAttempted, repairing]);
 
   async function mutate(label: string, id: string, fn: () => Promise<any>) {
     setBusy(id);
@@ -85,9 +134,10 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                     key={article.id}
                     article={article}
                     busy={busy === article.id}
+                    repairing={!!repairing[article.id]}
+                    repairFailure={repairFailures[article.id]}
                     onApprove={() => mutate("Article approved", article.id, () => api.approve(projectId, article.id))}
                     onReject={() => mutate("Article rejected", article.id, () => api.reject(projectId, article.id))}
-                    onFix={() => mutate("AI fix applied and QA refreshed", article.id, () => api.fixArticle(projectId, article.id))}
                     onSave={(content) =>
                       mutate("Content saved and QA refreshed", article.id, () => api.edit(projectId, article.id, { content_md: content }))
                     }
@@ -106,17 +156,19 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 function ReviewArticle({
   article,
   busy,
+  repairing,
+  repairFailure,
   onApprove,
   onReject,
-  onFix,
   onSave,
   detailHref,
 }: {
   article: Article;
   busy: boolean;
+  repairing: boolean;
+  repairFailure?: string;
   onApprove: () => void;
   onReject: () => void;
-  onFix: () => void;
   onSave: (content: string) => void;
   detailHref: string;
 }) {
@@ -124,7 +176,6 @@ function ReviewArticle({
   const [content, setContent] = useState(article.content_md);
   const title = articleReviewTitle(article);
   const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
-  const aiFixable = article.qa_blocking || seoContributions.some((row) => row.status !== "ready");
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -164,13 +215,7 @@ function ReviewArticle({
           <Button size="sm" onClick={() => setOpen((value) => !value)}>
             {open ? "Hide editor" : "Edit"}
           </Button>
-          {aiFixable && (
-            <Button disabled={busy} size="sm" onClick={onFix}>
-              <Sparkles size={14} />
-              AI fix
-            </Button>
-          )}
-          <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
+          <Button disabled={busy || repairing || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
             <CheckCircle2 size={14} />
             Approve
           </Button>
@@ -183,6 +228,8 @@ function ReviewArticle({
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.95fr)] 2xl:grid-cols-[minmax(560px,1fr)_minmax(560px,1fr)]">
         <div className="min-w-0 space-y-4">
+          {(repairing || repairFailure) && <AutoRepairStatus repairing={repairing} error={repairFailure} />}
+
           <OriginalArticlePanel
             content={content}
             editing={open}
@@ -199,6 +246,23 @@ function ReviewArticle({
         <ArticleWebPreview article={article} />
       </div>
     </article>
+  );
+}
+
+function AutoRepairStatus({ repairing, error }: { repairing: boolean; error?: string }) {
+  if (repairing) {
+    return (
+      <section className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-900">
+        CiteLoop is automatically repairing this draft and rerunning QA.
+      </section>
+    );
+  }
+  if (!error) return null;
+  return (
+    <section className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <div className="font-semibold">Automatic repair could not complete</div>
+      <div className="mt-1 text-xs leading-5 text-red-800">{error}</div>
+    </section>
   );
 }
 

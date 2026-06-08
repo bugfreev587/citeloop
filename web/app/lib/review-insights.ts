@@ -5,6 +5,10 @@ type ReviewArticleLike = {
   resolved_slug: string | null;
 };
 
+type RepairableArticleLike = ReviewArticleLike & {
+  qa_blocking: boolean;
+};
+
 export type SEOContribution = {
   label: string;
   value: string;
@@ -85,7 +89,7 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Search intent",
       value: keyword || "Keyword not specified",
-      detail: keyword ? "Gives the draft a clear query target." : "AI fix should infer the target query before approval.",
+      detail: keyword ? "Gives the draft a clear query target." : "CiteLoop will infer the target query before asking for approval.",
       status: keyword ? "ready" : "needs_review",
     },
     {
@@ -117,10 +121,15 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Internal links",
       value: `${links} markdown links`,
-      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "AI fix should add safe internal links when evidence allows.",
+      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "CiteLoop will add safe internal links when evidence allows.",
       status: links > 0 ? "ready" : "needs_review",
     },
   ];
+}
+
+export function shouldAutoRepairArticle(article: RepairableArticleLike) {
+  if (article.qa_blocking) return true;
+  return buildSEOContributions(article).some((row) => row.status === "missing" || (row.label === "Search intent" && row.status !== "ready"));
 }
 
 export function explainQAIssue(issue: string): ExplainedQAIssue {
@@ -130,7 +139,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA evidence map was not returned",
       detail:
         "The QA step expects a claims array so it can map product claims to evidence. The model response did not include that structure, so CiteLoop blocked approval conservatively.",
-      action: "Use AI fix first. CiteLoop will revise or normalize the draft, rerun QA, and only return unresolved choices to you.",
+      action: "CiteLoop automatically revises or normalizes the draft, will rerun QA, and only returns unresolved choices to you.",
       raw: issue,
     };
   }
@@ -139,7 +148,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA response could not be parsed",
       detail:
         "The auditor returned output that did not match the required JSON schema for evidence mapping, scores, and issues.",
-      action: "Use AI fix first. CiteLoop will rerun repair plus QA before asking for a manual decision.",
+      action: "CiteLoop automatically reruns repair plus QA before asking for a manual decision.",
       raw: issue,
     };
   }
@@ -147,14 +156,14 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
     return {
       title: "Product claim needs evidence",
       detail: issue.replace(/^unmapped product claim:\s*/i, ""),
-      action: "Use AI fix to remove or rewrite the claim against known evidence. Review only if the evidence is genuinely ambiguous.",
+      action: "CiteLoop automatically removes or rewrites the claim against known evidence. Review only if the evidence is genuinely ambiguous.",
       raw: issue,
     };
   }
   return {
     title: "QA blocking issue",
     detail: issue,
-    action: "Use AI fix to revise the draft and rerun QA. If it remains blocked, choose from the remaining manual options.",
+    action: "CiteLoop automatically revises the draft and reruns QA. If it remains blocked, choose from the remaining manual options.",
     raw: issue,
   };
 }
