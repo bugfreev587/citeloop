@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -299,6 +300,17 @@ func (s *Server) enterSafeMode(w http.ResponseWriter, r *http.Request) {
 	if in.EnteredBy == "" {
 		in.EnteredBy = "human"
 	}
+	policy, err := s.ensureSEOPolicy(r, projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !policy.SafeModeEnabled {
+		if err := s.setSEOPolicySafeMode(r.Context(), policy, true); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	event, err := s.Q.EnterSafeMode(r.Context(), db.EnterSafeModeParams{
 		ProjectID:     projectID,
 		Reason:        in.Reason,
@@ -336,6 +348,22 @@ func (s *Server) exitSafeMode(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "safe mode event not found")
+		return
+	}
+	if _, err := s.Q.GetOpenSafeModeEvent(r.Context(), projectID); err == pgx.ErrNoRows {
+		policy, policyErr := s.ensureSEOPolicy(r, projectID)
+		if policyErr != nil {
+			writeErr(w, http.StatusInternalServerError, policyErr.Error())
+			return
+		}
+		if policy.SafeModeEnabled {
+			if policyErr := s.setSEOPolicySafeMode(r.Context(), policy, false); policyErr != nil {
+				writeErr(w, http.StatusInternalServerError, policyErr.Error())
+				return
+			}
+		}
+	} else if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, event)
@@ -381,6 +409,30 @@ func (s *Server) ensureSEOPolicy(r *http.Request, projectID uuid.UUID) (db.SeoPo
 	})
 }
 
+func (s *Server) setSEOPolicySafeMode(ctx context.Context, policy db.SeoPolicy, enabled bool) error {
+	_, err := s.Q.UpsertSEOPolicy(ctx, db.UpsertSEOPolicyParams{
+		ProjectID:                         policy.ProjectID,
+		AutopilotLevel:                    policy.AutopilotLevel,
+		WeeklyActionLimit:                 int32OrDefault(policy.WeeklyActionLimit, 5),
+		MonthlyBudgetLimit:                numericOrDefault(policy.MonthlyBudgetLimit, 25),
+		AllowedActionTypes:                rawOrDefault(policy.AllowedActionTypes, `["submit sitemap","metadata rewrite","technical SEO fix task"]`),
+		BlockedUrlPatterns:                rawOrArray(policy.BlockedUrlPatterns),
+		RequiresReviewActionTypes:         rawOrDefault(policy.RequiresReviewActionTypes, `["refresh paragraph","create supporting article","merge pages","noindex/prune/delete","change robots/canonical rules"]`),
+		MaxAutoChangesPerPagePerMonth:     int32OrDefault(policy.MaxAutoChangesPerPagePerMonth, 1),
+		LowTrafficClicks28dThreshold:      int32OrDefault(policy.LowTrafficClicks28dThreshold, 10),
+		LowTrafficImpressions28dThreshold: int32OrDefault(policy.LowTrafficImpressions28dThreshold, 500),
+		MinConfidenceForAutoPublish:       numericOrDefault(policy.MinConfidenceForAutoPublish, 80),
+		QuietHoursStart:                   policy.QuietHoursStart,
+		QuietHoursEnd:                     policy.QuietHoursEnd,
+		QuietHoursTimezone:                stringOrDefault(policy.QuietHoursTimezone, "America/Los_Angeles"),
+		QuietHoursBehavior:                stringOrDefault(policy.QuietHoursBehavior, "defer_to_next_window"),
+		KillSwitchEnabled:                 policy.KillSwitchEnabled,
+		SafeModeEnabled:                   enabled,
+		RiskClassifierVersion:             stringOrDefault(policy.RiskClassifierVersion, autopilot.DefaultRiskClassifierVersion),
+	})
+	return err
+}
+
 func riskPolicyFromDB(policy db.SeoPolicy) autopilot.RiskPolicy {
 	return autopilot.RiskPolicy{
 		LowTrafficClicks28DThreshold:      int(policy.LowTrafficClicks28dThreshold),
@@ -399,6 +451,27 @@ func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
 		return json.RawMessage(fallback)
 	}
 	return raw
+}
+
+func int32OrDefault(value int32, fallback int32) int32 {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func numericOrDefault(value pgtype.Numeric, fallback float64) pgtype.Numeric {
+	if !value.Valid || value.Int == nil {
+		return pgutil.Numeric(fallback)
+	}
+	return value
+}
+
+func stringOrDefault(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func valueOr(value *string, fallback string) string {

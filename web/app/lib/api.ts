@@ -433,6 +433,8 @@ export type SafeModeEvent = {
   entered_at?: any;
   entered_by?: string;
   exited_at?: any;
+  exited_by?: string;
+  exit_reason?: string;
 };
 
 export type AICrawlerAccessSnapshot = {
@@ -1480,6 +1482,13 @@ export function createApi(auth?: AuthOptions) {
   },
   enterSafeMode: async (id: string, body: { reason: string; trigger_source?: string; entered_by?: string }): Promise<SafeModeEvent> => {
     return req<SafeModeEvent>(`/projects/${id}/seo/autopilot/safe-mode`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  exitSafeMode: async (id: string, safeModeID: string, body: { exited_by?: string; exit_reason?: string }): Promise<SafeModeEvent> => {
+    return req<SafeModeEvent>(
+      `/projects/${id}/seo/autopilot/safe-mode/${safeModeID}/exit`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
   },
   listNotificationChannels: async (id: string): Promise<NotificationChannel[]> => {
     const raw = await req<any[]>(`/projects/${id}/notifications/channels`, undefined, auth);

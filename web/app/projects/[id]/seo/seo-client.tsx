@@ -93,6 +93,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
   const [siteURL, setSiteURL] = useState("");
   const [surfaceURL, setSurfaceURL] = useState("");
   const [objectiveName, setObjectiveName] = useState("");
+  const [safeModeIntent, setSafeModeIntent] = useState<"enter" | "exit" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
@@ -149,6 +150,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
   const geoCoverage = normalizeNumeric(geoOverview?.score?.coverage);
   const geoScoreValue = normalizeNumeric(geoOverview?.score?.score);
   const showGeoScore = Boolean(geoOverview?.score && geoCoverage != null && geoCoverage >= 0.3 && geoOverview.score.confidence !== "insufficient_data");
+  const activeSafeMode = useMemo(() => safeModes.find((event) => !event.exited_at) ?? null, [safeModes]);
+  const policySafeModeOnly = Boolean(policy?.safe_mode_enabled && !activeSafeMode);
+  const safeModeActive = Boolean(activeSafeMode || policy?.safe_mode_enabled);
 
   async function saveSettings() {
     setBusy("settings");
@@ -389,7 +393,15 @@ export function SEOClient({ projectId }: { projectId: string }) {
     try {
       const result = await api.generateAutopilotPlan(projectId);
       await refresh();
-      setMessage({ title: "Autopilot plan generated", detail: `${result.plan?.actions?.length ?? 0} actions selected`, tone: "green" });
+      const actionCount = result.plan?.actions?.length ?? 0;
+      setMessage({
+        title: actionCount === 0 ? "No autopilot actions selected" : "Autopilot plan generated",
+        detail:
+          actionCount === 0
+            ? "No eligible actions met the current policy, data, or risk thresholds."
+            : `${actionCount} actions selected`,
+        tone: actionCount === 0 ? "amber" : "green",
+      });
     } catch (e: any) {
       setMessage({ title: "Could not generate autopilot plan", detail: e.message, tone: "red" });
     } finally {
@@ -397,15 +409,58 @@ export function SEOClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function enterSafeMode() {
+  function requestEnterSafeMode() {
+    if (activeSafeMode) {
+      setMessage({ title: "Safe mode is already active", detail: "Autopilot publishing and high-impact changes are paused.", tone: "amber" });
+      return;
+    }
+    setSafeModeIntent("enter");
+  }
+
+  function requestExitSafeMode() {
+    if (!activeSafeMode) {
+      setMessage({
+        title: policySafeModeOnly ? "Safe mode is active in policy" : "Safe mode is not active",
+        detail: policySafeModeOnly
+          ? "The policy flag is enabled, but there is no open safe mode event to exit from this panel."
+          : "There is no open safe mode event.",
+        tone: policySafeModeOnly ? "amber" : "neutral",
+      });
+      return;
+    }
+    setSafeModeIntent("exit");
+  }
+
+  async function confirmEnterSafeMode() {
     setBusy("safe-mode");
     setMessage(null);
     try {
       await api.enterSafeMode(projectId, { reason: "manual safe mode", trigger_source: "manual", entered_by: "human" });
+      setSafeModeIntent(null);
       await refresh();
-      setMessage({ title: "Safe mode enabled", tone: "amber" });
+      setMessage({
+        title: "Safe mode enabled",
+        detail: "Autopilot publishing and high-impact SEO changes are paused until safe mode is exited.",
+        tone: "amber",
+      });
     } catch (e: any) {
       setMessage({ title: "Could not enter safe mode", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function confirmExitSafeMode() {
+    if (!activeSafeMode) return;
+    setBusy("safe-mode-exit");
+    setMessage(null);
+    try {
+      await api.exitSafeMode(projectId, activeSafeMode.id, { exited_by: "human", exit_reason: "manual confirmation" });
+      setSafeModeIntent(null);
+      await refresh();
+      setMessage({ title: "Safe mode exited", detail: "Autopilot actions can resume under the current policy and review gates.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not exit safe mode", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -431,6 +486,62 @@ export function SEOClient({ projectId }: { projectId: string }) {
       />
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+      {activeSafeMode && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-bold">
+                <ShieldAlert size={16} />
+                Safe mode is active
+              </div>
+              <p className="mt-2 text-sm leading-6 text-amber-900">
+                Autopilot publishing and high-impact SEO changes are paused. Reason: {activeSafeMode.reason || "manual safe mode"}.
+                {activeSafeMode.entered_at ? ` Entered ${formatDate(activeSafeMode.entered_at)}.` : ""}
+              </p>
+            </div>
+            <Button size="sm" onClick={requestExitSafeMode} disabled={!!busy}>
+              Exit safe mode
+            </Button>
+          </div>
+        </div>
+      )}
+      {policySafeModeOnly && (
+        <Notice
+          title="Safe mode is active in policy"
+          detail="Autopilot plans will stay guarded. Refresh after the current safe mode event is recorded, or save policy changes before resuming automation."
+          tone="amber"
+        />
+      )}
+      {safeModeIntent && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900">
+                {safeModeIntent === "enter" ? "Confirm safe mode" : "Exit safe mode?"}
+              </div>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                {safeModeIntent === "enter"
+                  ? "This pauses Autopilot publishing and high-impact SEO changes. Drafting, review, and read-only analysis can continue."
+                  : "Autopilot actions can resume under the current policy, safe action limits, and review gates."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={safeModeIntent === "enter" ? "danger" : "primary"}
+                onClick={safeModeIntent === "enter" ? confirmEnterSafeMode : confirmExitSafeMode}
+                disabled={!!busy}
+              >
+                <ShieldAlert size={14} />
+                {safeModeIntent === "enter" ? "Confirm safe mode" : "Exit safe mode"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSafeModeIntent(null)} disabled={!!busy}>
+                {safeModeIntent === "enter" ? "Cancel" : "Keep safe mode"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {overview?.data_source_warnings?.map((warning) => (
         <Notice key={warning} title="SEO data warning" detail={warning} tone="amber" />
       ))}
@@ -788,16 +899,20 @@ export function SEOClient({ projectId }: { projectId: string }) {
           title="Autopilot"
           action={
             <div className="flex flex-wrap gap-2">
-              <Badge tone={policy?.safe_mode_enabled || safeModes.some((event) => !event.exited_at) ? "amber" : "neutral"}>
-                L{policy?.autopilot_level ?? 0}
-              </Badge>
+              <Badge tone={safeModeActive ? "amber" : "neutral"}>{safeModeActive ? "safe mode" : `L${policy?.autopilot_level ?? 0}`}</Badge>
               <Button size="sm" onClick={generatePlan} disabled={!!busy}>
                 <BarChart3 size={14} />
                 Plan
               </Button>
-              <Button size="sm" variant="danger" onClick={enterSafeMode} disabled={!!busy}>
+              <Button
+                size="sm"
+                variant={activeSafeMode ? "ghost" : "danger"}
+                onClick={activeSafeMode ? requestExitSafeMode : requestEnterSafeMode}
+                disabled={!!busy}
+                title={activeSafeMode ? "Exit safe mode after confirming" : "Confirm before pausing Autopilot automation"}
+              >
                 <ShieldAlert size={14} />
-                Safe mode
+                {activeSafeMode ? "Exit safe mode" : "Safe mode"}
               </Button>
             </div>
           }
@@ -844,12 +959,18 @@ export function SEOClient({ projectId }: { projectId: string }) {
             />
             Kill switch
           </label>
-          <div className="md:col-span-3 flex gap-2">
+          <div className="md:col-span-3 flex flex-col gap-2 md:flex-row">
             <TextInput value={objectiveName} onChange={(event) => setObjectiveName(event.target.value)} placeholder="Grow qualified blog clicks" />
-            <Button size="sm" onClick={createObjective} disabled={busy === "objective" || !objectiveName.trim()}>
+            <Button
+              size="sm"
+              onClick={createObjective}
+              disabled={busy === "objective" || !objectiveName.trim()}
+              title={objectiveName.trim() ? "Create SEO objective" : "Enter an objective name first"}
+            >
               <FileText size={14} />
               Objective
             </Button>
+            {!objectiveName.trim() && <p className="text-xs leading-5 text-slate-500 md:self-center">Enter an objective name to enable this action.</p>}
           </div>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-3">

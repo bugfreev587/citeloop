@@ -693,6 +693,9 @@ test("SEO APIs call project scoped endpoints", async () => {
         if (url.endsWith("/seo/autopilot/safe-mode")) {
           return [{ id: "safe-1", reason: "manual" }];
         }
+        if (url.endsWith("/seo/autopilot/safe-mode/safe-1/exit")) {
+          return { id: "safe-1", reason: "manual", exited_at: "2026-06-08T00:00:00Z" };
+        }
         return { status: "ok" };
       },
     };
@@ -722,6 +725,7 @@ test("SEO APIs call project scoped endpoints", async () => {
     await client.listAutopilotPlans("project-1");
     await client.listSafeModeEvents("project-1");
     await client.enterSafeMode("project-1", { reason: "manual" });
+    await client.exitSafeMode("project-1", "safe-1", { exit_reason: "manual confirmation" });
 
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/overview");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/settings");
@@ -750,6 +754,8 @@ test("SEO APIs call project scoped endpoints", async () => {
     assert.equal(calls[14].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].init.method, "POST");
+    assert.equal(calls[16].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode/safe-1/exit");
+    assert.equal(calls[16].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }
