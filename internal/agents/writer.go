@@ -79,7 +79,9 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	qaAgent := NewQA(w.Deps, w.Log)
 	qa, qaResp, qaErr := qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
 	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
+	repairAttemptsUsed := 0
 	for attempt := 1; attempt <= maxDraftRepairAttempts && draftNeedsRepair(out, qa, qaErr); attempt++ {
+		repairAttemptsUsed++
 		repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profileJSON, plat, canonical, *out, qa, qaErr)
 		recordRun(ctx, w.Q, projectID, agentWriter,
 			map[string]any{"topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": attempt, "feedback": repairFeedback(qa, qaErr)},
@@ -97,8 +99,9 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	}
 	if qaErr != nil {
 		// QA failure is non-fatal to drafting but forces human review after AI repair attempts.
-		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + qaErr.Error()}}
+		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + qaErr.Error()}, CanAutoFix: false}
 	}
+	repairStatus, requiresHuman := repairOutcome(qa, int32(repairAttemptsUsed), maxDraftRepairAttempts)
 
 	kind := "canonical"
 	var platformPtr *string
@@ -109,17 +112,22 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	}
 
 	art, err := w.Q.CreateArticle(ctx, db.CreateArticleParams{
-		ProjectID:  projectID,
-		TopicID:    topic.ID,
-		Kind:       kind,
-		Platform:   platformPtr,
-		ContentMd:  out.ContentMD,
-		SeoMeta:    toJSON(out.SEOMeta),
-		GeoScore:   pgutil.Numeric(qa.GeoScore),
-		SeoScore:   pgutil.Numeric(qa.SeoScore),
-		QaIssues:   toJSON(qaIssues(qa)),
-		QaBlocking: qa.QABlocking,
-		Status:     "pending_review",
+		ProjectID:             projectID,
+		TopicID:               topic.ID,
+		Kind:                  kind,
+		Platform:              platformPtr,
+		ContentMd:             out.ContentMD,
+		SeoMeta:               toJSON(out.SEOMeta),
+		GeoScore:              pgutil.Numeric(qa.GeoScore),
+		SeoScore:              pgutil.Numeric(qa.SeoScore),
+		QaIssues:              toJSON(qaIssues(qa)),
+		QaBlocking:            qa.QABlocking,
+		Status:                "pending_review",
+		RepairAttempts:        int32(repairAttemptsUsed),
+		RepairStatus:          repairStatus,
+		RequiresHumanDecision: requiresHuman,
+		HumanDecisionOptions:  toJSON(humanDecisionOptions(qa)),
+		QaFeedback:            toJSON(qa),
 	})
 	if err != nil {
 		return nil, err
@@ -135,6 +143,19 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	if err != nil {
 		return db.Article{}, err
 	}
+	qa := qaFromArticle(art)
+	if !shouldAttemptArticleRepair(art, maxDraftRepairAttempts) {
+		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
+	}
+	started, err := w.Q.StartArticleRepairForProject(ctx, db.StartArticleRepairForProjectParams{
+		ID:             articleID,
+		ProjectID:      projectID,
+		RepairAttempts: maxDraftRepairAttempts,
+	})
+	if err != nil {
+		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
+	}
+	art = started
 	topic, err := w.Q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: art.TopicID, ProjectID: projectID})
 	if err != nil {
 		return db.Article{}, err
@@ -154,35 +175,25 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		ContentMD: art.ContentMd,
 		SEOMeta:   completeSEOMeta(topic, meta, plat, canonical),
 	}
-	qa := &QAOutput{QABlocking: art.QaBlocking, Issues: articleIssueStrings(art.QaIssues)}
 	if len(qa.Issues) == 0 && art.QaBlocking {
 		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
 	}
 	qaAgent := NewQA(w.Deps, w.Log)
 	var qaErr error
-	for attempt := 1; attempt <= maxDraftRepairAttempts && draftNeedsRepair(out, qa, qaErr); attempt++ {
-		repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, qaErr)
-		recordRun(ctx, w.Q, projectID, agentWriter,
-			map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": attempt, "feedback": repairFeedback(qa, qaErr)},
-			repaired, repairResp, repairErr)
-		if repairErr != nil {
-			qa = &QAOutput{QABlocking: true, Issues: []string{"ai repair failed: " + repairErr.Error()}}
-			break
-		}
-		out = repaired
-		out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-		var qaCheckResp llm.CompletionResp
-		qa, qaCheckResp, qaErr = qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
-		recordRun(ctx, w.Q, projectID, agentQA,
-			map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "repair_attempt": attempt}, qa, qaCheckResp, qaErr)
-		if qaErr != nil {
-			qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + qaErr.Error()}}
-		}
+	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, qaErr)
+	recordRun(ctx, w.Q, projectID, agentWriter,
+		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": art.RepairAttempts, "feedback": repairFeedback(qa, qaErr)},
+		repaired, repairResp, repairErr)
+	if repairErr != nil {
+		qa = &QAOutput{QABlocking: true, Issues: []string{"ai repair failed: " + repairErr.Error()}, BlockingReason: repairErr.Error(), CanAutoFix: false}
+		return w.finishRepair(ctx, art, qa, "failed", repairErr.Error(), true)
 	}
+	out = repaired
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	qaResp, finalQAResp, finalQAErr := qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
 	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "post_repair_check": true}, qaResp, finalQAResp, finalQAErr)
 	if finalQAErr != nil {
-		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + finalQAErr.Error()}}
+		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + finalQAErr.Error()}, BlockingReason: finalQAErr.Error(), CanAutoFix: true}
 	} else {
 		qa = qaResp
 	}
@@ -196,14 +207,20 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	if err != nil {
 		return db.Article{}, err
 	}
-	return w.Q.SetArticleQA(ctx, db.SetArticleQAParams{
+	updated, err = w.Q.SetArticleQA(ctx, db.SetArticleQAParams{
 		ID:         updated.ID,
 		GeoScore:   pgutil.Numeric(qa.GeoScore),
 		SeoScore:   pgutil.Numeric(qa.SeoScore),
 		QaIssues:   toJSON(qaIssues(qa)),
 		QaBlocking: qa.QABlocking,
 		Status:     updated.Status,
+		QaFeedback: toJSON(qa),
 	})
+	if err != nil {
+		return db.Article{}, err
+	}
+	repairStatus, requiresHuman := repairOutcome(qa, updated.RepairAttempts, maxDraftRepairAttempts)
+	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
 }
 
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
@@ -402,7 +419,95 @@ func draftNeedsRepair(out *WriterOutput, qa *QAOutput, qaErr error) bool {
 	if qaErr != nil {
 		return true
 	}
-	return qa != nil && qa.QABlocking
+	return qa != nil && qa.QABlocking && qa.CanAutoFix
+}
+
+func shouldAttemptArticleRepair(art db.Article, maxAttempts int) bool {
+	return !art.RequiresHumanDecision && art.RepairAttempts < int32(maxAttempts)
+}
+
+func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool) {
+	if qa == nil {
+		return "failed", true
+	}
+	if !qa.QABlocking {
+		if attempts == 0 {
+			return "idle", false
+		}
+		return "repaired", false
+	}
+	if attempts >= int32(maxAttempts) || !qa.CanAutoFix {
+		return "exhausted", true
+	}
+	return "repaired", false
+}
+
+func repairFailureReason(qa *QAOutput, status string) string {
+	if status != "exhausted" && status != "failed" && status != "human_decision" {
+		return ""
+	}
+	reason := ""
+	if qa != nil {
+		reason = strings.TrimSpace(qa.BlockingReason)
+		if reason == "" && len(qa.Issues) > 0 {
+			reason = strings.Join(qa.Issues, "; ")
+		}
+	}
+	if reason == "" {
+		reason = "automatic repair could not satisfy QA"
+	}
+	return reason
+}
+
+func humanDecisionOptions(qa *QAOutput) []HumanDecisionOption {
+	if qa != nil && len(qa.HumanDecisionOptions) > 0 {
+		return qa.HumanDecisionOptions
+	}
+	return []HumanDecisionOption{
+		{Label: "Reject and regenerate", Description: "Discard this draft and send the topic back to backlog."},
+		{Label: "Edit product evidence", Description: "Add or correct profile/evidence, then regenerate or rerun QA."},
+		{Label: "Manual edit", Description: "Edit the draft directly when the positioning decision needs human judgment."},
+	}
+}
+
+func qaFromArticle(art db.Article) *QAOutput {
+	var out QAOutput
+	if len(art.QaFeedback) > 0 {
+		if err := json.Unmarshal(art.QaFeedback, &out); err == nil {
+			out = normalizeQAOutput(out)
+			if len(out.Issues) > 0 || len(out.Claims) > 0 || len(out.BlockingIssues) > 0 || out.BlockingReason != "" {
+				return &out
+			}
+		}
+	}
+	out = QAOutput{
+		QABlocking:           art.QaBlocking,
+		Issues:               articleIssueStrings(art.QaIssues),
+		HumanDecisionOptions: []HumanDecisionOption{},
+		BlockingIssues:       []QAFeedbackIssue{},
+		FixInstructions:      []string{},
+		CanAutoFix:           art.QaBlocking,
+	}
+	return &out
+}
+
+func (w *Writer) finishRepair(ctx context.Context, art db.Article, qa *QAOutput, status, reason string, requiresHuman bool) (db.Article, error) {
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+	if requiresHuman && status != "failed" && status != "exhausted" {
+		status = "human_decision"
+	}
+	return w.Q.FinishArticleRepairForProject(ctx, db.FinishArticleRepairForProjectParams{
+		ID:                    art.ID,
+		ProjectID:             art.ProjectID,
+		RepairStatus:          status,
+		RepairFailureReason:   reasonPtr,
+		RequiresHumanDecision: requiresHuman,
+		HumanDecisionOptions:  toJSON(humanDecisionOptions(qa)),
+		QaFeedback:            toJSON(qa),
+	})
 }
 
 func repairFeedback(qa *QAOutput, qaErr error) map[string]any {

@@ -1,10 +1,12 @@
 -- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
-   geo_score, seo_score, qa_issues, qa_blocking, status, content_hash)
+   geo_score, seo_score, qa_issues, qa_blocking, status, content_hash,
+   repair_attempts, repair_status, requires_human_decision, human_decision_options, qa_feedback)
 values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-  encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex')
+  encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex'),
+  $12, $13, $14, $15, $16
 )
 returning *;
 
@@ -81,8 +83,31 @@ returning *;
 
 -- name: SetArticleQA :one
 update articles set
-  geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6
+  geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6, qa_feedback = $7
 where id = $1
+returning *;
+
+-- name: StartArticleRepairForProject :one
+update articles set
+  repair_attempts = repair_attempts + 1,
+  last_repair_at = now(),
+  repair_status = 'repairing',
+  repair_failure_reason = null
+where id = $1
+  and project_id = $2
+  and repair_attempts < $3
+  and requires_human_decision = false
+returning *;
+
+-- name: FinishArticleRepairForProject :one
+update articles set
+  repair_status = $3,
+  repair_failure_reason = $4,
+  requires_human_decision = $5,
+  human_decision_options = $6,
+  qa_feedback = $7
+where id = $1
+  and project_id = $2
 returning *;
 
 -- Publisher: canonical articles due for auto-publish (§5.6).

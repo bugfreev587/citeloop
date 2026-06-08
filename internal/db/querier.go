@@ -33,6 +33,7 @@ type Querier interface {
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
+	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
 	GetActiveProfile(ctx context.Context, projectID uuid.UUID) (ProductProfile, error)
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
@@ -113,6 +114,7 @@ type Querier interface {
 	SetTopicScheduledAt(ctx context.Context, arg SetTopicScheduledAtParams) (Topic, error)
 	SetTopicScheduledAtForProject(ctx context.Context, arg SetTopicScheduledAtForProjectParams) (Topic, error)
 	SoftDeleteNotificationChannel(ctx context.Context, arg SoftDeleteNotificationChannelParams) (NotificationChannel, error)
+	StartArticleRepairForProject(ctx context.Context, arg StartArticleRepairForProjectParams) (Article, error)
 	StartSEORun(ctx context.Context, arg StartSEORunParams) (SeoRun, error)
 	UnlockVariant(ctx context.Context, arg UnlockVariantParams) (Article, error)
 	UpdateArticleContent(ctx context.Context, arg UpdateArticleContentParams) (Article, error)

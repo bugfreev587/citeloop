@@ -84,8 +84,11 @@ func TestSEOMetaFromTopicInfersMissingTargetKeyword(t *testing.T) {
 }
 
 func TestDraftNeedsRepairForQAAndSEOGaps(t *testing.T) {
-	if !draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{QABlocking: true}, nil) {
+	if !draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{QABlocking: true, CanAutoFix: true}, nil) {
 		t.Fatal("qa blocking draft must be repaired before review")
+	}
+	if draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{QABlocking: true, CanAutoFix: false}, nil) {
+		t.Fatal("qa blocking draft that requires human decision must not be repaired automatically")
 	}
 	if !draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, nil, errors.New("parse qa: missing claims")) {
 		t.Fatal("qa parser failure must be repaired before review")
@@ -95,5 +98,17 @@ func TestDraftNeedsRepairForQAAndSEOGaps(t *testing.T) {
 	}
 	if draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{}, nil) {
 		t.Fatal("clean draft should not be repaired")
+	}
+}
+
+func TestShouldAttemptArticleRepairHonorsPersistentLoopState(t *testing.T) {
+	if !shouldAttemptArticleRepair(db.Article{RepairAttempts: 1}, maxDraftRepairAttempts) {
+		t.Fatal("article under repair cap should be eligible")
+	}
+	if shouldAttemptArticleRepair(db.Article{RepairAttempts: int32(maxDraftRepairAttempts)}, maxDraftRepairAttempts) {
+		t.Fatal("article at repair cap must not be repaired again")
+	}
+	if shouldAttemptArticleRepair(db.Article{RequiresHumanDecision: true}, maxDraftRepairAttempts) {
+		t.Fatal("article escalated to human decision must not be repaired again")
 	}
 }

@@ -79,6 +79,38 @@ then:
 	}
 }
 
+func TestExtractQAOutputParsesStructuredFeedback(t *testing.T) {
+	raw := `{
+		"claims":[{"claim":"UniPost supports hosted OAuth","mapped":false,"evidence":""}],
+		"qa_blocking":true,
+		"geo_score":0.2,
+		"seo_score":0.4,
+		"issues":["unsupported OAuth claim"],
+		"blocking_issues":[{"code":"unmapped_product_claim","severity":"blocking","message":"OAuth claim lacks evidence","claim":"UniPost supports hosted OAuth"}],
+		"fix_instructions":["Remove or rewrite the OAuth claim using only supported evidence."],
+		"human_decision_options":[{"label":"Remove claim","description":"Delete the unsupported OAuth claim."},{"label":"Add evidence","description":"Update product evidence before approving."}],
+		"blocking_reason":"OAuth claim lacks evidence",
+		"can_auto_fix":true
+	}`
+
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("extractQAOutput: %v", err)
+	}
+	if len(out.BlockingIssues) != 1 || out.BlockingIssues[0].Code != "unmapped_product_claim" {
+		t.Fatalf("blocking issues = %#v", out.BlockingIssues)
+	}
+	if len(out.FixInstructions) != 1 {
+		t.Fatalf("fix instructions = %#v", out.FixInstructions)
+	}
+	if len(out.HumanDecisionOptions) != 2 {
+		t.Fatalf("human decision options = %#v", out.HumanDecisionOptions)
+	}
+	if !out.CanAutoFix {
+		t.Fatal("can_auto_fix should be parsed")
+	}
+}
+
 func TestQACompactCheckParsesValidFallback(t *testing.T) {
 	provider := &sequenceLLM{resps: []string{
 		`{"claims":[],"qa_blocking":false,"geo_score":0.7,"seo_score":0.8,"issues":[]}`,
