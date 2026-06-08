@@ -365,6 +365,7 @@ test("topic mutation APIs call project scoped endpoints", async () => {
     await client.updateTopic("project-1", "topic-1", { title: "Updated topic", priority: 3 });
     await client.scheduleTopic("project-1", "topic-1", "2026-06-10T09:00:00.000Z");
     await client.archiveTopic("project-1", "topic-1");
+    await client.restoreTopic("project-1", "topic-1");
 
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/topics/topic-1");
     assert.equal(calls[0].init.method, "PUT");
@@ -374,6 +375,8 @@ test("topic mutation APIs call project scoped endpoints", async () => {
     assert.deepEqual(JSON.parse(calls[1].init.body), { scheduled_at: "2026-06-10T09:00:00.000Z" });
     assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/topics/topic-1/archive");
     assert.equal(calls[2].init.method, "POST");
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/topics/topic-1/restore");
+    assert.equal(calls[3].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

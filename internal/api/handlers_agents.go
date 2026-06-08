@@ -263,6 +263,29 @@ func (s *Server) archiveTopic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
+func (s *Server) restoreTopic(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	topicID, err := s.topicID(r)
+	if err != nil {
+		writeErr(w, 400, "bad topic id")
+		return
+	}
+	if _, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: projectID}); err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	updated, err := s.Q.UpdateTopicStatus(r.Context(), db.UpdateTopicStatusParams{ID: topicID, Status: "backlog"})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
 // generateTopic runs Writer+QA for a single topic on demand (§5.3).
 func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 	id, err := s.projectID(r)

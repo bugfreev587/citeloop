@@ -77,6 +77,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/topics/{topicID}/generate", s.generateTopic)
 				r.Post("/topics/{topicID}/schedule", s.scheduleTopic)
 				r.Post("/topics/{topicID}/archive", s.archiveTopic)
+				r.Post("/topics/{topicID}/restore", s.restoreTopic)
 
 				r.Get("/review", s.listReview)
 				r.Get("/articles", s.listArticles)

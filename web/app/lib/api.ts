@@ -1140,6 +1140,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/topics/${topicID}/archive`, { method: "POST" }, auth);
     return normalizeTopic(raw);
   },
+  restoreTopic: async (id: string, topicID: string) => {
+    const raw = await req<any>(`/projects/${id}/topics/${topicID}/restore`, { method: "POST" }, auth);
+    return normalizeTopic(raw);
+  },
   generateTopic: async (id: string, topicID: string) => {
     const raw = await req<any[]>(`/projects/${id}/topics/${topicID}/generate`, { method: "POST" }, auth);
     return arrayFrom(raw).map(normalizeArticle);

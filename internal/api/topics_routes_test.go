@@ -29,6 +29,11 @@ func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 			method: http.MethodPost,
 			path:   "/api/projects/not-a-uuid/topics/not-a-topic/archive",
 		},
+		{
+			name:   "restore topic",
+			method: http.MethodPost,
+			path:   "/api/projects/not-a-uuid/topics/not-a-topic/restore",
+		},
 	}
 
 	for _, tt := range tests {
