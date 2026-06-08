@@ -123,78 +123,112 @@ function ReviewArticle({
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="min-w-0 space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
-                {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
-                <span className="text-xs font-semibold text-slate-400">
-                  geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
-                </span>
-              </div>
-              <h3 className="content-font text-[17px] font-semibold leading-6 text-slate-950">{title}</h3>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
-                <span>{previewPath(article)}</span>
-                {article.canonical_url && (
-                  <a
-                    href={article.canonical_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[#d93820]"
-                  >
-                    <ExternalLink size={12} />
-                    Published URL
-                  </a>
-                )}
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <a
-                href={detailHref}
-                className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                <FileText size={14} />
-                Detail
-              </a>
-              <Button size="sm" onClick={() => setOpen((value) => !value)}>
-                {open ? "Hide editor" : "Edit"}
-              </Button>
-              <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
-                <CheckCircle2 size={14} />
-                Approve
-              </Button>
-              <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
-                <XCircle size={14} />
-                Reject
-              </Button>
-            </div>
+      <div className="grid gap-4 border-b border-slate-100 pb-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+            {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+            <span className="text-xs font-semibold text-slate-400">
+              geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
+            </span>
           </div>
+          <h3 className="content-font text-[17px] font-semibold leading-6 text-slate-950">{title}</h3>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
+            <span className="max-w-full truncate">{previewPath(article)}</span>
+            {article.canonical_url && (
+              <a
+                href={article.canonical_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[#d93820]"
+              >
+                <ExternalLink size={12} />
+                Published URL
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <a
+            href={detailHref}
+            className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileText size={14} />
+            Detail
+          </a>
+          <Button size="sm" onClick={() => setOpen((value) => !value)}>
+            {open ? "Hide editor" : "Edit"}
+          </Button>
+          <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
+            <CheckCircle2 size={14} />
+            Approve
+          </Button>
+          <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
+            <XCircle size={14} />
+            Reject
+          </Button>
+        </div>
+      </div>
 
-          <SEOContributionPanel rows={seoContributions} />
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.95fr)] 2xl:grid-cols-[minmax(560px,1fr)_minmax(560px,1fr)]">
+        <div className="min-w-0 space-y-4">
+          <OriginalArticlePanel
+            content={content}
+            editing={open}
+            busy={busy}
+            onChange={setContent}
+            onSave={onSave}
+          />
 
           {article.qa_issues.length > 0 && <QAIssuePanel issues={article.qa_issues} />}
 
-          {open && (
-            <div className="grid gap-2">
-              <TextArea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-[340px] font-mono text-xs" />
-              <div className="flex flex-wrap items-center gap-3">
-                <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
-                  <Save size={14} />
-                  Save content
-                </Button>
-                <span className="text-xs text-slate-500">
-                  Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.
-                </span>
-              </div>
-            </div>
-          )}
+          <SEOContributionPanel rows={seoContributions} />
         </div>
 
         <ArticleWebPreview article={article} />
       </div>
     </article>
+  );
+}
+
+function OriginalArticlePanel({
+  content,
+  editing,
+  busy,
+  onChange,
+  onSave,
+}: {
+  content: string;
+  editing: boolean;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onSave: (content: string) => void;
+}) {
+  return (
+    <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-xs text-slate-500">
+        <FileText size={14} />
+        <span className="font-semibold text-slate-700">Original Markdown</span>
+      </div>
+      <div className="bg-white p-3">
+        {editing ? (
+          <div className="grid gap-2">
+            <TextArea value={content} onChange={(event) => onChange(event.target.value)} className="min-h-[560px] font-mono text-xs leading-5" />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
+                <Save size={14} />
+                Save content
+              </Button>
+              <span className="text-xs text-slate-500">
+                Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap break-words rounded-md bg-white font-mono text-xs leading-6 text-slate-700">{content || "No article body available."}</pre>
+        )}
+      </div>
+    </section>
   );
 }
 

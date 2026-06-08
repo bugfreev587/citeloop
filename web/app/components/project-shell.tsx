@@ -52,6 +52,7 @@ export function ProjectShell({
   const pathname = usePathname();
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
+  const reviewRoute = pathname.startsWith(`/projects/${projectId}/review`);
 
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
@@ -146,8 +147,13 @@ export function ProjectShell({
         </div>
       </div>
 
-      <main className="mx-auto min-h-[100dvh] max-w-5xl px-4 pb-12 pt-8 md:pl-[220px] md:pr-8">
-        <div className="mx-auto max-w-[960px]">{children}</div>
+      <main
+        className={cx(
+          "mx-auto min-h-[100dvh] px-4 pb-12 pt-8 md:pl-[220px] md:pr-8",
+          reviewRoute ? "max-w-[1560px]" : "max-w-5xl",
+        )}
+      >
+        <div className={cx("mx-auto", reviewRoute ? "max-w-[1320px]" : "max-w-[960px]")}>{children}</div>
       </main>
     </div>
   );
