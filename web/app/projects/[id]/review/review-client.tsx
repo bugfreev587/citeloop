@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, RefreshCw, Save, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { CheckCircle2, ExternalLink, Eye, FileText, RefreshCw, Save, Search, ShieldAlert, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
+import {
+  articleReviewTitle,
+  buildSEOContributions,
+  explainQAIssue,
+  previewPath,
+  type SEOContribution,
+} from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, TextArea, formatScore } from "../../../components/ui";
+import { Badge, Button, EmptyState, Notice, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
-
-function articleTitle(article: Article) {
-  return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
-}
 
 export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
@@ -115,66 +118,270 @@ function ReviewArticle({
 }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState(article.content_md);
+  const title = articleReviewTitle(article);
+  const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>
-              {article.platform || article.kind}
-            </Badge>
-            {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
-            <span className="text-xs font-semibold text-slate-400">
-              geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
-            </span>
+    <article className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="min-w-0 space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+                {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+                <span className="text-xs font-semibold text-slate-400">
+                  geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
+                </span>
+              </div>
+              <h3 className="content-font text-[17px] font-semibold leading-6 text-slate-950">{title}</h3>
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
+                <span>{previewPath(article)}</span>
+                {article.canonical_url && (
+                  <a
+                    href={article.canonical_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[#d93820]"
+                  >
+                    <ExternalLink size={12} />
+                    Published URL
+                  </a>
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <a
+                href={detailHref}
+                className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <FileText size={14} />
+                Detail
+              </a>
+              <Button size="sm" onClick={() => setOpen((value) => !value)}>
+                {open ? "Hide editor" : "Edit"}
+              </Button>
+              <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
+                <CheckCircle2 size={14} />
+                Approve
+              </Button>
+              <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
+                <XCircle size={14} />
+                Reject
+              </Button>
+            </div>
           </div>
-          <h3 className="content-font text-[15px] font-semibold leading-5 text-slate-900">{articleTitle(article)}</h3>
-          <p className="mt-2 line-clamp-3 content-font text-[15px] leading-5 text-slate-700">{article.content_md}</p>
+
+          <SEOContributionPanel rows={seoContributions} />
+
+          {article.qa_issues.length > 0 && <QAIssuePanel issues={article.qa_issues} />}
+
+          {open && (
+            <div className="grid gap-2">
+              <TextArea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-[340px] font-mono text-xs" />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
+                  <Save size={14} />
+                  Save content
+                </Button>
+                <span className="text-xs text-slate-500">
+                  Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.
+                </span>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <a href={detailHref} className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
-            Detail
-          </a>
-          <Button size="sm" onClick={() => setOpen((value) => !value)}>
-            {open ? "Hide" : "Edit"}
-          </Button>
-          <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
-            <CheckCircle2 size={14} />
-            Approve
-          </Button>
-          <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
-            <XCircle size={14} />
-            Reject
-          </Button>
-        </div>
+
+        <ArticleWebPreview article={article} />
       </div>
-
-      {article.qa_issues.length > 0 && (
-        <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
-          <div className="font-bold">Blocking evidence issues</div>
-          <ul className="mt-1 list-disc pl-4">
-            {article.qa_issues.map((issue, index) => (
-              <li key={`${issue}-${index}`}>{issue}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {open && (
-        <div className="mt-3 grid gap-2">
-          <TextArea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-[280px] font-mono text-xs" />
-          <div className="flex flex-wrap items-center gap-3">
-            <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
-              <Save size={14} />
-              Save content
-            </Button>
-            <span className="text-xs text-slate-500">
-              Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.
-            </span>
-          </div>
-        </div>
-      )}
     </article>
   );
+}
+
+function SEOContributionPanel({ rows }: { rows: SEOContribution[] }) {
+  const ready = rows.filter((row) => row.status === "ready").length;
+  const missing = rows.filter((row) => row.status === "missing").length;
+  const needsReview = rows.filter((row) => row.status === "needs_review").length;
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-2 text-sm font-bold text-slate-900">
+          <Search size={15} />
+          SEO contribution
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone="green">{ready} ready</Badge>
+          {needsReview > 0 && <Badge tone="amber">{needsReview} review</Badge>}
+          {missing > 0 && <Badge tone="red">{missing} missing</Badge>}
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {rows.map((row) => (
+          <ContributionRow key={row.label} row={row} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ContributionRow({ row }: { row: SEOContribution }) {
+  const dotClass = {
+    ready: "bg-green-500",
+    missing: "bg-red-500",
+    needs_review: "bg-amber-500",
+  }[row.status];
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="flex items-center gap-2">
+        <span className={cx("h-2 w-2 shrink-0 rounded-full", dotClass)} />
+        <div className="text-xs font-bold uppercase tracking-[0.08em] text-slate-500">{row.label}</div>
+      </div>
+      <div className="mt-1 truncate text-sm font-semibold text-slate-950" title={row.value}>
+        {row.value}
+      </div>
+      <div className="mt-1 text-xs leading-5 text-slate-600">{row.detail}</div>
+    </div>
+  );
+}
+
+function QAIssuePanel({ issues }: { issues: string[] }) {
+  return (
+    <section className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900">
+      <div className="mb-2 inline-flex items-center gap-2 text-sm font-bold">
+        <ShieldAlert size={15} />
+        Why QA blocked this draft
+      </div>
+      <div className="grid gap-2">
+        {issues.map((issue, index) => {
+          const explained = explainQAIssue(issue);
+          return (
+            <div key={`${issue}-${index}`} className="rounded-md border border-red-100 bg-white/65 p-3">
+              <div className="text-sm font-semibold">{explained.title}</div>
+              <div className="mt-1 text-xs leading-5 text-red-800">{explained.detail}</div>
+              <div className="mt-2 text-xs font-semibold text-red-900">{explained.action}</div>
+              <div className="mt-2 break-words font-mono text-[11px] leading-4 text-red-700/70">{explained.raw}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ArticleWebPreview({ article }: { article: Article }) {
+  const title = articleReviewTitle(article);
+  const description = stringMeta(article.seo_meta, "meta_description");
+  const h1 = stringMeta(article.seo_meta, "h1") || title;
+  const blocks = articlePreviewBlocks(article.content_md, h1);
+  const path = previewPath(article);
+
+  return (
+    <aside className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-xs text-slate-500">
+        <Eye size={14} />
+        <span className="shrink-0 font-semibold text-slate-700">Web preview</span>
+        <span className="truncate">{article.canonical_url || path}</span>
+      </div>
+      <div className="bg-white p-5">
+        <div className="border-b border-slate-100 pb-4">
+          <div className="text-xs font-bold uppercase tracking-[0.12em] text-[#d93820]">UniPost Blog</div>
+          {description && <p className="mt-2 content-font text-sm leading-6 text-slate-600">{description}</p>}
+        </div>
+        <div className="content-font mt-4 max-h-[520px] overflow-hidden text-[15px] leading-7 text-slate-800">
+          {blocks.length === 0 ? (
+            <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">No article body available.</div>
+          ) : (
+            blocks.map((block, index) => <MarkdownPreviewBlock key={`${block.slice(0, 30)}-${index}`} block={block} />)
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function stringMeta(meta: Record<string, any>, key: string) {
+  const value = meta?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function markdownBlocks(content: string) {
+  return content
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function articlePreviewBlocks(content: string, h1: string) {
+  const blocks = markdownBlocks(content);
+  if (!h1 || blocks.some((block) => block.startsWith("# "))) return blocks;
+  return [`# ${h1}`, ...blocks].slice(0, 10);
+}
+
+function MarkdownPreviewBlock({ block }: { block: string }) {
+  if (block.startsWith("```")) {
+    return <pre className="mb-4 overflow-hidden rounded-md bg-slate-950 px-3 py-2 font-mono text-xs leading-5 text-slate-100">{block.replace(/```/g, "").trim()}</pre>;
+  }
+
+  if (block.startsWith("# ")) {
+    return <h1 className="mb-4 text-2xl font-bold leading-8 text-slate-950">{renderInline(block.slice(2))}</h1>;
+  }
+
+  if (block.startsWith("## ")) {
+    return <h3 className="mb-2 mt-4 text-lg font-bold leading-7 text-slate-950">{renderInline(block.slice(3))}</h3>;
+  }
+
+  if (block.startsWith("### ")) {
+    return <h4 className="mb-2 mt-4 text-base font-bold leading-6 text-slate-950">{renderInline(block.slice(4))}</h4>;
+  }
+
+  const lines = block.split("\n").map((line) => line.trim());
+  if (lines.every((line) => /^[-*]\s+/.test(line))) {
+    return (
+      <ul className="mb-4 list-disc space-y-1 pl-5">
+        {lines.map((line, index) => (
+          <li key={`${line}-${index}`}>{renderInline(line.replace(/^[-*]\s+/, ""))}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <p className="mb-4">
+      {block.split("\n").map((line, index) => (
+        <span key={`${line}-${index}`}>
+          {index > 0 && <br />}
+          {renderInline(line.trim())}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function renderInline(text: string): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={`${part}-${index}`} className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.9em]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (link) {
+      return (
+        <a key={`${part}-${index}`} href={link[2]} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#d93820]">
+          {link[1]}
+        </a>
+      );
+    }
+    return <span key={`${part}-${index}`}>{part}</span>;
+  });
 }
