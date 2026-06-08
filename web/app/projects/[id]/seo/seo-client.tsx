@@ -439,7 +439,12 @@ export function SEOClient({ projectId }: { projectId: string }) {
         <SectionHeader
           title="Setup"
           eyebrow={overview?.capability_mode ?? "public_only"}
-          action={<Badge tone={overview?.handoff_ready_for_autopilot ? "green" : "amber"}>{overview?.handoff_ready_for_autopilot ? "ready" : "limited"}</Badge>}
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={overview?.data_source === "cold_start" ? "amber" : "green"}>{overview?.data_source ?? "loading"}</Badge>
+              <Badge tone={overview?.handoff_ready_for_autopilot ? "green" : "amber"}>{overview?.handoff_ready_for_autopilot ? "ready" : "limited"}</Badge>
+            </div>
+          }
         />
         {overview?.setup_checklist?.length ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -567,8 +572,11 @@ export function SEOClient({ projectId }: { projectId: string }) {
           title="GEO visibility"
           action={
             <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={geoOverview?.data_source === "cold_start" ? "amber" : "green"}>
+                {geoOverview?.data_source ?? "cold_start"}
+              </Badge>
               <Badge tone={geoOverview?.score?.confidence === "high" ? "green" : geoOverview?.score ? "amber" : "neutral"}>
-                {geoOverview?.score?.confidence ?? "insufficient_data"}
+                {geoOverview?.confidence ?? geoOverview?.score?.confidence ?? "insufficient_data"}
               </Badge>
               <Button size="sm" onClick={generatePromptSet} disabled={!!busy}>
                 <FileText size={14} />
@@ -585,6 +593,13 @@ export function SEOClient({ projectId }: { projectId: string }) {
             </div>
           }
         />
+        {geoOverview?.source_notes?.length ? (
+          <div className="mb-3 grid gap-2">
+            {geoOverview.source_notes.map((note) => (
+              <Notice key={note} title="GEO data source" detail={note} tone={geoOverview.data_source === "cold_start" ? "amber" : "neutral"} />
+            ))}
+          </div>
+        ) : null}
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "insufficient_data"}</div>
@@ -854,9 +869,24 @@ export function SEOClient({ projectId }: { projectId: string }) {
       </section>
 
       <section>
-        <SectionHeader title={brief?.title ?? "SEO operating brief"} action={<Badge tone={brief?.mode === "cold_start" ? "amber" : "green"}>{brief?.mode ?? "loading"}</Badge>} />
+        <SectionHeader
+          title={brief?.title ?? "SEO operating brief"}
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={brief?.data_source === "cold_start" ? "amber" : "green"}>{brief?.data_source ?? "loading"}</Badge>
+              <Badge tone={brief?.mode === "cold_start" ? "amber" : "green"}>{brief?.mode ?? "loading"}</Badge>
+            </div>
+          }
+        />
         {brief ? (
           <div className="rounded-lg border border-slate-200 bg-white p-4">
+            {brief.source_notes.length > 0 && (
+              <div className="mb-4 grid gap-2">
+                {brief.source_notes.map((note) => (
+                  <Notice key={note} title="SEO data source" detail={note} tone={brief.data_source === "cold_start" ? "amber" : "neutral"} />
+                ))}
+              </div>
+            )}
             {brief.blockers.length > 0 && (
               <div className="mb-4 grid gap-2">
                 {brief.blockers.map((blocker) => (

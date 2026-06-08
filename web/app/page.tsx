@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { ArrowRight, Database, PenLine, Send } from "lucide-react";
+import { ArrowRight, Database, LogIn, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
 import { createApi, DeploymentVersion, Project } from "./lib/api";
 import { getWebBuildInfo } from "./lib/build-info";
 
 export default async function Home() {
-  const { getToken } = await auth();
+  const { getToken, userId } = await auth();
+  if (!userId) {
+    return <SignedOutHome />;
+  }
+
   const token = await getToken();
   const api = createApi({ token });
   const webBuild = getWebBuildInfo();
@@ -116,4 +120,37 @@ export default async function Home() {
 
 function shortBuild(value?: string) {
   return value ? value.slice(0, 7) : "unknown";
+}
+
+function SignedOutHome() {
+  return (
+    <main className="min-h-[100dvh] bg-stone-100 px-4 py-8 text-slate-950">
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-5xl items-center">
+        <section className="max-w-2xl">
+          <div className="mb-3 inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
+            SEO + GEO content engine
+          </div>
+          <h1 className="text-3xl font-bold leading-tight text-slate-950 md:text-5xl">CiteLoop service console</h1>
+          <p className="mt-3 max-w-xl text-base leading-7 text-slate-600">
+            Sign in to connect a product URL, review generated drafts, and operate the SEO + GEO loop.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href="/sign-in"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
+            >
+              <LogIn size={16} />
+              Sign in
+            </Link>
+            <Link
+              href="/sign-up"
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+            >
+              Create account
+            </Link>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
 }

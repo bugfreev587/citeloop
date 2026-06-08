@@ -263,6 +263,8 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
     assert.deepEqual(overview.opportunities_by_type, []);
     assert.deepEqual(overview.actions_by_status, []);
     assert.deepEqual(overview.data_source_warnings, []);
+    assert.equal(overview.data_source, "cold_start");
+    assert.equal(overview.confidence, "low");
     assert.equal(overview.capability_mode, "customer_site_pending_verification");
     assert.equal(overview.setup_checklist[0].key, "publisher_write");
 
@@ -270,6 +272,8 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
     assert.deepEqual(settings.integrations, []);
 
     const brief = await client.getSEOBrief("project-1");
+    assert.equal(brief.data_source, "cold_start");
+    assert.equal(brief.confidence, "low");
     assert.deepEqual(brief.actions, []);
     assert.deepEqual(brief.blockers, []);
     assert.deepEqual(brief.geo_blockers, []);

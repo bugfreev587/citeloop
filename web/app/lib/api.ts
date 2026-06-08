@@ -246,6 +246,9 @@ export type SEOOverview = {
   opportunities_by_type: Array<{ type: string; status: string; count: number }>;
   actions_by_status: Array<{ status: string; count: number }>;
   cold_start: boolean;
+  data_source: string;
+  confidence: string;
+  source_notes: string[];
   handoff_ready_for_autopilot: boolean;
   data_source_warnings?: string[];
 };
@@ -291,6 +294,9 @@ export type SEOBrief = {
   mode: "cold_start" | "opportunities" | string;
   title: string;
   generated_at: string;
+  data_source: string;
+  confidence: string;
+  source_notes: string[];
   actions: SEOOpportunity[];
   blockers: string[];
   geo_blockers: string[];
@@ -526,6 +532,9 @@ export type GEOAssetBrief = {
 
 export type GEOOverview = {
   score?: GEOVisibilityScore | null;
+  data_source: string;
+  confidence: string;
+  source_notes: string[];
   prompt_sets: GEOPromptSet[];
   prompts: GEOPrompt[];
   competitors: GEOCompetitor[];
@@ -658,6 +667,9 @@ function normalizeSEOOverview(raw: any): SEOOverview {
     opportunities_by_type: arrayFrom(data.opportunities_by_type),
     actions_by_status: arrayFrom(data.actions_by_status),
     cold_start: Boolean(data.cold_start),
+    data_source: data.data_source ?? (data.cold_start ? "cold_start" : "unknown"),
+    confidence: data.confidence ?? (data.cold_start ? "low" : "unknown"),
+    source_notes: arrayFrom<string>(data.source_notes).map(String),
     handoff_ready_for_autopilot: Boolean(data.handoff_ready_for_autopilot),
     data_source_warnings: arrayFrom<string>(data.data_source_warnings).map(String),
   };
@@ -676,6 +688,9 @@ function normalizeSEOBrief(raw: any): SEOBrief {
     mode: data.mode ?? "cold_start",
     title: data.title ?? "SEO operating brief",
     generated_at: data.generated_at ?? "",
+    data_source: data.data_source ?? (data.mode === "cold_start" ? "cold_start" : "unknown"),
+    confidence: data.confidence ?? (data.mode === "cold_start" ? "low" : "unknown"),
+    source_notes: arrayFrom<string>(data.source_notes).map(String),
     actions: arrayFrom<SEOOpportunity>(data.actions),
     blockers: arrayFrom<string>(data.blockers).map(String),
     geo_blockers: arrayFrom<string>(data.geo_blockers).map(String),
@@ -868,6 +883,9 @@ function normalizeGEOOverview(raw: any): GEOOverview {
   const data = raw ?? {};
   return {
     score: normalizeGEOVisibilityScore(data.score),
+    data_source: data.data_source ?? (data.score ? "geo_observations" : "cold_start"),
+    confidence: data.confidence ?? data.score?.confidence ?? "insufficient_data",
+    source_notes: arrayFrom<string>(data.source_notes).map(String),
     prompt_sets: arrayFrom(data.prompt_sets).map(normalizeGEOPromptSet),
     prompts: arrayFrom(data.prompts).map(normalizeGEOPrompt),
     competitors: arrayFrom(data.competitors).map(normalizeGEOCompetitor),

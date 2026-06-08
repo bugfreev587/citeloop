@@ -54,11 +54,24 @@ func (s *Server) getGEOOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var scoreOut any
+	dataSource := "cold_start"
+	confidence := "insufficient_data"
+	sourceNotes := []string{"no_geo_visibility_score"}
 	if scoreErr == nil {
 		scoreOut = score
+		confidence = score.Confidence
+		if score.Confidence == "insufficient_data" || score.PromptCountObserved == 0 {
+			sourceNotes = []string{"geo_score_insufficient_data"}
+		} else {
+			dataSource = "geo_observations"
+			sourceNotes = []string{"geo_visibility_score", "answer_engine_observations"}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"score":             scoreOut,
+		"data_source":       dataSource,
+		"confidence":        confidence,
+		"source_notes":      sourceNotes,
 		"prompt_sets":       emptySlice(promptSets),
 		"prompts":           emptySlice(prompts),
 		"competitors":       emptySlice(competitors),

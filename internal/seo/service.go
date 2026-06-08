@@ -48,6 +48,8 @@ type SyncResult struct {
 	CheckedURLs        int       `json:"checked_urls"`
 	ConnectedGSC       bool      `json:"connected_gsc"`
 	ColdStart          bool      `json:"cold_start"`
+	DataSource         string    `json:"data_source"`
+	Confidence         string    `json:"confidence"`
 	DataSourceNotes    []string  `json:"data_source_notes"`
 	GeneratedAnomalies int       `json:"generated_anomalies"`
 }
@@ -62,6 +64,9 @@ type Overview struct {
 	OpportunitiesByType []db.SEOOpportunityCountsRow `json:"opportunities_by_type"`
 	ActionsByStatus     []db.ContentActionCountsRow  `json:"actions_by_status"`
 	ColdStart           bool                         `json:"cold_start"`
+	DataSource          string                       `json:"data_source"`
+	Confidence          string                       `json:"confidence"`
+	SourceNotes         []string                     `json:"source_notes"`
 	HandoffReadyForAuto bool                         `json:"handoff_ready_for_autopilot"`
 	DataSourceWarnings  []string                     `json:"data_source_warnings"`
 }
@@ -85,6 +90,9 @@ type Brief struct {
 	Mode             string              `json:"mode"`
 	Title            string              `json:"title"`
 	GeneratedAt      time.Time           `json:"generated_at"`
+	DataSource       string              `json:"data_source"`
+	Confidence       string              `json:"confidence"`
+	SourceNotes      []string            `json:"source_notes"`
 	Actions          []db.SeoOpportunity `json:"actions"`
 	Blockers         []string            `json:"blockers"`
 	GEOBlockers      []string            `json:"geo_blockers"`
@@ -156,6 +164,7 @@ func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, e
 	if out.ColdStart {
 		out.DataSourceWarnings = append(out.DataSourceWarnings, "SEO data is below the Operations Loop minimum threshold; brief uses cold-start mode.")
 	}
+	out.DataSource, out.Confidence, out.SourceNotes = seoSourceContract(out.ColdStart, integrations, out.DataSourceWarnings)
 	return out, nil
 }
 
@@ -270,6 +279,8 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 		return finish("error", result, err)
 	}
 	result.ColdStart = overview.ColdStart
+	result.DataSource = overview.DataSource
+	result.Confidence = overview.Confidence
 	status := "ok"
 	if !result.ConnectedGSC {
 		status = "degraded"
@@ -517,6 +528,8 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		return finish("error", result, err)
 	}
 	result.ColdStart = overview.ColdStart
+	result.DataSource = overview.DataSource
+	result.Confidence = overview.Confidence
 	status := "ok"
 	if result.ColdStart {
 		status = "degraded"
@@ -553,6 +566,9 @@ func (s Service) Brief(ctx context.Context, projectID uuid.UUID) (Brief, error) 
 		Mode:             mode,
 		Title:            title,
 		GeneratedAt:      s.now(),
+		DataSource:       overview.DataSource,
+		Confidence:       overview.Confidence,
+		SourceNotes:      overview.SourceNotes,
 		Actions:          firstSEOOpportunities(opps, DefaultBriefLimit),
 		Blockers:         blockers,
 		GEOBlockers:      geoBlockers,
@@ -760,6 +776,20 @@ func countLinks(html, siteURL string, internal bool) int32 {
 
 func isColdStart(stats db.SEOOverviewStatsRow) bool {
 	return stats.GscDays28d < 14 || pgutil.Float(stats.Impressions28d) < 500 || pgutil.Float(stats.Clicks28d) < 30
+}
+
+func seoSourceContract(coldStart bool, integrations []db.SeoIntegration, warnings []string) (string, string, []string) {
+	notes := append([]string{}, warnings...)
+	if coldStart {
+		notes = append(notes, "cold_start_threshold")
+		return "cold_start", "low", notes
+	}
+	if hasConnectedGSC(integrations) {
+		notes = append(notes, "gsc_api")
+		return "gsc_api", "high", notes
+	}
+	notes = append(notes, "public_site")
+	return "public_site", "low", notes
 }
 
 func hasConnectedGSC(integrations []db.SeoIntegration) bool {
