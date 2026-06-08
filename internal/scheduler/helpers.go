@@ -44,6 +44,8 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	c := cron.New()
 	// Daily generation pass (02:00).
 	_, _ = c.AddFunc("0 2 * * *", func() { s.TickGenerate(ctx) })
+	// Daily SEO data sync and opportunity analysis after content generation.
+	_, _ = c.AddFunc("0 3 * * *", func() { s.TickSEO(ctx) })
 	// Publish pass every 5 minutes so approved canonicals go out near their slot.
 	_, _ = c.AddFunc("*/5 * * * *", func() { s.TickPublish(ctx) })
 	// Review overdue pass every 30 minutes so single-operator queues are visible.
@@ -51,6 +53,6 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	// Notification worker pass every 10 seconds for webhook retry/dead handling.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickNotifications(ctx) })
 	c.Start()
-	slog.Default().Info("scheduler started", "generate", "daily@02:00", "publish", "every 5m", "review_overdue", "every 30m", "notifications", "every 10s")
+	slog.Default().Info("scheduler started", "generate", "daily@02:00", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "notifications", "every 10s")
 	return c
 }

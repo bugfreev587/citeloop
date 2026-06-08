@@ -41,6 +41,7 @@ export type Article = {
   resolved_slug: string | null;
   publish_path: string | null;
   canonical_url_verified_at: string | null;
+  content_hash: string | null;
   created_at: string | null;
 };
 
@@ -165,6 +166,7 @@ export function normalizeArticle(raw: any): Article {
     resolved_slug: raw.resolved_slug ?? null,
     publish_path: raw.publish_path ?? null,
     canonical_url_verified_at: normalizeTime(raw.canonical_url_verified_at),
+    content_hash: raw.content_hash ?? null,
     created_at: normalizeTime(raw.created_at),
   };
 }

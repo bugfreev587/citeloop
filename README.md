@@ -79,6 +79,10 @@ NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/
 Set `CLERK_SECRET_KEY` in Vercel for Clerk middleware and in the Railway API
 service for backend Bearer-token verification. Do not commit this key.
 
+For SEO data ingestion, set `GOOGLE_SERVICE_ACCOUNT_JSON` in the Railway API
+service secret store. CiteLoop stores only the credential reference in Postgres;
+the service account needs read access to Search Console and GA4.
+
 Recommended CLI flow after logging in to Vercel:
 
 ```bash

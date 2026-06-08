@@ -20,7 +20,7 @@ update articles set
   reviewed_by = $4,
   reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type ApproveArticleParams struct {
@@ -66,6 +66,7 @@ func (q *Queries) ApproveArticle(ctx context.Context, arg ApproveArticleParams) 
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -77,7 +78,7 @@ update articles set
   reviewed_by = $4,
   reviewed_at = now()
 where id = $1 and project_id = $5
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type ApproveArticleForProjectParams struct {
@@ -125,6 +126,7 @@ func (q *Queries) ApproveArticleForProject(ctx context.Context, arg ApproveArtic
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -149,9 +151,12 @@ func (q *Queries) CountStockedCanonical(ctx context.Context, projectID uuid.UUID
 const createArticle = `-- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
-   geo_score, seo_score, qa_issues, qa_blocking, status)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+   geo_score, seo_score, qa_issues, qa_blocking, status, content_hash)
+values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+  encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex')
+)
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type CreateArticleParams struct {
@@ -211,12 +216,13 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const getArticle = `-- name: GetArticle :one
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles where id = $1
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles where id = $1
 `
 
 func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -250,12 +256,13 @@ func (q *Queries) GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const getArticleForProject = `-- name: GetArticleForProject :one
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where id = $1 and project_id = $2
 `
 
@@ -295,12 +302,13 @@ func (q *Queries) GetArticleForProject(ctx context.Context, arg GetArticleForPro
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const listArticlesByStatus = `-- name: ListArticlesByStatus :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where project_id = $1 and status = $2
 order by created_at desc
 `
@@ -347,6 +355,7 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -359,7 +368,7 @@ func (q *Queries) ListArticlesByStatus(ctx context.Context, arg ListArticlesBySt
 }
 
 const listArticlesByTopic = `-- name: ListArticlesByTopic :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles where topic_id = $1 order by kind, platform
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles where topic_id = $1 order by kind, platform
 `
 
 func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error) {
@@ -399,6 +408,7 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -411,7 +421,7 @@ func (q *Queries) ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([
 }
 
 const listOverdueReviewArticles = `-- name: ListOverdueReviewArticles :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where status = 'pending_review'
   and created_at <= $1
 order by created_at asc
@@ -460,6 +470,7 @@ func (q *Queries) ListOverdueReviewArticles(ctx context.Context, arg ListOverdue
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -472,7 +483,7 @@ func (q *Queries) ListOverdueReviewArticles(ctx context.Context, arg ListOverdue
 }
 
 const listPendingReview = `-- name: ListPendingReview :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where project_id = $1 and status = 'pending_review'
 order by created_at asc
 `
@@ -514,6 +525,7 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -527,7 +539,7 @@ func (q *Queries) ListPendingReview(ctx context.Context, projectID uuid.UUID) ([
 
 const markDistributed = `-- name: MarkDistributed :one
 update articles set status = 'distributed' where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error) {
@@ -561,6 +573,7 @@ func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, e
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -568,7 +581,7 @@ func (q *Queries) MarkDistributed(ctx context.Context, id uuid.UUID) (Article, e
 const markDistributedForProject = `-- name: MarkDistributedForProject :one
 update articles set status = 'distributed'
 where id = $1 and project_id = $2
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type MarkDistributedForProjectParams struct {
@@ -607,6 +620,7 @@ func (q *Queries) MarkDistributedForProject(ctx context.Context, arg MarkDistrib
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -619,7 +633,7 @@ update articles set
   publish_phase = $4,
   canonical_url_verified_at = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type MarkPublishFailedParams struct {
@@ -665,6 +679,7 @@ func (q *Queries) MarkPublishFailed(ctx context.Context, arg MarkPublishFailedPa
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -682,7 +697,7 @@ update articles set
   last_publish_error = null,
   next_publish_retry_at = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type MarkPublishedParams struct {
@@ -730,6 +745,7 @@ func (q *Queries) MarkPublished(ctx context.Context, arg MarkPublishedParams) (A
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -743,7 +759,7 @@ update articles set
   next_publish_retry_at = null,
   last_publish_error = null
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type PreparePublishAttemptParams struct {
@@ -789,6 +805,7 @@ func (q *Queries) PreparePublishAttempt(ctx context.Context, arg PreparePublishA
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -803,7 +820,7 @@ update articles set
   last_publish_error = null,
   next_publish_retry_at = $5
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type RecordPublishAttemptResultParams struct {
@@ -851,6 +868,7 @@ func (q *Queries) RecordPublishAttemptResult(ctx context.Context, arg RecordPubl
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -858,7 +876,7 @@ func (q *Queries) RecordPublishAttemptResult(ctx context.Context, arg RecordPubl
 const rejectArticle = `-- name: RejectArticle :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type RejectArticleParams struct {
@@ -897,6 +915,7 @@ func (q *Queries) RejectArticle(ctx context.Context, arg RejectArticleParams) (A
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -904,7 +923,7 @@ func (q *Queries) RejectArticle(ctx context.Context, arg RejectArticleParams) (A
 const rejectArticleForProject = `-- name: RejectArticleForProject :one
 update articles set status = 'rejected', reviewed_by = $2, reviewed_at = now()
 where id = $1 and project_id = $3
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type RejectArticleForProjectParams struct {
@@ -944,6 +963,7 @@ func (q *Queries) RejectArticleForProject(ctx context.Context, arg RejectArticle
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -955,7 +975,7 @@ update articles set
 where id = $1
   and project_id = $2
   and status = 'publish_failed'
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type RetryPublishArticleParams struct {
@@ -994,12 +1014,13 @@ func (q *Queries) RetryPublishArticle(ctx context.Context, arg RetryPublishArtic
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const selectDueCanonical = `-- name: SelectDueCanonical :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where project_id = $1
   and kind = 'canonical'
   and (
@@ -1049,6 +1070,7 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -1061,7 +1083,7 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 }
 
 const selectPublishReconcileCandidates = `-- name: SelectPublishReconcileCandidates :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
 where project_id = $1
   and kind = 'canonical'
   and (
@@ -1111,6 +1133,7 @@ func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectI
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -1123,7 +1146,7 @@ func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectI
 }
 
 const selectUnlockableVariants = `-- name: SelectUnlockableVariants :many
-select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.last_publish_error, v.publish_attempts, v.next_publish_retry_at, v.publish_phase, v.resolved_slug, v.publish_path, v.canonical_url_verified_at, v.last_publish_run_id, v.created_at from articles v
+select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_meta, v.geo_score, v.seo_score, v.qa_issues, v.qa_blocking, v.canonical_url, v.status, v.scheduled_at, v.reviewed_by, v.reviewed_at, v.published_at, v.publish_result, v.last_publish_error, v.publish_attempts, v.next_publish_retry_at, v.publish_phase, v.resolved_slug, v.publish_path, v.canonical_url_verified_at, v.last_publish_run_id, v.created_at, v.content_hash from articles v
 join articles c
   on c.topic_id = v.topic_id and c.kind = 'canonical'
 where v.kind = 'syndication_variant'
@@ -1171,6 +1194,7 @@ func (q *Queries) SelectUnlockableVariants(ctx context.Context) ([]Article, erro
 			&i.CanonicalUrlVerifiedAt,
 			&i.LastPublishRunID,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -1186,7 +1210,7 @@ const setArticleQA = `-- name: SetArticleQA :one
 update articles set
   geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type SetArticleQAParams struct {
@@ -1236,6 +1260,7 @@ func (q *Queries) SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Art
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -1245,9 +1270,10 @@ update articles set
   status = 'ready_to_distribute',
   canonical_url = $2,
   content_md = $3,
-  seo_meta = $4          -- canonical placeholder backfilled in seo_meta too (§5.6)
+  seo_meta = $4,          -- canonical placeholder backfilled in seo_meta too (§5.6)
+  content_hash = encode(digest(coalesce($3::text, '') || coalesce($4::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type UnlockVariantParams struct {
@@ -1293,13 +1319,18 @@ func (q *Queries) UnlockVariant(ctx context.Context, arg UnlockVariantParams) (A
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const updateArticleContent = `-- name: UpdateArticleContent :one
-update articles set content_md = $2, seo_meta = $3 where id = $1
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+update articles set
+  content_md = $2,
+  seo_meta = $3,
+  content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
+where id = $1
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type UpdateArticleContentParams struct {
@@ -1339,14 +1370,18 @@ func (q *Queries) UpdateArticleContent(ctx context.Context, arg UpdateArticleCon
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
 
 const updateArticleContentForProject = `-- name: UpdateArticleContentForProject :one
-update articles set content_md = $2, seo_meta = $3
+update articles set
+  content_md = $2,
+  seo_meta = $3,
+  content_hash = encode(digest(coalesce($2::text, '') || coalesce($3::jsonb::text, ''), 'sha256'), 'hex')
 where id = $1 and project_id = $4
-returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash
 `
 
 type UpdateArticleContentForProjectParams struct {
@@ -1392,6 +1427,7 @@ func (q *Queries) UpdateArticleContentForProject(ctx context.Context, arg Update
 		&i.CanonicalUrlVerifiedAt,
 		&i.LastPublishRunID,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }

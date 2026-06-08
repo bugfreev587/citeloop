@@ -12,6 +12,7 @@ import {
   KeyRound,
   ListChecks,
   PenLine,
+  Search,
   Send,
   Settings,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const navItems = [
   { label: "Topics", href: "topics", icon: ListChecks },
   { label: "Review", href: "review", icon: PenLine },
   { label: "Publishing", href: "publishing", icon: Send },
+  { label: "SEO", href: "seo", icon: Search },
   { label: "Runs", href: "runs", icon: Activity },
   { label: "Settings", href: "settings", icon: Settings },
   { label: "Admin", href: "admin", icon: KeyRound },

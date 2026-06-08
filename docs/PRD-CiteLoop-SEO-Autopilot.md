@@ -46,7 +46,7 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 - `seo_sync` 连续 14 天成功，且最近 28 天 GSC page total 数据可用。
 - URL normalization 最近 14 天无同页重复冲突。
 - verified notification channel 存在并通过测试投递。
-- Google service account integration 状态为 `connected`。
+- permission readiness 通过：`search_read + publisher_write + notification_write + autopilot_policy_confirmed` 全部 connected；`public_only` 项目不得启用 Level 2 自动执行，只能停留在 observe/draft。
 - outcome measurement 至少能读取 baseline 并写入 measurement schedule。
 - kill switch 和 safe mode 状态可在 UI 第一屏看到。
 
@@ -60,6 +60,8 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 6. 系统能根据 outcome 调整 future prioritization。
 7. 所有自动动作可审计、可回滚、可暂停。
 8. 系统能在异常时自动进入 safe mode。
+9. 真实用户只输入 product domain 的项目，也能进入自动驾驶前的冷启动观察状态；系统不得要求用户手动配置 GSC/GA4/service account。
+10. 注册后的 guided permission onboarding 能一次性拿齐自动运营需要的最小权限，后续用户只参与高风险 approval、异常恢复和策略变更。
 
 ## 4. 非目标
 
@@ -82,12 +84,14 @@ SEO 自动驾驶不是“让 AI 随便改网站”，而是一个带约束的闭
 
 - 系统生成 opportunity 和 draft。
 - 人工选择、人工 approve、人工 publish。
+- `public_only` 项目最高只能到 Level 1，除非接入 CiteLoop 托管内容数据或完成客户站点所有权验证。
 
 ### Level 2：Guarded execution
 
 - 低风险动作可自动执行。
 - 中高风险动作必须人工 approve。
 - 默认推荐阶段。
+- 要求 `search_read`、`publisher_write`、`notification_write`、`autopilot_policy_confirmed` 和 `dry_run_passed` 全部有效。
 
 ### Level 3：Portfolio autopilot
 
@@ -523,6 +527,28 @@ Risk guard 调用 §6.1 的 deterministic classifier；LLM 只能补充解释，
 
 ## 10. 用户体验
 
+Autopilot UI 必须继承 Operations Loop 的 domain-only onboarding 约束：
+
+- 真实用户只看到 product domain、launch checklist、connection health、autopilot readiness。
+- 不展示 `gsc_site_url`、GA4 property id、service account、credential ref 作为必填项。
+- 如果项目仍是 `public_only`，Level 2+ 控件禁用，并解释为 “CiteLoop can draft recommendations from public data; automatic execution requires managed content data or verified first-party search data.”
+- 内部管理员可以查看 provider-level diagnostics，但该视图不作为真实用户主路径。
+
+### 10.0 Permission readiness gate
+
+Autopilot Overview 第一屏必须展示 readiness gate：
+
+| gate | Level 2 必需 | 失败时行为 |
+|---|---:|---|
+| `search_read` | yes | 禁用 CTR/position/decay 自动执行，只允许 draft |
+| `analytics_read` | no | 降低 priority confidence，标注 no conversion signal |
+| `publisher_write` | yes | 禁用 auto publish，只生成 diff/draft |
+| `notification_write` | yes | 禁用 Level 2+，因为异常无法可靠通知 |
+| `autopilot_policy_confirmed` | yes | 保持 Level 1，提示完成策略确认 |
+| `dry_run_passed` | yes | 不执行真实写入 |
+
+用户完成 launch checklist 后，不再需要日常处理权限。系统只在 grant expired/revoked、scope 不足、publish failure、safe mode 或 policy 提升时打扰用户。
+
 ### 10.1 Autopilot Overview
 
 展示：
@@ -755,6 +781,8 @@ Rollback 是内容和配置层面的恢复，不等于恢复 Google 排名、抓
 - Kill switch 必须在 UI 第一屏可见。
 - 高风险动作永远不能绕过 review。
 - Google credentials 和 repo credentials 不进 logs。
+- Executor 每次执行前必须验证 permission grant 未过期、未撤销、scope 足够、resource 与 action target 匹配。
+- Grant revoke/expire 后必须自动降级：search grant 失效停止数据驱动 action；publisher grant 失效停止 auto publish；notification grant 失效进入 safe mode。
 - Policy 变更要写 audit log。
 - Autopilot mode 提升必须二次确认。
 - Risk classifier rule 变更必须写 audit log，并从新 action 开始生效。
@@ -798,6 +826,7 @@ Rollback 是内容和配置层面的恢复，不等于恢复 Google 排名、抓
 - Policy editor。
 - Weekly plan generation。
 - No auto execution。
+- Permission readiness gate。
 - actor/audit migration。
 - risk classification rules v1。
 - safe mode event storage。
@@ -846,26 +875,29 @@ Rollback 是内容和配置层面的恢复，不等于恢复 Google 排名、抓
 12. Guardrail false positive/negative 可人工上报，并触发 safe mode 条件。
 13. Fact guard 能阻止无 evidence 产品事实。
 14. Technical guard 能阻止 canonical/noindex/unsafe MDX 问题。
-15. Level 2 下 low-risk metadata rewrite 可自动发布。
-16. 中高风险动作不会自动发布。
-17. 同一 plan 内同页 action 会合并或拒绝；不会并发修改同一 article。
-18. Executor 发现 content hash 被人工改动时 abort 并转 review。
-19. Quiet hours 命中时按 policy 延后或跳过，并写 audit。
-20. Publish 后写 measurement schedule。
-21. Control page 不足时 measurement 降级为 site-trend normalized，并写 evidence level。
-22. Outcome measurer 能给出 improved/neutral/worsened/inconclusive。
-23. Planner 能读取 historical outcome 调整 future scoring。
-24. Safe mode 可由 kill switch 手动开启。
-25. Safe mode 可由连续 publish failure 自动开启。
-26. Safe mode 开启后不再 auto publish。
-27. Safe mode open event 落库，退出必须人工确认并写 exited fields。
-28. Action audit detail 可追溯到 opportunity、plan、diff、commit、measurement。
-29. Rollback record 可按 action type 创建，并展示 rollback 局限。
-30. 所有自动写入绑定 actor 或 audit event。
-31. Notification 事件可投递。
-32. No raw secret in logs/API/UI。
-33. `go test ./...` 通过。
-34. `web npm run build` 通过。
+15. Level 2 启用前必须确认 permission readiness：`search_read + publisher_write + notification_write + autopilot_policy_confirmed + dry_run_passed`。
+16. Executor 每次执行前重新验证 permission grant 状态和 resource scope。
+17. 任一必需 grant 过期、撤销或 scope 不足时，Level 2 自动执行被禁用或进入 safe mode。
+18. Level 2 下 low-risk metadata rewrite 可自动发布。
+19. 中高风险动作不会自动发布。
+20. 同一 plan 内同页 action 会合并或拒绝；不会并发修改同一 article。
+21. Executor 发现 content hash 被人工改动时 abort 并转 review。
+22. Quiet hours 命中时按 policy 延后或跳过，并写 audit。
+23. Publish 后写 measurement schedule。
+24. Control page 不足时 measurement 降级为 site-trend normalized，并写 evidence level。
+25. Outcome measurer 能给出 improved/neutral/worsened/inconclusive。
+26. Planner 能读取 historical outcome 调整 future scoring。
+27. Safe mode 可由 kill switch 手动开启。
+28. Safe mode 可由连续 publish failure 自动开启。
+29. Safe mode 开启后不再 auto publish。
+30. Safe mode open event 落库，退出必须人工确认并写 exited fields。
+31. Action audit detail 可追溯到 opportunity、plan、diff、commit、measurement。
+32. Rollback record 可按 action type 创建，并展示 rollback 局限。
+33. 所有自动写入绑定 actor 或 audit event。
+34. Notification 事件可投递。
+35. No raw secret in logs/API/UI。
+36. `go test ./...` 通过。
+37. `web npm run build` 通过。
 
 ## 18. Definition of Done
 
