@@ -112,11 +112,11 @@ func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, e
 	if err != nil {
 		return out, err
 	}
-	out.Integrations = integrations
+	out.Integrations = nonNilSlice(integrations)
 	out.Last28Days = stats
 	out.Technical = technical
-	out.OpportunitiesByType = opps
-	out.ActionsByStatus = actions
+	out.OpportunitiesByType = nonNilSlice(opps)
+	out.ActionsByStatus = nonNilSlice(actions)
 	out.ColdStart = isColdStart(stats)
 	out.HandoffReadyForAuto = !out.ColdStart && hasConnectedGSC(integrations)
 	if !hasConnectedGSC(integrations) {
@@ -140,7 +140,7 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	if err != nil {
 		return SyncResult{}, err
 	}
-	result := SyncResult{RunID: run.ID, Status: "ok"}
+	result := SyncResult{RunID: run.ID, Status: "ok", DataSourceNotes: []string{}}
 	finish := func(status string, output any, runErr error) (SyncResult, error) {
 		result.Status = status
 		var errText *string
@@ -202,40 +202,11 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 		if article.CanonicalUrl == nil || strings.TrimSpace(*article.CanonicalUrl) == "" {
 			continue
 		}
-		normalized, err := NormalizeURL(*article.CanonicalUrl, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig))
+		normalized, status, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, *article.CanonicalUrl, uuidToPG(article.ID), article.ContentHash, strings.Contains(strings.ToLower(article.ContentMd), "<script"))
 		if err != nil {
 			return finish("error", result, err)
 		}
-		check := s.checkURL(ctx, *article.CanonicalUrl, prop.SiteUrl)
 		result.CheckedURLs++
-		status := "unknown"
-		if check.HTTPStatus != nil && *check.HTTPStatus >= 200 && *check.HTTPStatus < 300 {
-			status = "ok"
-		} else if check.HTTPStatus != nil {
-			status = "http_error"
-		}
-		_, err = s.Q.UpsertTechnicalCheck(ctx, db.UpsertTechnicalCheckParams{
-			ProjectID:             projectID,
-			RunID:                 run.ID,
-			PageUrl:               *article.CanonicalUrl,
-			NormalizedPageUrl:     normalized,
-			ArticleID:             uuidToPG(article.ID),
-			HttpStatus:            check.HTTPStatus,
-			CanonicalStatus:       strPtr(check.CanonicalStatus),
-			RobotsStatus:          strPtr(check.RobotsStatus),
-			TitleStatus:           strPtr(check.TitleStatus),
-			MetaDescriptionStatus: strPtr(check.MetaDescriptionStatus),
-			H1Status:              strPtr(check.H1Status),
-			StructuredDataStatus:  strPtr(check.StructuredDataStatus),
-			InternalLinkCount:     &check.InternalLinkCount,
-			OutboundLinkCount:     &check.OutboundLinkCount,
-			ContentHash:           article.ContentHash,
-			UnsafeMdxDetected:     strings.Contains(strings.ToLower(article.ContentMd), "<script"),
-			RawDetails:            mustJSON(check.RawDetails),
-		})
-		if err != nil {
-			return finish("error", result, err)
-		}
 		notes := map[string]any{"gsc_status": "missing", "metrics": "not_synced"}
 		if result.ConnectedGSC {
 			notes["gsc_status"] = "connected"
@@ -254,6 +225,14 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 		if err != nil {
 			return finish("error", result, err)
 		}
+	}
+	if result.CheckedURLs == 0 && strings.TrimSpace(prop.SiteUrl) != "" {
+		_, _, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, prop.SiteUrl, pgtype.UUID{}, nil, false)
+		if err != nil {
+			return finish("error", result, err)
+		}
+		result.CheckedURLs++
+		result.DataSourceNotes = append(result.DataSourceNotes, "public_site_checked")
 	}
 	overview, err := s.Overview(ctx, projectID)
 	if err != nil {
@@ -436,7 +415,7 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 	if err != nil {
 		return SyncResult{}, err
 	}
-	result := SyncResult{RunID: run.ID, Status: "ok"}
+	result := SyncResult{RunID: run.ID, Status: "ok", DataSourceNotes: []string{}}
 	finish := func(status string, output any, runErr error) (SyncResult, error) {
 		result.Status = status
 		var errText *string
@@ -542,10 +521,53 @@ func (s Service) Brief(ctx context.Context, projectID uuid.UUID) (Brief, error) 
 		Mode:        mode,
 		Title:       title,
 		GeneratedAt: s.now(),
-		Actions:     opps,
+		Actions:     nonNilSlice(opps),
 		Blockers:    blockers,
 		Measurement: []string{"No completed SEO measurement windows yet."},
 	}, nil
+}
+
+func (s Service) recordTechnicalCheck(
+	ctx context.Context,
+	projectID uuid.UUID,
+	runID uuid.UUID,
+	prop db.SeoProperty,
+	rawURL string,
+	articleID pgtype.UUID,
+	contentHash *string,
+	unsafeMDX bool,
+) (string, string, error) {
+	normalized, err := NormalizeURL(rawURL, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig))
+	if err != nil {
+		return "", "", err
+	}
+	check := s.checkURL(ctx, rawURL, prop.SiteUrl)
+	status := "unknown"
+	if check.HTTPStatus != nil && *check.HTTPStatus >= 200 && *check.HTTPStatus < 300 {
+		status = "ok"
+	} else if check.HTTPStatus != nil {
+		status = "http_error"
+	}
+	_, err = s.Q.UpsertTechnicalCheck(ctx, db.UpsertTechnicalCheckParams{
+		ProjectID:             projectID,
+		RunID:                 runID,
+		PageUrl:               rawURL,
+		NormalizedPageUrl:     normalized,
+		ArticleID:             articleID,
+		HttpStatus:            check.HTTPStatus,
+		CanonicalStatus:       strPtr(check.CanonicalStatus),
+		RobotsStatus:          strPtr(check.RobotsStatus),
+		TitleStatus:           strPtr(check.TitleStatus),
+		MetaDescriptionStatus: strPtr(check.MetaDescriptionStatus),
+		H1Status:              strPtr(check.H1Status),
+		StructuredDataStatus:  strPtr(check.StructuredDataStatus),
+		InternalLinkCount:     &check.InternalLinkCount,
+		OutboundLinkCount:     &check.OutboundLinkCount,
+		ContentHash:           contentHash,
+		UnsafeMdxDetected:     unsafeMDX,
+		RawDetails:            mustJSON(check.RawDetails),
+	})
+	return normalized, status, err
 }
 
 func (s Service) ensureProperty(ctx context.Context, projectID uuid.UUID, siteURL string) (db.SeoProperty, error) {
@@ -720,6 +742,13 @@ func decodeNormalizationConfig(raw json.RawMessage) URLNormalizationConfig {
 
 func uuidToPG(id uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func nonNilSlice[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
 }
 
 func strPtr(s string) *string {

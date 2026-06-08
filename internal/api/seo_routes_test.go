@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestSEORoutesAreRegistered(t *testing.T) {
@@ -37,6 +39,8 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "safe mode list", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/autopilot/safe-mode"},
 		{name: "safe mode enter", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/autopilot/safe-mode"},
 		{name: "safe mode exit", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/autopilot/safe-mode/not-an-id/exit"},
+		{name: "geo crawler audit", method: http.MethodPost, path: "/api/projects/not-a-uuid/geo/crawler-audit"},
+		{name: "geo crawler latest", method: http.MethodGet, path: "/api/projects/not-a-uuid/geo/crawler-audit/latest"},
 	}
 
 	for _, tt := range tests {
@@ -46,6 +50,31 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 			router.ServeHTTP(res, req)
 			if res.Code != http.StatusBadRequest {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestGEORoutesAreRegisteredForValidProject(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.New().String()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "crawler audit", method: http.MethodPost, path: "/api/projects/" + projectID + "/geo/crawler-audit"},
+		{name: "crawler latest", method: http.MethodGet, path: "/api/projects/" + projectID + "/geo/crawler-audit/latest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+			if res.Code == http.StatusNotFound {
+				t.Fatalf("%s status = %d, want route registered", tt.name, res.Code)
 			}
 		})
 	}

@@ -93,3 +93,22 @@ func TestQACompactCheckParsesValidFallback(t *testing.T) {
 		t.Fatal("compact fallback should preserve model qa_blocking=false")
 	}
 }
+
+func TestQAOutputLowScoresForceBlocking(t *testing.T) {
+	out := &QAOutput{
+		Claims:     []Claim{{Claim: "UniPost supports every social platform.", Mapped: true, Evidence: "feature"}},
+		QABlocking: false,
+		GeoScore:   0.6,
+		SeoScore:   0.7,
+		Issues:     []string{},
+	}
+
+	enforceQAGate(out)
+
+	if !out.QABlocking {
+		t.Fatal("low QA scores must force qa_blocking")
+	}
+	if len(out.Issues) == 0 {
+		t.Fatal("low-score gate should add a reviewer-visible issue")
+	}
+}

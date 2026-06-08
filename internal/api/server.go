@@ -46,12 +46,16 @@ func (s *Server) Router() http.Handler {
 			r.Use(clerkhttp.RequireHeaderAuthorization())
 		}
 
-		r.Get("/admin/llm-credentials", s.getLLMCredentials)
-		r.Put("/admin/llm-credentials", s.updateLLMCredentials)
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAdmin)
+			r.Get("/admin/llm-credentials", s.getLLMCredentials)
+			r.Put("/admin/llm-credentials", s.updateLLMCredentials)
+		})
 
 		r.Get("/projects", s.listProjects)
 		r.Post("/projects", s.createProject)
 		r.Route("/projects/{projectID}", func(r chi.Router) {
+			r.Use(s.requireProjectOwner)
 			r.Get("/", s.getProject)
 			r.Put("/config", s.updateConfig)
 
@@ -81,6 +85,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/distribute", s.listDistribute)
 			r.Get("/runs", s.listRuns)
 			r.Get("/runs/{runID}", s.getRun)
+			r.Get("/publisher-connections", s.listPublisherConnections)
+			r.Put("/publisher-connections/github-nextjs", s.upsertGitHubNextJSPublisherConnection)
+			r.Post("/publisher-connections/{connectionID}/test", s.testPublisherConnection)
 			r.Route("/seo", func(r chi.Router) {
 				r.Get("/overview", s.getSEOOverview)
 				r.Post("/sync", s.syncSEO)
@@ -116,6 +123,10 @@ func (s *Server) Router() http.Handler {
 					r.Post("/safe-mode", s.enterSafeMode)
 					r.Post("/safe-mode/{safeModeID}/exit", s.exitSafeMode)
 				})
+			})
+			r.Route("/geo", func(r chi.Router) {
+				r.Post("/crawler-audit", s.runGEOCrawlerAudit)
+				r.Get("/crawler-audit/latest", s.getLatestGEOCrawlerAudit)
 			})
 			r.Get("/notifications/channels", s.listNotificationChannels)
 			r.Post("/notifications/channels", s.createNotificationChannel)

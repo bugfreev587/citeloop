@@ -77,7 +77,18 @@ ARTICLE:
 			out.QABlocking = true
 		}
 	}
+	enforceQAGate(&out)
 	return &out, resp, nil
+}
+
+func enforceQAGate(out *QAOutput) {
+	if out == nil {
+		return
+	}
+	if out.GeoScore < 0.75 || out.SeoScore < 0.75 {
+		out.QABlocking = true
+		out.Issues = append(out.Issues, "qa score below publish threshold")
+	}
 }
 
 func (qa *QA) compactCheck(ctx context.Context, profileJSON json.RawMessage, evidence, contentMD string) (*QAOutput, llm.CompletionResp, error) {

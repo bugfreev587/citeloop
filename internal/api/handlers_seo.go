@@ -109,7 +109,7 @@ func (s *Server) listSEORuns(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	writeJSON(w, http.StatusOK, emptySlice(runs))
 }
 
 func (s *Server) listSEOOpportunities(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,7 @@ func (s *Server) listSEOOpportunities(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, opps)
+	writeJSON(w, http.StatusOK, emptySlice(opps))
 }
 
 func (s *Server) getSEOOpportunity(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +263,7 @@ func (s *Server) listSEOContentActions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, actions)
+	writeJSON(w, http.StatusOK, emptySlice(actions))
 }
 
 func (s *Server) getSEOContentAction(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +325,7 @@ func (s *Server) getSEOSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integrations": integrations})
+	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integrations": emptySlice(integrations)})
 }
 
 func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ package scheduler
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -213,8 +214,12 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 		return err
 	}
 	q := db.New(s.Pool)
+	blog, err := s.blogPublisherForProject(ctx, q, p)
+	if err != nil {
+		return err
+	}
 	for _, a := range due {
-		res, err := s.Blog.Publish(ctx, &a)
+		res, err := blog.Publish(ctx, &a)
 		if err != nil {
 			s.alert(p.ID, "publish failed for article "+a.ID.String()+": "+err.Error())
 			s.markPublishFailed(ctx, q, p, a, "github_write", err.Error(), true)
@@ -289,6 +294,10 @@ func (s *Scheduler) prepareDueCanonicals(ctx context.Context, p db.Project) ([]d
 		return nil, err
 	}
 	q := db.New(tx)
+	blog, err := s.blogPublisherForProject(ctx, q, p)
+	if err != nil {
+		return nil, err
+	}
 
 	due, err := q.SelectDueCanonical(ctx, p.ID)
 	if err != nil {
@@ -296,7 +305,7 @@ func (s *Scheduler) prepareDueCanonicals(ctx context.Context, p db.Project) ([]d
 	}
 	prepared := make([]db.Article, 0, len(due))
 	for _, a := range due {
-		slug, publishPath, _, err := s.Blog.Resolve(&a)
+		slug, publishPath, _, err := blog.Resolve(&a)
 		if err != nil {
 			return nil, err
 		}
@@ -346,7 +355,7 @@ func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project
 			s.markPublishFailed(ctx, q, p, a, "reconcile_missing_url", "reconcile missing canonical url", true)
 			continue
 		}
-		if err := s.verifyPublishedPath(ctx, res.Path); err != nil {
+		if err := s.verifyPublishedPathForProject(ctx, q, p, res.Path); err != nil {
 			s.markPublishFailed(ctx, q, p, a, "reconcile_missing_file", "reconcile content path failed: "+err.Error(), true)
 			continue
 		}
@@ -460,6 +469,62 @@ func (s *Scheduler) verifyPublishedPath(ctx context.Context, publishPath string)
 		return nil
 	}
 	return s.Blog.PublishedPathExists(ctx, publishPath)
+}
+
+func (s *Scheduler) verifyPublishedPathForProject(ctx context.Context, q *db.Queries, p db.Project, publishPath string) error {
+	if publishPath == "" {
+		return nil
+	}
+	blog, err := s.blogPublisherForProject(ctx, q, p)
+	if err != nil {
+		return err
+	}
+	if blog == nil {
+		return nil
+	}
+	return blog.PublishedPathExists(ctx, publishPath)
+}
+
+func (s *Scheduler) blogPublisherForProject(ctx context.Context, q *db.Queries, p db.Project) (*publisher.BlogPublisher, error) {
+	if q == nil {
+		return s.Blog, nil
+	}
+	conn, err := q.GetDefaultPublisherConnectionForProject(ctx, db.GetDefaultPublisherConnectionForProjectParams{
+		ProjectID: p.ID,
+		Kind:      publisher.ConnectionKindGitHubNextJS,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.Blog, nil
+		}
+		return nil, err
+	}
+	token := s.publisherCredentialToken(conn.CredentialRef)
+	blog, _, err := blogPublisherFromConnection(s.Blog, token, conn, s.Log)
+	return blog, err
+}
+
+func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string, conn db.PublisherConnection, log *slog.Logger) (*publisher.BlogPublisher, bool, error) {
+	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
+		return fallback, false, fmt.Errorf("unsupported publisher connection kind %q", conn.Kind)
+	}
+	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
+	if err != nil {
+		return fallback, false, err
+	}
+	return publisher.NewBlog(token, cfg.Repo, cfg.Branch, cfg.BaseURL, cfg.ContentDir, log), true, nil
+}
+
+func (s *Scheduler) publisherCredentialToken(ref *string) string {
+	if ref == nil || s.Blog == nil {
+		return ""
+	}
+	switch strings.TrimSpace(*ref) {
+	case "env:GITHUB_TOKEN", "GITHUB_TOKEN":
+		return strings.TrimSpace(s.Blog.Token)
+	default:
+		return ""
+	}
 }
 
 func nextPublishRetryAt(now time.Time, attempt int32) pgtype.Timestamptz {

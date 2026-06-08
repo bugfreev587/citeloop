@@ -71,7 +71,7 @@ func (s *Server) runStrategist(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, topics)
+	writeJSON(w, 200, emptySlice(topics))
 }
 
 func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +85,7 @@ func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, topics)
+	writeJSON(w, 200, emptySlice(topics))
 }
 
 func (s *Server) topicID(r *http.Request) (uuid.UUID, error) {
@@ -301,7 +301,7 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, arts)
+	writeJSON(w, 200, emptySlice(arts))
 }
 
 func (s *Server) tickGenerate(w http.ResponseWriter, r *http.Request) {
@@ -380,5 +380,5 @@ func (s *Server) listArticles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, arts)
+	writeJSON(w, 200, emptySlice(arts))
 }
