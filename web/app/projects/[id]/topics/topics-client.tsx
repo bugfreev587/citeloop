@@ -153,6 +153,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     setUndoArchive(null);
   }
 
+  function updateScheduleDraft(topicID: string, value: string) {
+    setScheduleDrafts((current) => ({ ...current, [topicID]: value }));
+  }
+
   function startEdit(topic: Topic) {
     setEditingId(topic.id);
     setDraft(draftFromTopic(topic));
@@ -496,7 +500,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       type="datetime-local"
                       value={scheduleValue}
                       disabled={isArchived}
-                      onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
+                      onChange={(event) => updateScheduleDraft(topic.id, event.target.value)}
+                      onInput={(event) => updateScheduleDraft(topic.id, event.currentTarget.value)}
                     />
                   </Field>
                   <Button disabled={busy === `schedule-${topic.id}` || isArchived || !canSchedule} size="sm" onClick={() => schedule(topic)}>
