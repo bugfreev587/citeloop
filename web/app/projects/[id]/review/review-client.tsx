@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, ExternalLink, Eye, FileText, RefreshCw, Save, Search, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Eye, FileText, RefreshCw, Save, Search, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
+  articlePreviewBlocks,
   articleReviewTitle,
   buildSEOContributions,
   explainQAIssue,
@@ -86,6 +87,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                     busy={busy === article.id}
                     onApprove={() => mutate("Article approved", article.id, () => api.approve(projectId, article.id))}
                     onReject={() => mutate("Article rejected", article.id, () => api.reject(projectId, article.id))}
+                    onFix={() => mutate("AI fix applied and QA refreshed", article.id, () => api.fixArticle(projectId, article.id))}
                     onSave={(content) =>
                       mutate("Content saved and QA refreshed", article.id, () => api.edit(projectId, article.id, { content_md: content }))
                     }
@@ -106,6 +108,7 @@ function ReviewArticle({
   busy,
   onApprove,
   onReject,
+  onFix,
   onSave,
   detailHref,
 }: {
@@ -113,6 +116,7 @@ function ReviewArticle({
   busy: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onFix: () => void;
   onSave: (content: string) => void;
   detailHref: string;
 }) {
@@ -120,6 +124,7 @@ function ReviewArticle({
   const [content, setContent] = useState(article.content_md);
   const title = articleReviewTitle(article);
   const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
+  const aiFixable = article.qa_blocking || seoContributions.some((row) => row.status !== "ready");
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -159,6 +164,12 @@ function ReviewArticle({
           <Button size="sm" onClick={() => setOpen((value) => !value)}>
             {open ? "Hide editor" : "Edit"}
           </Button>
+          {aiFixable && (
+            <Button disabled={busy} size="sm" onClick={onFix}>
+              <Sparkles size={14} />
+              AI fix
+            </Button>
+          )}
           <Button disabled={busy || article.qa_blocking} size="sm" variant="primary" onClick={onApprove}>
             <CheckCircle2 size={14} />
             Approve
@@ -323,7 +334,7 @@ function ArticleWebPreview({ article }: { article: Article }) {
           <div className="text-xs font-bold uppercase tracking-[0.12em] text-[#d93820]">UniPost Blog</div>
           {description && <p className="mt-2 content-font text-sm leading-6 text-slate-600">{description}</p>}
         </div>
-        <div className="content-font mt-4 max-h-[520px] overflow-hidden text-[15px] leading-7 text-slate-800">
+        <div className="content-font mt-4 text-[15px] leading-7 text-slate-800">
           {blocks.length === 0 ? (
             <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">No article body available.</div>
           ) : (
@@ -338,21 +349,6 @@ function ArticleWebPreview({ article }: { article: Article }) {
 function stringMeta(meta: Record<string, any>, key: string) {
   const value = meta?.[key];
   return typeof value === "string" ? value.trim() : "";
-}
-
-function markdownBlocks(content: string) {
-  return content
-    .trim()
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .slice(0, 10);
-}
-
-function articlePreviewBlocks(content: string, h1: string) {
-  const blocks = markdownBlocks(content);
-  if (!h1 || blocks.some((block) => block.startsWith("# "))) return blocks;
-  return [`# ${h1}`, ...blocks].slice(0, 10);
 }
 
 function MarkdownPreviewBlock({ block }: { block: string }) {

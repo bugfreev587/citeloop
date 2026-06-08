@@ -57,6 +57,20 @@ export function previewPath(article: ReviewArticleLike) {
   return `/blog/${slug}`;
 }
 
+export function markdownBlocks(content: string) {
+  return content
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+export function articlePreviewBlocks(content: string, h1: string) {
+  const blocks = markdownBlocks(content);
+  if (!h1 || blocks.some((block) => block.startsWith("# "))) return blocks;
+  return [`# ${h1}`, ...blocks];
+}
+
 export function buildSEOContributions(article: ReviewArticleLike): SEOContribution[] {
   const title = textValue(article.seo_meta?.title);
   const description = textValue(article.seo_meta?.meta_description);
@@ -71,7 +85,7 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Search intent",
       value: keyword || "Keyword not specified",
-      detail: keyword ? "Gives the draft a clear query target." : "Reviewer should confirm the target query before approval.",
+      detail: keyword ? "Gives the draft a clear query target." : "AI fix should infer the target query before approval.",
       status: keyword ? "ready" : "needs_review",
     },
     {
@@ -103,7 +117,7 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Internal links",
       value: `${links} markdown links`,
-      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "Consider adding internal links before publishing.",
+      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "AI fix should add safe internal links when evidence allows.",
       status: links > 0 ? "ready" : "needs_review",
     },
   ];
@@ -116,7 +130,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA evidence map was not returned",
       detail:
         "The QA step expects a claims array so it can map product claims to evidence. The model response did not include that structure, so CiteLoop blocked approval conservatively.",
-      action: "Open Edit, save the draft to rerun QA, or reject/regenerate if the article structure looks malformed.",
+      action: "Use AI fix first. CiteLoop will revise or normalize the draft, rerun QA, and only return unresolved choices to you.",
       raw: issue,
     };
   }
@@ -125,7 +139,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA response could not be parsed",
       detail:
         "The auditor returned output that did not match the required JSON schema for evidence mapping, scores, and issues.",
-      action: "Save the content to rerun QA after checking the preview, or reject the draft if it is visibly malformed.",
+      action: "Use AI fix first. CiteLoop will rerun repair plus QA before asking for a manual decision.",
       raw: issue,
     };
   }
@@ -133,14 +147,14 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
     return {
       title: "Product claim needs evidence",
       detail: issue.replace(/^unmapped product claim:\s*/i, ""),
-      action: "Edit the claim to match known product evidence, add support, or remove it before approving.",
+      action: "Use AI fix to remove or rewrite the claim against known evidence. Review only if the evidence is genuinely ambiguous.",
       raw: issue,
     };
   }
   return {
     title: "QA blocking issue",
     detail: issue,
-    action: "Resolve the issue in the draft, save, and let the backend rerun QA.",
+    action: "Use AI fix to revise the draft and rerun QA. If it remains blocked, choose from the remaining manual options.",
     raw: issue,
   };
 }
