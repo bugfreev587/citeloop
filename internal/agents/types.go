@@ -56,6 +56,7 @@ type SEOMeta struct {
 	MetaDescription string `json:"meta_description"`
 	Slug            string `json:"slug"`
 	H1              string `json:"h1"`
+	TargetKeyword   string `json:"target_keyword,omitempty"`
 	CanonicalURL    string `json:"canonical_url,omitempty"`
 }
 

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -56,5 +57,43 @@ func TestWriterDraftFallsBackToMarkdownWhenStructuredJSONIsInvalid(t *testing.T)
 	}
 	if provider.reqs[1].MaxTokens != 8192 {
 		t.Fatalf("fallback max tokens = %d, want 8192", provider.reqs[1].MaxTokens)
+	}
+}
+
+func TestSEOMetaFromTopicIncludesTargetKeyword(t *testing.T) {
+	topic := db.Topic{
+		Title:         "OAuth Flows Explained",
+		TargetKeyword: ptr("oauth social account connection"),
+	}
+
+	meta := seoMetaFromTopic(topic, "", true)
+
+	if meta.TargetKeyword != "oauth social account connection" {
+		t.Fatalf("target keyword = %q", meta.TargetKeyword)
+	}
+}
+
+func TestSEOMetaFromTopicInfersMissingTargetKeyword(t *testing.T) {
+	topic := db.Topic{Title: "OAuth Flows Explained"}
+
+	meta := seoMetaFromTopic(topic, "", true)
+
+	if meta.TargetKeyword != "OAuth Flows Explained" {
+		t.Fatalf("target keyword = %q", meta.TargetKeyword)
+	}
+}
+
+func TestDraftNeedsRepairForQAAndSEOGaps(t *testing.T) {
+	if !draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{QABlocking: true}, nil) {
+		t.Fatal("qa blocking draft must be repaired before review")
+	}
+	if !draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, nil, errors.New("parse qa: missing claims")) {
+		t.Fatal("qa parser failure must be repaired before review")
+	}
+	if !draftNeedsRepair(&WriterOutput{}, &QAOutput{}, nil) {
+		t.Fatal("missing target keyword must be repaired before review")
+	}
+	if draftNeedsRepair(&WriterOutput{SEOMeta: SEOMeta{TargetKeyword: "oauth"}}, &QAOutput{}, nil) {
+		t.Fatal("clean draft should not be repaired")
 	}
 }

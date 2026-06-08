@@ -620,6 +620,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeArticle(raw);
   },
+  fixArticle: async (id: string, articleID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/ai-fix`, { method: "POST" }, auth);
+    return normalizeArticle(raw);
+  },
   distributed: async (id: string, articleID: string) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/distributed`, { method: "POST" }, auth);
     return normalizeArticle(raw);

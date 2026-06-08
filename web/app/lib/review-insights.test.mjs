@@ -48,3 +48,13 @@ test("buildSEOContributions summarizes search contribution signals", async () =>
   assert.equal(rows[3].value, "oauth-flows-explained");
   assert.equal(rows[5].value, "1 markdown links");
 });
+
+test("articlePreviewBlocks keeps the full article body", async () => {
+  const { articlePreviewBlocks } = await loadReviewInsightsModule();
+  const content = Array.from({ length: 14 }, (_, index) => `## Section ${index + 1}\n\nBody ${index + 1}`).join("\n\n");
+
+  const blocks = articlePreviewBlocks(content, "Full preview article");
+
+  assert.equal(blocks.length, 29);
+  assert.equal(blocks.at(-1), "Body 14");
+});
