@@ -52,6 +52,12 @@ test("normalizeArticle returns clean scores, time fields, and qa issues", async 
     seo_score: { Int: 82, Exp: -1, Valid: true },
     qa_issues: ["unsupported claim"],
     qa_blocking: true,
+    qa_status: "parse_failed",
+    qa_failure_kind: "parse_qa",
+    qa_failure_message: "missing claims",
+    qa_attempt_count: 2,
+    qa_last_checked_at: { Time: "2026-06-05T12:30:00Z", Valid: true },
+    qa_human_options: ["Regenerate draft"],
     canonical_url: null,
     status: "pending_review",
     scheduled_at: { Time: "2026-06-06T12:00:00Z", Valid: true },
@@ -64,4 +70,10 @@ test("normalizeArticle returns clean scores, time fields, and qa issues", async 
   assert.equal(article.scheduled_at, "2026-06-06T12:00:00Z");
   assert.equal(article.published_at, null);
   assert.deepEqual(article.qa_issues, ["unsupported claim"]);
+  assert.equal(article.qa_status, "parse_failed");
+  assert.equal(article.qa_failure_kind, "parse_qa");
+  assert.equal(article.qa_failure_message, "missing claims");
+  assert.equal(article.qa_attempt_count, 2);
+  assert.equal(article.qa_last_checked_at, "2026-06-05T12:30:00Z");
+  assert.deepEqual(article.qa_human_options, ["Regenerate draft"]);
 });

@@ -5,6 +5,8 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -65,6 +67,15 @@ type WriterOutput struct {
 	SEOMeta   SEOMeta `json:"seo_meta"`
 }
 
+// AIFixOutput is the QA remediation payload. It uses the same article schema as
+// WriterOutput plus reviewer-visible context about what was changed.
+type AIFixOutput struct {
+	ContentMD          string   `json:"content_md"`
+	SEOMeta            SEOMeta  `json:"seo_meta"`
+	ResolutionSummary  string   `json:"resolution_summary"`
+	HumanDecisionHints []string `json:"human_decision_hints,omitempty"`
+}
+
 // Claim is one factual product claim and whether QA could map it to evidence.
 type Claim struct {
 	Claim    string `json:"claim"`
@@ -74,11 +85,36 @@ type Claim struct {
 
 // QAOutput is the QA agent result (PRD §5.3). qa_blocking is the real gate.
 type QAOutput struct {
-	Claims     []Claim  `json:"claims"`
-	QABlocking bool     `json:"qa_blocking"`
-	GeoScore   float64  `json:"geo_score"`
-	SeoScore   float64  `json:"seo_score"`
-	Issues     []string `json:"issues"`
+	Claims             []Claim  `json:"claims"`
+	QABlocking         bool     `json:"qa_blocking"`
+	GeoScore           float64  `json:"geo_score"`
+	SeoScore           float64  `json:"seo_score"`
+	Issues             []string `json:"issues"`
+	Status             string   `json:"status,omitempty"`
+	BlockingReasons    []string `json:"blocking_reasons,omitempty"`
+	FixInstructions    []string `json:"fix_instructions,omitempty"`
+	HumanDecisionHints []string `json:"human_decision_hints,omitempty"`
+	FailureFingerprint string   `json:"failure_fingerprint,omitempty"`
+	Confidence         string   `json:"confidence,omitempty"`
+}
+
+const (
+	QAStatusPending            = "pending"
+	QAStatusPassed             = "passed"
+	QAStatusBlocking           = "blocking"
+	QAStatusParseFailed        = "parse_failed"
+	QAStatusNeedsHumanDecision = "needs_human_decision"
+)
+
+// ArticleQAState is the persisted contract the review UI and approval gate use.
+// It is derived by backend rules so malformed model JSON cannot accidentally
+// unlock publishing.
+type ArticleQAState struct {
+	Status             string
+	FailureKind        string
+	FailureMessage     string
+	FailureFingerprint string
+	HumanOptions       []string
 }
 
 // Deps bundles the collaborators every agent needs.
@@ -148,6 +184,10 @@ func extractWriterOutput(s string) (WriterOutput, error) {
 	return extractValidJSON(s, validateWriterOutput)
 }
 
+func extractAIFixOutput(s string) (AIFixOutput, error) {
+	return extractValidJSON(s, validateAIFixOutput)
+}
+
 func extractQAOutput(s string) (QAOutput, error) {
 	return extractValidJSON(s, validateQAOutput)
 }
@@ -174,6 +214,10 @@ func validateWriterOutput(out WriterOutput) error {
 	return nil
 }
 
+func validateAIFixOutput(out AIFixOutput) error {
+	return validateWriterOutput(WriterOutput{ContentMD: out.ContentMD, SEOMeta: out.SEOMeta})
+}
+
 func validateQAOutput(out QAOutput) error {
 	if out.Claims == nil {
 		return fmt.Errorf("missing claims")
@@ -188,6 +232,150 @@ func validateQAOutput(out QAOutput) error {
 		return fmt.Errorf("seo_score out of range")
 	}
 	return nil
+}
+
+func normalizeQAOutput(out *QAOutput) {
+	if out == nil {
+		return
+	}
+	if out.Claims == nil {
+		out.Claims = []Claim{}
+	}
+	if out.Issues == nil {
+		out.Issues = []string{}
+	}
+	if out.QABlocking {
+		if len(out.BlockingReasons) == 0 {
+			out.BlockingReasons = qaIssues(out)
+		}
+		if len(out.FixInstructions) == 0 {
+			out.FixInstructions = defaultQAFixInstructions(out.BlockingReasons)
+		}
+		if out.Status == "" {
+			out.Status = QAStatusBlocking
+		}
+	} else if out.Status == "" {
+		out.Status = QAStatusPassed
+	}
+	if out.Confidence == "" {
+		if out.QABlocking {
+			out.Confidence = "medium"
+		} else {
+			out.Confidence = "high"
+		}
+	}
+}
+
+func BuildArticleQAState(out *QAOutput, qaErr error) ArticleQAState {
+	if qaErr != nil {
+		msg := trimForState(qaErr.Error())
+		return ArticleQAState{
+			Status:             QAStatusParseFailed,
+			FailureKind:        "parse_qa",
+			FailureMessage:     msg,
+			FailureFingerprint: qaFingerprint("parse_qa", msg, nil),
+			HumanOptions: []string{
+				"Ask AI to normalize the QA evidence map and rerun QA.",
+				"Regenerate this draft from the same topic.",
+				"Reject the draft and return the topic to backlog.",
+			},
+		}
+	}
+	if out == nil {
+		msg := "qa returned no result"
+		return ArticleQAState{
+			Status:             QAStatusParseFailed,
+			FailureKind:        "missing_qa_result",
+			FailureMessage:     msg,
+			FailureFingerprint: qaFingerprint("missing_qa_result", msg, nil),
+			HumanOptions:       []string{"Regenerate this draft from the same topic.", "Reject the draft and return the topic to backlog."},
+		}
+	}
+	normalizeQAOutput(out)
+	if !out.QABlocking {
+		return ArticleQAState{Status: QAStatusPassed}
+	}
+	issues := qaIssues(out)
+	kind := "qa_blocking"
+	for _, issue := range issues {
+		if strings.Contains(strings.ToLower(issue), "score below publish threshold") {
+			kind = "score_below_threshold"
+			break
+		}
+	}
+	message := "QA blocked the draft"
+	if len(issues) > 0 {
+		message = trimForState(issues[0])
+	}
+	options := out.HumanDecisionHints
+	if len(options) == 0 {
+		options = []string{
+			"Let AI revise unsupported claims and rerun QA.",
+			"Edit the specific unsupported claim manually, then save to rerun QA.",
+			"Reject the draft and return the topic to backlog.",
+		}
+	}
+	return ArticleQAState{
+		Status:             QAStatusBlocking,
+		FailureKind:        kind,
+		FailureMessage:     message,
+		FailureFingerprint: qaFingerprint(kind, message, issues),
+		HumanOptions:       options,
+	}
+}
+
+func NeedsHumanDecisionState(previous ArticleQAState, attempts int32) ArticleQAState {
+	msg := fmt.Sprintf("AI fix stopped after %d attempt(s): %s", attempts, previous.FailureMessage)
+	if previous.FailureMessage == "" {
+		msg = fmt.Sprintf("AI fix stopped after %d attempt(s) without passing QA", attempts)
+	}
+	kind := previous.FailureKind
+	if kind == "" {
+		kind = "qa_fix_exhausted"
+	}
+	return ArticleQAState{
+		Status:             QAStatusNeedsHumanDecision,
+		FailureKind:        kind,
+		FailureMessage:     trimForState(msg),
+		FailureFingerprint: qaFingerprint(kind, msg, previous.HumanOptions),
+		HumanOptions: []string{
+			"Regenerate the draft from the same topic.",
+			"Reject this draft and return the topic to backlog.",
+			"Open Edit for a manual rewrite, then save to rerun QA.",
+		},
+	}
+}
+
+func defaultQAFixInstructions(issues []string) []string {
+	if len(issues) == 0 {
+		return []string{"Revise the article so every product claim is supported by product profile or inventory evidence."}
+	}
+	out := make([]string, 0, len(issues)+1)
+	out = append(out, "Resolve each blocking QA issue before approval.")
+	for _, issue := range issues {
+		out = append(out, "Fix: "+issue)
+	}
+	return out
+}
+
+func qaFingerprint(kind, message string, parts []string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(kind))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(message))
+	for _, part := range parts {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(part))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func trimForState(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 500 {
+		return s[:500]
+	}
+	return s
 }
 
 func toJSON(v any) json.RawMessage {

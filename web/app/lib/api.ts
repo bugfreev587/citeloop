@@ -69,7 +69,7 @@ export type Project = {
   created_at?: any;
 };
 
-export type ReviewGroup = { topic_id: string; articles: Article[] };
+export type ReviewGroup = { topic_id: string; topic?: Topic; articles: Article[] };
 
 export type DistributeItem = {
   article: Article;
@@ -627,6 +627,7 @@ function normalizeProject(raw: any): Project {
 function normalizeReviewGroup(raw: any): ReviewGroup {
   return {
     topic_id: raw.topic_id,
+    topic: raw.topic ? normalizeTopic(raw.topic) : undefined,
     articles: Array.isArray(raw.articles) ? raw.articles.map(normalizeArticle) : [],
   };
 }
@@ -1350,6 +1351,10 @@ export function createApi(auth?: AuthOptions) {
       method: "POST",
       body: JSON.stringify({ reviewed_by: "reviewer" }),
     }, auth);
+    return normalizeArticle(raw);
+  },
+  aiFix: async (id: string, articleID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/ai-fix`, { method: "POST" }, auth);
     return normalizeArticle(raw);
   },
   reject: async (id: string, articleID: string) => {

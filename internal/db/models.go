@@ -69,6 +69,13 @@ type Article struct {
 	LastPublishRunID       pgtype.UUID        `json:"last_publish_run_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	ContentHash            *string            `json:"content_hash"`
+	QaStatus               string             `json:"qa_status"`
+	QaFailureKind          *string            `json:"qa_failure_kind"`
+	QaFailureMessage       *string            `json:"qa_failure_message"`
+	QaFailureFingerprint   *string            `json:"qa_failure_fingerprint"`
+	QaAttemptCount         int32              `json:"qa_attempt_count"`
+	QaLastCheckedAt        pgtype.Timestamptz `json:"qa_last_checked_at"`
+	QaHumanOptions         json.RawMessage    `json:"qa_human_options"`
 }
 
 type AutopilotAuditEvent struct {

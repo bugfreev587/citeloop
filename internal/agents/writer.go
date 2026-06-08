@@ -77,9 +77,10 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	qaAgent := NewQA(w.Deps, w.Log)
 	qa, qaResp, qaErr := qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
 	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
+	qaState := BuildArticleQAState(qa, qaErr)
 	if qaErr != nil {
 		// QA failure is non-fatal to drafting but forces human review.
-		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed: " + qaErr.Error()}}
+		qa = &QAOutput{Claims: []Claim{}, QABlocking: true, Issues: []string{"qa step failed: " + qaErr.Error()}}
 	}
 
 	kind := "canonical"
@@ -91,20 +92,34 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	}
 
 	art, err := w.Q.CreateArticle(ctx, db.CreateArticleParams{
-		ProjectID:  projectID,
-		TopicID:    topic.ID,
-		Kind:       kind,
-		Platform:   platformPtr,
-		ContentMd:  out.ContentMD,
-		SeoMeta:    toJSON(out.SEOMeta),
-		GeoScore:   pgutil.Numeric(qa.GeoScore),
-		SeoScore:   pgutil.Numeric(qa.SeoScore),
-		QaIssues:   toJSON(qaIssues(qa)),
-		QaBlocking: qa.QABlocking,
-		Status:     "pending_review",
+		ProjectID:            projectID,
+		TopicID:              topic.ID,
+		Kind:                 kind,
+		Platform:             platformPtr,
+		ContentMd:            out.ContentMD,
+		SeoMeta:              toJSON(out.SEOMeta),
+		GeoScore:             pgutil.Numeric(qa.GeoScore),
+		SeoScore:             pgutil.Numeric(qa.SeoScore),
+		QaIssues:             toJSON(qaIssues(qa)),
+		QaBlocking:           qa.QABlocking,
+		QaStatus:             qaState.Status,
+		QaFailureKind:        ptr(qaState.FailureKind),
+		QaFailureMessage:     ptr(qaState.FailureMessage),
+		QaFailureFingerprint: ptr(qaState.FailureFingerprint),
+		QaAttemptCount:       0,
+		QaHumanOptions:       toJSON(qaState.HumanOptions),
+		Status:               "pending_review",
 	})
 	if err != nil {
 		return nil, err
+	}
+	if qaState.Status != QAStatusPassed {
+		fixed, fixErr := qaAgent.FixArticle(ctx, projectID, art.ID)
+		if fixErr != nil {
+			w.Log.Warn("ai qa fix failed", "article", art.ID, "err", fixErr)
+		} else {
+			art = fixed
+		}
 	}
 	return &art, nil
 }

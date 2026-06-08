@@ -36,7 +36,11 @@ func (s *Server) listReview(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(order))
 	for _, tid := range order {
-		out = append(out, map[string]any{"topic_id": tid, "articles": groups[tid]})
+		group := map[string]any{"topic_id": tid, "articles": groups[tid]}
+		if topic, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: tid, ProjectID: id}); err == nil {
+			group["topic"] = topic
+		}
+		out = append(out, group)
 	}
 	writeJSON(w, 200, out)
 }
@@ -140,6 +144,26 @@ func (s *Server) editArticleScoped(w http.ResponseWriter, r *http.Request, proje
 	writeJSON(w, 200, updated)
 }
 
+func (s *Server) aiFixProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	qaAgent := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	updated, err := qaAgent.FixArticle(r.Context(), projectID, aid)
+	if err != nil {
+		writeErr(w, 500, "ai fix failed: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
 func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -179,8 +203,8 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		writeErr(w, 404, "article not found")
 		return
 	}
-	if a.QaBlocking {
-		writeErr(w, 409, "article has unresolved qa_blocking issues; resolve before approving")
+	if a.QaBlocking || a.QaStatus != agents.QAStatusPassed {
+		writeErr(w, 409, "article has unresolved QA issues; run AI fix or resolve before approving")
 		return
 	}
 

@@ -81,6 +81,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/articles", s.listArticles)
 				r.Get("/articles/{articleID}", s.getProjectArticle)
 				r.Put("/articles/{articleID}", s.editProjectArticle)
+				r.Post("/articles/{articleID}/ai-fix", s.aiFixProjectArticle)
 				r.Post("/articles/{articleID}/approve", s.approveProjectArticle)
 				r.Post("/articles/{articleID}/reject", s.rejectProjectArticle)
 				r.Post("/articles/{articleID}/distributed", s.markProjectDistributed)

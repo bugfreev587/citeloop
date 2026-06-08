@@ -112,3 +112,60 @@ func TestQAOutputLowScoresForceBlocking(t *testing.T) {
 		t.Fatal("low-score gate should add a reviewer-visible issue")
 	}
 }
+
+func TestBuildArticleQAStateClassifiesParseFailure(t *testing.T) {
+	state := BuildArticleQAState(nil, assertAnError("missing claims"))
+
+	if state.Status != QAStatusParseFailed {
+		t.Fatalf("status = %q", state.Status)
+	}
+	if state.FailureKind != "parse_qa" {
+		t.Fatalf("failure kind = %q", state.FailureKind)
+	}
+	if state.FailureFingerprint == "" {
+		t.Fatal("parse failures need a stable fingerprint")
+	}
+	if len(state.HumanOptions) == 0 {
+		t.Fatal("parse failures should return human decision options")
+	}
+}
+
+func TestBuildArticleQAStateClassifiesBlockingWithFixInstructions(t *testing.T) {
+	out := &QAOutput{
+		Claims:     []Claim{{Claim: "UniPost supports auto-posting to every channel.", Mapped: false}},
+		QABlocking: true,
+		GeoScore:   0.8,
+		SeoScore:   0.9,
+		Issues:     []string{"unsupported channel claim"},
+	}
+
+	state := BuildArticleQAState(out, nil)
+
+	if state.Status != QAStatusBlocking {
+		t.Fatalf("status = %q", state.Status)
+	}
+	if state.FailureKind != "qa_blocking" {
+		t.Fatalf("failure kind = %q", state.FailureKind)
+	}
+	if len(out.FixInstructions) == 0 {
+		t.Fatal("blocking QA should produce AI editor fix instructions")
+	}
+}
+
+func TestNeedsHumanDecisionStateStopsLoops(t *testing.T) {
+	state := NeedsHumanDecisionState(ArticleQAState{
+		FailureKind:    "qa_blocking",
+		FailureMessage: "same unsupported claim",
+	}, 3)
+
+	if state.Status != QAStatusNeedsHumanDecision {
+		t.Fatalf("status = %q", state.Status)
+	}
+	if len(state.HumanOptions) == 0 {
+		t.Fatal("human decision state should include choices")
+	}
+}
+
+type assertAnError string
+
+func (e assertAnError) Error() string { return string(e) }

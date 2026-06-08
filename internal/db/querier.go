@@ -110,6 +110,7 @@ type Querier interface {
 	ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]SeoRun, error)
 	ListSafeModeEvents(ctx context.Context, arg ListSafeModeEventsParams) ([]SafeModeEvent, error)
 	ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error)
+	MarkArticleNeedsHumanDecision(ctx context.Context, arg MarkArticleNeedsHumanDecisionParams) (Article, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
 	MarkNotificationChannelVerified(ctx context.Context, arg MarkNotificationChannelVerifiedParams) (NotificationChannel, error)

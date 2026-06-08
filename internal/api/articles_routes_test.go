@@ -16,6 +16,7 @@ func TestProjectScopedArticleMutationRoutesAreRegistered(t *testing.T) {
 	}{
 		{name: "get article", method: http.MethodGet, path: "/api/projects/not-a-uuid/articles/not-an-article"},
 		{name: "edit article", method: http.MethodPut, path: "/api/projects/not-a-uuid/articles/not-an-article"},
+		{name: "ai fix article", method: http.MethodPost, path: "/api/projects/not-a-uuid/articles/not-an-article/ai-fix"},
 		{name: "approve article", method: http.MethodPost, path: "/api/projects/not-a-uuid/articles/not-an-article/approve"},
 		{name: "reject article", method: http.MethodPost, path: "/api/projects/not-a-uuid/articles/not-an-article/reject"},
 		{name: "mark distributed", method: http.MethodPost, path: "/api/projects/not-a-uuid/articles/not-an-article/distributed"},
@@ -44,6 +45,7 @@ func TestFlatArticleMutationRoutesAreNotRegistered(t *testing.T) {
 	}{
 		{name: "edit article", method: http.MethodPut, path: "/api/articles/not-an-article"},
 		{name: "approve article", method: http.MethodPost, path: "/api/articles/not-an-article/approve"},
+		{name: "ai fix article", method: http.MethodPost, path: "/api/articles/not-an-article/ai-fix"},
 		{name: "reject article", method: http.MethodPost, path: "/api/articles/not-an-article/reject"},
 		{name: "mark distributed", method: http.MethodPost, path: "/api/articles/not-an-article/distributed"},
 		{name: "retry publish", method: http.MethodPost, path: "/api/articles/not-an-article/retry-publish"},

@@ -23,6 +23,8 @@ func (m *Mock) Complete(_ context.Context, req CompletionReq) (CompletionResp, e
 		text = mockTopics
 	case strings.Contains(req.Prompt, "[[WRITER]]"):
 		text = mockArticle
+	case strings.Contains(req.Prompt, "[[AI_QA_FIX]]"):
+		text = mockAIFix
 	case strings.Contains(req.Prompt, "[[QA]]"):
 		text = mockQA
 	default:
@@ -69,5 +71,17 @@ const mockQA = `{
   "qa_blocking": false,
   "geo_score": 0.82,
   "seo_score": 0.78,
-  "issues": []
+  "issues": [],
+  "status": "passed",
+  "blocking_reasons": [],
+  "fix_instructions": [],
+  "human_decision_hints": [],
+  "confidence": "high"
+}`
+
+const mockAIFix = `{
+  "content_md": "# The Complete Guide to Social Media Scheduling\n\nUniPost supports multi-platform scheduling and lets you queue posts in advance. Analytics are built in.\n\n## Why schedule\n\nScheduling saves time.",
+  "seo_meta": {"title":"Social Media Scheduling Guide","meta_description":"Learn to schedule posts across platforms with UniPost.","slug":"social-media-scheduling-guide","h1":"The Complete Guide to Social Media Scheduling"},
+  "resolution_summary": "Normalized the draft against QA feedback.",
+  "human_decision_hints": []
 }`

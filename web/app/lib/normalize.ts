@@ -30,6 +30,13 @@ export type Article = {
   seo_score: number | null;
   qa_issues: string[];
   qa_blocking: boolean;
+  qa_status: "pending" | "passed" | "blocking" | "parse_failed" | "needs_human_decision" | string;
+  qa_failure_kind: string | null;
+  qa_failure_message: string | null;
+  qa_failure_fingerprint: string | null;
+  qa_attempt_count: number;
+  qa_last_checked_at: string | null;
+  qa_human_options: string[];
   canonical_url: string | null;
   status: string;
   scheduled_at: string | null;
@@ -155,6 +162,13 @@ export function normalizeArticle(raw: any): Article {
     seo_score: normalizeNumeric(raw.seo_score),
     qa_issues: normalizeArray(raw.qa_issues).map(String),
     qa_blocking: Boolean(raw.qa_blocking),
+    qa_status: raw.qa_status ?? (raw.qa_blocking ? "blocking" : "passed"),
+    qa_failure_kind: raw.qa_failure_kind ?? null,
+    qa_failure_message: raw.qa_failure_message ?? null,
+    qa_failure_fingerprint: raw.qa_failure_fingerprint ?? null,
+    qa_attempt_count: Number(raw.qa_attempt_count ?? 0),
+    qa_last_checked_at: normalizeTime(raw.qa_last_checked_at),
+    qa_human_options: normalizeArray(raw.qa_human_options).map(String),
     canonical_url: raw.canonical_url ?? null,
     status: raw.status ?? "unknown",
     scheduled_at: normalizeTime(raw.scheduled_at),

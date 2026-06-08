@@ -1,9 +1,13 @@
 -- name: CreateArticle :one
 insert into articles
   (project_id, topic_id, kind, platform, content_md, seo_meta,
-   geo_score, seo_score, qa_issues, qa_blocking, status, content_hash)
+   geo_score, seo_score, qa_issues, qa_blocking,
+   qa_status, qa_failure_kind, qa_failure_message, qa_failure_fingerprint,
+   qa_attempt_count, qa_last_checked_at, qa_human_options,
+   status, content_hash)
 values (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, now(), $16, $17,
   encode(digest(coalesce($5::text, '') || coalesce($6::jsonb::text, ''), 'sha256'), 'hex')
 )
 returning *;
@@ -81,8 +85,32 @@ returning *;
 
 -- name: SetArticleQA :one
 update articles set
-  geo_score = $2, seo_score = $3, qa_issues = $4, qa_blocking = $5, status = $6
+  geo_score = $2,
+  seo_score = $3,
+  qa_issues = $4,
+  qa_blocking = $5,
+  status = $6,
+  qa_status = $7,
+  qa_failure_kind = $8,
+  qa_failure_message = $9,
+  qa_failure_fingerprint = $10,
+  qa_attempt_count = $11,
+  qa_last_checked_at = now(),
+  qa_human_options = $12
 where id = $1
+returning *;
+
+-- name: MarkArticleNeedsHumanDecision :one
+update articles set
+  qa_status = 'needs_human_decision',
+  qa_blocking = true,
+  qa_failure_kind = $2,
+  qa_failure_message = $3,
+  qa_failure_fingerprint = $4,
+  qa_human_options = $5,
+  qa_attempt_count = greatest(qa_attempt_count, $6),
+  qa_last_checked_at = now()
+where id = $1 and project_id = $7
 returning *;
 
 -- Publisher: canonical articles due for auto-publish (§5.6).
