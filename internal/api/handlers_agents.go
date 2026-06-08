@@ -387,17 +387,32 @@ func (s *Server) reconcilePublishing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !health.Ready {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":  "publishing blocked: publisher is not ready",
-			"health": health,
-		})
+		summary, err := s.publishingReconcileSummary(r.Context(), id, health, "blocked")
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+		return
+	}
+	before, err := s.publishingReconcileSummary(r.Context(), id, health, "checked")
+	if err != nil {
+		writeErr(w, 500, err.Error())
 		return
 	}
 	if err := s.Sched.ReconcilePublishProject(r.Context(), project); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "reconcile complete"})
+	after, err := s.publishingReconcileSummary(r.Context(), id, health, "reconciled")
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if before.CheckedArticles > after.CheckedArticles {
+		after.RepairedStateCount = before.CheckedArticles - after.CheckedArticles
+	}
+	writeJSON(w, 200, after)
 }
 
 // listDistribute returns ready_to_distribute variants enriched with the target

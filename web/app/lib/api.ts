@@ -241,6 +241,36 @@ export type PublishingHealth = {
   connection?: PublisherConnection | null;
 };
 
+export type PublishingLaneCounts = {
+  approved_canonical_due: number;
+  approved_canonical_scheduled: number;
+  approved_variants_waiting_canonical: number;
+  pending_review: number;
+  pending_url_verification: number;
+  publish_failures: number;
+  retryable_failures: number;
+  ready_to_distribute: number;
+  published_canonical: number;
+  reconcile_candidates: number;
+};
+
+export type PublishingSkippedReason = {
+  reason: string;
+  count: number;
+  detail: string;
+};
+
+export type PublishingReconcileResult = {
+  status: string;
+  checked_articles: number;
+  publishable_count: number;
+  repaired_state_count: number;
+  skipped_reasons: PublishingSkippedReason[];
+  blockers: string[];
+  counts: PublishingLaneCounts;
+  health: PublishingHealth;
+};
+
 export type GitHubNextJSPublisherInput = {
   label?: string;
   repo: string;
@@ -987,6 +1017,40 @@ function normalizePublishingHealth(raw: any): PublishingHealth {
   };
 }
 
+function normalizePublishingLaneCounts(raw: any): PublishingLaneCounts {
+  const data = raw ?? {};
+  return {
+    approved_canonical_due: Number(data.approved_canonical_due ?? 0),
+    approved_canonical_scheduled: Number(data.approved_canonical_scheduled ?? 0),
+    approved_variants_waiting_canonical: Number(data.approved_variants_waiting_canonical ?? 0),
+    pending_review: Number(data.pending_review ?? 0),
+    pending_url_verification: Number(data.pending_url_verification ?? 0),
+    publish_failures: Number(data.publish_failures ?? 0),
+    retryable_failures: Number(data.retryable_failures ?? 0),
+    ready_to_distribute: Number(data.ready_to_distribute ?? 0),
+    published_canonical: Number(data.published_canonical ?? 0),
+    reconcile_candidates: Number(data.reconcile_candidates ?? 0),
+  };
+}
+
+function normalizePublishingReconcileResult(raw: any): PublishingReconcileResult {
+  const data = raw ?? {};
+  return {
+    status: String(data.status ?? "checked"),
+    checked_articles: Number(data.checked_articles ?? 0),
+    publishable_count: Number(data.publishable_count ?? 0),
+    repaired_state_count: Number(data.repaired_state_count ?? 0),
+    skipped_reasons: arrayFrom<any>(data.skipped_reasons).map((reason) => ({
+      reason: String(reason?.reason ?? "unknown"),
+      count: Number(reason?.count ?? 0),
+      detail: String(reason?.detail ?? ""),
+    })),
+    blockers: arrayFrom<string>(data.blockers).map(String),
+    counts: normalizePublishingLaneCounts(data.counts),
+    health: normalizePublishingHealth(data.health),
+  };
+}
+
 function normalizeActivityJob(raw: any): ActivityJob {
   return {
     id: String(raw?.id ?? "job"),
@@ -1501,7 +1565,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/retry-publish`, { method: "POST" }, auth);
     return normalizeArticle(raw);
   },
-  reconcilePublishing: (id: string) => req(`/projects/${id}/publishing/reconcile`, { method: "POST" }, auth),
+  reconcilePublishing: async (id: string): Promise<PublishingReconcileResult> => {
+    const raw = await req<any>(`/projects/${id}/publishing/reconcile`, { method: "POST" }, auth);
+    return normalizePublishingReconcileResult(raw);
+  },
   };
 }
 

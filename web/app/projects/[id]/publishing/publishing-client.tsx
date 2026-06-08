@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, GitBranch, RefreshCw, RotateCcw, Send } from "lucide-react";
-import { Article, DistributeItem, PublishingHealth } from "../../../lib/api";
+import { Article, DistributeItem, PublishingHealth, PublishingReconcileResult } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
 
@@ -27,8 +27,20 @@ function reasonLabel(reason: string) {
     publisher_connection_error: "The latest publisher test failed",
     publisher_credential_missing: "GitHub token is missing",
     publisher_credential_unavailable: "Saved GitHub credential cannot be resolved",
+    publisher_blocked: "Publisher setup is blocking publishing",
+    no_reconcile_candidates: "No previous publish attempts need reconciliation",
+    no_publishable_canonical_due: "No approved canonical articles are due",
+    drafts_waiting_review: "Drafts are waiting in Review",
+    variants_waiting_canonical: "Variants are waiting for canonical publish",
   };
   return labels[reason] ?? reason.replaceAll("_", " ");
+}
+
+function resultTone(status?: string): "neutral" | "red" | "amber" | "green" {
+  if (status === "reconciled") return "green";
+  if (status === "blocked") return "amber";
+  if (status === "error") return "red";
+  return "neutral";
 }
 
 export function PublishingClient({ projectId }: { projectId: string }) {
@@ -38,6 +50,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [approved, setApproved] = useState<Article[]>([]);
   const [failed, setFailed] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
+  const [reconcileResult, setReconcileResult] = useState<PublishingReconcileResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
@@ -110,16 +123,21 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function reconcile() {
-    if (!health?.ready) {
-      setMessage({ title: "Publishing setup required", detail: publishBlockedReason, tone: "amber" });
-      return;
-    }
     setBusy("reconcile");
     setMessage(null);
     try {
-      await api.reconcilePublishing(projectId);
+      const result = await api.reconcilePublishing(projectId);
+      setReconcileResult(result);
+      setHealth(result.health);
       await refresh();
-      setMessage({ title: "Publishing reconciled", tone: "green" });
+      setMessage({
+        title: result.status === "blocked" ? "Publishing check completed" : "Publishing reconciled",
+        detail:
+          result.status === "blocked"
+            ? "Publishing is blocked by setup or content prerequisites. See the reconcile summary below."
+            : `Checked ${result.checked_articles} articles; repaired ${result.repaired_state_count}.`,
+        tone: result.status === "blocked" ? "amber" : "green",
+      });
     } catch (e: any) {
       setMessage({ title: "Reconcile failed", detail: e.message, tone: "red" });
     } finally {
@@ -156,7 +174,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
               <Send size={14} />
               Publish tick
             </Button>
-            <Button disabled={!!busy || !health?.ready} size="sm" onClick={reconcile} title={publishBlockedReason || "Reconcile approved articles"}>
+            <Button disabled={!!busy} size="sm" onClick={reconcile} title="Check publish lanes and reconcile previous publish attempts">
               <RotateCcw size={14} />
               Reconcile
             </Button>
@@ -216,6 +234,80 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           Open publisher settings
         </a>
       </section>
+
+      {reconcileResult && (
+        <section className="rounded-lg border border-slate-200 bg-white px-4 py-4">
+          <SectionHeader
+            title="Latest reconcile check"
+            eyebrow="Publish lanes"
+            action={<Badge tone={resultTone(reconcileResult.status)}>{reconcileResult.status}</Badge>}
+          />
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Checked</div>
+              <div className="mt-1 text-xl font-bold text-slate-900">{reconcileResult.checked_articles}</div>
+            </div>
+            <div className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Publishable now</div>
+              <div className="mt-1 text-xl font-bold text-slate-900">{reconcileResult.publishable_count}</div>
+            </div>
+            <div className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Repaired</div>
+              <div className="mt-1 text-xl font-bold text-slate-900">{reconcileResult.repaired_state_count}</div>
+            </div>
+            <div className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Blockers</div>
+              <div className="mt-1 text-xl font-bold text-slate-900">{reconcileResult.blockers.length}</div>
+            </div>
+          </div>
+
+          {reconcileResult.skipped_reasons.length > 0 ? (
+            <div className="mt-4 grid gap-2">
+              {reconcileResult.skipped_reasons.map((reason) => (
+                <div key={reason.reason} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <div className="font-semibold">
+                    {reasonLabel(reason.reason)}
+                    {reason.count > 0 ? ` (${reason.count})` : ""}
+                  </div>
+                  <div className="mt-1 opacity-80">{reason.detail}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Notice title="No skipped lanes" detail="All reconcile candidates were processed." tone="green" />
+          )}
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Due canonicals", reconcileResult.counts.approved_canonical_due],
+              ["Scheduled canonicals", reconcileResult.counts.approved_canonical_scheduled],
+              ["Pending URL verification", reconcileResult.counts.pending_url_verification],
+              ["Publish failures", reconcileResult.counts.publish_failures],
+              ["Retryable failures", reconcileResult.counts.retryable_failures],
+              ["Variants waiting", reconcileResult.counts.approved_variants_waiting_canonical],
+              ["Ready variants", reconcileResult.counts.ready_to_distribute],
+              ["Drafts in Review", reconcileResult.counts.pending_review],
+            ].map(([label, count]) => (
+              <div key={label} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <div className="font-semibold text-slate-700">{label}</div>
+                <div className="mt-1 text-lg font-bold text-slate-950">{count}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2 text-sm font-semibold">
+            <a className="text-[#d93820]" href={`/projects/${projectId}/review`}>
+              Open Review
+            </a>
+            <a className="text-[#d93820]" href={`/projects/${projectId}/topics`}>
+              Open Topics
+            </a>
+            <a className="text-[#d93820]" href={`/projects/${projectId}/settings`}>
+              Open publisher settings
+            </a>
+          </div>
+        </section>
+      )}
 
       <section>
         <SectionHeader title="Publish failures" action={<Badge tone={failed.length ? "red" : "neutral"}>{failed.length}</Badge>} />

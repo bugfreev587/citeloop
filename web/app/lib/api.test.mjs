@@ -548,7 +548,24 @@ test("publishing health and reconcile APIs call project scoped endpoints", async
             capabilities: {},
           };
         }
-        return { status: "reconcile complete" };
+        return {
+          status: "blocked",
+          checked_articles: 0,
+          publishable_count: 0,
+          repaired_state_count: 0,
+          skipped_reasons: [{ reason: "publisher_blocked", count: 1, detail: "Open Settings." }],
+          blockers: ["publisher_missing"],
+          counts: { pending_review: 2 },
+          health: {
+            status: "blocked",
+            ready: false,
+            connection_status: "missing",
+            credential_status: "missing",
+            reasons: ["publisher_missing"],
+            next_action: "Open Settings and connect a GitHub/Next.js publisher.",
+            capabilities: {},
+          },
+        };
       },
     };
   };
@@ -557,10 +574,13 @@ test("publishing health and reconcile APIs call project scoped endpoints", async
     const { createApi } = await loadApiModule();
     const client = createApi();
     const health = await client.getPublishingHealth("project-1");
-    await client.reconcilePublishing("project-1");
+    const reconcile = await client.reconcilePublishing("project-1");
 
     assert.equal(health.ready, false);
     assert.equal(health.reasons[0], "publisher_missing");
+    assert.equal(reconcile.status, "blocked");
+    assert.equal(reconcile.skipped_reasons[0].reason, "publisher_blocked");
+    assert.equal(reconcile.counts.pending_review, 2);
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publishing/health");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/publishing/reconcile");
     assert.equal(calls[1].init.method, "POST");
