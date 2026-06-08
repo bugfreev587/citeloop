@@ -422,10 +422,16 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           title="Publisher connection"
           eyebrow="Publishing"
           action={
-            <Button size="sm" onClick={refreshPublisherConnections} disabled={notificationBusy === "save-publisher"}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>
+                <Save size={14} />
+                Save publisher
+              </Button>
+              <Button size="sm" onClick={refreshPublisherConnections} disabled={notificationBusy === "save-publisher"}>
+                <RefreshCw size={14} />
+                Refresh
+              </Button>
+            </div>
           }
         />
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
