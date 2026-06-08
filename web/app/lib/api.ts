@@ -4,6 +4,7 @@ import {
   InventoryItem,
   ProductProfile,
   RawPgNumeric,
+  RunLink,
   Topic,
   normalizeArticle,
   normalizeInventoryItem,
@@ -14,7 +15,7 @@ import {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-export type { Article, GenerationRun, InventoryItem, ProductProfile, Topic };
+export type { Article, GenerationRun, InventoryItem, ProductProfile, RunLink, Topic };
 
 export type AuthOptions = {
   token?: string | null;
@@ -1164,6 +1165,10 @@ export function createApi(auth?: AuthOptions) {
     const suffix = params.toString() ? `?${params}` : "";
     const raw = await req<any[]>(`/projects/${id}/runs${suffix}`, undefined, auth);
     return arrayFrom(raw).map(normalizeRun);
+  },
+  getRun: async (id: string, runID: string): Promise<GenerationRun> => {
+    const raw = await req<any>(`/projects/${id}/runs/${runID}`, undefined, auth);
+    return normalizeRun(raw);
   },
   listPublisherConnections: async (id: string): Promise<PublisherConnection[]> => {
     const raw = await req<any[]>(`/projects/${id}/publisher-connections`, undefined, auth);

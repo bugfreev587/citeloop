@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
 import { GenerationRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
@@ -95,11 +95,12 @@ export function RunsClient({ projectId }: { projectId: string }) {
                 <th className="px-4 py-3 font-semibold">Model</th>
                 <th className="px-4 py-3 font-semibold">Created</th>
                 <th className="px-4 py-3 font-semibold">Error</th>
+                <th className="px-4 py-3 font-semibold">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {runs.map((run) => (
-                <tr key={run.id}>
+                <tr key={run.id} className="transition-colors hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">
                     <div className="flex flex-wrap items-center gap-2">
                       {run.agent}
@@ -116,6 +117,22 @@ export function RunsClient({ projectId }: { projectId: string }) {
                   </td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(run.created_at)}</td>
                   <td className="max-w-[280px] truncate px-4 py-3 text-slate-500">{run.error ?? "-"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={`/projects/${projectId}/runs/${run.id}`}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#d93820]"
+                      >
+                        Detail
+                        <ExternalLink size={12} />
+                      </a>
+                      {run.next_actions[0] && (
+                        <a href={run.next_actions[0].href} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
+                          {run.next_actions[0].label}
+                        </a>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

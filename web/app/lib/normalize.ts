@@ -104,6 +104,14 @@ export type GenerationRun = {
   status: string;
   error: string | null;
   created_at: string | null;
+  related_links: RunLink[];
+  next_actions: RunLink[];
+};
+
+export type RunLink = {
+  label: string;
+  href: string;
+  kind: string;
 };
 
 function parseJSONValue(value: any, fallback: any) {
@@ -244,5 +252,15 @@ export function normalizeRun(raw: any): GenerationRun {
     status: raw.status ?? "unknown",
     error: raw.error ?? null,
     created_at: normalizeTime(raw.created_at),
+    related_links: normalizeArray(raw.related_links).map(normalizeRunLink),
+    next_actions: normalizeArray(raw.next_actions).map(normalizeRunLink),
+  };
+}
+
+function normalizeRunLink(raw: any): RunLink {
+  return {
+    label: String(raw?.label ?? "Open"),
+    href: String(raw?.href ?? ""),
+    kind: String(raw?.kind ?? "link"),
   };
 }

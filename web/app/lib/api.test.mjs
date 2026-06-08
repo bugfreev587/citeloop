@@ -174,6 +174,35 @@ test("listRuns calls the project runs endpoint", async () => {
   }
 });
 
+test("getRun calls the project run detail endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "run-1",
+        project_id: "project-1",
+        agent: "qa",
+        status: "error",
+        related_links: [{ label: "Open draft", href: "/projects/project-1/articles/article-1", kind: "article" }],
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const run = await createApi().getRun("project-1", "run-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/runs/run-1");
+    assert.equal(run.related_links[0].kind, "article");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("getProjectActivity calls the project activity endpoint", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
