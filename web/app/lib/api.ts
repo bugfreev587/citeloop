@@ -147,6 +147,37 @@ export type NotificationDeliveryListOptions = {
   limit?: number;
 };
 
+export type PublisherConnection = {
+  id: string;
+  project_id: string;
+  kind: "github_nextjs" | "webhook" | "wordpress" | string;
+  label: string;
+  status: "missing" | "connected" | "error" | "revoked" | string;
+  is_default: boolean;
+  capabilities: Record<string, boolean>;
+  capability_schema_version: number;
+  credential_configured: boolean;
+  config: {
+    repo?: string;
+    branch?: string;
+    content_dir?: string;
+    base_url?: string;
+    publish_mode?: string;
+  };
+  last_verified_at?: any;
+  last_error?: string | null;
+};
+
+export type GitHubNextJSPublisherInput = {
+  label?: string;
+  repo: string;
+  branch?: string;
+  content_dir?: string;
+  base_url: string;
+  publish_mode?: string;
+  credential_ref?: string;
+};
+
 export type SEOIntegration = {
   id: string;
   project_id: string;
@@ -277,6 +308,41 @@ export type SafeModeEvent = {
   exited_at?: any;
 };
 
+export type AICrawlerAccessSnapshot = {
+  id: string;
+  project_id: string;
+  run_id: string;
+  page_url: string;
+  normalized_page_url: string;
+  target_user_agent: string;
+  probe_user_agent: string;
+  evidence_type: string;
+  robots_state: "allowed" | "disallowed" | "unknown" | string;
+  http_status?: number | null;
+  access_state: "ok" | "blocked" | "challenge" | "rate_limited" | "timeout" | "error" | string;
+  confidence: "high" | "medium" | "low" | string;
+  inferred: boolean;
+  meta_robots_state?: string | null;
+  sitemap_state?: string | null;
+  body_extractable: boolean;
+  raw_details?: any;
+  checked_at?: any;
+};
+
+export type GEOCrawlerAuditRequest = {
+  site_url?: string;
+  urls?: string[];
+  target_user_agents?: string[];
+};
+
+export type GEOCrawlerAuditResult = {
+  run?: any;
+  snapshots: AICrawlerAccessSnapshot[];
+  checked_urls: number;
+  created_blockers: number;
+  data_source_notes: string[];
+};
+
 export function defaultProjectConfig(): ProjectConfig {
   return {
     cadence_per_week: 3,
@@ -322,6 +388,10 @@ function normalizeDistributeItem(raw: any): DistributeItem {
   };
 }
 
+function arrayFrom<T = any>(value: any): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
   const provider: LLMProvider =
     raw.provider === "claude" ? "claude" : raw.provider === "openai" ? "openai" : "tokengate";
@@ -331,6 +401,93 @@ function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
     key_tail: raw.key_tail ?? undefined,
     base_url: raw.base_url ?? undefined,
     updated_at: raw.updated_at ?? undefined,
+  };
+}
+
+function normalizeSEOOverview(raw: any): SEOOverview {
+  const data = raw ?? {};
+  return {
+    property: data.property ?? null,
+    integrations: arrayFrom<SEOIntegration>(data.integrations),
+    last_28_days: data.last_28_days ?? {},
+    technical: data.technical ?? {},
+    opportunities_by_type: arrayFrom(data.opportunities_by_type),
+    actions_by_status: arrayFrom(data.actions_by_status),
+    cold_start: Boolean(data.cold_start),
+    handoff_ready_for_autopilot: Boolean(data.handoff_ready_for_autopilot),
+    data_source_warnings: arrayFrom<string>(data.data_source_warnings).map(String),
+  };
+}
+
+function normalizeSEOSettings(raw: any): { property?: SEOProperty | null; integrations: SEOIntegration[] } {
+  return {
+    property: raw?.property ?? null,
+    integrations: arrayFrom<SEOIntegration>(raw?.integrations),
+  };
+}
+
+function normalizeSEOBrief(raw: any): SEOBrief {
+  const data = raw ?? {};
+  return {
+    mode: data.mode ?? "cold_start",
+    title: data.title ?? "SEO operating brief",
+    generated_at: data.generated_at ?? "",
+    actions: arrayFrom<SEOOpportunity>(data.actions),
+    blockers: arrayFrom<string>(data.blockers).map(String),
+    measurement_updates: arrayFrom<string>(data.measurement_updates).map(String),
+  };
+}
+
+function normalizeAICrawlerAccessSnapshot(raw: any): AICrawlerAccessSnapshot {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    run_id: data.run_id ?? "",
+    page_url: data.page_url ?? "",
+    normalized_page_url: data.normalized_page_url ?? "",
+    target_user_agent: data.target_user_agent ?? "",
+    probe_user_agent: data.probe_user_agent ?? "",
+    evidence_type: data.evidence_type ?? "",
+    robots_state: data.robots_state ?? "unknown",
+    http_status: data.http_status ?? null,
+    access_state: data.access_state ?? "unknown",
+    confidence: data.confidence ?? "low",
+    inferred: Boolean(data.inferred),
+    meta_robots_state: data.meta_robots_state ?? null,
+    sitemap_state: data.sitemap_state ?? null,
+    body_extractable: Boolean(data.body_extractable),
+    raw_details: data.raw_details ?? undefined,
+    checked_at: data.checked_at ?? undefined,
+  };
+}
+
+function normalizeGEOCrawlerAuditResult(raw: any): GEOCrawlerAuditResult {
+  const data = raw ?? {};
+  return {
+    run: data.run ?? undefined,
+    snapshots: arrayFrom(data.snapshots).map(normalizeAICrawlerAccessSnapshot),
+    checked_urls: Number(data.checked_urls ?? 0),
+    created_blockers: Number(data.created_blockers ?? 0),
+    data_source_notes: arrayFrom<string>(data.data_source_notes).map(String),
+  };
+}
+
+function normalizePublisherConnection(raw: any): PublisherConnection {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    kind: data.kind ?? "github_nextjs",
+    label: data.label ?? "",
+    status: data.status ?? "missing",
+    is_default: Boolean(data.is_default),
+    capabilities: data.capabilities ?? {},
+    capability_schema_version: Number(data.capability_schema_version ?? 1),
+    credential_configured: Boolean(data.credential_configured),
+    config: data.config ?? {},
+    last_verified_at: data.last_verified_at ?? undefined,
+    last_error: data.last_error ?? null,
   };
 }
 
@@ -371,9 +528,9 @@ export function createApi(auth?: AuthOptions) {
   },
   listProjects: async () => {
     const raw = await req<any[]>("/projects", undefined, auth);
-    return raw.map(normalizeProject);
+    return arrayFrom(raw).map(normalizeProject);
   },
-  createProject: async (body: { name: string; slug: string; owner_id?: string }) => {
+  createProject: async (body: { name?: string; slug?: string; owner_id?: string; site_url?: string }) => {
     const raw = await req<any>("/projects", { method: "POST", body: JSON.stringify(body) }, auth);
     return normalizeProject(raw);
   },
@@ -400,7 +557,7 @@ export function createApi(auth?: AuthOptions) {
   },
   listInventory: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/inventory`, undefined, auth);
-    return raw.map(normalizeInventoryItem);
+    return arrayFrom(raw).map(normalizeInventoryItem);
   },
   updateInventory: async (
     id: string,
@@ -414,11 +571,11 @@ export function createApi(auth?: AuthOptions) {
     req<void>(`/projects/${id}/inventory/${itemID}`, { method: "DELETE" }, auth),
   runStrategist: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/strategist`, { method: "POST" }, auth);
-    return raw.map(normalizeTopic);
+    return arrayFrom(raw).map(normalizeTopic);
   },
   listTopics: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/topics`, undefined, auth);
-    return raw.map(normalizeTopic);
+    return arrayFrom(raw).map(normalizeTopic);
   },
   updateTopic: async (id: string, topicID: string, body: TopicUpdateInput) => {
     const raw = await req<any>(`/projects/${id}/topics/${topicID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
@@ -438,19 +595,19 @@ export function createApi(auth?: AuthOptions) {
   },
   generateTopic: async (id: string, topicID: string) => {
     const raw = await req<any[]>(`/projects/${id}/topics/${topicID}/generate`, { method: "POST" }, auth);
-    return raw.map(normalizeArticle);
+    return arrayFrom(raw).map(normalizeArticle);
   },
   listReview: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/review`, undefined, auth);
-    return raw.map(normalizeReviewGroup);
+    return arrayFrom(raw).map(normalizeReviewGroup);
   },
   listArticles: async (id: string, status: string) => {
     const raw = await req<any[]>(`/projects/${id}/articles?status=${status}`, undefined, auth);
-    return raw.map(normalizeArticle);
+    return arrayFrom(raw).map(normalizeArticle);
   },
   listDistribute: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/distribute`, undefined, auth);
-    return raw.map(normalizeDistributeItem);
+    return arrayFrom(raw).map(normalizeDistributeItem);
   },
   listRuns: async (id: string, options: RunListOptions = {}): Promise<GenerationRun[]> => {
     const params = new URLSearchParams();
@@ -460,10 +617,30 @@ export function createApi(auth?: AuthOptions) {
     if (options.cursor) params.set("cursor", options.cursor);
     const suffix = params.toString() ? `?${params}` : "";
     const raw = await req<any[]>(`/projects/${id}/runs${suffix}`, undefined, auth);
-    return raw.map(normalizeRun);
+    return arrayFrom(raw).map(normalizeRun);
+  },
+  listPublisherConnections: async (id: string): Promise<PublisherConnection[]> => {
+    const raw = await req<any[]>(`/projects/${id}/publisher-connections`, undefined, auth);
+    return arrayFrom(raw).map(normalizePublisherConnection);
+  },
+  upsertGitHubNextJSPublisherConnection: async (
+    id: string,
+    body: GitHubNextJSPublisherInput,
+  ): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/github-nextjs`,
+      { method: "PUT", body: JSON.stringify(body) },
+      auth,
+    );
+    return normalizePublisherConnection(raw);
+  },
+  testPublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
+    const raw = await req<any>(`/projects/${id}/publisher-connections/${connectionID}/test`, { method: "POST" }, auth);
+    return normalizePublisherConnection(raw);
   },
   getSEOOverview: async (id: string): Promise<SEOOverview> => {
-    return req<SEOOverview>(`/projects/${id}/seo/overview`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/seo/overview`, undefined, auth);
+    return normalizeSEOOverview(raw);
   },
   syncSEO: async (id: string, siteURL?: string) => {
     return req<any>(`/projects/${id}/seo/sync`, { method: "POST", body: JSON.stringify({ site_url: siteURL ?? "" }) }, auth);
@@ -472,7 +649,8 @@ export function createApi(auth?: AuthOptions) {
     return req<any>(`/projects/${id}/seo/analyze`, { method: "POST" }, auth);
   },
   getSEOSettings: async (id: string): Promise<{ property?: SEOProperty | null; integrations: SEOIntegration[] }> => {
-    return req<{ property?: SEOProperty | null; integrations: SEOIntegration[] }>(`/projects/${id}/seo/settings`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/seo/settings`, undefined, auth);
+    return normalizeSEOSettings(raw);
   },
   updateSEOSettings: async (
     id: string,
@@ -489,7 +667,16 @@ export function createApi(auth?: AuthOptions) {
     return req<any>(`/projects/${id}/seo/settings`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
   getSEOBrief: async (id: string): Promise<SEOBrief> => {
-    return req<SEOBrief>(`/projects/${id}/seo/briefs/latest`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/seo/briefs/latest`, undefined, auth);
+    return normalizeSEOBrief(raw);
+  },
+  runGEOCrawlerAudit: async (id: string, body: GEOCrawlerAuditRequest = {}): Promise<GEOCrawlerAuditResult> => {
+    const raw = await req<any>(`/projects/${id}/geo/crawler-audit`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return normalizeGEOCrawlerAuditResult(raw);
+  },
+  getLatestGEOCrawlerAudit: async (id: string): Promise<{ snapshots: AICrawlerAccessSnapshot[] }> => {
+    const raw = await req<any>(`/projects/${id}/geo/crawler-audit/latest`, undefined, auth);
+    return { snapshots: arrayFrom(raw?.snapshots).map(normalizeAICrawlerAccessSnapshot) };
   },
   listSEOOpportunities: async (id: string, options: SEOListOptions = {}): Promise<SEOOpportunity[]> => {
     const params = new URLSearchParams();
@@ -498,7 +685,8 @@ export function createApi(auth?: AuthOptions) {
     if (options.limit) params.set("limit", String(options.limit));
     if (options.cursor) params.set("cursor", options.cursor);
     const suffix = params.toString() ? `?${params}` : "";
-    return req<SEOOpportunity[]>(`/projects/${id}/seo/opportunities${suffix}`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/seo/opportunities${suffix}`, undefined, auth);
+    return arrayFrom(raw);
   },
   acceptSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
     return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/accept`, { method: "POST" }, auth);
@@ -523,10 +711,12 @@ export function createApi(auth?: AuthOptions) {
     if (options.limit) params.set("limit", String(options.limit));
     if (options.cursor) params.set("cursor", options.cursor);
     const suffix = params.toString() ? `?${params}` : "";
-    return req<SEOContentAction[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
+    return arrayFrom(raw);
   },
   listSEOObjectives: async (id: string): Promise<SEOObjective[]> => {
-    return req<SEOObjective[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
+    return arrayFrom(raw);
   },
   createSEOObjective: async (
     id: string,
@@ -544,16 +734,19 @@ export function createApi(auth?: AuthOptions) {
     return req<{ plan: SEOActionPlan; run: any }>(`/projects/${id}/seo/autopilot/plans/generate`, { method: "POST" }, auth);
   },
   listAutopilotPlans: async (id: string): Promise<SEOActionPlan[]> => {
-    return req<SEOActionPlan[]>(`/projects/${id}/seo/autopilot/plans`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/seo/autopilot/plans`, undefined, auth);
+    return arrayFrom(raw);
   },
   listSafeModeEvents: async (id: string): Promise<SafeModeEvent[]> => {
-    return req<SafeModeEvent[]>(`/projects/${id}/seo/autopilot/safe-mode`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/seo/autopilot/safe-mode`, undefined, auth);
+    return arrayFrom(raw);
   },
   enterSafeMode: async (id: string, body: { reason: string; trigger_source?: string; entered_by?: string }): Promise<SafeModeEvent> => {
     return req<SafeModeEvent>(`/projects/${id}/seo/autopilot/safe-mode`, { method: "POST", body: JSON.stringify(body) }, auth);
   },
   listNotificationChannels: async (id: string): Promise<NotificationChannel[]> => {
-    return req<NotificationChannel[]>(`/projects/${id}/notifications/channels`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/notifications/channels`, undefined, auth);
+    return arrayFrom(raw);
   },
   createNotificationChannel: async (
     id: string,
@@ -568,10 +761,12 @@ export function createApi(auth?: AuthOptions) {
     return req<NotificationChannel>(`/projects/${id}/notifications/channels/${channelID}/test`, { method: "POST" }, auth);
   },
   listNotificationEvents: async (id: string): Promise<NotificationEvent[]> => {
-    return req<NotificationEvent[]>(`/projects/${id}/notifications/events`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/notifications/events`, undefined, auth);
+    return arrayFrom(raw);
   },
   listNotificationSubscriptions: async (id: string): Promise<NotificationSubscription[]> => {
-    return req<NotificationSubscription[]>(`/projects/${id}/notifications/subscriptions`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/notifications/subscriptions`, undefined, auth);
+    return arrayFrom(raw);
   },
   upsertNotificationSubscription: async (
     id: string,
@@ -591,7 +786,8 @@ export function createApi(auth?: AuthOptions) {
     if (options.status) params.set("status", options.status);
     if (options.limit) params.set("limit", String(options.limit));
     const suffix = params.toString() ? `?${params}` : "";
-    return req<NotificationDelivery[]>(`/projects/${id}/notifications/deliveries${suffix}`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/notifications/deliveries${suffix}`, undefined, auth);
+    return arrayFrom(raw);
   },
   retryNotificationDelivery: async (id: string, deliveryID: string): Promise<NotificationDelivery> => {
     return req<NotificationDelivery>(`/projects/${id}/notifications/deliveries/${deliveryID}/retry`, { method: "POST" }, auth);

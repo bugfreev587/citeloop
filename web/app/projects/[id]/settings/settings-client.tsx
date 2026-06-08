@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Plus, RefreshCw, RotateCcw, Save, Send, Trash2 } from "lucide-react";
+import { Bell, GitBranch, Plus, RefreshCw, RotateCcw, Save, Send, Trash2 } from "lucide-react";
 import {
   defaultProjectConfig,
+  GitHubNextJSPublisherInput,
   NotificationChannel,
   NotificationChannelKind,
   NotificationDelivery,
   NotificationEvent,
   NotificationSubscription,
+  PublisherConnection,
   ProjectConfig,
 } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
@@ -52,9 +54,21 @@ const deliveryStatuses = [
   { value: "sent", label: "Sent" },
 ];
 
+const defaultPublisherDraft: GitHubNextJSPublisherInput = {
+  label: "GitHub/Next.js",
+  repo: "",
+  branch: "citeloop-content",
+  content_dir: "content/citeloop/blog",
+  base_url: "",
+  publish_mode: "publish",
+  credential_ref: "env:GITHUB_TOKEN",
+};
+
 export function SettingsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
+  const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
+  const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
@@ -81,6 +95,31 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const refreshPublisherConnections = useCallback(async () => {
+    try {
+      const nextConnections = await api.listPublisherConnections(projectId);
+      setPublisherConnections(nextConnections);
+      const github = nextConnections.find((connection) => connection.kind === "github_nextjs");
+      if (github) {
+        setPublisherDraft({
+          label: github.label || "GitHub/Next.js",
+          repo: github.config?.repo ?? "",
+          branch: github.config?.branch ?? "citeloop-content",
+          content_dir: github.config?.content_dir ?? "content/citeloop/blog",
+          base_url: github.config?.base_url ?? "",
+          publish_mode: github.config?.publish_mode ?? "publish",
+          credential_ref: github.credential_configured ? "env:GITHUB_TOKEN" : "",
+        });
+      }
+    } catch (e: any) {
+      setMessage({ title: "Publisher connections unavailable", detail: e.message, tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshPublisherConnections();
+  }, [refreshPublisherConnections]);
 
   const refreshNotifications = useCallback(async () => {
     try {
@@ -179,6 +218,46 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function savePublisherConnection() {
+    setNotificationBusy("save-publisher");
+    setMessage(null);
+    try {
+      const saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
+        ...publisherDraft,
+        repo: publisherDraft.repo.trim(),
+        branch: publisherDraft.branch?.trim() || "citeloop-content",
+        content_dir: publisherDraft.content_dir?.trim() || "content/citeloop/blog",
+        base_url: publisherDraft.base_url.trim(),
+        publish_mode: publisherDraft.publish_mode?.trim() || "publish",
+        credential_ref: publisherDraft.credential_ref?.trim() || undefined,
+      });
+      setPublisherConnections((current) => {
+        const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
+        return [saved, ...rest];
+      });
+      setMessage({ title: "Publisher connection saved", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Publisher save failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function testPublisherConnection(connectionID: string) {
+    setNotificationBusy(`test-publisher-${connectionID}`);
+    setMessage(null);
+    try {
+      const tested = await api.testPublisherConnection(projectId, connectionID);
+      setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
+      setMessage({ title: "Publisher connection verified", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Publisher test failed", detail: e.message, tone: "red" });
+      await refreshPublisherConnections();
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
   async function toggleSubscription(eventType: string, channelID: string, enabled: boolean) {
     setNotificationBusy(`sub-${eventType}-${channelID}`);
     setMessage(null);
@@ -209,6 +288,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   function subscriptionEnabled(eventType: string, channelID: string) {
     return subscriptions.some((sub) => sub.event_type === eventType && sub.channel_id === channelID && sub.enabled);
   }
+
+  const githubPublisher = publisherConnections.find((connection) => connection.kind === "github_nextjs");
 
   return (
     <div className="space-y-7">
@@ -277,6 +358,93 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             placeholder="Direct, evidence-backed, pragmatic."
           />
         </Field>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="Publisher connection"
+          eyebrow="Publishing"
+          action={
+            <Button size="sm" onClick={refreshPublisherConnections} disabled={notificationBusy === "save-publisher"}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          }
+        />
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <GitBranch size={16} />
+              GitHub/Next.js
+            </div>
+            <Badge tone={githubPublisher?.status === "connected" ? "green" : githubPublisher?.status === "error" ? "red" : "amber"}>
+              {githubPublisher?.status ?? "missing"}
+            </Badge>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="Repository">
+              <TextInput
+                value={publisherDraft.repo}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, repo: event.target.value }))}
+                placeholder="owner/repo"
+              />
+            </Field>
+            <Field label="Branch">
+              <TextInput
+                value={publisherDraft.branch ?? ""}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, branch: event.target.value }))}
+                placeholder="citeloop-content"
+              />
+            </Field>
+            <Field label="Content path">
+              <TextInput
+                value={publisherDraft.content_dir ?? ""}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, content_dir: event.target.value }))}
+                placeholder="content/citeloop/blog"
+              />
+            </Field>
+            <Field label="Base URL">
+              <TextInput
+                value={publisherDraft.base_url}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, base_url: event.target.value }))}
+                placeholder="https://example.com/blog"
+              />
+            </Field>
+            <Field label="Credential ref">
+              <TextInput
+                value={publisherDraft.credential_ref ?? ""}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, credential_ref: event.target.value }))}
+                placeholder="env:GITHUB_TOKEN"
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Publish mode">
+              <TextInput
+                value={publisherDraft.publish_mode ?? "publish"}
+                onChange={(event) => setPublisherDraft((current) => ({ ...current, publish_mode: event.target.value }))}
+                placeholder="publish"
+              />
+            </Field>
+          </div>
+
+          {githubPublisher?.last_error && <Notice title="Publisher health check failed" detail={githubPublisher.last_error} tone="red" />}
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>
+              <Save size={16} />
+              Save publisher
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => githubPublisher && testPublisherConnection(githubPublisher.id)}
+              disabled={!githubPublisher || notificationBusy === `test-publisher-${githubPublisher?.id}`}
+            >
+              <Send size={16} />
+              Test
+            </Button>
+          </div>
+        </div>
       </section>
 
       <section>

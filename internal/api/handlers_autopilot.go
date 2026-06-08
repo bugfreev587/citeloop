@@ -28,7 +28,7 @@ func (s *Server) listSEOObjectives(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, objectives)
+	writeJSON(w, http.StatusOK, emptySlice(objectives))
 }
 
 func (s *Server) createSEOObjective(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +275,7 @@ func (s *Server) listAutopilotPlans(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, plans)
+	writeJSON(w, http.StatusOK, emptySlice(plans))
 }
 
 func (s *Server) enterSafeMode(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +352,7 @@ func (s *Server) listSafeModeEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, events)
+	writeJSON(w, http.StatusOK, emptySlice(events))
 }
 
 func (s *Server) ensureSEOPolicy(r *http.Request, projectID uuid.UUID) (db.SeoPolicy, error) {

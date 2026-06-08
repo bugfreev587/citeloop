@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert } from "lucide-react";
 import {
+  AICrawlerAccessSnapshot,
   SEOActionPlan,
   SEOBrief,
   SEOContentAction,
@@ -44,6 +45,27 @@ function toneForStatus(status: string): "green" | "amber" | "red" | "neutral" {
   return "neutral";
 }
 
+function toneForRobots(state?: string): "green" | "amber" | "red" | "neutral" {
+  if (state === "allowed") return "green";
+  if (state === "disallowed") return "red";
+  if (state === "unknown") return "amber";
+  return "neutral";
+}
+
+function toneForAccess(state?: string): "green" | "amber" | "red" | "neutral" {
+  if (state === "ok") return "green";
+  if (["challenge", "rate_limited", "timeout"].includes(state ?? "")) return "amber";
+  if (["blocked", "error"].includes(state ?? "")) return "red";
+  return "neutral";
+}
+
+function toneForConfidence(confidence?: string): "green" | "amber" | "red" | "neutral" {
+  if (confidence === "high") return "green";
+  if (confidence === "medium") return "amber";
+  if (confidence === "low") return "neutral";
+  return "neutral";
+}
+
 export function SEOClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
@@ -54,9 +76,8 @@ export function SEOClient({ projectId }: { projectId: string }) {
   const [objectives, setObjectives] = useState<SEOObjective[]>([]);
   const [plans, setPlans] = useState<SEOActionPlan[]>([]);
   const [safeModes, setSafeModes] = useState<SafeModeEvent[]>([]);
+  const [crawlerSnapshots, setCrawlerSnapshots] = useState<AICrawlerAccessSnapshot[]>([]);
   const [siteURL, setSiteURL] = useState("");
-  const [gscSiteURL, setGscSiteURL] = useState("");
-  const [credentialRef, setCredentialRef] = useState("");
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
@@ -64,7 +85,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, settings, briefData, opps, actionRows, policyData, objectiveRows, planRows, safeModeRows] = await Promise.all([
+      const [overviewData, settings, briefData, opps, actionRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit] = await Promise.all([
         api.getSEOOverview(projectId),
         api.getSEOSettings(projectId),
         api.getSEOBrief(projectId),
@@ -74,6 +95,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
         api.listSEOObjectives(projectId),
         api.listAutopilotPlans(projectId),
         api.listSafeModeEvents(projectId),
+        api.getLatestGEOCrawlerAudit(projectId),
       ]);
       setOverview(overviewData);
       setBrief(briefData);
@@ -83,10 +105,8 @@ export function SEOClient({ projectId }: { projectId: string }) {
       setObjectives(objectiveRows);
       setPlans(planRows);
       setSafeModes(safeModeRows);
+      setCrawlerSnapshots(crawlerAudit.snapshots);
       setSiteURL(settings.property?.site_url ?? overviewData.property?.site_url ?? "");
-      setGscSiteURL(settings.property?.gsc_site_url ?? "");
-      const gsc = settings.integrations.find((integration) => integration.provider === "google_search_console");
-      setCredentialRef(gsc?.credential_ref ?? "");
     } catch (e: any) {
       setMessage({ title: "SEO data unavailable", detail: e.message, tone: "red" });
     }
@@ -106,8 +126,6 @@ export function SEOClient({ projectId }: { projectId: string }) {
     try {
       await api.updateSEOSettings(projectId, {
         site_url: siteURL,
-        gsc_site_url: gscSiteURL,
-        gsc_credential_ref: credentialRef,
       });
       await refresh();
       setMessage({ title: "SEO settings saved", tone: "green" });
@@ -127,6 +145,24 @@ export function SEOClient({ projectId }: { projectId: string }) {
       setMessage({ title: "SEO sync complete", detail: `sync ${result.sync?.status}; analyze ${result.analyze?.status}`, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "SEO sync failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCrawlerAudit() {
+    setBusy("geo-crawler");
+    setMessage(null);
+    try {
+      const result = await api.runGEOCrawlerAudit(projectId);
+      await refresh();
+      setMessage({
+        title: "GEO crawler audit complete",
+        detail: `${result.checked_urls} URLs checked; ${result.created_blockers} blockers queued`,
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "GEO crawler audit failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -270,23 +306,77 @@ export function SEOClient({ projectId }: { projectId: string }) {
 
       <section>
         <SectionHeader title="Settings" action={<Badge tone={toneForStatus(gscStatus)}>{gscStatus}</Badge>} />
-        <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-[1fr_1fr_auto]">
+        <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4">
           <Field label="Site URL">
             <TextInput value={siteURL} onChange={(e) => setSiteURL(e.target.value)} placeholder="https://dev.unipost.dev" />
           </Field>
-          <Field label="GSC site URL">
-            <TextInput value={gscSiteURL} onChange={(e) => setGscSiteURL(e.target.value)} placeholder="sc-domain:unipost.dev" />
-          </Field>
-          <Field label="Credential ref">
-            <TextInput value={credentialRef} onChange={(e) => setCredentialRef(e.target.value)} placeholder="GOOGLE_SERVICE_ACCOUNT_JSON" />
-          </Field>
-          <div className="md:col-span-3">
-            <Button size="sm" onClick={saveSettings} disabled={busy === "settings" || !siteURL}>
-              <Settings size={14} />
-              Save settings
-            </Button>
-          </div>
+          {gscStatus === "missing" && (
+            <Notice
+              title="Search Console not connected"
+              detail="CiteLoop is using the public site until an internal admin connects first-party search data."
+              tone="amber"
+            />
+          )}
+          <Button size="sm" onClick={saveSettings} disabled={busy === "settings" || !siteURL}>
+            <Settings size={14} />
+            Save settings
+          </Button>
         </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="GEO crawler access"
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={crawlerSnapshots.some((snapshot) => snapshot.robots_state === "disallowed") ? "red" : crawlerSnapshots.length ? "green" : "neutral"}>
+                {crawlerSnapshots.length}
+              </Badge>
+              <Button size="sm" onClick={runCrawlerAudit} disabled={!!busy || !siteURL}>
+                <RefreshCw size={14} />
+                Audit
+              </Button>
+            </div>
+          }
+        />
+        {crawlerSnapshots.length === 0 ? (
+          <EmptyState title="No crawler audit snapshots" detail="Run audit after saving a site URL." />
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full min-w-[840px] text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Crawler</th>
+                  <th className="px-4 py-3 font-semibold">Page</th>
+                  <th className="px-4 py-3 font-semibold">Robots</th>
+                  <th className="px-4 py-3 font-semibold">Access</th>
+                  <th className="px-4 py-3 font-semibold">Confidence</th>
+                  <th className="px-4 py-3 font-semibold">Source</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {crawlerSnapshots.slice(0, 40).map((snapshot) => (
+                  <tr key={`${snapshot.normalized_page_url}-${snapshot.target_user_agent}-${snapshot.evidence_type}`}>
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{snapshot.target_user_agent}</td>
+                    <td className="max-w-[340px] truncate px-4 py-3 text-slate-600">{snapshot.page_url || snapshot.normalized_page_url}</td>
+                    <td className="px-4 py-3">
+                      <Badge tone={toneForRobots(snapshot.robots_state)}>{snapshot.robots_state}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone={toneForAccess(snapshot.access_state)}>{snapshot.access_state}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone={toneForConfidence(snapshot.confidence)}>{snapshot.confidence}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone={snapshot.inferred ? "amber" : "green"}>{snapshot.inferred ? "inferred" : "observed"}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section>

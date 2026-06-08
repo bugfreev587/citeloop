@@ -9,12 +9,10 @@ import {
   CircleHelp,
   Database,
   Home,
-  KeyRound,
   ListChecks,
   PenLine,
   Search,
   Send,
-  Settings,
 } from "lucide-react";
 import { Project } from "../lib/api";
 import { cx } from "./ui";
@@ -27,8 +25,6 @@ const navItems = [
   { label: "Publishing", href: "publishing", icon: Send },
   { label: "SEO", href: "seo", icon: Search },
   { label: "Runs", href: "runs", icon: Activity },
-  { label: "Settings", href: "settings", icon: Settings },
-  { label: "Admin", href: "admin", icon: KeyRound },
 ];
 
 function projectHref(projectId: string, leaf: string) {

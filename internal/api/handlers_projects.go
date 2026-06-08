@@ -3,9 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -15,34 +18,82 @@ func (s *Server) projectID(r *http.Request) (uuid.UUID, error) {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	ps, err := s.Q.ListProjects(r.Context())
+	ownerID := s.ownerID(r)
+	if ownerID == "" {
+		writeErr(w, http.StatusForbidden, "project owner required")
+		return
+	}
+	ps, err := s.Q.ListProjectsByOwner(r.Context(), ownerID)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, ps)
+	writeJSON(w, 200, emptySlice(ps))
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name  string `json:"name"`
-		Slug  string `json:"slug"`
-		Owner string `json:"owner_id"`
+		Name    string `json:"name"`
+		Slug    string `json:"slug"`
+		Owner   string `json:"owner_id"`
+		SiteURL string `json:"site_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if in.Owner == "" {
-		in.Owner = "default"
+	ownerID := s.ownerID(r)
+	if ownerID == "" {
+		writeErr(w, http.StatusForbidden, "project owner required")
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	in.Slug = slugifyProject(in.Slug)
+	in.SiteURL = strings.TrimSpace(in.SiteURL)
+	if in.Name == "" && in.SiteURL != "" {
+		in.Name = projectNameFromURL(in.SiteURL)
+	}
+	if in.Slug == "" {
+		in.Slug = slugifyProject(in.Name)
+	}
+	if in.Name == "" || in.Slug == "" {
+		writeErr(w, http.StatusBadRequest, "project name or site_url required")
+		return
+	}
+	normalizedSiteURL := ""
+	if in.SiteURL != "" {
+		normalized, err := seopkg.NormalizeURL(in.SiteURL, in.SiteURL, seopkg.URLNormalizationConfig{})
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad site_url")
+			return
+		}
+		normalizedSiteURL = normalized
 	}
 	p, err := s.Q.CreateProject(r.Context(), db.CreateProjectParams{
-		OwnerID: in.Owner, Name: in.Name, Slug: in.Slug,
+		OwnerID: ownerID, Name: in.Name, Slug: in.Slug,
 		Config: config.Default().JSON(),
 	})
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if normalizedSiteURL != "" {
+		if _, err := s.Q.UpsertSEOProperty(r.Context(), db.UpsertSEOPropertyParams{
+			ProjectID:              p.ID,
+			SiteUrl:                normalizedSiteURL,
+			UrlNormalizationConfig: json.RawMessage(`{}`),
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if _, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
+			ProjectID: p.ID,
+			Provider:  seopkg.ProviderGSC,
+			Status:    "missing",
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, 201, p)
 }
@@ -72,7 +123,9 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	p, err := s.Q.UpdateProjectConfig(r.Context(), db.UpdateProjectConfigParams{ID: id, Config: cfg.JSON()})
+	p, err := s.Q.UpdateProjectConfigForOwner(r.Context(), db.UpdateProjectConfigForOwnerParams{
+		ID: id, Config: cfg.JSON(), OwnerID: s.ownerID(r),
+	})
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -137,7 +190,7 @@ func (s *Server) listInventory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, items)
+	writeJSON(w, 200, emptySlice(items))
 }
 
 func (s *Server) updateInventory(w http.ResponseWriter, r *http.Request) {
@@ -198,4 +251,38 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func emptySlice[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
+}
+
+func projectNameFromURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return strings.TrimSpace(raw)
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	return host
+}
+
+func slugifyProject(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

@@ -151,6 +151,104 @@ test("listRuns calls the project runs endpoint", async () => {
   }
 });
 
+test("list APIs tolerate null responses as empty arrays", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => null,
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    assert.deepEqual(await client.listProjects(), []);
+    assert.deepEqual(await client.listTopics("project-1"), []);
+    assert.deepEqual(await client.listArticles("project-1", "published"), []);
+    assert.deepEqual(await client.listRuns("project-1"), []);
+    assert.deepEqual(await client.listSEOOpportunities("project-1"), []);
+    assert.deepEqual(await client.listAutopilotPlans("project-1"), []);
+    assert.deepEqual(await client.listSafeModeEvents("project-1"), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("createProject supports URL-first onboarding payloads", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "project-1", name: "unipost.dev", slug: "unipost-dev" }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const project = await createApi().createProject({ site_url: "https://unipost.dev" });
+
+    assert.equal(project.id, "project-1");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { site_url: "https://unipost.dev" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("SEO APIs normalize null nested arrays from cold-start projects", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      if (url.endsWith("/seo/overview")) {
+        return {
+          property: null,
+          integrations: null,
+          last_28_days: null,
+          technical: null,
+          opportunities_by_type: null,
+          actions_by_status: null,
+          data_source_warnings: null,
+          cold_start: true,
+        };
+      }
+      if (url.endsWith("/seo/settings")) {
+        return { property: null, integrations: null };
+      }
+      if (url.endsWith("/seo/briefs/latest")) {
+        return { mode: "cold_start", title: "Brief", actions: null, blockers: null, measurement_updates: null };
+      }
+      return null;
+    },
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const overview = await client.getSEOOverview("project-1");
+    assert.deepEqual(overview.integrations, []);
+    assert.deepEqual(overview.opportunities_by_type, []);
+    assert.deepEqual(overview.actions_by_status, []);
+    assert.deepEqual(overview.data_source_warnings, []);
+
+    const settings = await client.getSEOSettings("project-1");
+    assert.deepEqual(settings.integrations, []);
+
+    const brief = await client.getSEOBrief("project-1");
+    assert.deepEqual(brief.actions, []);
+    assert.deepEqual(brief.blockers, []);
+    assert.deepEqual(brief.measurement_updates, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("topic mutation APIs call project scoped endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
@@ -349,6 +447,53 @@ test("publishing reconcile API calls project scoped endpoint", async () => {
   }
 });
 
+test("publisher connection APIs call project scoped endpoints without raw token fields", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/publisher-connections")) {
+          return [{ id: "publisher-1", kind: "github_nextjs", capabilities: { create_article: true } }];
+        }
+        return { id: "publisher-1", kind: "github_nextjs", capabilities: { create_article: true } };
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const connections = await client.listPublisherConnections("project-1");
+    await client.upsertGitHubNextJSPublisherConnection("project-1", {
+      repo: "owner/site",
+      branch: "staging",
+      content_dir: "content/blog",
+      base_url: "https://example.com/blog",
+      publish_mode: "publish",
+      credential_ref: "env:GITHUB_TOKEN",
+    });
+    await client.testPublisherConnection("project-1", "publisher-1");
+
+    assert.equal(connections[0].capabilities.create_article, true);
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publisher-connections");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/publisher-connections/github-nextjs");
+    assert.equal(calls[1].init.method, "PUT");
+    const body = JSON.parse(calls[1].init.body);
+    assert.equal(body.repo, "owner/site");
+    assert.equal(body.credential_ref, "env:GITHUB_TOKEN");
+    assert.equal(Object.hasOwn(body, "token"), false);
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/test");
+    assert.equal(calls[2].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("SEO APIs call project scoped endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
@@ -453,6 +598,41 @@ test("SEO APIs call project scoped endpoints", async () => {
     assert.equal(calls[14].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GEO crawler APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/geo/crawler-audit/latest")) {
+          return { snapshots: [] };
+        }
+        return { checked_urls: 1, created_blockers: 0, snapshots: [] };
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const run = await client.runGEOCrawlerAudit("project-1", { target_user_agents: ["OAI-SearchBot"] });
+    const latest = await client.getLatestGEOCrawlerAudit("project-1");
+
+    assert.equal(run.checked_urls, 1);
+    assert.deepEqual(latest.snapshots, []);
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/geo/crawler-audit");
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { target_user_agents: ["OAI-SearchBot"] });
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/geo/crawler-audit/latest");
   } finally {
     globalThis.fetch = originalFetch;
   }

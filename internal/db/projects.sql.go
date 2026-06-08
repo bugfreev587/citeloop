@@ -80,12 +80,70 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, e
 	return i, err
 }
 
+const getProjectForOwner = `-- name: GetProjectForOwner :one
+select id, owner_id, name, slug, config, created_at from projects
+where id = $1
+  and owner_id = $2
+`
+
+type GetProjectForOwnerParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID string    `json:"owner_id"`
+}
+
+func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForOwner, arg.ID, arg.OwnerID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listProjects = `-- name: ListProjects :many
 select id, owner_id, name, slug, config, created_at from projects order by created_at desc
 `
 
 func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listProjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Config,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsByOwner = `-- name: ListProjectsByOwner :many
+select id, owner_id, name, slug, config, created_at from projects
+where owner_id = $1
+order by created_at desc
+`
+
+func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsByOwner, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +181,33 @@ type UpdateProjectConfigParams struct {
 
 func (q *Queries) UpdateProjectConfig(ctx context.Context, arg UpdateProjectConfigParams) (Project, error) {
 	row := q.db.QueryRow(ctx, updateProjectConfig, arg.ID, arg.Config)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateProjectConfigForOwner = `-- name: UpdateProjectConfigForOwner :one
+update projects set config = $2
+where id = $1
+  and owner_id = $3
+returning id, owner_id, name, slug, config, created_at
+`
+
+type UpdateProjectConfigForOwnerParams struct {
+	ID      uuid.UUID       `json:"id"`
+	Config  json.RawMessage `json:"config"`
+	OwnerID string          `json:"owner_id"`
+}
+
+func (q *Queries) UpdateProjectConfigForOwner(ctx context.Context, arg UpdateProjectConfigForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectConfigForOwner, arg.ID, arg.Config, arg.OwnerID)
 	var i Project
 	err := row.Scan(
 		&i.ID,

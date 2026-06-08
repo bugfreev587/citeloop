@@ -19,6 +19,27 @@ type AdminLlmCredential struct {
 	BaseUrl   string             `json:"base_url"`
 }
 
+type AiCrawlerAccessSnapshot struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	RunID             uuid.UUID          `json:"run_id"`
+	PageUrl           string             `json:"page_url"`
+	NormalizedPageUrl string             `json:"normalized_page_url"`
+	TargetUserAgent   string             `json:"target_user_agent"`
+	ProbeUserAgent    string             `json:"probe_user_agent"`
+	EvidenceType      string             `json:"evidence_type"`
+	RobotsState       string             `json:"robots_state"`
+	HttpStatus        *int32             `json:"http_status"`
+	AccessState       string             `json:"access_state"`
+	Confidence        string             `json:"confidence"`
+	Inferred          bool               `json:"inferred"`
+	MetaRobotsState   *string            `json:"meta_robots_state"`
+	SitemapState      *string            `json:"sitemap_state"`
+	BodyExtractable   bool               `json:"body_extractable"`
+	RawDetails        json.RawMessage    `json:"raw_details"`
+	CheckedAt         pgtype.Timestamptz `json:"checked_at"`
+}
+
 type Article struct {
 	ID                     uuid.UUID          `json:"id"`
 	ProjectID              uuid.UUID          `json:"project_id"`
@@ -134,6 +155,20 @@ type GenerationRun struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type GeoRun struct {
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	Agent      string             `json:"agent"`
+	Status     string             `json:"status"`
+	Provider   string             `json:"provider"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	Input      json.RawMessage    `json:"input"`
+	Output     json.RawMessage    `json:"output"`
+	Error      *string            `json:"error"`
+	CostUsd    pgtype.Numeric     `json:"cost_usd"`
+}
+
 type GuardrailCheck struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`
@@ -238,6 +273,26 @@ type Project struct {
 	Slug      string             `json:"slug"`
 	Config    json.RawMessage    `json:"config"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type PublisherConnection struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	Kind                    string             `json:"kind"`
+	Label                   string             `json:"label"`
+	Status                  string             `json:"status"`
+	IsDefault               bool               `json:"is_default"`
+	Capabilities            json.RawMessage    `json:"capabilities"`
+	CapabilitySchemaVersion int32              `json:"capability_schema_version"`
+	CredentialRef           *string            `json:"credential_ref"`
+	Config                  json.RawMessage    `json:"config"`
+	OauthAccessExpiresAt    pgtype.Timestamptz `json:"oauth_access_expires_at"`
+	OauthRefreshStatus      *string            `json:"oauth_refresh_status"`
+	RevokedAt               pgtype.Timestamptz `json:"revoked_at"`
+	LastVerifiedAt          pgtype.Timestamptz `json:"last_verified_at"`
+	LastError               *string            `json:"last_error"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RiskClassificationRule struct {

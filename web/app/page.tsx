@@ -30,10 +30,10 @@ export default async function Home() {
               SEO + GEO content engine
             </div>
             <h1 className="max-w-2xl text-3xl font-bold leading-tight text-slate-950 md:text-5xl">
-              CiteLoop project console
+              CiteLoop service console
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
-              Review generated content, watch publishing gates, and distribute variants from one operational dashboard.
+              Connect a product URL, build the profile, and review SEO + AEO progress from one dashboard.
             </p>
           </div>
 
@@ -72,7 +72,7 @@ export default async function Home() {
             {!error && projects.length === 0 && (
               <EmptyState
                 title="No projects yet"
-                detail="Create a project to start Insight, topic planning, review, and publishing workflows."
+                detail="Connect your service URL to start the onboarding workflow."
               />
             )}
           </div>

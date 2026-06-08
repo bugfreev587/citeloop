@@ -63,10 +63,14 @@ func TestFromEnvReadsTokenGateDefaults(t *testing.T) {
 
 func TestFromEnvReadsClerkSecretKey(t *testing.T) {
 	t.Setenv("CLERK_SECRET_KEY", "sk_test_clerk")
+	t.Setenv("CITELOOP_ADMIN_USER_IDS", "user_1,user_2")
 
 	env := FromEnv()
 	if env.ClerkSecretKey != "sk_test_clerk" {
 		t.Fatalf("ClerkSecretKey = %q", env.ClerkSecretKey)
+	}
+	if env.AdminUserIDs != "user_1,user_2" {
+		t.Fatalf("AdminUserIDs = %q", env.AdminUserIDs)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
@@ -41,14 +42,21 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		ProjectID:       projectID,
 		Agent:           r.URL.Query().Get("agent"),
 		Status:          r.URL.Query().Get("status"),
-		CursorCreatedAt: pgutil.TS(cursor),
+		CursorCreatedAt: generationRunCursorParam(cursor),
 		LimitRows:       limit,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	writeJSON(w, http.StatusOK, emptySlice(runs))
+}
+
+func generationRunCursorParam(cursor time.Time) pgtype.Timestamptz {
+	if cursor.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgutil.TS(cursor)
 }
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
