@@ -168,7 +168,7 @@ func (q *Queries) GetTopicForProject(ctx context.Context, arg GetTopicForProject
 }
 
 const listArticlesByTopicForProject = `-- name: ListArticlesByTopicForProject :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash from articles
+select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback from articles
 where topic_id = $1 and project_id = $2
 order by kind, platform
 `
@@ -216,6 +216,13 @@ func (q *Queries) ListArticlesByTopicForProject(ctx context.Context, arg ListArt
 			&i.LastPublishRunID,
 			&i.CreatedAt,
 			&i.ContentHash,
+			&i.RepairAttempts,
+			&i.LastRepairAt,
+			&i.RepairStatus,
+			&i.RepairFailureReason,
+			&i.RequiresHumanDecision,
+			&i.HumanDecisionOptions,
+			&i.QaFeedback,
 		); err != nil {
 			return nil, err
 		}

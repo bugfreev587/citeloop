@@ -16,6 +16,7 @@ import (
 )
 
 const canonicalPlaceholder = "{{CANONICAL_URL}}" // backfilled at publish (§5.6)
+const maxDraftRepairAttempts = 2
 
 // Writer generates the canonical article and, for syndication topics, one
 // rewritten variant per platform (PRD §5.3). QA runs inline after each draft.
@@ -72,15 +73,35 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	if err != nil {
 		return nil, err
 	}
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 
 	// QA: evidence mapping gate + scoring (§5.3)
 	qaAgent := NewQA(w.Deps, w.Log)
 	qa, qaResp, qaErr := qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
 	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
-	if qaErr != nil {
-		// QA failure is non-fatal to drafting but forces human review.
-		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed: " + qaErr.Error()}}
+	repairAttemptsUsed := 0
+	for attempt := 1; attempt <= maxDraftRepairAttempts && draftNeedsRepair(out, qa, qaErr); attempt++ {
+		repairAttemptsUsed++
+		repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profileJSON, plat, canonical, *out, qa, qaErr)
+		recordRun(ctx, w.Q, projectID, agentWriter,
+			map[string]any{"topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": attempt, "feedback": repairFeedback(qa, qaErr)},
+			repaired, repairResp, repairErr)
+		if repairErr != nil {
+			qa = &QAOutput{QABlocking: true, Issues: []string{"ai repair failed: " + repairErr.Error()}}
+			qaErr = nil
+			break
+		}
+		out = repaired
+		out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+		qa, qaResp, qaErr = qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
+		recordRun(ctx, w.Q, projectID, agentQA,
+			map[string]any{"topic": topic.ID, "platform": plat, "repair_attempt": attempt}, qa, qaResp, qaErr)
 	}
+	if qaErr != nil {
+		// QA failure is non-fatal to drafting but forces human review after AI repair attempts.
+		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + qaErr.Error()}, CanAutoFix: false}
+	}
+	repairStatus, requiresHuman := repairOutcome(qa, int32(repairAttemptsUsed), maxDraftRepairAttempts)
 
 	kind := "canonical"
 	var platformPtr *string
@@ -91,17 +112,22 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	}
 
 	art, err := w.Q.CreateArticle(ctx, db.CreateArticleParams{
-		ProjectID:  projectID,
-		TopicID:    topic.ID,
-		Kind:       kind,
-		Platform:   platformPtr,
-		ContentMd:  out.ContentMD,
-		SeoMeta:    toJSON(out.SEOMeta),
-		GeoScore:   pgutil.Numeric(qa.GeoScore),
-		SeoScore:   pgutil.Numeric(qa.SeoScore),
-		QaIssues:   toJSON(qaIssues(qa)),
-		QaBlocking: qa.QABlocking,
-		Status:     "pending_review",
+		ProjectID:             projectID,
+		TopicID:               topic.ID,
+		Kind:                  kind,
+		Platform:              platformPtr,
+		ContentMd:             out.ContentMD,
+		SeoMeta:               toJSON(out.SEOMeta),
+		GeoScore:              pgutil.Numeric(qa.GeoScore),
+		SeoScore:              pgutil.Numeric(qa.SeoScore),
+		QaIssues:              toJSON(qaIssues(qa)),
+		QaBlocking:            qa.QABlocking,
+		Status:                "pending_review",
+		RepairAttempts:        int32(repairAttemptsUsed),
+		RepairStatus:          repairStatus,
+		RequiresHumanDecision: requiresHuman,
+		HumanDecisionOptions:  toJSON(humanDecisionOptions(qa)),
+		QaFeedback:            toJSON(qa),
 	})
 	if err != nil {
 		return nil, err
@@ -109,12 +135,101 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 	return &art, nil
 }
 
+// RepairArticle applies the same AI feedback loop to an existing pending draft.
+// It is the reviewer-facing escape hatch: feedback goes to the writer first, QA
+// re-runs, and only the remaining unresolved choices stay in the human queue.
+func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UUID) (db.Article, error) {
+	art, err := w.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: articleID, ProjectID: projectID})
+	if err != nil {
+		return db.Article{}, err
+	}
+	qa := qaFromArticle(art)
+	if !shouldAttemptArticleRepair(art, maxDraftRepairAttempts) {
+		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
+	}
+	started, err := w.Q.StartArticleRepairForProject(ctx, db.StartArticleRepairForProjectParams{
+		ID:             articleID,
+		ProjectID:      projectID,
+		RepairAttempts: maxDraftRepairAttempts,
+	})
+	if err != nil {
+		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
+	}
+	art = started
+	topic, err := w.Q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: art.TopicID, ProjectID: projectID})
+	if err != nil {
+		return db.Article{}, err
+	}
+	profile, err := w.Q.GetActiveProfile(ctx, projectID)
+	if err != nil {
+		return db.Article{}, fmt.Errorf("no active profile: %w", err)
+	}
+	canonical := art.Kind == "canonical"
+	plat := ""
+	if art.Platform != nil {
+		plat = *art.Platform
+	}
+	var meta SEOMeta
+	_ = json.Unmarshal(art.SeoMeta, &meta)
+	out := &WriterOutput{
+		ContentMD: art.ContentMd,
+		SEOMeta:   completeSEOMeta(topic, meta, plat, canonical),
+	}
+	if len(qa.Issues) == 0 && art.QaBlocking {
+		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
+	}
+	qaAgent := NewQA(w.Deps, w.Log)
+	var qaErr error
+	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, qaErr)
+	recordRun(ctx, w.Q, projectID, agentWriter,
+		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": art.RepairAttempts, "feedback": repairFeedback(qa, qaErr)},
+		repaired, repairResp, repairErr)
+	if repairErr != nil {
+		qa = &QAOutput{QABlocking: true, Issues: []string{"ai repair failed: " + repairErr.Error()}, BlockingReason: repairErr.Error(), CanAutoFix: false}
+		return w.finishRepair(ctx, art, qa, "failed", repairErr.Error(), true)
+	}
+	out = repaired
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	qaResp, finalQAResp, finalQAErr := qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
+	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "post_repair_check": true}, qaResp, finalQAResp, finalQAErr)
+	if finalQAErr != nil {
+		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + finalQAErr.Error()}, BlockingReason: finalQAErr.Error(), CanAutoFix: true}
+	} else {
+		qa = qaResp
+	}
+
+	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
+		ID:        articleID,
+		ProjectID: projectID,
+		ContentMd: out.ContentMD,
+		SeoMeta:   toJSON(out.SEOMeta),
+	})
+	if err != nil {
+		return db.Article{}, err
+	}
+	updated, err = w.Q.SetArticleQA(ctx, db.SetArticleQAParams{
+		ID:         updated.ID,
+		GeoScore:   pgutil.Numeric(qa.GeoScore),
+		SeoScore:   pgutil.Numeric(qa.SeoScore),
+		QaIssues:   toJSON(qaIssues(qa)),
+		QaBlocking: qa.QABlocking,
+		Status:     updated.Status,
+		QaFeedback: toJSON(qa),
+	})
+	if err != nil {
+		return db.Article{}, err
+	}
+	repairStatus, requiresHuman := repairOutcome(qa, updated.RepairAttempts, maxDraftRepairAttempts)
+	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
+}
+
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
 	canonicalInstr := writerCanonicalInstruction(plat, canonical)
 
 	prompt := fmt.Sprintf(`[[WRITER]] Write a content article for this topic.
 %s
-Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,canonical_url?}}.
+Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
+If TARGET KEYWORD is empty, infer one concise primary search query from TOPIC and include it as seo_meta.target_keyword.
 
 TOPIC: %s
 TARGET KEYWORD: %s
@@ -140,6 +255,60 @@ PRODUCT PROFILE:
 		}
 		return fallback, fallbackResp, nil
 	}
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+	return &out, resp, nil
+}
+
+func (w *Writer) repairDraft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, current WriterOutput, qa *QAOutput, qaErr error) (*WriterOutput, llm.CompletionResp, error) {
+	current.SEOMeta = completeSEOMeta(topic, current.SEOMeta, plat, canonical)
+	metaJSON, _ := json.MarshalIndent(current.SEOMeta, "", "  ")
+	feedbackJSON, _ := json.MarshalIndent(map[string]any{
+		"qa_error": qaErrorString(qaErr),
+		"qa":       qa,
+		"seo":      seoRepairFeedback(current.SEOMeta),
+	}, "", "  ")
+	prompt := fmt.Sprintf(`[[WRITER_REPAIR]] Revise this draft before human review.
+Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
+
+Rules:
+- Resolve every QA/SEO feedback item that can be resolved from the topic, profile, evidence, or the current draft.
+- If QA reports unmapped product claims, remove the claim or rewrite it so it only states facts supported by the profile/evidence.
+- If target_keyword is missing, infer a concise primary search query from TOPIC and put it in seo_meta.target_keyword.
+- Do not invent product capabilities, statistics, customer names, integrations, pricing, or guarantees.
+- If the evidence is insufficient, make the article more conservative instead of asking the reviewer to edit.
+
+%s
+
+TOPIC: %s
+TARGET KEYWORD: %s
+TARGET PROMPT: %s
+ANGLE: %s / FORMAT: %s
+
+PRODUCT PROFILE:
+%s
+
+CURRENT SEO META:
+%s
+
+QA AND SEO FEEDBACK:
+%s
+
+CURRENT ARTICLE:
+%s`, writerCanonicalInstruction(plat, canonical), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000), string(metaJSON), string(feedbackJSON), clip(current.ContentMD, 7000))
+
+	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
+		System: "You are an expert SEO+GEO editor. Fix drafts using only supported facts and return valid JSON.",
+		Prompt: prompt, JSON: true, MaxTokens: 4096,
+	})
+	if err != nil {
+		return nil, resp, err
+	}
+	out, err := extractWriterOutput(resp.Text)
+	if err != nil {
+		return nil, resp, err
+	}
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	return &out, resp, nil
 }
 
@@ -199,11 +368,186 @@ func seoMetaFromTopic(topic db.Topic, plat string, canonical bool) SEOMeta {
 		MetaDescription: metaDescriptionFromTopic(topic),
 		Slug:            slugify(topic.Title),
 		H1:              topic.Title,
+		TargetKeyword:   targetKeywordFromTopic(topic),
 	}
 	if !canonical && platform.SupportsCanonical(platform.Platform(plat)) {
 		meta.CanonicalURL = canonicalPlaceholder
 	}
 	return meta
+}
+
+func completeSEOMeta(topic db.Topic, meta SEOMeta, plat string, canonical bool) SEOMeta {
+	fallback := seoMetaFromTopic(topic, plat, canonical)
+	if strings.TrimSpace(meta.Title) == "" {
+		meta.Title = fallback.Title
+	}
+	if strings.TrimSpace(meta.MetaDescription) == "" {
+		meta.MetaDescription = fallback.MetaDescription
+	}
+	if strings.TrimSpace(meta.Slug) == "" {
+		meta.Slug = fallback.Slug
+	}
+	if strings.TrimSpace(meta.H1) == "" {
+		meta.H1 = fallback.H1
+	}
+	if strings.TrimSpace(meta.TargetKeyword) == "" {
+		meta.TargetKeyword = fallback.TargetKeyword
+	}
+	if !canonical && platform.SupportsCanonical(platform.Platform(plat)) && strings.TrimSpace(meta.CanonicalURL) == "" {
+		meta.CanonicalURL = canonicalPlaceholder
+	}
+	return meta
+}
+
+func targetKeywordFromTopic(topic db.Topic) string {
+	if kw := strings.TrimSpace(strDeref(topic.TargetKeyword)); kw != "" {
+		return kw
+	}
+	if prompt := strings.TrimSpace(strDeref(topic.TargetPrompt)); prompt != "" {
+		return prompt
+	}
+	return strings.TrimSpace(topic.Title)
+}
+
+func draftNeedsRepair(out *WriterOutput, qa *QAOutput, qaErr error) bool {
+	if out == nil {
+		return false
+	}
+	if strings.TrimSpace(out.SEOMeta.TargetKeyword) == "" {
+		return true
+	}
+	if qaErr != nil {
+		return true
+	}
+	return qa != nil && qa.QABlocking && qa.CanAutoFix
+}
+
+func shouldAttemptArticleRepair(art db.Article, maxAttempts int) bool {
+	return !art.RequiresHumanDecision && art.RepairAttempts < int32(maxAttempts)
+}
+
+func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool) {
+	if qa == nil {
+		return "failed", true
+	}
+	if !qa.QABlocking {
+		if attempts == 0 {
+			return "idle", false
+		}
+		return "repaired", false
+	}
+	if attempts >= int32(maxAttempts) || !qa.CanAutoFix {
+		return "exhausted", true
+	}
+	return "repaired", false
+}
+
+func repairFailureReason(qa *QAOutput, status string) string {
+	if status != "exhausted" && status != "failed" && status != "human_decision" {
+		return ""
+	}
+	reason := ""
+	if qa != nil {
+		reason = strings.TrimSpace(qa.BlockingReason)
+		if reason == "" && len(qa.Issues) > 0 {
+			reason = strings.Join(qa.Issues, "; ")
+		}
+	}
+	if reason == "" {
+		reason = "automatic repair could not satisfy QA"
+	}
+	return reason
+}
+
+func humanDecisionOptions(qa *QAOutput) []HumanDecisionOption {
+	if qa != nil && len(qa.HumanDecisionOptions) > 0 {
+		return qa.HumanDecisionOptions
+	}
+	return []HumanDecisionOption{
+		{Label: "Reject and regenerate", Description: "Discard this draft and send the topic back to backlog."},
+		{Label: "Edit product evidence", Description: "Add or correct profile/evidence, then regenerate or rerun QA."},
+		{Label: "Manual edit", Description: "Edit the draft directly when the positioning decision needs human judgment."},
+	}
+}
+
+func qaFromArticle(art db.Article) *QAOutput {
+	var out QAOutput
+	if len(art.QaFeedback) > 0 {
+		if err := json.Unmarshal(art.QaFeedback, &out); err == nil {
+			out = normalizeQAOutput(out)
+			if len(out.Issues) > 0 || len(out.Claims) > 0 || len(out.BlockingIssues) > 0 || out.BlockingReason != "" {
+				return &out
+			}
+		}
+	}
+	out = QAOutput{
+		QABlocking:           art.QaBlocking,
+		Issues:               articleIssueStrings(art.QaIssues),
+		HumanDecisionOptions: []HumanDecisionOption{},
+		BlockingIssues:       []QAFeedbackIssue{},
+		FixInstructions:      []string{},
+		CanAutoFix:           art.QaBlocking,
+	}
+	return &out
+}
+
+func (w *Writer) finishRepair(ctx context.Context, art db.Article, qa *QAOutput, status, reason string, requiresHuman bool) (db.Article, error) {
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+	if requiresHuman && status != "failed" && status != "exhausted" {
+		status = "human_decision"
+	}
+	return w.Q.FinishArticleRepairForProject(ctx, db.FinishArticleRepairForProjectParams{
+		ID:                    art.ID,
+		ProjectID:             art.ProjectID,
+		RepairStatus:          status,
+		RepairFailureReason:   reasonPtr,
+		RequiresHumanDecision: requiresHuman,
+		HumanDecisionOptions:  toJSON(humanDecisionOptions(qa)),
+		QaFeedback:            toJSON(qa),
+	})
+}
+
+func repairFeedback(qa *QAOutput, qaErr error) map[string]any {
+	return map[string]any{
+		"qa_error": qaErrorString(qaErr),
+		"qa":       qa,
+	}
+}
+
+func seoRepairFeedback(meta SEOMeta) []string {
+	var feedback []string
+	if strings.TrimSpace(meta.TargetKeyword) == "" {
+		feedback = append(feedback, "seo_meta.target_keyword is missing")
+	}
+	if strings.TrimSpace(meta.Title) == "" {
+		feedback = append(feedback, "seo_meta.title is missing")
+	}
+	if strings.TrimSpace(meta.MetaDescription) == "" {
+		feedback = append(feedback, "seo_meta.meta_description is missing")
+	}
+	if strings.TrimSpace(meta.Slug) == "" {
+		feedback = append(feedback, "seo_meta.slug is missing")
+	}
+	if strings.TrimSpace(meta.H1) == "" {
+		feedback = append(feedback, "seo_meta.h1 is missing")
+	}
+	return feedback
+}
+
+func qaErrorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func articleIssueStrings(raw json.RawMessage) []string {
+	var issues []string
+	_ = json.Unmarshal(raw, &issues)
+	return issues
 }
 
 func metaDescriptionFromTopic(topic db.Topic) string {

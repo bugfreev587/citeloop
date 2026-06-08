@@ -5,6 +5,13 @@ type ReviewArticleLike = {
   resolved_slug: string | null;
 };
 
+type RepairableArticleLike = ReviewArticleLike & {
+  qa_blocking: boolean;
+  repair_attempts?: number;
+  repair_status?: string;
+  requires_human_decision?: boolean;
+};
+
 export type SEOContribution = {
   label: string;
   value: string;
@@ -57,6 +64,20 @@ export function previewPath(article: ReviewArticleLike) {
   return `/blog/${slug}`;
 }
 
+export function markdownBlocks(content: string) {
+  return content
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+export function articlePreviewBlocks(content: string, h1: string) {
+  const blocks = markdownBlocks(content);
+  if (!h1 || blocks.some((block) => block.startsWith("# "))) return blocks;
+  return [`# ${h1}`, ...blocks];
+}
+
 export function buildSEOContributions(article: ReviewArticleLike): SEOContribution[] {
   const title = textValue(article.seo_meta?.title);
   const description = textValue(article.seo_meta?.meta_description);
@@ -71,7 +92,7 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Search intent",
       value: keyword || "Keyword not specified",
-      detail: keyword ? "Gives the draft a clear query target." : "Reviewer should confirm the target query before approval.",
+      detail: keyword ? "Gives the draft a clear query target." : "CiteLoop will infer the target query before asking for approval.",
       status: keyword ? "ready" : "needs_review",
     },
     {
@@ -103,10 +124,18 @@ export function buildSEOContributions(article: ReviewArticleLike): SEOContributi
     {
       label: "Internal links",
       value: `${links} markdown links`,
-      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "Consider adding internal links before publishing.",
+      detail: links > 0 ? "Links help connect this article to existing product/context pages." : "CiteLoop will add safe internal links when evidence allows.",
       status: links > 0 ? "ready" : "needs_review",
     },
   ];
+}
+
+export function shouldAutoRepairArticle(article: RepairableArticleLike) {
+  if (article.requires_human_decision) return false;
+  if ((article.repair_attempts ?? 0) >= 2) return false;
+  if (article.repair_status === "repairing" || article.repair_status === "exhausted" || article.repair_status === "human_decision") return false;
+  if (article.qa_blocking) return true;
+  return buildSEOContributions(article).some((row) => row.status === "missing" || (row.label === "Search intent" && row.status !== "ready"));
 }
 
 export function explainQAIssue(issue: string): ExplainedQAIssue {
@@ -116,7 +145,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA evidence map was not returned",
       detail:
         "The QA step expects a claims array so it can map product claims to evidence. The model response did not include that structure, so CiteLoop blocked approval conservatively.",
-      action: "Open Edit, save the draft to rerun QA, or reject/regenerate if the article structure looks malformed.",
+      action: "CiteLoop automatically revises or normalizes the draft, will rerun QA, and only returns unresolved choices to you.",
       raw: issue,
     };
   }
@@ -125,7 +154,7 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
       title: "QA response could not be parsed",
       detail:
         "The auditor returned output that did not match the required JSON schema for evidence mapping, scores, and issues.",
-      action: "Save the content to rerun QA after checking the preview, or reject the draft if it is visibly malformed.",
+      action: "CiteLoop automatically reruns repair plus QA before asking for a manual decision.",
       raw: issue,
     };
   }
@@ -133,14 +162,14 @@ export function explainQAIssue(issue: string): ExplainedQAIssue {
     return {
       title: "Product claim needs evidence",
       detail: issue.replace(/^unmapped product claim:\s*/i, ""),
-      action: "Edit the claim to match known product evidence, add support, or remove it before approving.",
+      action: "CiteLoop automatically removes or rewrites the claim against known evidence. Review only if the evidence is genuinely ambiguous.",
       raw: issue,
     };
   }
   return {
     title: "QA blocking issue",
     detail: issue,
-    action: "Resolve the issue in the draft, save, and let the backend rerun QA.",
+    action: "CiteLoop automatically revises the draft and reruns QA. If it remains blocked, choose from the remaining manual options.",
     raw: issue,
   };
 }

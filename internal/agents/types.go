@@ -56,6 +56,7 @@ type SEOMeta struct {
 	MetaDescription string `json:"meta_description"`
 	Slug            string `json:"slug"`
 	H1              string `json:"h1"`
+	TargetKeyword   string `json:"target_keyword,omitempty"`
 	CanonicalURL    string `json:"canonical_url,omitempty"`
 }
 
@@ -72,13 +73,30 @@ type Claim struct {
 	Evidence string `json:"evidence"`
 }
 
+type QAFeedbackIssue struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Claim    string `json:"claim,omitempty"`
+}
+
+type HumanDecisionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
 // QAOutput is the QA agent result (PRD §5.3). qa_blocking is the real gate.
 type QAOutput struct {
-	Claims     []Claim  `json:"claims"`
-	QABlocking bool     `json:"qa_blocking"`
-	GeoScore   float64  `json:"geo_score"`
-	SeoScore   float64  `json:"seo_score"`
-	Issues     []string `json:"issues"`
+	Claims               []Claim               `json:"claims"`
+	QABlocking           bool                  `json:"qa_blocking"`
+	GeoScore             float64               `json:"geo_score"`
+	SeoScore             float64               `json:"seo_score"`
+	Issues               []string              `json:"issues"`
+	BlockingIssues       []QAFeedbackIssue     `json:"blocking_issues"`
+	FixInstructions      []string              `json:"fix_instructions"`
+	HumanDecisionOptions []HumanDecisionOption `json:"human_decision_options"`
+	BlockingReason       string                `json:"blocking_reason"`
+	CanAutoFix           bool                  `json:"can_auto_fix"`
 }
 
 // Deps bundles the collaborators every agent needs.
@@ -149,7 +167,11 @@ func extractWriterOutput(s string) (WriterOutput, error) {
 }
 
 func extractQAOutput(s string) (QAOutput, error) {
-	return extractValidJSON(s, validateQAOutput)
+	out, err := extractValidJSON(s, validateQAOutput)
+	if err != nil {
+		return QAOutput{}, err
+	}
+	return normalizeQAOutput(out), nil
 }
 
 func validateWriterOutput(out WriterOutput) error {
@@ -188,6 +210,28 @@ func validateQAOutput(out QAOutput) error {
 		return fmt.Errorf("seo_score out of range")
 	}
 	return nil
+}
+
+func normalizeQAOutput(out QAOutput) QAOutput {
+	if out.Claims == nil {
+		out.Claims = []Claim{}
+	}
+	if out.Issues == nil {
+		out.Issues = []string{}
+	}
+	if out.BlockingIssues == nil {
+		out.BlockingIssues = []QAFeedbackIssue{}
+	}
+	if out.FixInstructions == nil {
+		out.FixInstructions = []string{}
+	}
+	if out.HumanDecisionOptions == nil {
+		out.HumanDecisionOptions = []HumanDecisionOption{}
+	}
+	if out.QABlocking && !out.CanAutoFix && len(out.HumanDecisionOptions) == 0 && out.BlockingReason == "" && len(out.BlockingIssues) == 0 {
+		out.CanAutoFix = true
+	}
+	return out
 }
 
 func toJSON(v any) json.RawMessage {
