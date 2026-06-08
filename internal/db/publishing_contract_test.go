@@ -45,6 +45,20 @@ func TestGenerationRunsAllowPublisherAndNotificationAgents(t *testing.T) {
 	}
 }
 
+func TestSafeModeMigrationAddsGenerationRunAgent(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0015_safe_mode_generation_runs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(raw)
+
+	for _, want := range []string{"generation_runs_agent_check", "'safe_mode'"} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("safe mode run migration missing %q", want)
+		}
+	}
+}
+
 func TestPublishStateUpgradeMigrationBackfillsExistingDatabases(t *testing.T) {
 	raw, err := os.ReadFile("../migrations/0004_article_publish_state_upgrade.sql")
 	if err != nil {

@@ -321,6 +321,7 @@ func (s *Server) enterSafeMode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordSafeModeGenerationRun(r.Context(), projectID, "enter", event)
 	writeJSON(w, http.StatusOK, event)
 }
 
@@ -366,6 +367,7 @@ func (s *Server) exitSafeMode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordSafeModeGenerationRun(r.Context(), projectID, "exit", event)
 	writeJSON(w, http.StatusOK, event)
 }
 
@@ -431,6 +433,36 @@ func (s *Server) setSEOPolicySafeMode(ctx context.Context, policy db.SeoPolicy, 
 		RiskClassifierVersion:             stringOrDefault(policy.RiskClassifierVersion, autopilot.DefaultRiskClassifierVersion),
 	})
 	return err
+}
+
+func (s *Server) recordSafeModeGenerationRun(ctx context.Context, projectID uuid.UUID, action string, event db.SafeModeEvent) {
+	_, _ = s.Q.InsertGenerationRun(ctx, db.InsertGenerationRunParams{
+		ProjectID: projectID,
+		Agent:     "safe_mode",
+		Input: mustJSONLocal(map[string]any{
+			"action":         action,
+			"reason":         event.Reason,
+			"trigger_source": event.TriggerSource,
+			"entered_by":     event.EnteredBy,
+			"exit_reason":    event.ExitReason,
+		}),
+		Output: mustJSONLocal(map[string]any{
+			"event_id":          event.ID.String(),
+			"safe_mode_enabled": action == "enter",
+			"entered_at":        timeStringOrNil(event.EnteredAt),
+			"exited_at":         timeStringOrNil(event.ExitedAt),
+		}),
+		CostUsd: pgutil.Numeric(0),
+		Status:  "ok",
+	})
+}
+
+func timeStringOrNil(value pgtype.Timestamptz) *string {
+	if !value.Valid {
+		return nil
+	}
+	out := value.Time.UTC().Format(time.RFC3339)
+	return &out
 }
 
 func riskPolicyFromDB(policy db.SeoPolicy) autopilot.RiskPolicy {
