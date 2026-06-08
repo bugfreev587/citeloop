@@ -84,3 +84,14 @@ func TestPublishingReconcileRouteIsRegistered(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectActivityRouteIsRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/not-a-uuid/activity", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("activity status = %d, want %d", res.Code, http.StatusBadRequest)
+	}
+}

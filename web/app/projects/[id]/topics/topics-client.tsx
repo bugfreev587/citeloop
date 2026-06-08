@@ -82,7 +82,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   async function runStrategist() {
     setBusy("strategist");
-    setMessage(null);
+    setMessage({
+      title: "Strategist running",
+      detail: "CiteLoop is generating the next topic backlog. The run will appear in Runs when it finishes.",
+      tone: "amber",
+    });
     try {
       const next = await api.runStrategist(projectId);
       setTopics(next);
@@ -166,7 +170,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   async function generate(topic: Topic) {
     setBusy(topic.id);
-    setMessage(null);
+    setMessage({
+      title: "Writer running",
+      detail: "QA is queued after the draft is written. If QA blocks the draft, Review will show the reason and AI fix options.",
+      tone: "amber",
+    });
     try {
       const articles = await api.generateTopic(projectId, topic.id);
       await refresh();
@@ -189,13 +197,20 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title="Topics"
           eyebrow="Backlog and schedule intent"
           action={
-            <Button disabled={!!busy} variant="primary" onClick={runStrategist}>
+            <Button disabled={busy === "strategist"} variant="primary" onClick={runStrategist}>
               <Wand2 size={16} />
               Run Strategist
             </Button>
           }
         />
-        {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+        {message && (
+          <div className="space-y-2">
+            <Notice title={message.title} detail={message.detail} tone={message.tone} />
+            <a href={`/projects/${projectId}/runs`} className="inline-flex text-xs font-semibold text-[#d93820]">
+              Open Runs
+            </a>
+          </div>
+        )}
       </section>
 
       <section className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
@@ -211,7 +226,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <option value="syndication">Syndication</option>
             <option value="both">Both</option>
           </select>
-          <Button disabled={!!busy} onClick={refresh}>
+          <Button onClick={refresh}>
             <RefreshCw size={16} />
             Refresh
           </Button>
@@ -248,7 +263,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <Button
-                      disabled={!!busy || topic.status === "archived"}
+                      disabled={busy === `edit-${topic.id}` || busy === topic.id || topic.status === "archived"}
                       size="sm"
                       variant="ghost"
                       onClick={() => startEdit(topic)}
@@ -256,11 +271,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <Pencil size={14} />
                       Edit
                     </Button>
-                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="primary" onClick={() => generate(topic)}>
+                    <Button disabled={busy === topic.id || topic.status === "archived"} size="sm" variant="primary" onClick={() => generate(topic)}>
                       <Wand2 size={14} />
                       Generate
                     </Button>
-                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="danger" onClick={() => archive(topic)}>
+                    <Button disabled={busy === `archive-${topic.id}` || topic.status === "archived"} size="sm" variant="danger" onClick={() => archive(topic)}>
                       <Archive size={14} />
                       Archive
                     </Button>
@@ -315,11 +330,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       </Field>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Button disabled={!!busy} size="sm" variant="ghost" onClick={cancelEdit}>
+                      <Button disabled={busy === `edit-${topic.id}`} size="sm" variant="ghost" onClick={cancelEdit}>
                         <X size={14} />
                         Cancel
                       </Button>
-                      <Button disabled={!!busy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
+                      <Button disabled={busy === `edit-${topic.id}` || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
                         <Check size={14} />
                         Save
                       </Button>
@@ -335,7 +350,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
                     />
                   </Field>
-                  <Button disabled={!!busy || topic.status === "archived"} size="sm" onClick={() => schedule(topic)}>
+                  <Button disabled={busy === `schedule-${topic.id}` || topic.status === "archived"} size="sm" onClick={() => schedule(topic)}>
                     <CalendarDays size={14} />
                     Schedule
                   </Button>

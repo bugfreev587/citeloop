@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
-import { Article, DistributeItem, GenerationRun, Project, ReviewGroup, Topic } from "../../lib/api";
+import { Activity, AlertCircle, CheckCircle2, ChevronRight, Clock3, Copy, ExternalLink, Loader2, RefreshCw, Wand2 } from "lucide-react";
+import { ActivityJob, Article, DistributeItem, GenerationRun, Project, ProjectActivity, ReviewGroup, Topic } from "../../lib/api";
 import { useApi } from "../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
 
-type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
+type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string; href?: string; hrefLabel?: string } | null;
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
@@ -21,6 +21,65 @@ function runStatusTone(status: string): "green" | "red" | "amber" | "neutral" {
   if (status === "error" || status === "failed") return "red";
   if (status === "running") return "amber";
   return "neutral";
+}
+
+function jobStatusTone(status: string): "green" | "red" | "amber" | "neutral" | "blue" {
+  if (status === "succeeded") return "green";
+  if (status === "failed") return "red";
+  if (status === "running" || status === "queued" || status === "degraded") return "amber";
+  if (status === "waiting_for_permission") return "blue";
+  return "neutral";
+}
+
+function JobIcon({ status }: { status: string }) {
+  if (status === "running") return <Loader2 size={16} className="animate-spin text-[#d93820]" />;
+  if (status === "succeeded") return <CheckCircle2 size={16} className="text-green-600" />;
+  if (status === "failed") return <AlertCircle size={16} className="text-red-600" />;
+  return <Clock3 size={16} className="text-slate-400" />;
+}
+
+function localJobs(busy: string | null, projectId: string): ActivityJob[] {
+  if (busy === "Insight") {
+    return [
+      {
+        id: "local-insight-crawl",
+        label: "Public crawl",
+        status: "running",
+        detail: "CiteLoop is crawling the public site and preparing product evidence.",
+        href: `/projects/${projectId}/runs`,
+      },
+      {
+        id: "local-insight-profile",
+        label: "Product profile",
+        status: "queued",
+        detail: "Profile extraction will run after crawl data is ready.",
+        href: `/projects/${projectId}/runs`,
+      },
+    ];
+  }
+  if (busy === "Strategist") {
+    return [
+      {
+        id: "local-strategist",
+        label: "Strategist",
+        status: "running",
+        detail: "Strategist running: generating the next topic backlog.",
+        href: `/projects/${projectId}/runs`,
+      },
+    ];
+  }
+  if (busy === "Publish tick") {
+    return [
+      {
+        id: "local-publisher",
+        label: "Publisher",
+        status: "running",
+        detail: "Publisher tick is checking approved canonical articles.",
+        href: `/projects/${projectId}/runs`,
+      },
+    ];
+  }
+  return [];
 }
 
 function money(value: number | null) {
@@ -39,6 +98,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [failedPublish, setFailedPublish] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [runs, setRuns] = useState<GenerationRun[]>([]);
+  const [activity, setActivity] = useState<ProjectActivity | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -46,7 +106,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, t, r, pub, app, failed, dist, runRows] = await Promise.all([
+      const [p, t, r, pub, app, failed, dist, activityRow] = await Promise.all([
         api.getProject(projectId),
         api.listTopics(projectId),
         api.listReview(projectId),
@@ -54,7 +114,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listArticles(projectId, "approved"),
         api.listArticles(projectId, "publish_failed"),
         api.listDistribute(projectId),
-        api.listRuns(projectId, { limit: 5 }),
+        api.getProjectActivity(projectId),
       ]);
       setProject(p);
       setTopics(t);
@@ -63,7 +123,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       setApproved(app);
       setFailedPublish(failed);
       setReady(dist);
-      setRuns(runRows);
+      setActivity(activityRow);
+      setRuns(activityRow.recent_runs.slice(0, 5));
     } catch (e: any) {
       setApiError(e.message);
     }
@@ -75,13 +136,13 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
     setBusy(label);
-    setMessage(null);
+    setMessage({ tone: "amber", title: `${label} running`, detail: "You can keep this page open; the latest run will appear in Runs.", href: `/projects/${projectId}/runs`, hrefLabel: "Open Runs" });
     try {
       await fn();
       await refresh();
-      setMessage({ tone: "green", title: success });
+      setMessage({ tone: "green", title: success, href: `/projects/${projectId}/runs`, hrefLabel: "View run history" });
     } catch (e: any) {
-      setMessage({ tone: "red", title: `${label} failed`, detail: e.message });
+      setMessage({ tone: "red", title: `${label} failed`, detail: e.message, href: `/projects/${projectId}/runs`, hrefLabel: "Open Runs" });
     } finally {
       setBusy(null);
     }
@@ -124,6 +185,8 @@ export function Workspace({ projectId }: { projectId: string }) {
   const waitingVariants = approved.filter(
     (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
   );
+  const visibleJobs = [...localJobs(busy, projectId), ...(activity?.active_jobs ?? []), ...(activity?.jobs ?? [])];
+  const publisherBlocked = activity?.publishing_health && !activity.publishing_health.ready;
 
   return (
     <div className="space-y-7">
@@ -139,13 +202,97 @@ export function Workspace({ projectId }: { projectId: string }) {
           tone="amber"
         />
       )}
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+      {message && (
+        <div className="space-y-2">
+          <Notice title={message.title} detail={message.detail} tone={message.tone} />
+          {message.href && (
+            <a href={message.href} className="inline-flex text-xs font-semibold text-[#d93820]">
+              {message.hrefLabel ?? "Open"}
+            </a>
+          )}
+        </div>
+      )}
+
+      <section>
+        <SectionHeader
+          title="Activity"
+          eyebrow="Jobs, health, and latest outcomes"
+          action={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone={activity?.insight.profile_ready ? "green" : "amber"}>
+                {activity?.insight.profile_ready ? "profile ready" : "profile missing"}
+              </Badge>
+              <Badge tone={(activity?.insight.inventory_count ?? 0) > 0 ? "green" : "neutral"}>
+                {activity?.insight.inventory_count ?? 0} inventory
+              </Badge>
+              <Badge tone={(activity?.counts.pending_review ?? 0) > 0 ? "amber" : "neutral"}>
+                {activity?.counts.pending_review ?? 0} review
+              </Badge>
+            </div>
+          }
+        />
+        <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
+          {visibleJobs.length === 0 ? (
+            <EmptyState title="No activity yet" detail="Run Insight to start the SEO and GEO operating loop." />
+          ) : (
+            <div className="grid gap-2 lg:grid-cols-2">
+              {visibleJobs.map((job) => (
+                <a
+                  key={job.id}
+                  href={job.href || `/projects/${projectId}/runs`}
+                  className="grid min-h-[92px] gap-2 rounded-lg border border-slate-200 px-4 py-3 text-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <JobIcon status={job.status} />
+                      <span className="truncate font-bold text-slate-900">{job.label}</span>
+                    </div>
+                    <Badge tone={jobStatusTone(job.status)}>{job.status.replaceAll("_", " ")}</Badge>
+                  </div>
+                  <div className="line-clamp-2 text-slate-600">{job.detail || "No detail captured yet."}</div>
+                  <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-400">
+                    <span>{job.run_id ? "Run captured" : "No run yet"}</span>
+                    <span>{formatDate(job.updated_at ?? null)}</span>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+          {activity?.insight.crawl_summary && (
+            <div className="rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2 font-semibold text-slate-900">
+                <Activity size={16} />
+                Insight crawl summary
+                <a href={`/projects/${projectId}/knowledge`} className="text-xs font-bold text-[#d93820]">
+                  Open Knowledge
+                </a>
+              </div>
+              <div className="mt-2 grid gap-2 text-slate-600 sm:grid-cols-4">
+                <span>{activity.insight.crawl_summary.discovered_count ?? 0} discovered</span>
+                <span>{activity.insight.crawl_summary.fetched_count ?? 0} fetched</span>
+                <span>{activity.insight.crawl_summary.inventory_count ?? activity.insight.inventory_count} inventory</span>
+                <span>{activity.insight.crawl_summary.truncated ? "truncated" : "complete"}</span>
+              </div>
+            </div>
+          )}
+          {(activity?.recent_failures.length ?? 0) > 0 && (
+            <div className="grid gap-2">
+              {activity?.recent_failures.map((failure) => (
+                <a key={failure.run_id} href={failure.href || `/projects/${projectId}/runs`} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                  <div className="font-bold">{failure.agent} failed</div>
+                  <div className="mt-1 line-clamp-2">{failure.error}</div>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
 
       <section>
         <SectionHeader
           title="Pipeline"
           action={
-            <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
+            <Button size="sm" onClick={() => refresh()}>
               <RefreshCw size={14} />
               Refresh
             </Button>
@@ -160,20 +307,29 @@ export function Workspace({ projectId }: { projectId: string }) {
               className="w-full"
             />
             <Button
-              disabled={!!busy || !landing}
+              disabled={busy === "Insight" || !landing}
               variant="primary"
               onClick={() => run("Insight", () => api.runInsight(projectId, landing), "Insight completed")}
             >
               <Wand2 size={16} />
               Run Insight
             </Button>
-            <Button disabled={!!busy} onClick={() => run("Strategist", () => api.runStrategist(projectId))}>
+            <Button disabled={busy === "Strategist"} onClick={() => run("Strategist", () => api.runStrategist(projectId))}>
               Run Strategist
             </Button>
-            <Button disabled={!!busy} onClick={() => run("Publish tick", () => api.tickPublish(projectId))}>
+            <Button
+              disabled={busy === "Publish tick" || Boolean(publisherBlocked)}
+              title={publisherBlocked ? activity?.publishing_health.next_action : "Run publisher tick"}
+              onClick={() => run("Publish tick", () => api.tickPublish(projectId))}
+            >
               Publish tick
             </Button>
           </div>
+          {publisherBlocked && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+              Publishing waits on setup: {activity?.publishing_health.next_action}
+            </div>
+          )}
         </div>
       </section>
 

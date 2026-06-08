@@ -174,6 +174,39 @@ test("listRuns calls the project runs endpoint", async () => {
   }
 });
 
+test("getProjectActivity calls the project activity endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        jobs: [{ id: "strategist", label: "Strategist", status: "queued", detail: "Ready" }],
+        active_jobs: [],
+        recent_runs: [{ id: "run-1", project_id: "project-1", agent: "strategist", status: "ok" }],
+        recent_failures: [],
+        insight: { profile_ready: true, inventory_count: 3 },
+        counts: { topics: 4, pending_review: 1, published: 0 },
+        publishing_health: { status: "blocked", ready: false, reasons: ["publisher_missing"] },
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const activity = await createApi().getProjectActivity("project-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/activity");
+    assert.equal(activity.jobs[0].id, "strategist");
+    assert.equal(activity.recent_runs[0].id, "run-1");
+    assert.equal(activity.insight.inventory_count, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

@@ -110,6 +110,45 @@ export type RunListOptions = {
   cursor?: string;
 };
 
+export type ActivityJobStatus = "queued" | "running" | "succeeded" | "degraded" | "failed" | "waiting_for_permission" | string;
+
+export type ActivityJob = {
+  id: string;
+  label: string;
+  status: ActivityJobStatus;
+  detail: string;
+  href?: string;
+  run_id?: string | null;
+  updated_at?: string | null;
+};
+
+export type ActivityFailure = {
+  run_id: string;
+  agent: string;
+  error: string;
+  href: string;
+  created_at: string | null;
+};
+
+export type ProjectActivity = {
+  jobs: ActivityJob[];
+  active_jobs: ActivityJob[];
+  recent_runs: GenerationRun[];
+  recent_failures: ActivityFailure[];
+  insight: {
+    profile_ready: boolean;
+    inventory_count: number;
+    crawl_summary?: CrawlSummary;
+    last_run_id?: string | null;
+  };
+  counts: {
+    topics: number;
+    pending_review: number;
+    published: number;
+  };
+  publishing_health: PublishingHealth;
+};
+
 export type TopicUpdateInput = {
   channel?: string;
   title?: string;
@@ -947,6 +986,50 @@ function normalizePublishingHealth(raw: any): PublishingHealth {
   };
 }
 
+function normalizeActivityJob(raw: any): ActivityJob {
+  return {
+    id: String(raw?.id ?? "job"),
+    label: String(raw?.label ?? "Job"),
+    status: raw?.status ?? "queued",
+    detail: String(raw?.detail ?? ""),
+    href: raw?.href ?? undefined,
+    run_id: raw?.run_id ?? null,
+    updated_at: raw?.updated_at ?? null,
+  };
+}
+
+function normalizeActivityFailure(raw: any): ActivityFailure {
+  return {
+    run_id: String(raw?.run_id ?? ""),
+    agent: String(raw?.agent ?? "unknown"),
+    error: String(raw?.error ?? "No error captured."),
+    href: raw?.href ?? "",
+    created_at: raw?.created_at ?? null,
+  };
+}
+
+function normalizeProjectActivity(raw: any): ProjectActivity {
+  const data = raw ?? {};
+  return {
+    jobs: arrayFrom<any>(data.jobs).map(normalizeActivityJob),
+    active_jobs: arrayFrom<any>(data.active_jobs).map(normalizeActivityJob),
+    recent_runs: arrayFrom<any>(data.recent_runs).map((run) => normalizeRun({ input: null, output: null, ...run })),
+    recent_failures: arrayFrom<any>(data.recent_failures).map(normalizeActivityFailure),
+    insight: {
+      profile_ready: Boolean(data.insight?.profile_ready),
+      inventory_count: Number(data.insight?.inventory_count ?? 0),
+      crawl_summary: data.insight?.crawl_summary ?? undefined,
+      last_run_id: data.insight?.last_run_id ?? null,
+    },
+    counts: {
+      topics: Number(data.counts?.topics ?? 0),
+      pending_review: Number(data.counts?.pending_review ?? 0),
+      published: Number(data.counts?.published ?? 0),
+    },
+    publishing_health: normalizePublishingHealth(data.publishing_health),
+  };
+}
+
 async function bearerHeader(auth?: AuthOptions): Promise<Record<string, string>> {
   const token = auth?.token ?? (auth?.getToken ? await auth.getToken() : null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -996,6 +1079,10 @@ export function createApi(auth?: AuthOptions) {
   getProject: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
     return normalizeProject(raw);
+  },
+  getProjectActivity: async (id: string): Promise<ProjectActivity> => {
+    const raw = await req<any>(`/projects/${id}/activity`, undefined, auth);
+    return normalizeProjectActivity(raw);
   },
   updateConfig: async (id: string, config: ProjectConfig) => {
     const raw = await req<any>(`/projects/${id}/config`, { method: "PUT", body: JSON.stringify(config) }, auth);

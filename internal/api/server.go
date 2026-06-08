@@ -61,6 +61,7 @@ func (s *Server) Router() http.Handler {
 				r.Use(s.requireProjectOwner)
 				r.Get("/", s.getProject)
 				r.Put("/config", s.updateConfig)
+				r.Get("/activity", s.getProjectActivity)
 
 				r.Post("/insight", s.runInsight)
 				r.Get("/profile", s.getProfile)
