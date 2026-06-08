@@ -140,6 +140,26 @@ func (s *Server) editArticleScoped(w http.ResponseWriter, r *http.Request, proje
 	writeJSON(w, 200, updated)
 }
 
+func (s *Server) fixProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	updated, err := writer.RepairArticle(r.Context(), projectID, aid)
+	if err != nil {
+		writeErr(w, 500, "ai fix failed: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
 func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
