@@ -463,20 +463,42 @@ test("notification APIs call project scoped endpoints", async () => {
   }
 });
 
-test("publishing reconcile API calls project scoped endpoint", async () => {
+test("publishing health and reconcile APIs call project scoped endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url, init });
-    return { ok: true, status: 200, json: async () => ({ status: "reconcile complete" }) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/publishing/health")) {
+          return {
+            status: "blocked",
+            ready: false,
+            connection_status: "missing",
+            credential_status: "missing",
+            reasons: ["publisher_missing"],
+            next_action: "Open Settings and connect a GitHub/Next.js publisher.",
+            capabilities: {},
+          };
+        }
+        return { status: "reconcile complete" };
+      },
+    };
   };
 
   try {
     const { createApi } = await loadApiModule();
-    await createApi().reconcilePublishing("project-1");
+    const client = createApi();
+    const health = await client.getPublishingHealth("project-1");
+    await client.reconcilePublishing("project-1");
 
-    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publishing/reconcile");
-    assert.equal(calls[0].init.method, "POST");
+    assert.equal(health.ready, false);
+    assert.equal(health.reasons[0], "publisher_missing");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publishing/health");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/publishing/reconcile");
+    assert.equal(calls[1].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

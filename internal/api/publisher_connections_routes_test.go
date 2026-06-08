@@ -20,6 +20,7 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/projects/not-a-uuid/publisher-connections"},
+		{http.MethodGet, "/api/projects/not-a-uuid/publishing/health"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/github-nextjs"},
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
@@ -60,6 +61,7 @@ func TestRejectPublisherConnectionSecretFields(t *testing.T) {
 		`{"repo":"owner/site","base_url":"https://example.com/blog","webhook_url":"https://hooks.example"}`,
 		`{"repo":"owner/site","base_url":"https://example.com/blog","webhookUrl":"https://hooks.example"}`,
 		`{"repo":"owner/site","base_url":"https://example.com/blog","api_key":"secret"}`,
+		`{"repo":"owner/site","base_url":"https://example.com/blog","deploy_hook_url":"https://api.vercel.com/v1/integrations/deploy/prj/secret"}`,
 		`{"repo":"owner/site","base_url":"https://example.com/blog","nested":{"password":"secret"}}`,
 	} {
 		if err := rejectPublisherConnectionSecrets([]byte(raw)); err == nil {
@@ -83,7 +85,8 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 		IsDefault:     true,
 		Capabilities:  publisher.GitHubNextJSCapabilities().JSON(),
 		CredentialRef: strPtr("env:GITHUB_TOKEN"),
-		Config:        json.RawMessage(`{"repo":"owner/site","base_url":"https://example.com/blog"}`),
+		Config:        json.RawMessage(`{"repo":"owner/site","base_url":"https://example.com/blog","deploy_hook_url":"https://api.vercel.com/v1/integrations/deploy/prj/secret"}`),
+		LastError:     strPtr("deploy hook failed: https://api.vercel.com/v1/integrations/deploy/prj/secret token=ghp_supersecret"),
 	}
 
 	body, err := json.Marshal(publisherConnectionResponse(connection))
@@ -98,5 +101,11 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 	}
 	if strings.Contains(string(body), "token") {
 		t.Fatalf("response leaked token-like text: %s", string(body))
+	}
+	if strings.Contains(string(body), "deploy_hook") || strings.Contains(string(body), "api.vercel.com") {
+		t.Fatalf("response leaked deploy hook material: %s", string(body))
+	}
+	if strings.Contains(string(body), "ghp_supersecret") {
+		t.Fatalf("response leaked raw token material: %s", string(body))
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -92,7 +93,7 @@ func (s *Server) upsertGitHubNextJSPublisherConnection(w http.ResponseWriter, r 
 		"publish_mode": strings.TrimSpace(in.PublishMode),
 	})
 	if _, err := publisher.ParseGitHubNextJSConfig(cfgRaw); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusBadRequest, "Repository and base URL are required before saving publisher.")
 		return
 	}
 	if s.Q == nil {
@@ -318,7 +319,7 @@ func publisherConnectionResponse(row db.PublisherConnection) publisherConnection
 		CredentialConfigured:    row.CredentialRef != nil && strings.TrimSpace(*row.CredentialRef) != "",
 		Config:                  sanitizePublisherConfig(row.Config),
 		LastVerifiedAt:          nullableTime(row.LastVerifiedAt),
-		LastError:               row.LastError,
+		LastError:               sanitizePublisherLastError(row.LastError),
 	}
 }
 
@@ -360,6 +361,8 @@ func isSecretLikePublisherKey(key string) bool {
 		strings.Contains(normalized, "secret") ||
 		strings.Contains(normalized, "password") ||
 		strings.Contains(normalized, "api_key") ||
+		strings.Contains(normalized, "deploy_hook") ||
+		strings.Contains(normalized, "hook_url") ||
 		(strings.Contains(normalized, "webhook") && strings.Contains(normalized, "url"))
 }
 
@@ -377,6 +380,25 @@ func sanitizePublisherConfig(raw json.RawMessage) json.RawMessage {
 		}
 	}
 	return mustPublisherJSON(m)
+}
+
+var publisherSecretTextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]+`),
+	regexp.MustCompile(`https://hooks\.slack\.com/\S+`),
+	regexp.MustCompile(`https://(?:discord|discordapp)\.com/api/webhooks/\S+`),
+	regexp.MustCompile(`https://api\.vercel\.com/\S+`),
+	regexp.MustCompile(`(?i)(token|api[_-]?key|secret|password)=\S+`),
+}
+
+func sanitizePublisherLastError(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	clean := *value
+	for _, pattern := range publisherSecretTextPatterns {
+		clean = pattern.ReplaceAllString(clean, "[redacted]")
+	}
+	return &clean
 }
 
 func safeJSON(raw json.RawMessage, fallback string) json.RawMessage {

@@ -253,6 +253,17 @@ func (s *Scheduler) TickPublish(ctx context.Context) {
 	s.unlockVariants(ctx)
 }
 
+func (s *Scheduler) PublishProject(ctx context.Context, p db.Project) error {
+	if err := s.publishForProject(ctx, p); err != nil {
+		return err
+	}
+	if err := s.reconcilePublishForProject(ctx, p); err != nil {
+		return err
+	}
+	s.unlockVariants(ctx)
+	return nil
+}
+
 func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 	due, err := s.prepareDueCanonicals(ctx, p)
 	if err != nil {

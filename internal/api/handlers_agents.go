@@ -310,7 +310,36 @@ func (s *Server) tickGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tickPublish(w http.ResponseWriter, r *http.Request) {
-	s.Sched.TickPublish(r.Context())
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	project, err := s.Q.GetProject(r.Context(), id)
+	if err != nil {
+		writeErr(w, 404, "project not found")
+		return
+	}
+	if s.Sched == nil {
+		writeErr(w, 503, "scheduler unavailable")
+		return
+	}
+	health, err := s.publisherHealth(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !health.Ready {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "publishing blocked: publisher is not ready",
+			"health": health,
+		})
+		return
+	}
+	if err := s.Sched.PublishProject(r.Context(), project); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	writeJSON(w, 200, map[string]string{"status": "publish tick complete"})
 }
 
@@ -327,6 +356,18 @@ func (s *Server) reconcilePublishing(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Sched == nil {
 		writeErr(w, 503, "scheduler unavailable")
+		return
+	}
+	health, err := s.publisherHealth(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !health.Ready {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "publishing blocked: publisher is not ready",
+			"health": health,
+		})
 		return
 	}
 	if err := s.Sched.ReconcilePublishProject(r.Context(), project); err != nil {

@@ -67,10 +67,20 @@ func TestFlatArticleMutationRoutesAreNotRegistered(t *testing.T) {
 func TestPublishingReconcileRouteIsRegistered(t *testing.T) {
 	router := (&Server{}).Router()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/not-a-uuid/publishing/reconcile", nil)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("reconcile status = %d, want %d", res.Code, http.StatusBadRequest)
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "reconcile", path: "/api/projects/not-a-uuid/publishing/reconcile"},
+		{name: "publish tick", path: "/api/projects/not-a-uuid/tick/publish"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("%s status = %d, want %d", tc.name, res.Code, http.StatusBadRequest)
+			}
+		})
 	}
 }

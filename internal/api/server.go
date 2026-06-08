@@ -94,6 +94,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/publisher-connections/{connectionID}/test", s.testPublisherConnection)
 				r.Put("/publisher-connections/{connectionID}/credential", s.upsertPublisherCredential)
 				r.Delete("/publisher-connections/{connectionID}/credential", s.revokePublisherCredential)
+				r.Get("/publishing/health", s.getPublishingHealth)
 				r.Route("/seo", func(r chi.Router) {
 					r.Get("/overview", s.getSEOOverview)
 					r.Post("/sync", s.syncSEO)

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, RefreshCw, RotateCcw, Send } from "lucide-react";
-import { Article, DistributeItem } from "../../../lib/api";
+import { Copy, ExternalLink, GitBranch, RefreshCw, RotateCcw, Send } from "lucide-react";
+import { Article, DistributeItem, PublishingHealth } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
 
@@ -12,8 +12,28 @@ function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} article`;
 }
 
+function healthTone(status?: string): "neutral" | "red" | "amber" | "green" {
+  if (status === "ready" || status === "connected" || status === "configured") return "green";
+  if (status === "error") return "red";
+  if (!status || status === "missing" || status === "blocked" || status === "in_progress") return "amber";
+  return "neutral";
+}
+
+function reasonLabel(reason: string) {
+  const labels: Record<string, string> = {
+    database_unavailable: "Database is unavailable",
+    publisher_missing: "No publisher connection has been saved",
+    publisher_config_invalid: "Publisher repository or base URL is incomplete",
+    publisher_connection_error: "The latest publisher test failed",
+    publisher_credential_missing: "GitHub token is missing",
+    publisher_credential_unavailable: "Saved GitHub credential cannot be resolved",
+  };
+  return labels[reason] ?? reason.replaceAll("_", " ");
+}
+
 export function PublishingClient({ projectId }: { projectId: string }) {
   const api = useApi();
+  const [health, setHealth] = useState<PublishingHealth | null>(null);
   const [published, setPublished] = useState<Article[]>([]);
   const [approved, setApproved] = useState<Article[]>([]);
   const [failed, setFailed] = useState<Article[]>([]);
@@ -23,12 +43,14 @@ export function PublishingClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [pub, app, fail, dist] = await Promise.all([
+      const [nextHealth, pub, app, fail, dist] = await Promise.all([
+        api.getPublishingHealth(projectId),
         api.listArticles(projectId, "published"),
         api.listArticles(projectId, "approved"),
         api.listArticles(projectId, "publish_failed"),
         api.listDistribute(projectId),
       ]);
+      setHealth(nextHealth);
       setPublished(pub);
       setApproved(app);
       setFailed(fail);
@@ -50,6 +72,14 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       ),
     [approved, ready],
   );
+
+  const publishBlockedReason = useMemo(() => {
+    if (!health) return "Publisher health is still loading.";
+    if (health.ready) return "";
+    if (health.next_action) return health.next_action;
+    if (health.reasons.length) return health.reasons.map(reasonLabel).join(", ");
+    return "Publisher is not ready.";
+  }, [health]);
 
   async function markDistributed(article: Article) {
     setBusy(article.id);
@@ -80,6 +110,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function reconcile() {
+    if (!health?.ready) {
+      setMessage({ title: "Publishing setup required", detail: publishBlockedReason, tone: "amber" });
+      return;
+    }
     setBusy("reconcile");
     setMessage(null);
     try {
@@ -93,6 +127,24 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function publishTick() {
+    if (!health?.ready) {
+      setMessage({ title: "Publishing setup required", detail: publishBlockedReason, tone: "amber" });
+      return;
+    }
+    setBusy("publish-tick");
+    setMessage(null);
+    try {
+      await api.tickPublish(projectId);
+      await refresh();
+      setMessage({ title: "Publish tick complete", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Publish tick failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="space-y-7">
       <SectionHeader
@@ -100,7 +152,11 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         eyebrow="Canonical and syndication lanes"
         action={
           <div className="flex flex-wrap gap-2">
-            <Button disabled={!!busy} size="sm" onClick={reconcile}>
+            <Button disabled={!!busy || !health?.ready} size="sm" onClick={publishTick} title={publishBlockedReason || "Run canonical publisher tick"}>
+              <Send size={14} />
+              Publish tick
+            </Button>
+            <Button disabled={!!busy || !health?.ready} size="sm" onClick={reconcile} title={publishBlockedReason || "Reconcile approved articles"}>
               <RotateCcw size={14} />
               Reconcile
             </Button>
@@ -112,6 +168,54 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         }
       />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+      <section className="rounded-lg border border-slate-200 bg-white px-4 py-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <GitBranch size={16} />
+              Publisher setup
+            </div>
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-600">
+              CiteLoop needs a connected publisher and saved credential before canonical articles can publish automatically.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={healthTone(health?.status)}>{health?.status ?? "loading"}</Badge>
+            <Badge tone={healthTone(health?.connection_status)}>connection {health?.connection_status ?? "loading"}</Badge>
+            <Badge tone={healthTone(health?.credential_status)}>credential {health?.credential_status ?? "loading"}</Badge>
+          </div>
+        </div>
+        {!health?.ready && (
+          <Notice
+            title="Publishing blocked"
+            detail={publishBlockedReason}
+            tone={health?.status === "error" ? "red" : "amber"}
+          />
+        )}
+        {health?.reasons?.length ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {health.reasons.map((reason) => (
+              <Badge key={reason} tone={healthTone(health.status)}>
+                {reasonLabel(reason)}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {Object.entries(health?.capabilities ?? {}).map(([key, enabled]) => (
+            <div key={key} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+              <div className="font-semibold uppercase tracking-[0.14em] text-slate-400">{key.replaceAll("_", " ")}</div>
+              <div className={enabled ? "mt-1 font-bold text-green-700" : "mt-1 font-bold text-slate-500"}>{enabled ? "Available" : "Unavailable"}</div>
+            </div>
+          ))}
+        </div>
+        <a
+          href={`/projects/${projectId}/settings`}
+          className="mt-3 inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-[#d93820] hover:bg-slate-50"
+        >
+          Open publisher settings
+        </a>
+      </section>
 
       <section>
         <SectionHeader title="Publish failures" action={<Badge tone={failed.length ? "red" : "neutral"}>{failed.length}</Badge>} />

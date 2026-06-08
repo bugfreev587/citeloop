@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/db"
 )
 
 func TestCeilDiv(t *testing.T) {
@@ -31,6 +33,10 @@ func TestSchedulerExposesNotificationTick(t *testing.T) {
 
 func TestSchedulerExposesReviewOverdueTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickReviewOverdue
+}
+
+func TestSchedulerExposesProjectScopedPublish(t *testing.T) {
+	var _ func(*Scheduler, context.Context, db.Project) error = (*Scheduler).PublishProject
 }
 
 func TestSchedulerExposesGEOTick(t *testing.T) {

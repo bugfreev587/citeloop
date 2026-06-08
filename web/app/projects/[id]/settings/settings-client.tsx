@@ -220,15 +220,25 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   async function savePublisherConnection() {
+    const repo = publisherDraft.repo.trim();
+    const baseURL = publisherDraft.base_url.trim();
+    if (!repo || !baseURL) {
+      setMessage({
+        title: "Publisher settings incomplete",
+        detail: "Repository and Base URL are required before saving publisher.",
+        tone: "amber",
+      });
+      return;
+    }
     setNotificationBusy("save-publisher");
     setMessage(null);
     try {
       let saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
         ...publisherDraft,
-        repo: publisherDraft.repo.trim(),
+        repo,
         branch: publisherDraft.branch?.trim() || "citeloop-content",
         content_dir: publisherDraft.content_dir?.trim() || "content/citeloop/blog",
-        base_url: publisherDraft.base_url.trim(),
+        base_url: baseURL,
         publish_mode: publisherDraft.publish_mode?.trim() || "publish",
         credential_ref: undefined,
       });

@@ -190,6 +190,17 @@ export type PublisherConnection = {
   last_error?: string | null;
 };
 
+export type PublishingHealth = {
+  status: "ready" | "blocked" | "error" | string;
+  ready: boolean;
+  connection_status: "missing" | "in_progress" | "connected" | "error" | string;
+  credential_status: "missing" | "configured" | "error" | string;
+  reasons: string[];
+  next_action: string;
+  capabilities: Record<string, boolean>;
+  connection?: PublisherConnection | null;
+};
+
 export type GitHubNextJSPublisherInput = {
   label?: string;
   repo: string;
@@ -922,6 +933,20 @@ function normalizePublisherConnection(raw: any): PublisherConnection {
   };
 }
 
+function normalizePublishingHealth(raw: any): PublishingHealth {
+  const data = raw ?? {};
+  return {
+    status: data.status ?? "blocked",
+    ready: Boolean(data.ready),
+    connection_status: data.connection_status ?? "missing",
+    credential_status: data.credential_status ?? "missing",
+    reasons: arrayFrom<string>(data.reasons).map(String),
+    next_action: data.next_action ?? "Open Settings and connect a GitHub/Next.js publisher.",
+    capabilities: data.capabilities ?? {},
+    connection: data.connection ? normalizePublisherConnection(data.connection) : null,
+  };
+}
+
 async function bearerHeader(auth?: AuthOptions): Promise<Record<string, string>> {
   const token = auth?.token ?? (auth?.getToken ? await auth.getToken() : null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -1056,6 +1081,10 @@ export function createApi(auth?: AuthOptions) {
   listPublisherConnections: async (id: string): Promise<PublisherConnection[]> => {
     const raw = await req<any[]>(`/projects/${id}/publisher-connections`, undefined, auth);
     return arrayFrom(raw).map(normalizePublisherConnection);
+  },
+  getPublishingHealth: async (id: string): Promise<PublishingHealth> => {
+    const raw = await req<any>(`/projects/${id}/publishing/health`, undefined, auth);
+    return normalizePublishingHealth(raw);
   },
   upsertGitHubNextJSPublisherConnection: async (
     id: string,
