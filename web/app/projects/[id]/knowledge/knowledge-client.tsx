@@ -56,14 +56,15 @@ export function KnowledgeClient({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [p, items, runs] = await Promise.all([
+      const [p, items, runs, activity] = await Promise.all([
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
         api.listRuns(projectId, { agent: "insight", status: "ok", limit: 100 }).catch(() => []),
+        api.getProjectActivity(projectId).catch(() => null),
       ]);
       setProfile(p);
       setInventory(items);
-      setCrawlSummary(latestCrawlSummary(runs));
+      setCrawlSummary(activity?.insight.crawl_summary ?? latestCrawlSummary(runs));
       setProfileDraft(JSON.stringify(p?.profile ?? {}, null, 2));
     } catch (e: any) {
       setMessage({ title: "Knowledge data unavailable", detail: e.message, tone: "amber" });
