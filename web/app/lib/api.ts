@@ -21,6 +21,28 @@ export type AuthOptions = {
   getToken?: () => Promise<string | null>;
 };
 
+export type DeploymentBuild = {
+  service: string;
+  commit_sha?: string;
+  commit_ref?: string;
+  deployment_id?: string;
+  environment?: string;
+  url?: string;
+};
+
+export type DeploymentVersion = {
+  status: string;
+  build: DeploymentBuild;
+  database?: {
+    connected?: boolean;
+    migration_status?: string;
+    applied_migrations?: number;
+    latest_migration?: string;
+    error?: string;
+  };
+  generated_at?: string;
+};
+
 export type ProjectConfig = {
   cadence_per_week: number;
   buffer_days: number;
@@ -908,6 +930,9 @@ async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions): Pro
 
 export function createApi(auth?: AuthOptions) {
   return {
+  getVersion: async (): Promise<DeploymentVersion> => {
+    return req<DeploymentVersion>("/meta/version", undefined, auth);
+  },
   getLLMCredentials: async () => {
     const raw = await req<any>("/admin/llm-credentials", undefined, auth);
     return normalizeLLMCredentialsStatus(raw);

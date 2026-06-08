@@ -14,7 +14,7 @@ import {
   Search,
   Send,
 } from "lucide-react";
-import { Project } from "../lib/api";
+import type { DeploymentBuild, DeploymentVersion, Project } from "../lib/api";
 import { cx } from "./ui";
 
 const navItems = [
@@ -39,10 +39,14 @@ function isActive(pathname: string, projectId: string, leaf: string) {
 export function ProjectShell({
   project,
   projectId,
+  apiVersion,
+  webBuild,
   children,
 }: {
   project: Project | null;
   projectId: string;
+  apiVersion: DeploymentVersion | null;
+  webBuild: DeploymentBuild;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -86,6 +90,7 @@ export function ProjectShell({
         </nav>
 
         <div className="mt-auto grid gap-2">
+          <DeploymentSnapshot apiVersion={apiVersion} webBuild={webBuild} />
           <div className="w-[185px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
             <div className="flex items-center justify-between font-semibold text-slate-700">
               <span>Budget</span>
@@ -145,6 +150,39 @@ export function ProjectShell({
       <main className="mx-auto min-h-[100dvh] max-w-5xl px-4 pb-12 pt-8 md:pl-[220px] md:pr-8">
         <div className="mx-auto max-w-[960px]">{children}</div>
       </main>
+    </div>
+  );
+}
+
+function DeploymentSnapshot({
+  apiVersion,
+  webBuild,
+}: {
+  apiVersion: DeploymentVersion | null;
+  webBuild: DeploymentBuild;
+}) {
+  const apiBuild = apiVersion?.build;
+  const apiMigration = apiVersion?.database?.latest_migration || apiVersion?.database?.migration_status || "unknown";
+
+  return (
+    <div className="w-[185px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-500">
+      <div className="mb-1 font-semibold uppercase text-slate-400">Deployment</div>
+      <DeploymentLine label="Web" build={webBuild} />
+      <DeploymentLine label="API" build={apiBuild} />
+      <div className="truncate" title={apiMigration}>
+        DB {apiMigration}
+      </div>
+    </div>
+  );
+}
+
+function DeploymentLine({ label, build }: { label: string; build?: DeploymentBuild }) {
+  const sha = build?.commit_sha ? build.commit_sha.slice(0, 7) : "unknown";
+  const ref = build?.commit_ref || build?.environment || "unknown";
+
+  return (
+    <div className="truncate" title={`${label} ${sha} ${ref}`}>
+      {label} {sha} · {ref}
     </div>
   );
 }

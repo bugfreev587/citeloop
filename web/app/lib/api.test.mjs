@@ -46,6 +46,29 @@ test("createApi attaches a provided Clerk token as Authorization", async () => {
   }
 });
 
+test("getVersion calls the public API metadata endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "ok", build: { service: "citeloop-api", commit_sha: "abcdef123" } }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const version = await createApi().getVersion();
+
+    assert.equal(calls[0].url, "https://api.example.test/api/meta/version");
+    assert.equal(version.build.service, "citeloop-api");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("createApi resolves Clerk tokens from getToken", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

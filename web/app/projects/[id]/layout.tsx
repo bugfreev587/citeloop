@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { ProjectShell } from "../../components/project-shell";
-import { createApi, Project } from "../../lib/api";
+import { createApi, DeploymentVersion, Project } from "../../lib/api";
+import { getWebBuildInfo } from "../../lib/build-info";
 
 export default async function ProjectLayout({
   children,
@@ -14,14 +15,20 @@ export default async function ProjectLayout({
   const token = await getToken();
   const api = createApi({ token });
   let project: Project | null = null;
+  let apiVersion: DeploymentVersion | null = null;
   try {
-    project = await api.getProject(id);
+    [project, apiVersion] = await Promise.all([api.getProject(id), api.getVersion()]);
   } catch {
     project = null;
+    try {
+      apiVersion = await api.getVersion();
+    } catch {
+      apiVersion = null;
+    }
   }
 
   return (
-    <ProjectShell project={project} projectId={id}>
+    <ProjectShell project={project} projectId={id} apiVersion={apiVersion} webBuild={getWebBuildInfo()}>
       {children}
     </ProjectShell>
   );

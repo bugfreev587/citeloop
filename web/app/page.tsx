@@ -4,18 +4,26 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Database, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
-import { createApi, Project } from "./lib/api";
+import { createApi, DeploymentVersion, Project } from "./lib/api";
+import { getWebBuildInfo } from "./lib/build-info";
 
 export default async function Home() {
   const { getToken } = await auth();
   const token = await getToken();
   const api = createApi({ token });
+  const webBuild = getWebBuildInfo();
   let projects: Project[] = [];
+  let apiVersion: DeploymentVersion | null = null;
   let error: string | null = null;
   try {
-    projects = await api.listProjects();
+    [projects, apiVersion] = await Promise.all([api.listProjects(), api.getVersion()]);
   } catch (e: any) {
     error = e.message;
+    try {
+      apiVersion = await api.getVersion();
+    } catch {
+      apiVersion = null;
+    }
   }
 
   return (
@@ -80,6 +88,12 @@ export default async function Home() {
 
         <aside className="grid gap-4 self-start">
           <ProjectCreateForm />
+          <div className="grid gap-1 rounded-xl border border-slate-200 bg-white p-4 text-xs leading-5 text-slate-500">
+            <div className="font-semibold uppercase text-slate-400">Deployment</div>
+            <div>Web {shortBuild(webBuild.commit_sha)} · {webBuild.commit_ref || webBuild.environment || "unknown"}</div>
+            <div>API {shortBuild(apiVersion?.build?.commit_sha)} · {apiVersion?.build?.commit_ref || apiVersion?.build?.environment || "unknown"}</div>
+            <div>DB {apiVersion?.database?.latest_migration || apiVersion?.database?.migration_status || "unknown"}</div>
+          </div>
           <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Database size={16} />
@@ -98,4 +112,8 @@ export default async function Home() {
       </div>
     </main>
   );
+}
+
+function shortBuild(value?: string) {
+  return value ? value.slice(0, 7) : "unknown";
 }
