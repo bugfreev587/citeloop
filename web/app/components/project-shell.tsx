@@ -54,7 +54,7 @@ export function ProjectShell({
   const budget = project?.config?.monthly_budget_usd ?? 50;
 
   return (
-    <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
+    <div className="min-h-[100dvh] bg-stone-100 text-slate-950 md:h-[100dvh] md:overflow-hidden">
       <aside className="fixed left-0 top-0 z-20 hidden h-[100dvh] w-[210px] flex-col border-r border-gray-200 bg-white px-3 py-4 md:flex">
         <Link href="/" className="mb-4 flex h-9 items-center gap-2 px-2 text-sm font-bold text-slate-900">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-950 text-xs text-white">CL</span>
@@ -147,7 +147,7 @@ export function ProjectShell({
         </div>
       </div>
 
-      <main className="mx-auto min-h-[100dvh] max-w-5xl px-4 pb-12 pt-8 md:pl-[220px] md:pr-8">
+      <main className="mx-auto min-h-[100dvh] max-w-5xl px-4 pb-12 pt-8 md:h-[100dvh] md:overflow-y-auto md:pl-[220px] md:pr-8">
         <div className="mx-auto max-w-[960px]">{children}</div>
       </main>
     </div>
