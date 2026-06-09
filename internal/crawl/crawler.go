@@ -30,19 +30,19 @@ type Page struct {
 
 // Result is the outcome of a discovery+fetch run.
 type Result struct {
-	Landing   *Page    `json:"landing"`
-	Articles  []*Page  `json:"articles"`
-	Discovered []string `json:"discovered"`  // normalized article URLs found
-	Truncated bool     `json:"truncated"`    // hit sitemap_url_cap (§5.1)
-	Errors    []string `json:"errors"`       // per-page failures (non-fatal)
+	Landing    *Page    `json:"landing"`
+	Articles   []*Page  `json:"articles"`
+	Discovered []string `json:"discovered"` // normalized article URLs found
+	Truncated  bool     `json:"truncated"`  // hit sitemap_url_cap (§5.1)
+	Errors     []string `json:"errors"`     // per-page failures (non-fatal)
 }
 
 type Crawler struct {
-	cfg    config.CrawlConfig
-	client *http.Client
+	cfg     config.CrawlConfig
+	client  *http.Client
 	limiter <-chan time.Time
-	log    *slog.Logger
-	now    func() time.Time
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 func New(cfg config.CrawlConfig, log *slog.Logger) *Crawler {
@@ -68,6 +68,26 @@ func New(cfg config.CrawlConfig, log *slog.Logger) *Crawler {
 		log:     log,
 		now:     time.Now,
 	}
+}
+
+// FetchLanding fetches only the landing page. It is used for low-latency
+// profile extraction before the slower article discovery and inventory pass.
+func (c *Crawler) FetchLanding(ctx context.Context, landingURL string) (*Result, error) {
+	base, err := url.Parse(landingURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid landing url: %w", err)
+	}
+
+	var rb *robots
+	if c.cfg.RespectRobots {
+		rb = fetchRobots(ctx, c.client, base)
+	}
+
+	landing, err := c.fetch(ctx, base, rb)
+	if err != nil {
+		return nil, fmt.Errorf("landing fetch failed (fatal): %w", err)
+	}
+	return &Result{Landing: landing}, nil
 }
 
 // Run discovers articles for the given landing URL and fetches them, honoring

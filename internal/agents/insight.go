@@ -58,58 +58,65 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 	}
 
 	// 2) Persist profile as a new active version.
-	if err := a.Q.DeactivateProfiles(ctx, projectID); err != nil {
-		return nil, 0, summary, err
-	}
-	ver, err := a.Q.NextProfileVersion(ctx, projectID)
-	if err != nil {
-		return nil, 0, summary, err
-	}
-	srcURLs := []string{landingURL}
-	for _, p := range res.Articles {
-		srcURLs = append(srcURLs, p.URL)
-	}
-	saved, err := a.Q.InsertProfile(ctx, db.InsertProfileParams{
-		ProjectID:  projectID,
-		SourceUrls: toJSON(srcURLs),
-		Profile:    toJSON(profile),
-		Version:    int32(ver),
-	})
+	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
 	if err != nil {
 		return nil, 0, summary, err
 	}
 
 	// 3) Per-article inventory with evidence snippets (skip failures, §5.1).
-	count := 0
-	for _, page := range res.Articles {
-		item, iresp, ierr := a.extractInventory(ctx, page)
-		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "inventory", "url": page.URL}, item, iresp, ierr)
-		if ierr != nil {
-			a.Log.Warn("inventory extraction failed", "url", page.URL, "err", ierr)
-			continue
-		}
-		item.URL = page.URL
-		if _, err := a.Q.UpsertInventory(ctx, db.UpsertInventoryParams{
-			ProjectID:        projectID,
-			Url:              page.URL,
-			Title:            ptr(item.Title),
-			TargetKeyword:    ptr(item.TargetKeyword),
-			Topics:           toJSON(item.Topics),
-			Summary:          ptr(item.Summary),
-			EvidenceSnippets: toJSON(item.EvidenceSnippets),
-			Source:           "existing",
-		}); err != nil {
-			a.Log.Warn("inventory upsert failed", "url", page.URL, "err", err)
-			continue
-		}
-		count++
-	}
+	count := a.persistInventory(ctx, projectID, res)
 	summary.InventoryCount = count
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl_summary", "landing": landingURL}, map[string]any{
 		"crawl_summary": summary,
 	}, llm.CompletionResp{}, nil)
 	a.Log.Info("insight complete", "version", saved.Version, "articles", count, "truncated", res.Truncated)
 	return profile, count, summary, nil
+}
+
+// RunQuickProfile builds and persists a product profile from the landing page
+// only, so onboarding can make the project usable before full crawl completes.
+func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (*Profile, CrawlSummary, error) {
+	cr := crawl.New(crawlCfg, a.Log)
+	res, err := cr.FetchLanding(ctx, landingURL)
+	if err != nil {
+		return nil, CrawlSummary{}, fmt.Errorf("crawl landing: %w", err)
+	}
+	summary := summarizeCrawl(landingURL, res)
+
+	profile, resp, err := a.extractProfile(ctx, res)
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "landing"}, map[string]any{
+		"profile":        profile,
+		"profile_source": "landing",
+		"landing_url":    summary.LandingURL,
+	}, resp, err)
+	if err != nil {
+		return nil, summary, fmt.Errorf("profile extraction: %w", err)
+	}
+
+	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, false))
+	if err != nil {
+		return nil, summary, err
+	}
+	a.Log.Info("quick insight profile complete", "version", saved.Version, "landing", summary.LandingURL)
+	return profile, summary, nil
+}
+
+// RunInventoryFromCrawl performs the slower full crawl and content inventory
+// pass without replacing the active landing-derived product profile.
+func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (int, CrawlSummary, error) {
+	cr := crawl.New(crawlCfg, a.Log)
+	res, err := cr.Run(ctx, landingURL)
+	if err != nil {
+		return 0, CrawlSummary{}, fmt.Errorf("crawl: %w", err)
+	}
+	summary := summarizeCrawl(landingURL, res)
+	count := a.persistInventory(ctx, projectID, res)
+	summary.InventoryCount = count
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl_summary", "landing": landingURL}, map[string]any{
+		"crawl_summary": summary,
+	}, llm.CompletionResp{}, nil)
+	a.Log.Info("insight inventory crawl complete", "articles", count, "truncated", res.Truncated)
+	return count, summary, nil
 }
 
 func summarizeCrawl(landingURL string, res *crawl.Result) CrawlSummary {
@@ -134,6 +141,73 @@ func summarizeCrawl(landingURL string, res *crawl.Result) CrawlSummary {
 		}
 	}
 	return summary
+}
+
+func profileSourceURLs(landingURL string, res *crawl.Result, includeArticles bool) []string {
+	srcURLs := []string{landingURL}
+	if res != nil && res.Landing != nil && res.Landing.URL != "" {
+		srcURLs[0] = res.Landing.URL
+	}
+	if !includeArticles || res == nil {
+		return srcURLs
+	}
+	for _, p := range res.Articles {
+		if p == nil || p.URL == "" {
+			continue
+		}
+		srcURLs = append(srcURLs, p.URL)
+	}
+	return srcURLs
+}
+
+func (a *Insight) saveProfile(ctx context.Context, projectID uuid.UUID, profile *Profile, sourceURLs []string) (db.ProductProfile, error) {
+	if err := a.Q.DeactivateProfiles(ctx, projectID); err != nil {
+		return db.ProductProfile{}, err
+	}
+	ver, err := a.Q.NextProfileVersion(ctx, projectID)
+	if err != nil {
+		return db.ProductProfile{}, err
+	}
+	return a.Q.InsertProfile(ctx, db.InsertProfileParams{
+		ProjectID:  projectID,
+		SourceUrls: toJSON(sourceURLs),
+		Profile:    toJSON(profile),
+		Version:    int32(ver),
+	})
+}
+
+func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res *crawl.Result) int {
+	count := 0
+	if res == nil {
+		return count
+	}
+	for _, page := range res.Articles {
+		if page == nil {
+			continue
+		}
+		item, iresp, ierr := a.extractInventory(ctx, page)
+		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "inventory", "url": page.URL}, item, iresp, ierr)
+		if ierr != nil {
+			a.Log.Warn("inventory extraction failed", "url", page.URL, "err", ierr)
+			continue
+		}
+		item.URL = page.URL
+		if _, err := a.Q.UpsertInventory(ctx, db.UpsertInventoryParams{
+			ProjectID:        projectID,
+			Url:              page.URL,
+			Title:            ptr(item.Title),
+			TargetKeyword:    ptr(item.TargetKeyword),
+			Topics:           toJSON(item.Topics),
+			Summary:          ptr(item.Summary),
+			EvidenceSnippets: toJSON(item.EvidenceSnippets),
+			Source:           "existing",
+		}); err != nil {
+			a.Log.Warn("inventory upsert failed", "url", page.URL, "err", err)
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func (a *Insight) extractProfile(ctx context.Context, res *crawl.Result) (*Profile, llm.CompletionResp, error) {

@@ -79,6 +79,7 @@ export type InsightResult = {
   profile: any;
   inventory_count: number;
   crawl_summary?: CrawlSummary;
+  background_crawl?: boolean;
 };
 
 export type RunListOptions = {

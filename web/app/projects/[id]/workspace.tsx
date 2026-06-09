@@ -162,7 +162,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             <Button
               disabled={!!busy || !landing}
               variant="primary"
-              onClick={() => run("Insight", () => api.runInsight(projectId, landing), "Insight completed")}
+              onClick={() => run("Insight", () => api.runInsight(projectId, landing), "Product profile ready; crawl continues in background")}
             >
               <Wand2 size={16} />
               Run Insight

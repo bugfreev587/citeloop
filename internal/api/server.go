@@ -32,7 +32,8 @@ type Server struct {
 	Log     *slog.Logger
 	SEOData seo.GoogleDataProvider
 
-	OnboardingRunner projectOnboardingRunner
+	OnboardingRunner       projectOnboardingRunner
+	InsightInventoryRunner insightInventoryRunner
 }
 
 func (s *Server) Router() http.Handler {
