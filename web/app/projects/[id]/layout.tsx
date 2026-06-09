@@ -1,8 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { ProjectShell } from "../../components/project-shell";
+import { clerkServerAuthConfigured, requireConfiguredClerk } from "../../lib/auth-config";
 import { createApi, Project } from "../../lib/api";
-
-const clerkServerAuthConfigured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
 export default async function ProjectLayout({
   children,
@@ -11,6 +10,8 @@ export default async function ProjectLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
+  requireConfiguredClerk();
+
   const { id } = await params;
   let token: string | null = null;
   if (clerkServerAuthConfigured) {
