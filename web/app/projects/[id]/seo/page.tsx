@@ -1,6 +1,6 @@
-import { SEOClient } from "./seo-client";
+import { redirect } from "next/navigation";
 
 export default async function SEOPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <SEOClient projectId={id} />;
+  redirect(`/projects/${id}/visibility`);
 }

@@ -4,7 +4,6 @@ import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
   CheckCircle2,
   CircleHelp,
   Database,
@@ -19,12 +18,12 @@ import { cx } from "./ui";
 
 const navItems = [
   { label: "Home", href: "", icon: Home },
-  { label: "Knowledge", href: "knowledge", icon: Database },
-  { label: "Topics", href: "topics", icon: ListChecks },
+  { label: "Context", href: "context", icon: Database },
+  { label: "Content Plan", href: "plan", icon: ListChecks },
   { label: "Review", href: "review", icon: PenLine },
-  { label: "Publishing", href: "publishing", icon: Send },
-  { label: "SEO", href: "seo", icon: Search },
-  { label: "Runs", href: "runs", icon: Activity },
+  { label: "Publish", href: "publish", icon: Send },
+  { label: "Visibility", href: "visibility", icon: Search },
+  { label: "Settings", href: "settings", icon: CircleHelp },
 ];
 
 function projectHref(projectId: string, leaf: string) {

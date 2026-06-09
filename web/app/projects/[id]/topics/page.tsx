@@ -1,6 +1,6 @@
-import { TopicsClient } from "./topics-client";
+import { redirect } from "next/navigation";
 
 export default async function TopicsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <TopicsClient projectId={id} />;
+  redirect(`/projects/${id}/plan`);
 }
