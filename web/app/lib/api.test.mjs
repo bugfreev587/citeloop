@@ -284,6 +284,39 @@ test("createProject supports URL-first onboarding payloads", async () => {
   }
 });
 
+test("project lifecycle APIs call project scoped endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "project-1", name: "Project", slug: "project", status: "active", config: {} }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    await client.listProjects("archived");
+    await client.archiveProject("project-1");
+    await client.restoreProject("project-1");
+    await client.deleteProject("project-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects?status=archived");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/archive");
+    assert.equal(calls[1].init.method, "POST");
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/restore");
+    assert.equal(calls[2].init.method, "POST");
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/");
+    assert.equal(calls[3].init.method, "DELETE");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("SEO APIs normalize null nested arrays from cold-start projects", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({

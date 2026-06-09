@@ -11,6 +11,7 @@ import (
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) projectID(r *http.Request) (uuid.UUID, error) {
@@ -23,7 +24,11 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "project owner required")
 		return
 	}
-	ps, err := s.Q.ListProjectsByOwner(r.Context(), ownerID)
+	status, ok := projectStatusFilter(w, r)
+	if !ok {
+		return
+	}
+	ps, err := s.Q.ListProjectsByOwner(r.Context(), db.ListProjectsByOwnerParams{OwnerID: ownerID, Status: status})
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -96,6 +101,80 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 201, p)
+}
+
+func (s *Server) archiveProject(w http.ResponseWriter, r *http.Request) {
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	p, err := s.Q.ArchiveProjectForOwner(r.Context(), db.ArchiveProjectForOwnerParams{ID: id, OwnerID: s.ownerID(r)})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "project not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) restoreProject(w http.ResponseWriter, r *http.Request) {
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	p, err := s.Q.RestoreProjectForOwner(r.Context(), db.RestoreProjectForOwnerParams{ID: id, OwnerID: s.ownerID(r)})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "project not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	blockers, err := s.Q.CountProjectDeleteBlockers(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if blockers.PublishedContentCount > 0 {
+		writeErr(w, http.StatusConflict, "project has published history; archive it instead")
+		return
+	}
+	if blockers.OperationalRecordCount > 0 {
+		writeErr(w, http.StatusConflict, "project has generated or configured data; archive it instead")
+		return
+	}
+	p, err := s.Q.DeleteEmptyProjectForOwner(r.Context(), db.DeleteEmptyProjectForOwnerParams{ProjectIDArg: id, OwnerIDArg: s.ownerID(r)})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeErr(w, http.StatusConflict, "project is not empty or was already removed")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func projectStatusFilter(w http.ResponseWriter, r *http.Request) (string, bool) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status == "" {
+		return "active", true
+	}
+	if status == "all" {
+		return "", true
+	}
+	if status == "active" || status == "archived" {
+		return status, true
+	}
+	writeErr(w, http.StatusBadRequest, "bad project status")
+	return "", false
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {

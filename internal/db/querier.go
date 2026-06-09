@@ -14,10 +14,12 @@ import (
 type Querier interface {
 	ApproveArticle(ctx context.Context, arg ApproveArticleParams) (Article, error)
 	ApproveArticleForProject(ctx context.Context, arg ApproveArticleForProjectParams) (Article, error)
+	ArchiveProjectForOwner(ctx context.Context, arg ArchiveProjectForOwnerParams) (Project, error)
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)
 	ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
+	CountProjectDeleteBlockers(ctx context.Context, projectIDArg uuid.UUID) (CountProjectDeleteBlockersRow, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
 	// publishing (not backlog, not terminal). The scheduler uses this to fill only
 	// the buffer-window deficit instead of regenerating every tick (§5.4).
@@ -36,6 +38,7 @@ type Querier interface {
 	CreateSEOObjective(ctx context.Context, arg CreateSEOObjectiveParams) (SeoObjective, error)
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
+	DeleteEmptyProjectForOwner(ctx context.Context, arg DeleteEmptyProjectForOwnerParams) (Project, error)
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
@@ -99,8 +102,8 @@ type Querier interface {
 	ListPendingReview(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	ListProfileVersions(ctx context.Context, projectID uuid.UUID) ([]ProductProfile, error)
 	ListProjectOwnedGEOExternalSurfaces(ctx context.Context, projectID uuid.UUID) ([]GeoExternalSurface, error)
-	ListProjects(ctx context.Context) ([]Project, error)
-	ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error)
+	ListProjects(ctx context.Context, status string) ([]Project, error)
+	ListProjectsByOwner(ctx context.Context, arg ListProjectsByOwnerParams) ([]Project, error)
 	ListPublishedCanonicalArticlesForSEO(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	ListPublisherConnections(ctx context.Context, projectID uuid.UUID) ([]PublisherConnection, error)
 	ListSEOActionPlans(ctx context.Context, arg ListSEOActionPlansParams) ([]SeoActionPlan, error)
@@ -129,6 +132,7 @@ type Querier interface {
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
+	RestoreProjectForOwner(ctx context.Context, arg RestoreProjectForOwnerParams) (Project, error)
 	RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (NotificationDelivery, error)
 	RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error)
 	RevokePublisherCredentialForConnection(ctx context.Context, arg RevokePublisherCredentialForConnectionParams) (PublisherCredential, error)

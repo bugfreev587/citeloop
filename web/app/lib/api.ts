@@ -66,6 +66,7 @@ export type Project = {
   owner_id?: string;
   name: string;
   slug: string;
+  status: "active" | "archived";
   config: ProjectConfig;
   created_at?: any;
 };
@@ -702,6 +703,7 @@ function normalizeProject(raw: any): Project {
     owner_id: raw.owner_id,
     name: raw.name ?? "Untitled project",
     slug: raw.slug ?? raw.id,
+    status: raw.status === "archived" ? "archived" : "active",
     config: { ...defaultProjectConfig(), ...(raw.config ?? {}) },
     created_at: raw.created_at,
   };
@@ -1135,8 +1137,9 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
-  listProjects: async () => {
-    const raw = await req<any[]>("/projects", undefined, auth);
+  listProjects: async (status?: "active" | "archived" | "all") => {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+    const raw = await req<any[]>(`/projects${suffix}`, undefined, auth);
     return arrayFrom(raw).map(normalizeProject);
   },
   createProject: async (body: { name?: string; slug?: string; owner_id?: string; site_url?: string }) => {
@@ -1145,6 +1148,18 @@ export function createApi(auth?: AuthOptions) {
   },
   getProject: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
+    return normalizeProject(raw);
+  },
+  archiveProject: async (id: string) => {
+    const raw = await req<any>(`/projects/${id}/archive`, { method: "POST" }, auth);
+    return normalizeProject(raw);
+  },
+  restoreProject: async (id: string) => {
+    const raw = await req<any>(`/projects/${id}/restore`, { method: "POST" }, auth);
+    return normalizeProject(raw);
+  },
+  deleteProject: async (id: string) => {
+    const raw = await req<any>(`/projects/${id}/`, { method: "DELETE" }, auth);
     return normalizeProject(raw);
   },
   getProjectActivity: async (id: string): Promise<ProjectActivity> => {

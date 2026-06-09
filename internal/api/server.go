@@ -60,6 +60,9 @@ func (s *Server) Router() http.Handler {
 			r.Route("/projects/{projectID}", func(r chi.Router) {
 				r.Use(s.requireProjectOwner)
 				r.Get("/", s.getProject)
+				r.Delete("/", s.deleteProject)
+				r.Post("/archive", s.archiveProject)
+				r.Post("/restore", s.restoreProject)
 				r.Put("/config", s.updateConfig)
 				r.Get("/activity", s.getProjectActivity)
 

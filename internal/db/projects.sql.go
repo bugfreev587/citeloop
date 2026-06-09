@@ -12,10 +12,68 @@ import (
 	"github.com/google/uuid"
 )
 
+const archiveProjectForOwner = `-- name: ArchiveProjectForOwner :one
+update projects set status = 'archived'
+where id = $1
+  and owner_id = $2
+returning id, owner_id, name, slug, config, created_at, status
+`
+
+type ArchiveProjectForOwnerParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID string    `json:"owner_id"`
+}
+
+func (q *Queries) ArchiveProjectForOwner(ctx context.Context, arg ArchiveProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, archiveProjectForOwner, arg.ID, arg.OwnerID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
+const countProjectDeleteBlockers = `-- name: CountProjectDeleteBlockers :one
+select
+  (
+    select count(*) from articles a
+    where a.project_id = $1
+      and a.status in ('pending_url_verification', 'published', 'publish_failed', 'ready_to_distribute', 'distributed')
+  )::bigint as published_content_count,
+  (
+    (select count(*) from product_profiles pp where pp.project_id = $1) +
+    (select count(*) from content_inventory ci where ci.project_id = $1) +
+    (select count(*) from topics t where t.project_id = $1) +
+    (select count(*) from articles a where a.project_id = $1) +
+    (select count(*) from generation_runs gr where gr.project_id = $1) +
+    (select count(*) from notification_channels nc where nc.project_id = $1) +
+    (select count(*) from notification_subscriptions ns where ns.project_id = $1) +
+    (select count(*) from notification_deliveries nd where nd.project_id = $1)
+  )::bigint as operational_record_count
+`
+
+type CountProjectDeleteBlockersRow struct {
+	PublishedContentCount  int64 `json:"published_content_count"`
+	OperationalRecordCount int64 `json:"operational_record_count"`
+}
+
+func (q *Queries) CountProjectDeleteBlockers(ctx context.Context, projectIDArg uuid.UUID) (CountProjectDeleteBlockersRow, error) {
+	row := q.db.QueryRow(ctx, countProjectDeleteBlockers, projectIDArg)
+	var i CountProjectDeleteBlockersRow
+	err := row.Scan(&i.PublishedContentCount, &i.OperationalRecordCount)
+	return i, err
+}
+
 const createProject = `-- name: CreateProject :one
 insert into projects (owner_id, name, slug, config)
 values ($1, $2, $3, $4)
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, status
 `
 
 type CreateProjectParams struct {
@@ -40,12 +98,48 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
+const deleteEmptyProjectForOwner = `-- name: DeleteEmptyProjectForOwner :one
+delete from projects
+where projects.id = $1
+  and projects.owner_id = $2
+  and not exists (select 1 from product_profiles pp where pp.project_id = $1)
+  and not exists (select 1 from content_inventory ci where ci.project_id = $1)
+  and not exists (select 1 from topics t where t.project_id = $1)
+  and not exists (select 1 from articles a where a.project_id = $1)
+  and not exists (select 1 from generation_runs gr where gr.project_id = $1)
+  and not exists (select 1 from notification_channels nc where nc.project_id = $1)
+  and not exists (select 1 from notification_subscriptions ns where ns.project_id = $1)
+  and not exists (select 1 from notification_deliveries nd where nd.project_id = $1)
+returning id, owner_id, name, slug, config, created_at, status
+`
+
+type DeleteEmptyProjectForOwnerParams struct {
+	ProjectIDArg uuid.UUID `json:"project_id_arg"`
+	OwnerIDArg   string    `json:"owner_id_arg"`
+}
+
+func (q *Queries) DeleteEmptyProjectForOwner(ctx context.Context, arg DeleteEmptyProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, deleteEmptyProjectForOwner, arg.ProjectIDArg, arg.OwnerIDArg)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getProject = `-- name: GetProject :one
-select id, owner_id, name, slug, config, created_at from projects where id = $1
+select id, owner_id, name, slug, config, created_at, status from projects where id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id uuid.UUID) (Project, error) {
@@ -58,12 +152,13 @@ func (q *Queries) GetProject(ctx context.Context, id uuid.UUID) (Project, error)
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getProjectBySlug = `-- name: GetProjectBySlug :one
-select id, owner_id, name, slug, config, created_at from projects where slug = $1
+select id, owner_id, name, slug, config, created_at, status from projects where slug = $1
 `
 
 func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, error) {
@@ -76,12 +171,13 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, e
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getProjectForOwner = `-- name: GetProjectForOwner :one
-select id, owner_id, name, slug, config, created_at from projects
+select id, owner_id, name, slug, config, created_at, status from projects
 where id = $1
   and owner_id = $2
 `
@@ -101,16 +197,19 @@ func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwner
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-select id, owner_id, name, slug, config, created_at from projects order by created_at desc
+select id, owner_id, name, slug, config, created_at, status from projects
+where ($1::text = '' or status = $1)
+order by created_at desc
 `
 
-func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
-	rows, err := q.db.Query(ctx, listProjects)
+func (q *Queries) ListProjects(ctx context.Context, status string) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjects, status)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +224,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.Slug,
 			&i.Config,
 			&i.CreatedAt,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -137,13 +237,19 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-select id, owner_id, name, slug, config, created_at from projects
+select id, owner_id, name, slug, config, created_at, status from projects
 where owner_id = $1
+  and ($2::text = '' or status = $2)
 order by created_at desc
 `
 
-func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
-	rows, err := q.db.Query(ctx, listProjectsByOwner, ownerID)
+type ListProjectsByOwnerParams struct {
+	OwnerID string `json:"owner_id"`
+	Status  string `json:"status"`
+}
+
+func (q *Queries) ListProjectsByOwner(ctx context.Context, arg ListProjectsByOwnerParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsByOwner, arg.OwnerID, arg.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +264,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 			&i.Slug,
 			&i.Config,
 			&i.CreatedAt,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -169,9 +276,36 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 	return items, nil
 }
 
+const restoreProjectForOwner = `-- name: RestoreProjectForOwner :one
+update projects set status = 'active'
+where id = $1
+  and owner_id = $2
+returning id, owner_id, name, slug, config, created_at, status
+`
+
+type RestoreProjectForOwnerParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID string    `json:"owner_id"`
+}
+
+func (q *Queries) RestoreProjectForOwner(ctx context.Context, arg RestoreProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, restoreProjectForOwner, arg.ID, arg.OwnerID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
 const updateProjectConfig = `-- name: UpdateProjectConfig :one
 update projects set config = $2 where id = $1
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, status
 `
 
 type UpdateProjectConfigParams struct {
@@ -189,6 +323,7 @@ func (q *Queries) UpdateProjectConfig(ctx context.Context, arg UpdateProjectConf
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }
@@ -197,7 +332,7 @@ const updateProjectConfigForOwner = `-- name: UpdateProjectConfigForOwner :one
 update projects set config = $2
 where id = $1
   and owner_id = $3
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, status
 `
 
 type UpdateProjectConfigForOwnerParams struct {
@@ -216,6 +351,7 @@ func (q *Queries) UpdateProjectConfigForOwner(ctx context.Context, arg UpdatePro
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.Status,
 	)
 	return i, err
 }

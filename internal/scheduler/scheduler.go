@@ -111,7 +111,7 @@ func (s *Scheduler) TickReviewOverdue(ctx context.Context) {
 // TickGenerate runs the daily generation pass across all projects (§5.4).
 func (s *Scheduler) TickGenerate(ctx context.Context) {
 	q := db.New(s.Pool)
-	projects, err := q.ListProjects(ctx)
+	projects, err := q.ListProjects(ctx, "active")
 	if err != nil {
 		s.Log.Error("list projects", "err", err)
 		return
@@ -202,7 +202,7 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 		return
 	}
 	q := db.New(s.Pool)
-	projects, err := q.ListProjects(ctx)
+	projects, err := q.ListProjects(ctx, "active")
 	if err != nil {
 		s.logger().Error("list projects for geo tick", "err", err)
 		return
@@ -236,7 +236,7 @@ func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Proje
 // TickPublish auto-publishes due canonicals and unlocks distributable variants.
 func (s *Scheduler) TickPublish(ctx context.Context) {
 	q := db.New(s.Pool)
-	projects, err := q.ListProjects(ctx)
+	projects, err := q.ListProjects(ctx, "active")
 	if err != nil {
 		s.Log.Error("list projects", "err", err)
 		return

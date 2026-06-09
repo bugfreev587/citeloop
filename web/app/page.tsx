@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { ArrowRight, Database, LogIn, PenLine, Send } from "lucide-react";
+import { Database, LogIn, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
-import { Badge, EmptyState, Notice } from "./components/ui";
+import { Notice } from "./components/ui";
 import { createApi, DeploymentVersion, Project } from "./lib/api";
 import { getWebBuildInfo } from "./lib/build-info";
+import { ProjectListClient } from "./project-list-client";
 
 export default async function Home() {
   const { getToken, userId } = await auth();
@@ -59,35 +60,7 @@ export default async function Home() {
             </div>
           )}
 
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold leading-7 text-slate-900">Projects</h2>
-            <Badge tone="neutral">{projects.length} total</Badge>
-          </div>
-
-          <div className="grid gap-3">
-            {projects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="group flex min-h-[74px] items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:bg-slate-50"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-base font-bold text-slate-900">{project.name}</div>
-                  <div className="mt-1 truncate text-sm text-slate-500">/{project.slug}</div>
-                </div>
-                <ArrowRight
-                  className="text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-[#d93820]"
-                  size={18}
-                />
-              </Link>
-            ))}
-            {!error && projects.length === 0 && (
-              <EmptyState
-                title="No projects yet"
-                detail="Connect your service URL to start the onboarding workflow."
-              />
-            )}
-          </div>
+          <ProjectListClient initialProjects={projects} />
         </section>
 
         <aside className="grid gap-4 self-start">
