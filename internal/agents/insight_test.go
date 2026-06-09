@@ -35,3 +35,39 @@ func TestSummarizeCrawlCapturesOperatorRelevantFields(t *testing.T) {
 		t.Fatalf("sample urls = %#v", summary.SampleURLs)
 	}
 }
+
+func TestProfileSourceURLsLandingOnlyForQuickProfile(t *testing.T) {
+	urls := profileSourceURLs("https://example.com/input", &crawl.Result{
+		Landing: &crawl.Page{URL: "https://example.com"},
+		Articles: []*crawl.Page{
+			{URL: "https://example.com/blog/a"},
+			{URL: "https://example.com/blog/b"},
+		},
+	}, false)
+
+	if len(urls) != 1 || urls[0] != "https://example.com" {
+		t.Fatalf("quick profile source urls = %#v, want landing only", urls)
+	}
+}
+
+func TestProfileSourceURLsIncludesArticlesForFullProfile(t *testing.T) {
+	urls := profileSourceURLs("https://example.com/input", &crawl.Result{
+		Landing: &crawl.Page{URL: "https://example.com"},
+		Articles: []*crawl.Page{
+			nil,
+			{URL: "https://example.com/blog/a"},
+			{URL: ""},
+			{URL: "https://example.com/blog/b"},
+		},
+	}, true)
+
+	want := []string{"https://example.com", "https://example.com/blog/a", "https://example.com/blog/b"}
+	if len(urls) != len(want) {
+		t.Fatalf("source urls = %#v, want %#v", urls, want)
+	}
+	for i := range want {
+		if urls[i] != want[i] {
+			t.Fatalf("source urls = %#v, want %#v", urls, want)
+		}
+	}
+}

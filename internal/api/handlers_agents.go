@@ -25,7 +25,8 @@ func (s *Server) projectConfig(r *http.Request, id uuid.UUID) (config.ProjectCon
 	return config.Parse(p.Config)
 }
 
-// runInsight crawls the landing URL and builds profile + inventory (§5.1).
+// runInsight builds the product profile from the landing page, then continues
+// the slower public crawl and inventory pass in the background.
 func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 	id, err := s.projectID(r)
 	if err != nil {
@@ -45,12 +46,18 @@ func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
-	profile, count, summary, err := ag.Run(r.Context(), id, in.LandingURL, cfg.Crawl)
+	profile, summary, err := ag.RunQuickProfile(r.Context(), id, in.LandingURL, cfg.Crawl)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"profile": profile, "inventory_count": count, "crawl_summary": summary})
+	s.startInsightInventoryCrawl(id, in.LandingURL, cfg.Crawl)
+	writeJSON(w, 200, map[string]any{
+		"profile":          profile,
+		"inventory_count":  0,
+		"crawl_summary":    summary,
+		"background_crawl": true,
+	})
 }
 
 // runStrategist produces the topic backlog (§5.2).

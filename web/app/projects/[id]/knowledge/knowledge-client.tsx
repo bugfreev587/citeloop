@@ -90,10 +90,12 @@ export function KnowledgeClient({ projectId }: { projectId: string }) {
     try {
       const result = await api.runInsight(projectId, landing.trim());
       await refresh();
-      if (result.crawl_summary) setCrawlSummary(result.crawl_summary);
+      if (result.crawl_summary && !result.background_crawl) setCrawlSummary(result.crawl_summary);
       setMessage({
-        title: "Insight completed",
-        detail: `Inventory count: ${result.inventory_count}. ${result.crawl_summary?.truncated ? "Crawl was truncated." : "Crawl completed within configured bounds."}`,
+        title: result.background_crawl ? "Product profile ready" : "Insight completed",
+        detail: result.background_crawl
+          ? "Full public crawl and inventory are running in the background."
+          : `Inventory count: ${result.inventory_count}. ${result.crawl_summary?.truncated ? "Crawl was truncated." : "Inventory crawl completed within configured bounds."}`,
         tone: "green",
       });
     } catch (e: any) {
