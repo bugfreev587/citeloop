@@ -4,11 +4,12 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Database, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
+import { clerkServerAuthConfigured, requireConfiguredClerk } from "./lib/auth-config";
 import { createApi, Project } from "./lib/api";
 
-const clerkServerAuthConfigured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
-
 export default async function Home() {
+  requireConfiguredClerk();
+
   let token: string | null = null;
   if (clerkServerAuthConfigured) {
     const { getToken } = await auth();

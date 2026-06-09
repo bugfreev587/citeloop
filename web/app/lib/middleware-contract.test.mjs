@@ -11,6 +11,13 @@ test("middleware keeps the landing page public", async () => {
 test("middleware passes through when Clerk is not configured", async () => {
   const source = await readFile(new URL("../../middleware.ts", import.meta.url), "utf8");
 
-  assert.equal(source.includes("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"), true);
+  assert.equal(source.includes("allowUnconfiguredClerkBypass"), true);
   assert.equal(source.includes("NextResponse.next()"), true);
+});
+
+test("middleware fails closed when Clerk is not configured in production", async () => {
+  const source = await readFile(new URL("../../middleware.ts", import.meta.url), "utf8");
+
+  assert.equal(source.includes("allowUnconfiguredClerkBypass"), true);
+  assert.equal(source.includes("status: 503"), true);
 });

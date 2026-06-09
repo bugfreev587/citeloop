@@ -107,7 +107,11 @@ func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID
 	cr := crawl.New(crawlCfg, a.Log)
 	res, err := cr.Run(ctx, landingURL)
 	if err != nil {
-		return 0, CrawlSummary{}, fmt.Errorf("crawl: %w", err)
+		runErr := fmt.Errorf("crawl: %w", err)
+		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl", "landing": landingURL, "scope": "background"}, map[string]any{
+			"landing_url": landingURL,
+		}, llm.CompletionResp{}, runErr)
+		return 0, CrawlSummary{LandingURL: landingURL}, runErr
 	}
 	summary := summarizeCrawl(landingURL, res)
 	count := a.persistInventory(ctx, projectID, res)
@@ -115,7 +119,22 @@ func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl_summary", "landing": landingURL}, map[string]any{
 		"crawl_summary": summary,
 	}, llm.CompletionResp{}, nil)
+
+	profile, resp, err := a.extractProfile(ctx, res)
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "full_crawl"}, map[string]any{
+		"profile":        profile,
+		"profile_source": "full_crawl",
+		"crawl_summary":  summary,
+	}, resp, err)
+	if err != nil {
+		return count, summary, fmt.Errorf("profile upgrade: %w", err)
+	}
+	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
+	if err != nil {
+		return count, summary, fmt.Errorf("profile save: %w", err)
+	}
 	a.Log.Info("insight inventory crawl complete", "articles", count, "truncated", res.Truncated)
+	a.Log.Info("insight full profile upgraded", "version", saved.Version, "landing", summary.LandingURL)
 	return count, summary, nil
 }
 
