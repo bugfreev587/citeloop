@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, CalendarDays, Check, Pencil, RefreshCw, Wand2, X } from "lucide-react";
+import { Archive, CalendarDays, Check, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
 import { Topic } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
@@ -52,6 +52,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const strategistRunning = busy === "strategist";
 
   const refresh = useCallback(async () => {
     try {
@@ -189,9 +190,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title="Topics"
           eyebrow="Backlog and schedule intent"
           action={
-            <Button disabled={!!busy} variant="primary" onClick={runStrategist}>
-              <Wand2 size={16} />
-              Run Strategist
+            <Button aria-busy={strategistRunning} disabled={!!busy} variant="primary" onClick={runStrategist}>
+              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+              {strategistRunning ? "Running strategist" : "Run Strategist"}
             </Button>
           }
         />

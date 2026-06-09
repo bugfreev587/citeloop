@@ -158,3 +158,11 @@ test("activity log defaults to user-facing attention events and hides run intern
 
   assert.doesNotMatch(activity, /title="Runs"/);
 });
+
+test("content plan shows visible feedback while strategist is running", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /busy === "strategist"/);
+  assert.match(topics, /animate-spin/);
+  assert.match(topics, /Running strategist/);
+});
