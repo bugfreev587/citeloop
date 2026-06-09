@@ -6,10 +6,15 @@ import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
 import { createApi, Project } from "./lib/api";
 
+const clerkServerAuthConfigured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
+
 export default async function Home() {
-  const { getToken } = await auth();
-  const token = await getToken();
-  const api = createApi({ token });
+  let token: string | null = null;
+  if (clerkServerAuthConfigured) {
+    const { getToken } = await auth();
+    token = await getToken();
+  }
+  const api = createApi(token ? { token } : undefined);
   let projects: Project[] = [];
   let error: string | null = null;
   try {
@@ -24,7 +29,7 @@ export default async function Home() {
         <section className="min-w-0">
           <div className="mb-8">
             <div className="mb-4 flex justify-end">
-              <UserButton />
+              {clerkServerAuthConfigured && <UserButton />}
             </div>
             <div className="mb-3 inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
               SEO + GEO content engine
