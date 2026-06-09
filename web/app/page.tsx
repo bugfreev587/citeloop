@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { ArrowRight, Database, PenLine, Send } from "lucide-react";
+import { ArrowRight, BookOpen, Database, PenLine, Send } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "./lib/auth-config";
@@ -41,6 +41,13 @@ export default async function Home() {
             <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
               Connect a product URL, build the profile, and review SEO + AEO progress from one dashboard.
             </p>
+            <Link
+              href="/docs"
+              className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+            >
+              <BookOpen size={16} />
+              Read the docs
+            </Link>
           </div>
 
           {error && (
@@ -89,7 +96,7 @@ export default async function Home() {
           <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Database size={16} />
-              Knowledge
+              Context
             </div>
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <PenLine size={16} />
@@ -97,7 +104,7 @@ export default async function Home() {
             </div>
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Send size={16} />
-              Manual distribution
+              Publish and distribute
             </div>
           </div>
         </aside>

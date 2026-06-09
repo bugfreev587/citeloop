@@ -4,6 +4,7 @@ import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BookOpen,
   CheckCircle2,
   CircleHelp,
   Database,
@@ -33,6 +34,10 @@ function projectHref(projectId: string, leaf: string) {
 function isActive(pathname: string, projectId: string, leaf: string) {
   const href = projectHref(projectId, leaf);
   return leaf ? pathname.startsWith(href) : pathname === href;
+}
+
+function isDocsActive(pathname: string, projectId: string) {
+  return pathname === "/docs" || pathname.startsWith("/docs/") || pathname.startsWith(`/projects/${projectId}/docs`);
 }
 
 export function ProjectShell({
@@ -102,6 +107,16 @@ export function ProjectShell({
             <CircleHelp size={16} />
             Help
           </Link>
+          <Link
+            href="/docs"
+            className={cx(
+              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+              isDocsActive(pathname, projectId) && "bg-slate-50 font-semibold text-[#d93820]",
+            )}
+          >
+            <BookOpen size={16} />
+            Docs
+          </Link>
           <div className="flex h-[52px] w-[185px] items-center gap-3 rounded-xl border border-slate-100 bg-white px-2 shadow-sm">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
               {projectName.slice(0, 2).toUpperCase()}
@@ -139,6 +154,15 @@ export function ProjectShell({
               {item.label}
             </Link>
           ))}
+          <Link
+            href="/docs"
+            className={cx(
+              "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
+              isDocsActive(pathname, projectId) && "border-[#d93820] text-[#d93820]",
+            )}
+          >
+            Docs
+          </Link>
         </div>
       </div>
 
