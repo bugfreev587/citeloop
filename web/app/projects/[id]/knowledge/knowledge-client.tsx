@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ExternalLink, Pencil, RefreshCw, Save, ShieldCheck, Wand2, X } from "lucide-react";
 import { CrawlSummary, GenerationRun, InventoryItem, ProductProfile } from "../../../lib/api";
+import { ProfileDraft, lines, profilePayloadFromAdvancedJSON, profilePayloadFromDraft } from "../../../lib/dashboard-ux-logic";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
 
@@ -15,27 +16,6 @@ type InventoryDraft = {
   topics: string;
   evidence_snippets: string;
 };
-
-type ProfileDraft = {
-  positioning: string;
-  icp: string;
-  value_props: string;
-  features: string;
-  differentiators: string;
-  competitors: string;
-  key_terms: string;
-  tone: string;
-  banned_claims: string;
-  content_rules: string;
-  advancedJSON: string;
-};
-
-function lines(value: string) {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
 
 function readPath(source: Record<string, any>, path: string) {
   return path.split(".").reduce<any>((value, key) => (value && typeof value === "object" ? value[key] : undefined), source);
@@ -71,29 +51,6 @@ function profileDraftFrom(profile: ProductProfile | null): ProfileDraft {
     banned_claims: firstProfileValue(data, ["banned_claims", "risky_claims", "guardrails.banned_claims"]),
     content_rules: firstProfileValue(data, ["content_rules", "rules", "style_rules", "voice.rules"]),
     advancedJSON: JSON.stringify(data, null, 2),
-  };
-}
-
-function profilePayloadFrom(draft: ProfileDraft) {
-  const base = draft.advancedJSON.trim() ? JSON.parse(draft.advancedJSON) : {};
-  const voice = base.voice && typeof base.voice === "object" && !Array.isArray(base.voice) ? base.voice : {};
-  return {
-    ...base,
-    positioning: draft.positioning.trim(),
-    icp: lines(draft.icp),
-    value_props: lines(draft.value_props),
-    features: lines(draft.features),
-    differentiators: lines(draft.differentiators),
-    competitors: lines(draft.competitors),
-    key_terms: lines(draft.key_terms),
-    tone: draft.tone.trim(),
-    banned_claims: lines(draft.banned_claims),
-    content_rules: lines(draft.content_rules),
-    voice: {
-      ...voice,
-      tone: draft.tone.trim(),
-      rules: lines(draft.content_rules),
-    },
   };
 }
 
@@ -207,7 +164,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
     setBusy("profile");
     setMessage(null);
     try {
-      const payload = nextProfile ?? profilePayloadFrom(profileDraft);
+      const payload = nextProfile ?? profilePayloadFromDraft(profileDraft, profile?.profile ?? {});
       const updated = await api.updateProfile(projectId, {
         profile: payload,
         source_urls: profile?.source_urls ?? [],
@@ -217,6 +174,25 @@ export function ContextClient({ projectId }: { projectId: string }) {
       setMessage({ title: success, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Context save failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveAdvancedProfile() {
+    setBusy("profile");
+    setMessage(null);
+    try {
+      const payload = profilePayloadFromAdvancedJSON(profileDraft.advancedJSON);
+      const updated = await api.updateProfile(projectId, {
+        profile: payload,
+        source_urls: profile?.source_urls ?? [],
+      });
+      setProfile(updated);
+      setProfileDraft(profileDraftFrom(updated));
+      setMessage({ title: "Advanced context saved", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Advanced JSON save failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -258,7 +234,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
   function confirmContext() {
     saveProfile(
       {
-        ...profilePayloadFrom(profileDraft),
+        ...profilePayloadFromDraft(profileDraft, profile?.profile ?? {}),
         context_confirmed_at: new Date().toISOString(),
       },
       "Context confirmed",
@@ -424,7 +400,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
               <TextArea rows={3} value={profileDraft.tone} onChange={(event) => setProfileDraft({ ...profileDraft, tone: event.target.value })} />
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Banned claims" helper="Brand and legal guardrails. One claim per line.">
+              <Field label="Banned claims" helper="Claims CiteLoop should avoid generating. One claim per line.">
                 <TextArea rows={6} value={profileDraft.banned_claims} onChange={(event) => setProfileDraft({ ...profileDraft, banned_claims: event.target.value })} />
               </Field>
               <Field label="Content rules" helper="Style instructions and reviewer rules. One rule per line.">
@@ -520,7 +496,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 onChange={(event) => setProfileDraft({ ...profileDraft, advancedJSON: event.target.value })}
                 className="min-h-[240px] font-mono text-xs"
               />
-              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={() => saveProfile()}>
+              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={saveAdvancedProfile}>
                 <Save size={16} />
                 Save advanced context
               </Button>

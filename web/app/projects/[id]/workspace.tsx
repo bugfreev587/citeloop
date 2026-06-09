@@ -14,6 +14,7 @@ import {
   SEOOverview,
   Topic,
 } from "../../lib/api";
+import { nextWorkspaceAction, visibilityLifecycleLabel, visibilityLifecycleTone } from "../../lib/dashboard-ux-logic";
 import { useApi } from "../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
 
@@ -60,22 +61,6 @@ function evidenceCount(items: InventoryItem[]) {
 
 function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
-}
-
-function opportunityStage(status: string) {
-  if (["accepted", "planned", "ready_for_review"].includes(status)) return "Added to Content Plan";
-  if (["drafted", "in_review"].includes(status)) return "Draft waiting for review";
-  if (["published", "measuring"].includes(status)) return "Measuring visibility impact";
-  if (["learned", "converted", "improved"].includes(status)) return "Loop closed";
-  if (status === "dismissed") return "Dismissed";
-  return "Opportunity detected";
-}
-
-function opportunityTone(status: string): "neutral" | "red" | "amber" | "green" | "blue" {
-  if (["learned", "converted", "improved"].includes(status)) return "green";
-  if (["accepted", "planned", "drafted", "published", "measuring", "ready_for_review", "in_review"].includes(status)) return "blue";
-  if (status === "dismissed") return "neutral";
-  return "amber";
 }
 
 export function Workspace({ projectId }: { projectId: string }) {
@@ -187,48 +172,18 @@ export function Workspace({ projectId }: { projectId: string }) {
     (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
   );
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
+  const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
   const nextAction = useMemo(() => {
-    if (failedPublish.length > 0) {
-      return {
-        title: "Fix publishing",
-        detail: "A canonical article could not be confirmed online, so related variants may stay locked.",
-        href: `/projects/${projectId}/publish`,
-      };
-    }
-    if (reviewArticles.some((article) => article.qa_blocking)) {
-      return {
-        title: "Review blocked drafts",
-        detail: "Some drafts need evidence or positioning fixes before they can be approved.",
-        href: `/projects/${projectId}/review`,
-      };
-    }
-    if (reviewArticles.length > 0) {
-      return {
-        title: "Review drafts",
-        detail: "Generated drafts are waiting for the human approval gate.",
-        href: `/projects/${projectId}/review`,
-      };
-    }
-    if (ready.length > 0) {
-      return {
-        title: "Distribute variants",
-        detail: "Approved variants are ready after their canonical article went live.",
-        href: `/projects/${projectId}/publish`,
-      };
-    }
-    if (topics.length === 0) {
-      return {
-        title: "Generate content plan",
-        detail: "Create a first backlog from your domain context before drafting content.",
-        href: `/projects/${projectId}/plan`,
-      };
-    }
-    return {
-      title: "Refresh context",
-      detail: "Keep product facts, evidence, and positioning current before the next content cycle.",
-      href: `/projects/${projectId}/context`,
-    };
-  }, [failedPublish.length, projectId, ready.length, reviewArticles, topics.length]);
+    return nextWorkspaceAction({
+      projectId,
+      hasProfile: Boolean(profile),
+      failedPublishCount: failedPublish.length,
+      hasBlockedDrafts,
+      reviewCount: reviewArticles.length,
+      readyCount: ready.length,
+      topicsCount: topics.length,
+    });
+  }, [failedPublish.length, hasBlockedDrafts, profile, projectId, ready.length, reviewArticles.length, topics.length]);
 
   const alsoWaiting = [
     reviewArticles.length > 0 && { label: `${reviewArticles.length} drafts need review`, href: `/projects/${projectId}/review`, tone: "amber" as const },
@@ -265,7 +220,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           };
 
   const opportunitiesConverted = seoOpportunities.filter((opportunity) =>
-    ["accepted", "planned", "converted", "published", "measuring", "learned", "improved"].includes(opportunity.status),
+    ["accepted", "planned", "converted"].includes(opportunity.status),
   ).length;
   const activeLoopCount =
     seoOpportunities.filter((opportunity) => !["dismissed", "archived"].includes(opportunity.status)).length +
@@ -289,8 +244,8 @@ export function Workspace({ projectId }: { projectId: string }) {
     ...seoOpportunities.slice(0, 3).map((opportunity) => ({
       id: `opportunity-${opportunity.id}`,
       title: opportunityTitle(opportunity),
-      stage: opportunityStage(opportunity.status),
-      tone: opportunityTone(opportunity.status),
+      stage: visibilityLifecycleLabel(opportunity.status),
+      tone: visibilityLifecycleTone(opportunity.status),
       href: `/projects/${projectId}/visibility`,
     })),
     ...topics.slice(0, 2).map((topic) => ({
@@ -363,7 +318,11 @@ export function Workspace({ projectId }: { projectId: string }) {
                   <Wand2 size={16} />
                   Refresh context
                 </Button>
-                <Button disabled={!!busy} onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}>
+                <Button
+                  disabled={!!busy || !profile}
+                  title={!profile ? "Refresh context before generating a content plan" : undefined}
+                  onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
+                >
                   Generate content plan
                 </Button>
               </div>

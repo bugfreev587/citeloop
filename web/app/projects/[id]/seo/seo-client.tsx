@@ -17,6 +17,7 @@ import {
   SEOPolicy,
   SafeModeEvent,
 } from "../../../lib/api";
+import { visibilityLifecycleLabel, visibilityLifecycleTone } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
@@ -85,23 +86,6 @@ function capabilityLabel(mode?: string) {
 
 function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
-}
-
-function lifecycleLabel(status: string) {
-  if (["accepted", "planned", "ready_for_review"].includes(status)) return "Added to Content Plan";
-  if (["drafting", "drafted", "in_review"].includes(status)) return "Draft waiting for review";
-  if (["published", "measuring"].includes(status)) return "Measuring impact";
-  if (["learned", "converted", "improved"].includes(status)) return "Loop closed";
-  if (status === "dismissed") return "Dismissed";
-  return "Opportunity detected";
-}
-
-function lifecycleTone(status: string): "green" | "amber" | "blue" | "neutral" | "red" {
-  if (["learned", "converted", "improved"].includes(status)) return "green";
-  if (["accepted", "planned", "ready_for_review", "drafting", "drafted", "published", "measuring"].includes(status)) return "blue";
-  if (status === "dismissed") return "neutral";
-  if (["failed", "blocked"].includes(status)) return "red";
-  return "amber";
 }
 
 export function SEOClient({ projectId }: { projectId: string }) {
@@ -187,15 +171,15 @@ export function SEOClient({ projectId }: { projectId: string }) {
     ...opportunities.slice(0, 4).map((opportunity) => ({
       id: `opportunity-${opportunity.id}`,
       title: opportunityTitle(opportunity),
-      stage: lifecycleLabel(opportunity.status),
-      tone: lifecycleTone(opportunity.status),
+      stage: visibilityLifecycleLabel(opportunity.status),
+      tone: visibilityLifecycleTone(opportunity.status),
       detail: opportunity.expected_impact || opportunity.page_url || opportunity.normalized_page_url || "Visibility signal",
     })),
     ...actions.slice(0, 3).map((action) => ({
       id: `action-${action.id}`,
       title: action.action_type,
-      stage: lifecycleLabel(action.status),
-      tone: lifecycleTone(action.status),
+      stage: visibilityLifecycleLabel(action.status),
+      tone: visibilityLifecycleTone(action.status),
       detail: action.target_url || action.normalized_target_url || "Content action",
     })),
   ].slice(0, 5);
