@@ -147,8 +147,8 @@ export function ProjectShell({
         </div>
       </div>
 
-      <main className="mx-auto min-h-[100dvh] max-w-5xl px-4 pb-12 pt-8 md:h-[100dvh] md:overflow-y-auto md:pl-[220px] md:pr-8">
-        <div className="mx-auto max-w-[960px]">{children}</div>
+      <main className="min-h-[100dvh] w-full px-4 pb-12 pt-6 md:h-[100dvh] md:overflow-y-auto md:pl-[234px] md:pr-6 lg:pr-8">
+        <div className="mx-auto w-full max-w-[1480px]">{children}</div>
       </main>
     </div>
   );

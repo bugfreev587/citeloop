@@ -154,8 +154,8 @@ function ReviewArticle({
   }, [article.content_md, article.id]);
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <article className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
@@ -167,31 +167,31 @@ function ReviewArticle({
           <h3 className="content-font text-lg font-semibold leading-6 text-slate-950">{articleTitle(article)}</h3>
           <div className="mt-1 break-all text-xs font-medium text-slate-500">{articlePath(article)}</div>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <a href={detailHref} className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+        <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
+          <a href={detailHref} className="inline-flex h-8 min-w-[92px] flex-1 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:flex-none">
             <FileText size={14} />
             Detail
           </a>
-          <Button size="sm" onClick={() => setEditing((value) => !value)}>
+          <Button className="min-w-[92px] flex-1 sm:flex-none" size="sm" onClick={() => setEditing((value) => !value)}>
             {editing ? "Hide edit" : "Edit"}
           </Button>
-          <Button disabled={busy || passed || attemptsLeft === 0} size="sm" onClick={onAIFix}>
+          <Button className="min-w-[92px] flex-1 sm:flex-none" disabled={busy || passed || attemptsLeft === 0} size="sm" onClick={onAIFix}>
             <Sparkles size={14} />
             AI fix
           </Button>
-          <Button disabled={busy || !passed} size="sm" variant="primary" onClick={onApprove}>
+          <Button className="min-w-[92px] flex-1 sm:flex-none" disabled={busy || !passed} size="sm" variant="primary" onClick={onApprove}>
             <CheckCircle2 size={14} />
             Approve
           </Button>
-          <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
+          <Button className="min-w-[92px] flex-1 sm:flex-none" disabled={busy} size="sm" variant="danger" onClick={onReject}>
             <XCircle size={14} />
             Reject
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.95fr)]">
-        <section className="rounded-lg border border-slate-200 bg-white">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(480px,0.95fr)]">
+        <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
           <PanelHeader icon={<FileText size={15} />} title={editing ? "Editable markdown" : "Original markdown"} meta={`QA attempts ${article.qa_attempt_count}/3`} />
           <div className="p-4">
             {editing ? (
@@ -206,15 +206,15 @@ function ReviewArticle({
                 </div>
               </div>
             ) : (
-              <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap rounded-md bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100">
+              <pre data-testid="article-markdown-scroll" className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-md bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-100 xl:max-h-[760px] 2xl:max-h-[860px]">
                 {article.content_md}
               </pre>
             )}
           </div>
         </section>
 
-        <div className="grid content-start gap-4">
-          <section className="rounded-lg border border-slate-200 bg-white">
+        <div className="grid min-w-0 content-start gap-4">
+          <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
             <PanelHeader icon={<Eye size={15} />} title="Web preview" meta={articlePath(article)} />
             <MarkdownPreview article={article} />
           </section>
@@ -229,9 +229,9 @@ function ReviewArticle({
 
 function PanelHeader({ icon, title, meta }: { icon: ReactNode; title: string; meta?: string }) {
   return (
-    <div className="flex min-h-11 items-center gap-2 border-b border-slate-200 px-4 text-sm font-semibold text-slate-700">
-      {icon}
-      <span>{title}</span>
+    <div className="flex min-h-11 min-w-0 items-center gap-2 border-b border-slate-200 px-4 text-sm font-semibold text-slate-700">
+      <span className="shrink-0">{icon}</span>
+      <span className="shrink-0">{title}</span>
       {meta && <span className="min-w-0 truncate text-xs font-medium text-slate-400">{meta}</span>}
     </div>
   );
@@ -343,10 +343,10 @@ function MarkdownPreview({ article }: { article: Article }) {
   const lines = article.content_md.split("\n");
 
   return (
-    <div className="max-h-[720px] overflow-auto bg-white p-6">
+    <div data-testid="article-preview-scroll" className="max-h-[72vh] overflow-auto bg-white p-5 xl:max-h-[760px] xl:p-6 2xl:max-h-[860px]">
       <div className="mb-5 border-b border-slate-100 pb-5">
         <div className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-[#d93820]">Unipost Blog</div>
-        <h1 className="content-font text-3xl font-bold leading-tight text-slate-950">{heading}</h1>
+        <h1 className="content-font text-2xl font-bold leading-tight text-slate-950 sm:text-3xl">{heading}</h1>
         {meta && <p className="mt-4 content-font text-base leading-7 text-slate-600">{meta}</p>}
       </div>
       <div className="grid gap-3 content-font text-[15px] leading-7 text-slate-800">
