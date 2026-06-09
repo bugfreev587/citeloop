@@ -17,6 +17,7 @@ import (
 
 const canonicalPlaceholder = "{{CANONICAL_URL}}" // backfilled at publish (§5.6)
 const maxDraftRepairAttempts = 2
+const profileGuardrailInstruction = "Profile fields named banned_claims are negative constraints, not approved facts. Do not repeat or imply banned_claims."
 
 // Writer generates the canonical article and, for syndication topics, one
 // rewritten variant per platform (PRD §5.3). QA runs inline after each draft.
@@ -230,6 +231,7 @@ func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.Raw
 %s
 Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
 If TARGET KEYWORD is empty, infer one concise primary search query from TOPIC and include it as seo_meta.target_keyword.
+%s
 
 TOPIC: %s
 TARGET KEYWORD: %s
@@ -237,7 +239,7 @@ TARGET PROMPT: %s
 ANGLE: %s / FORMAT: %s
 
 PRODUCT PROFILE:
-%s`, canonicalInstr, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, canonicalInstr, profileGuardrailInstruction, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
@@ -275,6 +277,7 @@ Rules:
 - If QA reports unmapped product claims, remove the claim or rewrite it so it only states facts supported by the profile/evidence.
 - If target_keyword is missing, infer a concise primary search query from TOPIC and put it in seo_meta.target_keyword.
 - Do not invent product capabilities, statistics, customer names, integrations, pricing, or guarantees.
+- %s
 - If the evidence is insufficient, make the article more conservative instead of asking the reviewer to edit.
 
 %s
@@ -294,7 +297,7 @@ QA AND SEO FEEDBACK:
 %s
 
 CURRENT ARTICLE:
-%s`, writerCanonicalInstruction(plat, canonical), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, profileGuardrailInstruction, writerCanonicalInstruction(plat, canonical), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000), string(metaJSON), string(feedbackJSON), clip(current.ContentMD, 7000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
@@ -317,6 +320,7 @@ func (w *Writer) draftMarkdownFallback(ctx context.Context, topic db.Topic, prof
 %s
 Only state product facts supported by the profile. Return only Markdown/MDX body text. Do not wrap the answer in a code fence. Do not return JSON or front matter.
 Write a complete, concise 900-1400 word article. Prefer prose, tables, and short bullets over long code examples. If you include a code block, close it before continuing.
+%s
 
 TOPIC: %s
 TARGET KEYWORD: %s
@@ -324,7 +328,7 @@ TARGET PROMPT: %s
 ANGLE: %s / FORMAT: %s
 
 PRODUCT PROFILE:
-%s`, canonicalInstr, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, canonicalInstr, profileGuardrailInstruction, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{

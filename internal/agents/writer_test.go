@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -57,6 +58,35 @@ func TestWriterDraftFallsBackToMarkdownWhenStructuredJSONIsInvalid(t *testing.T)
 	}
 	if provider.reqs[1].MaxTokens != 8192 {
 		t.Fatalf("fallback max tokens = %d, want 8192", provider.reqs[1].MaxTokens)
+	}
+}
+
+func TestWriterPromptTreatsBannedClaimsAsNegativeConstraints(t *testing.T) {
+	provider := &sequenceLLM{resps: []string{
+		`{"content_md":"# Draft\n\nSupported article.","seo_meta":{"title":"Draft","meta_description":"Desc","slug":"draft","h1":"Draft","target_keyword":"draft"}}`,
+	}}
+	writer := NewWriter(Deps{LLM: provider}, nil)
+	topic := db.Topic{
+		Title:         "Evidence-backed Content",
+		TargetKeyword: ptr("evidence-backed content"),
+	}
+	profile := []byte(`{"features":["evidence library"],"banned_claims":["Guaranteed #1 rankings"],"content_rules":["Cite sources"]}`)
+
+	if _, _, err := writer.draft(context.Background(), topic, profile, "", true); err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
+	}
+	prompt := provider.reqs[0].Prompt
+	if !strings.Contains(prompt, "banned_claims") {
+		t.Fatal("prompt must include banned_claims from the profile")
+	}
+	if !strings.Contains(prompt, "negative constraints") {
+		t.Fatal("prompt must explain banned claims as negative constraints")
+	}
+	if !strings.Contains(prompt, "Do not repeat or imply banned_claims") {
+		t.Fatal("prompt must forbid repeating banned claims")
 	}
 }
 

@@ -1,6 +1,6 @@
-import { RunsClient } from "./runs-client";
+import { redirect } from "next/navigation";
 
 export default async function RunsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <RunsClient projectId={id} />;
+  redirect(`/projects/${id}/settings/activity`);
 }
