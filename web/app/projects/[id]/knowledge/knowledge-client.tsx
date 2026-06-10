@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Pencil, RefreshCw, Save, ShieldCheck, Wand2, X } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ExternalLink, Loader2, Pencil, RefreshCw, Save, ShieldCheck, Wand2, X } from "lucide-react";
 import { CrawlSummary, GenerationRun, InventoryItem, ProductProfile } from "../../../lib/api";
 import { ProfileDraft, lines, profilePayloadFromAdvancedJSON, profilePayloadFromDraft } from "../../../lib/dashboard-ux-logic";
 import { useApi } from "../../../lib/use-api";
@@ -84,6 +84,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const [backgroundCrawl, setBackgroundCrawl] = useState(false);
+  const bgBaselineRef = useRef(0);
+  const bgAttemptsRef = useRef(0);
 
   const refresh = useCallback(async () => {
     setMessage(null);
@@ -105,6 +108,43 @@ export function ContextClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The full public crawl + evidence inventory runs in a detached background job after a
+  // landing-only "quick profile". Poll until new source pages land, then refresh and notify,
+  // so the user never has to guess whether the background work finished.
+  useEffect(() => {
+    if (!backgroundCrawl) return;
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      bgAttemptsRef.current += 1;
+      try {
+        const items = await api.listInventory(projectId);
+        if (cancelled) return;
+        if (items.length > bgBaselineRef.current) {
+          setInventory(items);
+          await refresh();
+          if (cancelled) return;
+          setBackgroundCrawl(false);
+          setMessage({
+            tone: "green",
+            title: "Context updated",
+            detail: `Background crawl finished — ${items.length} source page${items.length === 1 ? "" : "s"} and their evidence are ready.`,
+          });
+          return;
+        }
+      } catch {
+        // transient failure; keep polling until the attempt cap
+      }
+      if (bgAttemptsRef.current >= 18) {
+        // ~2.5 min cap: stop quietly so a slow/blocked crawl never polls forever.
+        if (!cancelled) setBackgroundCrawl(false);
+      }
+    }, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [backgroundCrawl, api, projectId, refresh]);
 
   const evidenceRows = useMemo(
     () =>
@@ -144,12 +184,15 @@ export function ContextClient({ projectId }: { projectId: string }) {
     setMessage(null);
     try {
       const result = await api.runInsight(projectId, landing.trim());
+      bgBaselineRef.current = inventory.length;
+      bgAttemptsRef.current = 0;
+      setBackgroundCrawl(Boolean(result.background_crawl));
       await refresh();
       if (result.crawl_summary && !result.background_crawl) setCrawlSummary(result.crawl_summary);
       setMessage({
         title: "Context refreshed",
         detail: result.background_crawl
-          ? "Product profile ready. Full public crawl and evidence inventory are running in the background."
+          ? "Product profile ready. The full public crawl and evidence inventory are running in the background — this page updates automatically when they finish."
           : `Captured ${result.inventory_count} source items. ${result.crawl_summary?.truncated ? "Some pages were skipped by crawl bounds." : "Source scan completed within configured bounds."}`,
         tone: "green",
       });
@@ -297,6 +340,13 @@ export function ContextClient({ projectId }: { projectId: string }) {
       </section>
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+
+      {backgroundCrawl && (
+        <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
+          <Loader2 className="animate-spin" size={16} />
+          Reading the rest of your site — source pages and evidence will appear here automatically.
+        </div>
+      )}
 
       {profile && !contextConfirmed && (
         <section>

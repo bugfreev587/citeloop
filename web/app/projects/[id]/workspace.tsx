@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
 import {
   Article,
@@ -119,6 +119,38 @@ export function Workspace({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // After project creation, onboarding (crawl + product profile) runs in the background.
+  // While the project still has no profile, poll so Home flips from "Needs context" to a
+  // ready state on its own instead of stranding a fresh user on an empty dashboard.
+  const onboardingAttemptsRef = useRef(0);
+  useEffect(() => {
+    if (profile) return;
+    onboardingAttemptsRef.current = 0;
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      onboardingAttemptsRef.current += 1;
+      try {
+        const next = await api.getProfile(projectId);
+        if (cancelled) return;
+        if (next) {
+          await refresh();
+          if (cancelled) return;
+          setMessage({ tone: "green", title: "Your domain context is ready", detail: "CiteLoop finished reading your site. Review the context, then generate a content plan." });
+          return;
+        }
+      } catch {
+        // ignore transient errors and keep polling until the cap
+      }
+      if (onboardingAttemptsRef.current >= 18 && !cancelled) {
+        window.clearInterval(interval);
+      }
+    }, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [profile, api, projectId, refresh]);
 
   const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
     setBusy(label);

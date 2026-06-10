@@ -37,6 +37,26 @@ test("settings nav entry is hidden when the user cannot access settings, avoidin
   assert.match(layout, /canAccessSettings=\{canAccessSettings\}/);
 });
 
+test("context and home surface a background-crawl completion signal instead of stranding the user", () => {
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+  assert.match(context, /backgroundCrawl/);
+  assert.match(context, /api\.listInventory\(projectId\)/);
+  assert.match(context, /updates automatically when they finish/);
+  assert.match(context, /will appear here automatically/);
+
+  const workspace = read("projects/[id]/workspace.tsx");
+  // Home polls for the onboarding profile so a freshly created project flips to a ready state on its own.
+  assert.match(workspace, /if \(profile\) return;/);
+  assert.match(workspace, /Your domain context is ready/);
+});
+
+test("review surfaces honest repair state and a deep link to fix evidence in context", () => {
+  const review = read("projects/[id]/review/review-client.tsx");
+  assert.match(review, /Fix evidence in Context/);
+  assert.match(review, /Automatic repair is exhausted/);
+  assert.match(review, /repairExhausted/);
+});
+
 test("destructive content-plan and distribution actions confirm before running", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   // Archive and schedule-clear are reversible-but-surprising; both must confirm.
