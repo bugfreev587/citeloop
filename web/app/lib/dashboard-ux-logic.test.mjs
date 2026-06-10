@@ -78,8 +78,12 @@ test("buildActionableMomentum turns non-zero metrics into actions", async () => 
       "/projects/project_1",
     ],
   );
+  assert.deepEqual(
+    momentum.items.map((item) => item.actionLabel),
+    ["Publish", "View impact", "Review loop", "Timeline"],
+  );
   assert.ok(momentum.items.every((item) => item.value > 0));
-  assert.ok(momentum.items.every((item) => item.actionLabel));
+  assert.ok(momentum.items.every((item) => item.actionLabel.length <= 11));
   assert.equal(momentum.emptyAction, null);
 });
 

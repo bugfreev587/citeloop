@@ -168,7 +168,7 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       value: input.readyToDistributeCount,
       detail: "approved variants can move now",
       href: `/projects/${input.projectId}/publish`,
-      actionLabel: "Open Publish",
+      actionLabel: "Publish",
       tone: "amber",
     },
     {
@@ -195,7 +195,7 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       value: input.activeLoopItemCount,
       detail: "items moving from insight to impact",
       href: `/projects/${input.projectId}`,
-      actionLabel: "Open timeline",
+      actionLabel: "Timeline",
       tone: "neutral",
     },
     {
