@@ -20,7 +20,7 @@ import {
 import { visibilityLifecycleLabel, visibilityLifecycleTone } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -183,6 +183,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
       detail: action.target_url || action.normalized_target_url || "Content action",
     })),
   ].slice(0, 5);
+  const loopTotal = opportunities.length + actions.length;
 
   async function saveSettings() {
     setBusy("settings");
@@ -510,7 +511,14 @@ export function SEOClient({ projectId }: { projectId: string }) {
 
       <section>
         <SectionHeader title="Search visibility" eyebrow={gscStatus === "connected" ? "Verified search data" : "Public crawl only"} />
-        <div className="grid gap-3 md:grid-cols-4">
+        {gscStatus !== "connected" && (
+          <Notice
+            title="Search Console is not connected"
+            detail="The numbers below are placeholders. Connect first-party search data to show verified clicks, impressions, CTR, and position."
+            tone="amber"
+          />
+        )}
+        <div className={cx("grid gap-3 md:grid-cols-4", gscStatus !== "connected" && "opacity-60")}>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <BarChart3 className="mb-3 text-slate-400" size={18} />
             <div className="text-sm font-bold text-slate-900">{metric(overview?.last_28_days?.clicks_28d)}</div>
@@ -535,13 +543,6 @@ export function SEOClient({ projectId }: { projectId: string }) {
             <p className="mt-1 text-sm leading-5 text-slate-500">Technical URLs</p>
           </div>
         </div>
-        {gscStatus !== "connected" && (
-          <Notice
-            title="Search Console is not connected"
-            detail="CiteLoop is using public crawl and content progress only. Connect first-party search data to show verified clicks, impressions, CTR, and position."
-            tone="amber"
-          />
-        )}
       </section>
 
       <section>
@@ -581,6 +582,11 @@ export function SEOClient({ projectId }: { projectId: string }) {
                 <Badge tone={row.tone}>{row.stage}</Badge>
               </div>
             ))}
+            {loopTotal > loopRows.length && (
+              <div className="px-1 text-xs font-semibold text-slate-400">
+                Showing {loopRows.length} of {loopTotal}. See Opportunities and Content actions below for the full list.
+              </div>
+            )}
           </div>
         )}
       </section>
