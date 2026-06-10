@@ -450,7 +450,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
               <TextArea rows={3} value={profileDraft.tone} onChange={(event) => setProfileDraft({ ...profileDraft, tone: event.target.value })} />
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Banned claims" helper="Claims CiteLoop should avoid generating. One claim per line.">
+              <Field label="Banned claims" helper="Brand/legal guardrails. Drafts that state one of these are blocked in Review. One claim per line.">
                 <TextArea rows={6} value={profileDraft.banned_claims} onChange={(event) => setProfileDraft({ ...profileDraft, banned_claims: event.target.value })} />
               </Field>
               <Field label="Content rules" helper="Style instructions and reviewer rules. One rule per line.">
