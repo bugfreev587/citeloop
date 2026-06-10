@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -85,6 +86,7 @@ ARTICLE:
 		}
 	}
 	enforceQAGate(&out)
+	enforceBannedClaims(&out, profileJSON, contentMD)
 	return &out, resp, nil
 }
 
@@ -95,6 +97,39 @@ func enforceQAGate(out *QAOutput) {
 	if out.GeoScore < 0.75 || out.SeoScore < 0.75 {
 		out.QABlocking = true
 		out.Issues = append(out.Issues, "qa score below publish threshold")
+	}
+}
+
+// enforceBannedClaims is a deterministic guardrail: if the draft literally
+// contains a claim the project marked as banned (brand/legal guardrail in the
+// profile), block regardless of the model's judgment. It is auto-fixable — the
+// editor loop is instructed to strip banned_claims — so the writer can resolve
+// it without a human in most cases (§5.3 evidence safety).
+func enforceBannedClaims(out *QAOutput, profileJSON json.RawMessage, contentMD string) {
+	if out == nil {
+		return
+	}
+	var p struct {
+		BannedClaims []string `json:"banned_claims"`
+	}
+	if err := json.Unmarshal(profileJSON, &p); err != nil {
+		return
+	}
+	body := strings.ToLower(contentMD)
+	for _, claim := range p.BannedClaims {
+		claim = strings.TrimSpace(claim)
+		if claim == "" {
+			continue
+		}
+		if strings.Contains(body, strings.ToLower(claim)) {
+			out.QABlocking = true
+			out.CanAutoFix = true
+			issue := "banned claim present: " + claim
+			out.Issues = append(out.Issues, issue)
+			if strings.TrimSpace(out.BlockingReason) == "" {
+				out.BlockingReason = issue
+			}
+		}
 	}
 }
 

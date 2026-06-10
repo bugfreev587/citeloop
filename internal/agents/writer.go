@@ -17,7 +17,7 @@ import (
 
 const canonicalPlaceholder = "{{CANONICAL_URL}}" // backfilled at publish (§5.6)
 const maxDraftRepairAttempts = 2
-const profileGuardrailInstruction = "Profile fields named banned_claims are negative constraints, not approved facts. Do not repeat or imply banned_claims."
+const profileGuardrailInstruction = "Profile fields named banned_claims are negative constraints, not approved facts. Do not repeat or imply banned_claims. Treat profile fields named content_rules as required style and compliance rules to follow."
 
 // Writer generates the canonical article and, for syndication topics, one
 // rewritten variant per platform (PRD §5.3). QA runs inline after each draft.
