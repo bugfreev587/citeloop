@@ -33,8 +33,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       setApproved(app);
       setFailed(fail);
       setReady(dist);
+      return { pub, app, fail, dist };
     } catch (e: any) {
       setMessage({ title: "Publishing data unavailable", detail: e.message, tone: "amber" });
+      return null;
     }
   }, [api, projectId]);
 
@@ -84,8 +86,19 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     setMessage(null);
     try {
       await api.reconcilePublishing(projectId);
-      await refresh();
-      setMessage({ title: "Publishing reconciled", tone: "green" });
+      const data = await refresh();
+      if (data) {
+        const waitingCount = data.app.filter(
+          (article) => article.kind === "syndication_variant" && !data.dist.some((item) => item.article.id === article.id),
+        ).length;
+        setMessage({
+          tone: data.fail.length ? "amber" : "green",
+          title: "Publishing checked",
+          detail: `${data.pub.length} published · ${data.dist.length} ready to distribute · ${waitingCount} waiting on canonical · ${data.fail.length} failed.`,
+        });
+      } else {
+        setMessage({ title: "Publishing checked", tone: "green" });
+      }
     } catch (e: any) {
       setMessage({ title: "Reconcile failed", detail: e.message, tone: "red" });
     } finally {
@@ -237,7 +250,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
               <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
                 <div className="font-bold text-slate-900">{articleTitle(article)}</div>
                 <div className="mt-1 text-slate-500">
-                  {article.platform ?? "platform"} is approved but waiting for canonical publish and URL backfill.
+                  {article.platform ?? "platform"} is approved. It unlocks automatically once its canonical article is published and its live URL is confirmed.
                 </div>
               </div>
             ))}
