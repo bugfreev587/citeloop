@@ -122,10 +122,10 @@ export function ProjectShell({
         <Link
           href={primaryAction.href}
           title={primaryAction.detail}
-          className="mb-4 flex h-10 w-[185px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-2 text-base font-medium text-white transition-all duration-150 active:scale-[0.97]"
+          className="mb-4 flex h-10 w-[185px] items-center justify-start gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
         >
-          <PrimaryIcon size={17} strokeWidth={2} />
-          {primaryAction.title}
+          <PrimaryIcon className="shrink-0" size={17} strokeWidth={2} />
+          <span className="min-w-0 truncate whitespace-nowrap">{primaryAction.title}</span>
         </Link>
 
         <nav className="grid gap-1">

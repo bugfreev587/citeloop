@@ -168,6 +168,35 @@ test("sidebarPrimaryAction uses the current highest-priority action and falls ba
   assert.equal(healthy.href, "/projects/project_1");
 });
 
+test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", async () => {
+  const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+
+  const blocked = sidebarPrimaryAction({
+    projectId: "project_1",
+    hasProfile: true,
+    failedPublishCount: 0,
+    hasBlockedDrafts: true,
+    reviewCount: 4,
+    readyCount: 0,
+    topicsCount: 5,
+  });
+  const noPlan = sidebarPrimaryAction({
+    projectId: "project_1",
+    hasProfile: true,
+    failedPublishCount: 0,
+    hasBlockedDrafts: false,
+    reviewCount: 0,
+    readyCount: 0,
+    topicsCount: 0,
+  });
+
+  assert.equal(blocked.title, "Review blocked");
+  assert.equal(blocked.href, "/projects/project_1/review");
+  assert.equal(noPlan.title, "Create plan");
+  assert.equal(noPlan.href, "/projects/project_1/plan");
+  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
+});
+
 test("profilePayloadFromDraft saves structured fields even when advanced JSON is invalid", async () => {
   const { profilePayloadFromDraft } = await loadDashboardUXLogicModule();
 

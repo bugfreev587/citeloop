@@ -25,6 +25,14 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
   }
 });
 
+test("project shell keeps the fixed-width sidebar primary action to one line", () => {
+  const shell = read("components/project-shell.tsx");
+
+  assert.match(shell, /overflow-hidden/);
+  assert.match(shell, /truncate whitespace-nowrap/);
+  assert.match(shell, /className="shrink-0"/);
+});
+
 test("settings nav entry is hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
   const shell = read("components/project-shell.tsx");
   // Shell must accept and apply a canAccessSettings gate so non-admin users do not see a Settings entry that 404s.

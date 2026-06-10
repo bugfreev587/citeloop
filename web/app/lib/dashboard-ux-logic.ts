@@ -297,23 +297,17 @@ export function visibleHomeSectionIds(sections: HomeSectionCandidate[], options:
 
 export function sidebarPrimaryAction(input: NextWorkspaceActionInput): WorkspaceAction {
   const action = nextWorkspaceAction(input);
-  const hasUrgentWork =
-    !input.hasProfile ||
-    input.failedPublishCount > 0 ||
-    input.hasBlockedDrafts ||
-    input.reviewCount > 0 ||
-    input.readyCount > 0 ||
-    input.topicsCount === 0;
-
-  if (!hasUrgentWork) {
-    return {
-      title: "Open Home",
-      detail: "Start from the control center before jumping into deeper work.",
-      href: `/projects/${input.projectId}`,
-    };
-  }
-
-  return action;
+  if (!input.hasProfile) return action;
+  if (input.failedPublishCount > 0) return action;
+  if (input.hasBlockedDrafts) return { ...action, title: "Review blocked" };
+  if (input.reviewCount > 0) return { ...action, title: "Review drafts" };
+  if (input.readyCount > 0) return { ...action, title: "Distribute" };
+  if (input.topicsCount === 0) return { ...action, title: "Create plan" };
+  return {
+    title: "Open Home",
+    detail: "Start from the control center before jumping into deeper work.",
+    href: `/projects/${input.projectId}`,
+  };
 }
 
 export function profilePayloadFromDraft(draft: ProfileDraft, baseProfile: Record<string, any> = {}) {
