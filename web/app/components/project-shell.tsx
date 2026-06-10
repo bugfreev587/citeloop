@@ -57,7 +57,6 @@ export function ProjectShell({
   const pathname = usePathname();
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
-  const reviewRoute = pathname.startsWith(`/projects/${projectId}/review`);
   const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
   // Settings is admin-gated server-side; hide the entry for users who would only hit a 404.
   const visibleNav = navItems.filter((item) => item.href !== "settings" || canAccessSettings);
@@ -218,12 +217,9 @@ export function ProjectShell({
       </div>
 
       <main
-        className={cx(
-          "mx-auto min-h-[100dvh] px-4 pb-12 pt-8 md:pl-[220px] md:pr-8",
-          reviewRoute ? "max-w-[1560px]" : "max-w-5xl",
-        )}
+        className="mx-auto min-h-[100dvh] max-w-[1560px] px-4 pb-12 pt-8 md:pl-[220px] md:pr-8"
       >
-        <div className={cx("mx-auto", reviewRoute ? "max-w-[1320px]" : "max-w-[960px]")}>{children}</div>
+        <div className="mx-auto max-w-[1320px]">{children}</div>
       </main>
     </div>
   );

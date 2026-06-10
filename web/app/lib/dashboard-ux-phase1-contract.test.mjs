@@ -33,6 +33,16 @@ test("project shell keeps the fixed-width sidebar primary action to one line", (
   assert.match(shell, /className="shrink-0"/);
 });
 
+test("project shell uses the review-width canvas for every project page", () => {
+  const shell = read("components/project-shell.tsx");
+
+  assert.match(shell, /max-w-\[1560px\]/);
+  assert.match(shell, /max-w-\[1320px\]/);
+  assert.doesNotMatch(shell, /reviewRoute \?/);
+  assert.doesNotMatch(shell, /max-w-5xl/);
+  assert.doesNotMatch(shell, /max-w-\[960px\]/);
+});
+
 test("settings nav entry is hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
   const shell = read("components/project-shell.tsx");
   // Shell must accept and apply a canAccessSettings gate so non-admin users do not see a Settings entry that 404s.
