@@ -42,17 +42,17 @@ test("root page exposes docs before a zero-project user creates a project", () =
   assert.match(home, /Read the docs/);
 });
 
-test("project shell exposes Docs below Help and keeps it reachable on mobile", () => {
+test("project shell exposes Docs in the footer and keeps it reachable on mobile", () => {
   const shell = read("components/project-shell.tsx");
   const footer = shell.slice(shell.indexOf('className="mt-auto grid gap-2"'));
-  const helpIndex = footer.indexOf("Help");
   const docsIndex = footer.indexOf("Docs");
   const accountIndex = footer.indexOf("<UserButton");
 
-  assert.notEqual(helpIndex, -1, "Help link should exist");
   assert.notEqual(docsIndex, -1, "Docs link should exist");
-  assert.ok(helpIndex < docsIndex, "Docs should render below Help");
   assert.ok(docsIndex < accountIndex, "Docs should render above the project/account card");
+
+  // The old Help entry linked to "/" (home), which was redundant with Docs and misleading; it was removed.
+  assert.doesNotMatch(footer, />\s*Help\s*</, "redundant Help link should be removed");
 
   assert.match(shell, /BookOpen/);
   assert.match(shell, /href="\/docs"/);

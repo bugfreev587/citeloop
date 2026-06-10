@@ -514,7 +514,17 @@ export function Workspace({ projectId }: { projectId: string }) {
                   {articleTitle(article)}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigator.clipboard?.writeText(article.content_md)}>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard?.writeText(article.content_md);
+                        setMessage({ tone: "green", title: "Copied to clipboard" });
+                      } catch {
+                        setMessage({ tone: "red", title: "Copy failed", detail: "Clipboard is unavailable in this browser." });
+                      }
+                    }}
+                  >
                     <Copy size={14} />
                     Copy
                   </Button>
@@ -529,7 +539,14 @@ export function Workspace({ projectId }: { projectId: string }) {
                       Compose
                     </a>
                   )}
-                  <Button size="sm" onClick={() => run("Distributed", () => api.distributed(projectId, article.id))}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const ok = window.confirm("Mark this variant as distributed? This records it as posted and removes it from the ready list.");
+                      if (!ok) return;
+                      run("Distributed", () => api.distributed(projectId, article.id), "Marked as distributed");
+                    }}
+                  >
                     Mark distributed
                   </Button>
                 </div>

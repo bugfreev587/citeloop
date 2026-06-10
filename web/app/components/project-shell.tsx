@@ -6,13 +6,13 @@ import { usePathname } from "next/navigation";
 import {
   BookOpen,
   CheckCircle2,
-  CircleHelp,
   Database,
   Home,
   ListChecks,
   PenLine,
   Search,
   Send,
+  Settings2,
 } from "lucide-react";
 import { Project } from "../lib/api";
 import { cx } from "./ui";
@@ -24,7 +24,7 @@ const navItems = [
   { label: "Review", href: "review", icon: PenLine },
   { label: "Publish", href: "publish", icon: Send },
   { label: "Visibility", href: "visibility", icon: Search },
-  { label: "Settings", href: "settings", icon: CircleHelp },
+  { label: "Settings", href: "settings", icon: Settings2 },
 ];
 
 function projectHref(projectId: string, leaf: string) {
@@ -43,16 +43,20 @@ function isDocsActive(pathname: string, projectId: string) {
 export function ProjectShell({
   project,
   projectId,
+  canAccessSettings = true,
   children,
 }: {
   project: Project | null;
   projectId: string;
+  canAccessSettings?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const reviewRoute = pathname.startsWith(`/projects/${projectId}/review`);
+  // Settings is admin-gated server-side; hide the entry for users who would only hit a 404.
+  const visibleNav = navItems.filter((item) => item.href !== "settings" || canAccessSettings);
 
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
@@ -71,7 +75,7 @@ export function ProjectShell({
         </Link>
 
         <nav className="grid gap-1">
-          {navItems.map((item) => {
+          {visibleNav.map((item) => {
             const active = isActive(pathname, projectId, item.href);
             const Icon = item.icon;
             return (
@@ -100,13 +104,6 @@ export function ProjectShell({
               <div className="h-1.5 w-1/3 rounded-full bg-[#d93820]" />
             </div>
           </div>
-          <Link
-            href="/"
-            className="flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900"
-          >
-            <CircleHelp size={16} />
-            Help
-          </Link>
           <Link
             href="/docs"
             className={cx(
@@ -142,7 +139,7 @@ export function ProjectShell({
           </Link>
         </div>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-          {navItems.map((item) => (
+          {visibleNav.map((item) => (
             <Link
               key={item.label}
               href={projectHref(projectId, item.href)}
