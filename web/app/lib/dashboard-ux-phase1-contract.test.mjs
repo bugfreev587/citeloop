@@ -141,10 +141,21 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
   }
 });
 
-test("home exposes a user-facing next action and does not show run internals by default", () => {
+test("home leads with growth outcomes and does not show run internals by default", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
-  for (const copy of ["Next action", "Why this", "Also waiting", "Refresh context", "Generate content plan"]) {
+  for (const copy of [
+    "Growth Overview",
+    "Growth impact",
+    "AI citations",
+    "Organic traffic",
+    "Published pages",
+    "Next growth move",
+    "Growth loop",
+    "Measurement coverage",
+    "Refresh context",
+    "Generate content plan",
+  ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
@@ -153,16 +164,22 @@ test("home exposes a user-facing next action and does not show run internals by 
   }
 });
 
-test("home phase 1 behaves like a compact control center instead of a module index", () => {
+test("home explains growth limits and loop status from existing product data", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Actionable momentum",
-    "Event stream",
+    "Growth measurement is limited",
+    "Search Console is not connected yet",
+    "Review drafts to unlock growth",
+    "Find opportunities",
+    "Plan content",
+    "Create drafts",
+    "Review",
+    "Publish",
+    "Measure results",
+    "Recent growth signals",
+    "CiteLoop knowledge",
     "More waiting",
-    "Context health",
-    "Activity warning summary",
-    "Next publish slot",
     "Cannot approve:",
   ]) {
     assert.match(workspace, new RegExp(copy));
@@ -179,17 +196,18 @@ test("home phase 1 behaves like a compact control center instead of a module ind
 
   assert.doesNotMatch(workspace, /Results \/ Momentum/);
   assert.doesNotMatch(workspace, /Loop progress/);
+  assert.doesNotMatch(workspace, /Actionable momentum/);
+  assert.doesNotMatch(workspace, /Active loop items/);
   assert.doesNotMatch(workspace, /No failed or degraded activity needs attention right now/);
   assert.doesNotMatch(workspace, /label: "Needs evidence"/);
   assert.doesNotMatch(workspace, /Automation healthy/);
 });
 
-test("home momentum tile action labels stay on one line in compact metric cards", () => {
+test("home growth loop stays readable instead of squeezing six stages into one row", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
-  assert.match(workspace, /flex min-w-0 items-start justify-between gap-3/);
-  assert.match(workspace, /min-w-0 text-\[13px\] font-bold leading-5 text-slate-500/);
-  assert.match(workspace, /<Badge tone=\{item\.tone\} className="shrink-0 whitespace-nowrap">/);
+  assert.match(workspace, /md:grid-cols-2 lg:grid-cols-3/);
+  assert.doesNotMatch(workspace, /xl:grid-cols-6/);
 });
 
 test("settings exposes activity log as the secondary home for automation audit details", () => {
