@@ -40,6 +40,10 @@ test("root page exposes docs before a zero-project user creates a project", () =
 
   assert.match(home, /href="\/docs"/);
   assert.match(home, /Read the docs/);
+  assert.match(home, /CiteLoop control center/);
+  assert.match(home, /status, action, and timeline/);
+  assert.doesNotMatch(home, /CiteLoop service console/);
+  assert.doesNotMatch(home, /onboarding workflow/);
 });
 
 test("project shell exposes Docs in the footer and keeps it reachable on mobile", () => {

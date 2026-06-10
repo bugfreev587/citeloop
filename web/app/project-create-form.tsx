@@ -17,9 +17,9 @@ type OnboardingStep = {
 };
 
 const initialSteps: OnboardingStep[] = [
-  { key: "project", label: "Create project", state: "pending" },
-  { key: "insight", label: "Start product profile job", state: "pending" },
-  { key: "seo", label: "Start SEO baseline job", state: "pending" },
+  { key: "project", label: "Create control center", state: "pending" },
+  { key: "insight", label: "Read domain context", state: "pending" },
+  { key: "seo", label: "Prepare visibility baseline", state: "pending" },
 ];
 
 function normalizeSiteURL(value: string) {
@@ -58,11 +58,11 @@ export function ProjectCreateForm() {
     try {
       normalizedURL = normalizeSiteURL(siteURL);
     } catch {
-      setError("Enter a valid service URL.");
+      setError("Enter a valid product URL.");
       return;
     }
     if (!normalizedURL) {
-      setError("Service URL is required.");
+      setError("Product URL is required.");
       return;
     }
 
@@ -91,10 +91,10 @@ export function ProjectCreateForm() {
     <form onSubmit={onSubmit} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <div>
         <div className="flex items-center justify-between gap-3">
-          <div className="text-sm font-bold text-slate-900">Connect service</div>
+          <div className="text-sm font-bold text-slate-900">Connect product</div>
           {busy && <Badge tone="amber">Working</Badge>}
         </div>
-        <div className="mt-1 text-sm text-slate-500">Start with the URL customers already see.</div>
+        <div className="mt-1 text-sm text-slate-500">Start with the public URL customers already see.</div>
       </div>
       {error && <Notice title="Onboarding stopped" detail={error} tone="red" />}
       {error && createdProject && (
@@ -106,11 +106,11 @@ export function ProjectCreateForm() {
           <ArrowRight size={16} />
         </Link>
       )}
-      <Field label="Service URL">
+      <Field label="Product URL">
         <TextInput
           value={siteURL}
           onChange={(event) => setSiteURL(event.target.value)}
-          placeholder="https://unipost.dev"
+          placeholder="https://your-domain.com"
           disabled={busy}
         />
       </Field>
@@ -126,7 +126,7 @@ export function ProjectCreateForm() {
       )}
       <Button disabled={busy} variant="primary" type="submit">
         <Plus size={16} />
-        {busy ? "Connecting" : "Connect"}
+        {busy ? "Creating" : "Create control center"}
       </Button>
     </form>
   );

@@ -33,13 +33,13 @@ export default async function Home() {
               {clerkServerAuthConfigured && <UserButton />}
             </div>
             <div className="mb-3 inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
-              SEO + GEO content engine
+              Status, actions, timeline
             </div>
             <h1 className="max-w-2xl text-3xl font-bold leading-tight text-slate-950 md:text-5xl">
-              CiteLoop service console
+              CiteLoop control center
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
-              Connect a product URL, build the profile, and review SEO + AEO progress from one dashboard.
+              Open a project to see status, action, and timeline in one place before moving into deeper work.
             </p>
             <Link
               href="/docs"
@@ -85,7 +85,7 @@ export default async function Home() {
             {!error && projects.length === 0 && (
               <EmptyState
                 title="No projects yet"
-                detail="Connect your service URL to start the onboarding workflow."
+                detail="Connect your product URL to create the first control center."
               />
             )}
           </div>
@@ -96,15 +96,15 @@ export default async function Home() {
           <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Database size={16} />
-              Context
+              Context status
             </div>
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <PenLine size={16} />
-              Human review gate
+              Next action
             </div>
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Send size={16} />
-              Publish and distribute
+              Publish timeline
             </div>
           </div>
         </aside>

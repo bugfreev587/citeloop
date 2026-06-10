@@ -94,7 +94,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       const isGate = String(e.message).includes("409");
       setMessage({
         title: isGate ? "Article is still blocked" : `${label} failed`,
-        detail: isGate ? "The backend rejected approval because qa_blocking is still true." : e.message,
+        detail: isGate ? "The article still has blocking QA issues. Open the draft details for the exact reason." : e.message,
         tone: isGate ? "amber" : "red",
       });
     } finally {
@@ -194,7 +194,7 @@ function ReviewArticle({
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
-            {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+            {article.qa_blocking && <Badge tone="red">Cannot approve</Badge>}
             {article.requires_human_decision && <Badge tone="amber">human decision</Badge>}
             <span className="text-xs font-semibold text-slate-400">
               geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
@@ -244,7 +244,7 @@ function ReviewArticle({
       {blockingSummary && (
         <div className="mt-3 flex items-center gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
           <ShieldAlert size={13} />
-          Approve is locked: {blockingSummary}. See the details below to resolve it.
+          Cannot approve: {blockingSummary}. See the details below to resolve it.
         </div>
       )}
 

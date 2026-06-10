@@ -76,9 +76,14 @@ test("settings maps raw errors to user copy, confirms a budget pause, and drops 
 
 test("review surfaces honest repair state and a deep link to fix evidence in context", () => {
   const review = read("projects/[id]/review/review-client.tsx");
+  const articleDetail = read("projects/[id]/articles/[articleId]/article-detail-client.tsx");
   assert.match(review, /Fix evidence in Context/);
   assert.match(review, /Automatic repair is exhausted/);
   assert.match(review, /repairExhausted/);
+  assert.match(review, /Cannot approve:/);
+  assert.doesNotMatch(review, /qa blocking/);
+  assert.match(articleDetail, /Cannot approve:/);
+  assert.doesNotMatch(articleDetail, /qa blocking/);
 });
 
 test("destructive content-plan and distribution actions confirm before running", () => {
@@ -130,17 +135,17 @@ test("home exposes a user-facing next action and does not show run internals by 
   }
 });
 
-test("home phase 2 exposes momentum, loop progress, and context health from existing product data", () => {
+test("home phase 1 behaves like a compact control center instead of a module index", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Results / Momentum",
-    "Loop progress",
+    "Actionable momentum",
+    "Event stream",
+    "More waiting",
     "Context health",
     "Activity warning summary",
-    "Published this month",
-    "Opportunities converted",
-    "Evidence coverage",
+    "Next publish slot",
+    "Cannot approve:",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
@@ -154,8 +159,11 @@ test("home phase 2 exposes momentum, loop progress, and context health from exis
     assert.match(workspace, new RegExp(apiCall.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  assert.doesNotMatch(workspace, /Automation healthy/);
+  assert.doesNotMatch(workspace, /Results \/ Momentum/);
+  assert.doesNotMatch(workspace, /Loop progress/);
   assert.doesNotMatch(workspace, /No failed or degraded activity needs attention right now/);
+  assert.doesNotMatch(workspace, /label: "Needs evidence"/);
+  assert.doesNotMatch(workspace, /Automation healthy/);
 });
 
 test("settings exposes activity log as the secondary home for automation audit details", () => {
@@ -231,7 +239,8 @@ test("content plan shows visible feedback while strategist is running", () => {
 
   assert.match(topics, /busy === "strategist"/);
   assert.match(topics, /animate-spin/);
-  assert.match(topics, /Running strategist/);
+  assert.match(topics, /Generating content plan/);
+  assert.doesNotMatch(topics, /Running strategist/);
 });
 
 test("content plan treats topic generation as a per-topic background operation", () => {

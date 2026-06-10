@@ -3,9 +3,9 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
-  CheckCircle2,
   Database,
   Home,
   ListChecks,
@@ -15,6 +15,8 @@ import {
   Settings2,
 } from "lucide-react";
 import { Project } from "../lib/api";
+import { sidebarPrimaryAction, type NextWorkspaceActionInput, type WorkspaceAction } from "../lib/dashboard-ux-logic";
+import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
 
 const navItems = [
@@ -51,12 +53,63 @@ export function ProjectShell({
   canAccessSettings?: boolean;
   children: React.ReactNode;
 }) {
+  const api = useApi();
   const pathname = usePathname();
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const reviewRoute = pathname.startsWith(`/projects/${projectId}/review`);
+  const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
   // Settings is admin-gated server-side; hide the entry for users who would only hit a 404.
   const visibleNav = navItems.filter((item) => item.href !== "settings" || canAccessSettings);
+  const primaryAction: WorkspaceAction = useMemo(() => {
+    if (!actionSummary) {
+      return {
+        title: "Open Home",
+        detail: "Start from the control center before jumping into deeper work.",
+        href: `/projects/${projectId}`,
+      };
+    }
+    return sidebarPrimaryAction(actionSummary);
+  }, [actionSummary, projectId]);
+  const PrimaryIcon = primaryAction.href.endsWith("/publish")
+    ? Send
+    : primaryAction.href.endsWith("/review")
+      ? PenLine
+      : primaryAction.href.endsWith("/plan")
+        ? ListChecks
+        : primaryAction.href.endsWith("/context")
+          ? Database
+          : Home;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPrimaryAction() {
+      const [profile, failedPublish, review, ready, topics] = await Promise.all([
+        api.getProfile(projectId).catch(() => null),
+        api.listArticles(projectId, "publish_failed").catch(() => []),
+        api.listReview(projectId).catch(() => []),
+        api.listDistribute(projectId).catch(() => []),
+        api.listTopics(projectId).catch(() => []),
+      ]);
+      if (cancelled) return;
+      const reviewArticles = review.flatMap((group) => group.articles);
+      setActionSummary({
+        projectId,
+        hasProfile: Boolean(profile),
+        failedPublishCount: failedPublish.length,
+        hasBlockedDrafts: reviewArticles.some((article) => article.qa_blocking),
+        reviewCount: reviewArticles.length,
+        readyCount: ready.length,
+        topicsCount: topics.length,
+      });
+    }
+
+    loadPrimaryAction();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, projectId]);
 
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
@@ -67,11 +120,12 @@ export function ProjectShell({
         </Link>
 
         <Link
-          href={`/projects/${projectId}/review`}
+          href={primaryAction.href}
+          title={primaryAction.detail}
           className="mb-4 flex h-10 w-[185px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-2 text-base font-medium text-white transition-all duration-150 active:scale-[0.97]"
         >
-          <CheckCircle2 size={17} strokeWidth={2} />
-          Review queue
+          <PrimaryIcon size={17} strokeWidth={2} />
+          {primaryAction.title}
         </Link>
 
         <nav className="grid gap-1">
@@ -134,8 +188,8 @@ export function ProjectShell({
           <Link href="/" className="font-bold text-slate-900">
             CiteLoop
           </Link>
-          <Link href={`/projects/${projectId}/review`} className="text-sm font-semibold text-[#d93820]">
-            Review
+          <Link href={primaryAction.href} className="text-sm font-semibold text-[#d93820]">
+            {primaryAction.title}
           </Link>
         </div>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">

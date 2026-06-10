@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
+import { Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -14,7 +14,12 @@ import {
   SEOOverview,
   Topic,
 } from "../../lib/api";
-import { nextWorkspaceAction, visibilityLifecycleLabel, visibilityLifecycleTone } from "../../lib/dashboard-ux-logic";
+import {
+  buildActionableMomentum,
+  buildHomeEventStream,
+  nextWorkspaceAction,
+  visibleHomeSectionIds,
+} from "../../lib/dashboard-ux-logic";
 import { useApi } from "../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
 
@@ -188,17 +193,8 @@ export function Workspace({ projectId }: { projectId: string }) {
         type: topic.channel,
       }));
     const rows = [...articleRows, ...topicRows].sort((a, b) => String(a.time).localeCompare(String(b.time)));
-    if (rows.length > 0) return rows.slice(0, 5);
-
-    const cadence = project?.config?.cadence_per_week ?? 3;
-    return Array.from({ length: Math.min(cadence, 4) }, (_, index) => ({
-      id: `empty-${index}`,
-      time: null,
-      title: "Open content slot",
-      status: "empty",
-      type: "slot",
-    }));
-  }, [approved, project?.config?.cadence_per_week, topics]);
+    return rows.slice(0, 5);
+  }, [approved, topics]);
 
   const waitingVariants = approved.filter(
     (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
@@ -241,7 +237,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         }
       : contextEvidenceCount === 0
         ? {
-            label: "Needs evidence",
+            label: "Evidence missing",
             tone: "amber" as const,
             detail: "Source pages are present, but supported claims still need evidence snippets.",
           }
@@ -258,58 +254,73 @@ export function Workspace({ projectId }: { projectId: string }) {
     seoOpportunities.filter((opportunity) => !["dismissed", "archived"].includes(opportunity.status)).length +
     reviewArticles.length +
     ready.length;
-  const momentumItems = [
-    {
-      label: "Published this month",
-      value: published.filter((article) => isThisMonth(article.published_at)).length,
-      detail: "canonical articles live",
-    },
-    { label: "Drafts approved", value: approved.length, detail: "ready for publish or distribution" },
-    { label: "Opportunities converted", value: opportunitiesConverted, detail: "visibility signals entered the content loop" },
-    { label: "Active loop items", value: activeLoopCount, detail: "moving through plan, review, publish, or visibility" },
-  ];
+  const actionableMomentum = buildActionableMomentum({
+    projectId,
+    hasProfile: Boolean(profile),
+    publishedThisMonthCount: published.filter((article) => isThisMonth(article.published_at)).length,
+    approvedDraftCount: approved.length,
+    opportunitiesConvertedCount: opportunitiesConverted,
+    readyToDistributeCount: ready.length,
+    activeLoopItemCount: activeLoopCount,
+  });
   const visibilityCapability =
     seoOverview?.capability_mode && seoOverview.capability_mode !== "public_only"
       ? "Verified search data is available for visibility reporting."
       : "Search Console is not connected yet. CiteLoop is tracking public crawl and content progress only.";
-  const loopItems = [
-    ...seoOpportunities.slice(0, 3).map((opportunity) => ({
-      id: `opportunity-${opportunity.id}`,
-      title: opportunityTitle(opportunity),
-      stage: visibilityLifecycleLabel(opportunity.status),
-      tone: visibilityLifecycleTone(opportunity.status),
-      href: `/projects/${projectId}/visibility`,
-    })),
-    ...topics.slice(0, 2).map((topic) => ({
-      id: `topic-${topic.id}`,
-      title: topicLabel(topic),
-      stage: "Added to Content Plan",
-      tone: "blue" as const,
-      href: `/projects/${projectId}/plan`,
-    })),
-    ...reviewArticles.slice(0, 2).map((article) => ({
-      id: `review-${article.id}`,
-      title: articleTitle(article),
-      stage: article.qa_blocking ? "Draft needs evidence" : "Draft waiting for review",
-      tone: article.qa_blocking ? ("red" as const) : ("amber" as const),
-      href: `/projects/${projectId}/review`,
-    })),
-    ...published.slice(0, 2).map((article) => ({
-      id: `published-${article.id}`,
-      title: articleTitle(article),
-      stage: "Published and measuring",
-      tone: "green" as const,
-      href: `/projects/${projectId}/publish`,
-    })),
-  ].slice(0, 5);
+  const nextScheduledRow = scheduledRows.find((row) => row.time);
+  const eventStream = buildHomeEventStream({
+    projectId,
+    liveActivities: runs
+      .filter((run) => run.status === "running")
+      .slice(0, 2)
+      .map((run) => ({
+        id: `run-${run.id}`,
+        title: activityLabel(run.agent),
+        detail: "CiteLoop is working on this project right now.",
+        href: `/projects/${projectId}/settings/activity`,
+      })),
+    recentEvents: [
+      ...published.slice(0, 2).map((article) => ({
+        id: `published-${article.id}`,
+        title: `Published ${articleTitle(article)}`,
+        detail: formatDate(article.published_at),
+        href: `/projects/${projectId}/visibility`,
+      })),
+      ...approved.slice(0, 1).map((article) => ({
+        id: `approved-${article.id}`,
+        title: `Approved ${articleTitle(article)}`,
+        detail: formatDate(article.reviewed_at),
+        href: `/projects/${projectId}/publish`,
+      })),
+      ...seoOpportunities.slice(0, 1).map((opportunity) => ({
+        id: `opportunity-${opportunity.id}`,
+        title: opportunityTitle(opportunity),
+        detail: "Visibility opportunity detected",
+        href: `/projects/${projectId}/visibility`,
+      })),
+    ],
+    nextEvent: nextScheduledRow
+      ? {
+          title: "Next publish slot",
+          detail: `${nextScheduledRow.title} - ${formatDate(nextScheduledRow.time)}`,
+          href: `/projects/${projectId}/publish`,
+        }
+      : null,
+  });
+  const homeSections = [
+    { id: "needs-attention", label: "Needs attention", count: failedPublish.length, priority: 100, href: `/projects/${projectId}/publish` },
+    { id: "activity-warnings", label: "Activity warning summary", count: automationWarnings.length, priority: 90, href: `/projects/${projectId}/settings/activity` },
+    { id: "needs-review", label: "Needs review", count: reviewArticles.length, priority: hasBlockedDrafts ? 85 : 80, href: `/projects/${projectId}/review` },
+    { id: "ready-to-distribute", label: "Ready to distribute", count: ready.length, priority: 70, href: `/projects/${projectId}/publish` },
+    { id: "this-week", label: "This week", count: scheduledRows.length, priority: 40, href: `/projects/${projectId}/publish` },
+    { id: "waiting-canonical", label: "Waiting on canonical", count: waitingVariants.length, priority: 30, href: `/projects/${projectId}/publish` },
+  ];
+  const sectionBudget = visibleHomeSectionIds(homeSections, { limit: 2 });
+  const visibleSectionIds = new Set(sectionBudget.visibleIds);
+  const overflowSections = homeSections.filter((section) => sectionBudget.overflowIds.includes(section.id));
 
   return (
-    <div className="space-y-7">
-      <button className="flex h-9 w-full items-center justify-between rounded-lg text-left text-sm font-semibold text-slate-400 transition-colors hover:text-slate-600">
-        Show learning resources
-        <ChevronRight size={16} />
-      </button>
-
+    <div className="space-y-5">
       {apiError && (
         <Notice
           title="API server unavailable"
@@ -319,161 +330,148 @@ export function Workspace({ projectId }: { projectId: string }) {
       )}
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Badge tone="blue">Next action</Badge>
-              <span className="text-xs font-semibold text-slate-400">Why this</span>
-            </div>
-            <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Badge tone="blue">Next action</Badge>
+            <span className="text-xs font-semibold text-slate-400">Why this</span>
           </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_280px]">
-            <div>
-              <h2 className="text-2xl font-bold leading-8 text-slate-950">{nextAction.title}</h2>
-              <p className="mt-2 max-w-[64ch] text-sm leading-6 text-slate-600">{nextAction.detail}</p>
-              <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
-                <TextInput
-                  value={landing}
-                  onChange={(event) => setLanding(event.target.value)}
-                  placeholder="https://product-domain.com"
-                  className="w-full"
-                />
-                <Button
-                  disabled={!!busy || !landing.trim()}
-                  variant="primary"
-                  onClick={() => run("Context refresh", () => api.runInsight(projectId, landing.trim()), "Context refreshed; crawl may continue in background")}
-                >
-                  <Wand2 size={16} />
-                  Refresh context
-                </Button>
-                <Button
-                  disabled={!!busy || !profile}
-                  title={!profile ? "Refresh context before generating a content plan" : undefined}
-                  onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
-                >
-                  Generate content plan
-                </Button>
-              </div>
+          <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
+            <RefreshCw size={14} />
+            Refresh
+          </Button>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div>
+            <h2 className="text-2xl font-bold leading-8 text-slate-950">{nextAction.title}</h2>
+            <p className="mt-2 max-w-[64ch] text-sm leading-6 text-slate-600">{nextAction.detail}</p>
+            <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+              <TextInput
+                value={landing}
+                onChange={(event) => setLanding(event.target.value)}
+                placeholder="https://product-domain.com"
+                className="w-full"
+              />
+              <Button
+                disabled={!!busy || !landing.trim()}
+                variant="primary"
+                onClick={() => run("Context refresh", () => api.runInsight(projectId, landing.trim()), "Context refreshed; crawl may continue in background")}
+              >
+                <Wand2 size={16} />
+                Refresh context
+              </Button>
+              <Button
+                disabled={!!busy || !profile}
+                title={!profile ? "Refresh context before generating a content plan" : undefined}
+                onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
+              >
+                Generate content plan
+              </Button>
             </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-3">
-              <div className="text-xs font-bold uppercase text-slate-400">Also waiting</div>
-              <div className="mt-2 grid gap-2">
-                {alsoWaiting.length === 0 ? (
-                  <div className="text-sm text-slate-500">No urgent queues. Keep context fresh for the next cycle.</div>
-                ) : (
-                  alsoWaiting.map((item) => (
-                    <a key={item.label} href={item.href} className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700 hover:text-[#d93820]">
-                      <span>{item.label}</span>
-                      <Badge tone={item.tone}>open</Badge>
-                    </a>
-                  ))
-                )}
-              </div>
+          </div>
+          <div className="rounded-lg bg-slate-50 px-3 py-3">
+            <div className="text-xs font-bold uppercase text-slate-400">Also waiting</div>
+            <div className="mt-2 grid gap-2">
+              {alsoWaiting.length === 0 ? (
+                <div className="text-sm text-slate-500">No urgent queues. Keep context fresh for the next cycle.</div>
+              ) : (
+                alsoWaiting.map((item) => (
+                  <a key={item.label} href={item.href} className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700 hover:text-[#d93820]">
+                    <span>{item.label}</span>
+                    <Badge tone={item.tone}>open</Badge>
+                  </a>
+                ))
+              )}
             </div>
           </div>
         </div>
       </section>
 
-      <section>
-        <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-          <div>
-            <SectionHeader title="Results / Momentum" eyebrow={project?.name ?? "Project"} />
-            <div className="grid gap-3 sm:grid-cols-2">
-              {momentumItems.map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
-                  <div className="mt-2 text-3xl font-bold leading-none text-slate-950">{item.value}</div>
-                  <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-5 text-slate-600">
-              {visibilityCapability}
-            </div>
-          </div>
-
-          <div>
-            <SectionHeader title="Context health" />
-            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-semibold text-slate-900">{contextHealth.label}</div>
-                <Badge tone={contextHealth.tone}>Evidence coverage</Badge>
-              </div>
-              <p className="mt-2 text-sm leading-5 text-slate-600">{contextHealth.detail}</p>
-              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-lg bg-slate-50 px-3 py-2">
-                  <div className="text-xs font-bold uppercase text-slate-400">Source pages</div>
-                  <div className="mt-1 text-lg font-bold text-slate-900">{sourcePageCount}</div>
-                </div>
-                <div className="rounded-lg bg-slate-50 px-3 py-2">
-                  <div className="text-xs font-bold uppercase text-slate-400">Evidence</div>
-                  <div className="mt-1 text-lg font-bold text-slate-900">{contextEvidenceCount}</div>
-                </div>
-              </div>
-              <a href={`/projects/${projectId}/context`} className="mt-4 inline-flex text-sm font-semibold text-[#d93820]">
-                Open Context
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <SectionHeader title="Actionable momentum" eyebrow={project?.name ?? "Project"} />
+          {actionableMomentum.items.length === 0 && actionableMomentum.emptyAction ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-5">
+              <div className="font-semibold text-slate-900">{actionableMomentum.emptyAction.title}</div>
+              <p className="mt-1 text-sm leading-5 text-slate-500">{actionableMomentum.emptyAction.detail}</p>
+              <a href={actionableMomentum.emptyAction.href} className="mt-3 inline-flex text-sm font-semibold text-[#d93820]">
+                {actionableMomentum.emptyAction.actionLabel}
               </a>
             </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {actionableMomentum.items.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
+                    <Badge tone={item.tone}>{item.actionLabel}</Badge>
+                  </div>
+                  <div className="mt-2 text-3xl font-bold leading-none text-slate-950">{item.value}</div>
+                  <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
+                </a>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-5 text-slate-600">
+            {visibilityCapability}
+          </div>
+        </div>
+
+        <div>
+          <SectionHeader title="Context health" />
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-semibold text-slate-900">{contextHealth.label}</div>
+              <Badge tone={contextHealth.tone}>Evidence coverage</Badge>
+            </div>
+            <p className="mt-2 text-sm leading-5 text-slate-600">{contextHealth.detail}</p>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+              <div className="rounded-lg bg-slate-50 px-3 py-2">
+                <div className="text-xs font-bold uppercase text-slate-400">Source pages</div>
+                <div className="mt-1 text-lg font-bold text-slate-900">{sourcePageCount}</div>
+              </div>
+              <div className="rounded-lg bg-slate-50 px-3 py-2">
+                <div className="text-xs font-bold uppercase text-slate-400">Evidence</div>
+                <div className="mt-1 text-lg font-bold text-slate-900">{contextEvidenceCount}</div>
+              </div>
+            </div>
+            <a href={`/projects/${projectId}/context`} className="mt-4 inline-flex text-sm font-semibold text-[#d93820]">
+              Open Context
+            </a>
           </div>
         </div>
       </section>
 
       <section>
-        <SectionHeader title="Loop progress" eyebrow="Visibility to content loop" />
-        {loopItems.length === 0 ? (
-          <EmptyState
-            title="No active loop items yet"
-            detail="Visibility opportunities will appear here after they are detected, added to Content Plan, drafted, published, and measured."
-          />
+        <SectionHeader title="Event stream" eyebrow="Now, recent, next" />
+        {eventStream.items.length === 0 && eventStream.emptyAction ? (
+          <EmptyState title={eventStream.emptyAction.title} detail={eventStream.emptyAction.detail} />
         ) : (
           <div className="grid gap-2">
-            {loopItems.map((item) => (
+            {eventStream.items.map((item) => (
               <a
                 key={item.id}
                 href={item.href}
-                className="flex min-h-[46px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
+                className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
               >
                 <div className="min-w-0">
                   <div className="truncate font-semibold text-slate-900">{item.title}</div>
-                  <div className="mt-0.5 text-[13px] font-semibold text-slate-400">{item.stage}</div>
+                  <div className="mt-0.5 truncate text-[13px] font-semibold text-slate-400">{item.detail}</div>
                 </div>
-                <Badge tone={item.tone}>loop</Badge>
+                <Badge tone={item.kind === "live" ? "amber" : item.kind === "next" ? "blue" : "green"}>{item.timeLabel}</Badge>
               </a>
             ))}
           </div>
         )}
       </section>
 
-      <section>
-        <SectionHeader title="This week" eyebrow="Content rhythm" />
-        <div className="grid gap-2">
-          {scheduledRows.map((row) => (
-            <div
-              key={row.id}
-              className="flex min-h-[38px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
-            >
-              <div className="min-w-0">
-                <div className="truncate font-semibold text-slate-800">{row.title}</div>
-                <div className="text-[13px] font-semibold text-slate-400">{formatDate(row.time)}</div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={row.status === "empty" ? "neutral" : "blue"}>{row.type}</Badge>
-                <Badge tone={row.status === "empty" ? "amber" : "green"}>{row.status}</Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Needs attention" action={<Badge tone={failedPublish.length ? "red" : "neutral"}>{failedPublish.length}</Badge>} />
-        {failedPublish.length === 0 ? (
-          <EmptyState title="No publish failures" detail="Publish failures will appear here without checking server logs." />
-        ) : (
+      {visibleSectionIds.has("needs-attention") && (
+        <section>
+          <SectionHeader title="Needs attention" action={<Badge tone="red">{failedPublish.length}</Badge>} />
           <div className="grid gap-2">
             {failedPublish.slice(0, 3).map((article) => (
               <div key={article.id} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
@@ -485,16 +483,40 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section>
-        <SectionHeader title="Needs review" action={<Badge tone={reviewArticles.length ? "amber" : "neutral"}>{reviewArticles.length}</Badge>} />
-        {reviewArticles.length === 0 ? (
-          <EmptyState title="Nothing pending review" detail="Generated drafts that need the human gate will appear here." />
-        ) : (
+      {visibleSectionIds.has("activity-warnings") && (
+        <section>
+          <SectionHeader title="Activity warning summary" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Activity log</a>} />
+          <div className="grid gap-2">
+            {automationWarnings.map((run) => (
+              <div
+                key={run.id}
+                className="flex min-h-[44px] flex-col gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-900">{activityLabel(run.agent)}</span>
+                    <Badge tone={activityTone(run.status, Boolean(run.output?.degraded))}>{run.status}</Badge>
+                    {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">{run.error ?? "Limited quality. Open activity log for details."}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs font-semibold text-slate-400">
+                  <span>{formatDate(run.created_at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {visibleSectionIds.has("needs-review") && (
+        <section>
+          <SectionHeader title="Needs review" action={<Badge tone="amber">{reviewArticles.length}</Badge>} />
           <div className="columns-1 gap-3 sm:columns-2">
-            {reviewArticles.map((article) => (
+            {reviewArticles.slice(0, 4).map((article) => (
               <div
                 key={article.id}
                 className="mb-3 break-inside-avoid rounded-xl border border-slate-200 bg-white px-4 py-3"
@@ -503,12 +525,16 @@ export function Workspace({ projectId }: { projectId: string }) {
                   <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>
                     {article.platform || article.kind}
                   </Badge>
-                  {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
                 </div>
                 <div className="content-font text-[15px] font-semibold leading-5 text-slate-900">
                   {articleTitle(article)}
                 </div>
-                <p className="mt-2 line-clamp-4 content-font text-[15px] leading-5 text-slate-700">
+                {article.qa_blocking && (
+                  <div className="mt-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
+                    Cannot approve: {article.qa_issues[0] || "QA has not cleared this draft"}
+                  </div>
+                )}
+                <p className="mt-2 line-clamp-3 content-font text-[15px] leading-5 text-slate-700">
                   {article.content_md}
                 </p>
                 <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
@@ -522,17 +548,12 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section>
-        <SectionHeader title="Ready to distribute" action={<Badge tone={ready.length ? "green" : "neutral"}>{ready.length}</Badge>} />
-        {ready.length === 0 ? (
-          <EmptyState
-            title="No variants ready"
-            detail="Variants unlock only after the canonical article is published and canonical_url is available."
-          />
-        ) : (
+      {visibleSectionIds.has("ready-to-distribute") && (
+        <section>
+          <SectionHeader title="Ready to distribute" action={<Badge tone="green">{ready.length}</Badge>} />
           <div className="grid gap-3 sm:grid-cols-2">
             {ready.map(({ article, compose_url, supports_canonical }) => (
               <div key={article.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
@@ -585,28 +606,25 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {automationWarnings.length > 0 && (
+      {visibleSectionIds.has("this-week") && (
         <section>
-          <SectionHeader title="Activity warning summary" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Activity log</a>} />
+          <SectionHeader title="This week" eyebrow="Content rhythm" />
           <div className="grid gap-2">
-            {automationWarnings.map((run) => (
+            {scheduledRows.map((row) => (
               <div
-                key={run.id}
-                className="flex min-h-[44px] flex-col gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+                key={row.id}
+                className="flex min-h-[38px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
               >
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-900">{activityLabel(run.agent)}</span>
-                    <Badge tone={activityTone(run.status, Boolean(run.output?.degraded))}>{run.status}</Badge>
-                    {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-slate-500">{run.error ?? "Limited quality. Open activity log for details."}</div>
+                  <div className="truncate font-semibold text-slate-800">{row.title}</div>
+                  <div className="text-[13px] font-semibold text-slate-400">{formatDate(row.time)}</div>
                 </div>
-                <div className="flex shrink-0 items-center gap-3 text-xs font-semibold text-slate-400">
-                  <span>{formatDate(run.created_at)}</span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge tone="blue">{row.type}</Badge>
+                  <Badge tone="green">{row.status}</Badge>
                 </div>
               </div>
             ))}
@@ -614,7 +632,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         </section>
       )}
 
-      {waitingVariants.length > 0 && (
+      {visibleSectionIds.has("waiting-canonical") && (
         <section>
           <SectionHeader title="Waiting on canonical" />
           <div className="grid gap-2">
@@ -623,6 +641,24 @@ export function Workspace({ projectId }: { projectId: string }) {
                 <span className="font-semibold text-slate-800">{articleTitle(article)}</span>
                 <span className="ml-2 text-slate-400">waiting for canonical URL</span>
               </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {overflowSections.length > 0 && (
+        <section>
+          <SectionHeader title="More waiting" eyebrow="Collapsed to keep Home focused" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {overflowSections.map((section) => (
+              <a
+                key={section.id}
+                href={section.href}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#d93820]"
+              >
+                <span>{section.label}</span>
+                <Badge tone="neutral">{section.count}</Badge>
+              </a>
             ))}
           </div>
         </section>

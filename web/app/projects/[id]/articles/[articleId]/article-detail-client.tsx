@@ -35,6 +35,7 @@ export function ArticleDetailClient({ projectId, articleId }: { projectId: strin
   if (loading) return <EmptyState title="Loading article" detail="Fetching article details." />;
   if (error) return <Notice title="Article unavailable" detail={error} tone="red" />;
   if (!article) return <EmptyState title="Article not found" detail="The article is missing or belongs to another project." />;
+  const blockingReason = article.qa_issues[0] || "QA has not cleared this draft";
 
   return (
     <div className="space-y-7">
@@ -55,8 +56,13 @@ export function ArticleDetailClient({ projectId, articleId }: { projectId: strin
             {article.status}
           </Badge>
           <Badge tone={article.kind === "canonical" ? "green" : "blue"}>{article.platform || article.kind}</Badge>
-          {article.qa_blocking && <Badge tone="red">qa blocking</Badge>}
+          {article.qa_blocking && <Badge tone="red">Cannot approve</Badge>}
         </div>
+        {article.qa_blocking && (
+          <div className="rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
+            Cannot approve: {blockingReason}
+          </div>
+        )}
         <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
           <div>geo {formatScore(article.geo_score)}</div>
           <div>seo {formatScore(article.seo_score)}</div>

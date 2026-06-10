@@ -14,6 +14,73 @@ export type WorkspaceAction = {
   href: string;
 };
 
+export type ActionableMomentumInput = {
+  projectId: string;
+  hasProfile: boolean;
+  publishedThisMonthCount: number;
+  approvedDraftCount: number;
+  opportunitiesConvertedCount: number;
+  readyToDistributeCount: number;
+  activeLoopItemCount: number;
+};
+
+export type ActionableMomentumItem = {
+  id: string;
+  label: string;
+  value: number;
+  detail: string;
+  href: string;
+  actionLabel: string;
+  tone: "green" | "amber" | "blue" | "neutral";
+};
+
+export type ActionableMomentumResult = {
+  items: ActionableMomentumItem[];
+  emptyAction: (WorkspaceAction & { actionLabel: string }) | null;
+};
+
+export type HomeEventInput = {
+  projectId: string;
+  liveActivities?: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    href: string;
+  }>;
+  recentEvents?: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    href: string;
+  }>;
+  nextEvent?: {
+    title: string;
+    detail: string;
+    href: string;
+  } | null;
+  limit?: number;
+};
+
+export type HomeEventStreamItem = {
+  id: string;
+  kind: "live" | "recent" | "next";
+  title: string;
+  detail: string;
+  href: string;
+  timeLabel: string;
+};
+
+export type HomeEventStreamResult = {
+  items: HomeEventStreamItem[];
+  emptyAction: (WorkspaceAction & { actionLabel: string }) | null;
+};
+
+export type HomeSectionCandidate = {
+  id: string;
+  count: number;
+  priority: number;
+};
+
 export type ProfileDraft = {
   positioning: string;
   icp: string;
@@ -91,6 +158,162 @@ export function nextWorkspaceAction({
     detail: "Keep product facts, evidence, and positioning current before the next content cycle.",
     href: `/projects/${projectId}/context`,
   };
+}
+
+export function buildActionableMomentum(input: ActionableMomentumInput): ActionableMomentumResult {
+  const candidates: ActionableMomentumItem[] = [
+    {
+      id: "ready-to-publish",
+      label: "Ready to publish",
+      value: input.readyToDistributeCount,
+      detail: "approved variants can move now",
+      href: `/projects/${input.projectId}/publish`,
+      actionLabel: "Open Publish",
+      tone: "amber",
+    },
+    {
+      id: "published-this-month",
+      label: "Published this month",
+      value: input.publishedThisMonthCount,
+      detail: "live assets feeding visibility",
+      href: `/projects/${input.projectId}/visibility`,
+      actionLabel: "View impact",
+      tone: "green",
+    },
+    {
+      id: "opportunities-converted",
+      label: "Opportunities converted",
+      value: input.opportunitiesConvertedCount,
+      detail: "visibility gaps entered the loop",
+      href: `/projects/${input.projectId}/visibility`,
+      actionLabel: "Review loop",
+      tone: "blue",
+    },
+    {
+      id: "active-loop-items",
+      label: "Active loop items",
+      value: input.activeLoopItemCount,
+      detail: "items moving from insight to impact",
+      href: `/projects/${input.projectId}`,
+      actionLabel: "Open timeline",
+      tone: "neutral",
+    },
+    {
+      id: "approved-drafts",
+      label: "Approved drafts",
+      value: input.approvedDraftCount,
+      detail: "approved drafts waiting on publish",
+      href: `/projects/${input.projectId}/publish`,
+      actionLabel: "Publish",
+      tone: "amber",
+    },
+  ];
+  const items = candidates.filter((item) => item.value > 0).slice(0, 4);
+
+  if (items.length > 0) {
+    return { items, emptyAction: null };
+  }
+
+  if (!input.hasProfile) {
+    return {
+      items: [],
+      emptyAction: {
+        title: "Context needs confirmation",
+        detail: "Connect product facts and source evidence before CiteLoop can generate a plan.",
+        href: `/projects/${input.projectId}/context`,
+        actionLabel: "Open Context",
+      },
+    };
+  }
+
+  return {
+    items: [],
+    emptyAction: {
+      title: "Context is ready",
+      detail: "Generate the first content plan to start moving items through the loop.",
+      href: `/projects/${input.projectId}/plan`,
+      actionLabel: "Generate content plan",
+    },
+  };
+}
+
+export function buildHomeEventStream({
+  projectId,
+  liveActivities = [],
+  recentEvents = [],
+  nextEvent,
+  limit = 5,
+}: HomeEventInput): HomeEventStreamResult {
+  const liveItems = liveActivities.map((event): HomeEventStreamItem => ({
+    ...event,
+    kind: "live",
+    timeLabel: "Now",
+  }));
+  const recentItems = recentEvents.map((event): HomeEventStreamItem => ({
+    ...event,
+    kind: "recent",
+    timeLabel: "Recent",
+  }));
+  const nextItems: HomeEventStreamItem[] = nextEvent
+    ? [
+        {
+          id: "next-event",
+          kind: "next",
+          title: nextEvent.title,
+          detail: nextEvent.detail,
+          href: nextEvent.href,
+          timeLabel: "Next",
+        },
+      ]
+    : [];
+  const items = [...liveItems, ...recentItems, ...nextItems].slice(0, limit);
+
+  if (items.length > 0) {
+    return { items, emptyAction: null };
+  }
+
+  return {
+    items: [],
+    emptyAction: {
+      title: "All set for now",
+      detail: "No live work or scheduled publish slot is waiting. Refresh context when product facts change.",
+      href: `/projects/${projectId}/context`,
+      actionLabel: "Refresh context",
+    },
+  };
+}
+
+export function visibleHomeSectionIds(sections: HomeSectionCandidate[], options: { limit?: number } = {}) {
+  const limit = options.limit ?? 2;
+  const active = sections
+    .filter((section) => section.count > 0)
+    .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+
+  return {
+    visibleIds: active.slice(0, limit).map((section) => section.id),
+    overflowIds: active.slice(limit).map((section) => section.id),
+  };
+}
+
+export function sidebarPrimaryAction(input: NextWorkspaceActionInput): WorkspaceAction {
+  const action = nextWorkspaceAction(input);
+  const hasUrgentWork =
+    !input.hasProfile ||
+    input.failedPublishCount > 0 ||
+    input.hasBlockedDrafts ||
+    input.reviewCount > 0 ||
+    input.readyCount > 0 ||
+    input.topicsCount === 0;
+
+  if (!hasUrgentWork) {
+    return {
+      title: "Open Home",
+      detail: "Start from the control center before jumping into deeper work.",
+      href: `/projects/${input.projectId}`,
+    };
+  }
+
+  return action;
 }
 
 export function profilePayloadFromDraft(draft: ProfileDraft, baseProfile: Record<string, any> = {}) {

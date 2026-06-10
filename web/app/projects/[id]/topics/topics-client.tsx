@@ -105,9 +105,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     try {
       const next = await api.runStrategist(projectId);
       setTopics(next);
-      setMessage({ title: "Strategist completed", detail: `${next.length} topics returned.`, tone: "green" });
+      setMessage({ title: "Content plan generated", detail: `${next.length} topics returned.`, tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Strategist failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Content plan failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -249,7 +249,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           action={
             <Button aria-busy={strategistRunning} disabled={strategistRunning} variant="primary" onClick={runStrategist}>
               {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-              {strategistRunning ? "Running strategist" : "Run Strategist"}
+              {strategistRunning ? "Generating content plan" : "Generate content plan"}
             </Button>
           }
         />

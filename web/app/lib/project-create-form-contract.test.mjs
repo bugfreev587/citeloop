@@ -16,3 +16,15 @@ test("project onboarding form does not wait for long-running insight or SEO sync
   assert.equal(source.includes("api.syncSEO"), false);
   assert.equal(source.includes("router.push(`/projects/${project.id}`)"), true);
 });
+
+test("project onboarding form uses control-center copy instead of job jargon", async () => {
+  const source = await readFile(new URL("../project-create-form.tsx", import.meta.url), "utf8");
+
+  for (const copy of ["Connect product", "Product URL", "Create control center", "Read domain context"]) {
+    assert.match(source, new RegExp(copy));
+  }
+
+  for (const staleCopy of ["Connect service", "Service URL", "Start product profile job", "Start SEO baseline job"]) {
+    assert.doesNotMatch(source, new RegExp(staleCopy));
+  }
+});
