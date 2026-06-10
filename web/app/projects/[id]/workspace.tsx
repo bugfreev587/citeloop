@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Copy, ExternalLink, RefreshCw, Wand2 } from "lucide-react";
+import { ArrowRight, BarChart3, ChevronRight, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles, Wand2 } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -14,9 +14,10 @@ import {
   SEOOverview,
   Topic,
 } from "../../lib/api";
-import { nextWorkspaceAction, visibilityLifecycleLabel, visibilityLifecycleTone } from "../../lib/dashboard-ux-logic";
+import { visibilityLifecycleLabel, visibilityLifecycleTone } from "../../lib/dashboard-ux-logic";
+import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, formatDate, formatScore } from "../../components/ui";
+import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -61,6 +62,25 @@ function evidenceCount(items: InventoryItem[]) {
 
 function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
+}
+
+function metric(value: any, digits = 0) {
+  const n = normalizeNumeric(value);
+  if (n == null) return "-";
+  return n.toLocaleString("en", { maximumFractionDigits: digits, minimumFractionDigits: digits });
+}
+
+function sumCounts(rows: Array<{ status: string; count: number }> | undefined, statuses: string[]) {
+  if (!rows) return 0;
+  return rows
+    .filter((row) => statuses.includes(row.status))
+    .reduce((total, row) => total + row.count, 0);
+}
+
+function hasConnectedSearchData(overview: SEOOverview | null) {
+  if (!overview) return false;
+  if (overview.capability_mode === "managed_content_connected" || overview.capability_mode === "customer_site_connected") return true;
+  return overview.integrations.some((integration) => integration.provider === "google_search_console" && integration.status === "connected");
 }
 
 export function Workspace({ projectId }: { projectId: string }) {
@@ -205,25 +225,60 @@ export function Workspace({ projectId }: { projectId: string }) {
   );
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
   const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
-  const nextAction = useMemo(() => {
-    return nextWorkspaceAction({
-      projectId,
-      hasProfile: Boolean(profile),
-      failedPublishCount: failedPublish.length,
-      hasBlockedDrafts,
-      reviewCount: reviewArticles.length,
-      readyCount: ready.length,
-      topicsCount: topics.length,
-    });
+  const nextGrowthMove = useMemo(() => {
+    if (!profile) {
+      return {
+        title: "Refresh context to start growth",
+        detail: "CiteLoop needs product facts, source pages, and evidence before it can plan content that should grow visibility.",
+        href: `/projects/${projectId}/context`,
+        cta: "Refresh context",
+        tone: "amber" as const,
+      };
+    }
+    if (failedPublish.length > 0) {
+      return {
+        title: "Fix publishing to restore growth tracking",
+        detail: "A published page could not be confirmed online, so CiteLoop cannot safely measure or distribute related work.",
+        href: `/projects/${projectId}/publish`,
+        cta: "Open publish",
+        tone: "red" as const,
+      };
+    }
+    if (hasBlockedDrafts || reviewArticles.length > 0) {
+      return {
+        title: "Review drafts to unlock growth",
+        detail: `${reviewArticles.length} draft${reviewArticles.length === 1 ? "" : "s"} can move into publishing once you approve the evidence, claims, and positioning.`,
+        href: `/projects/${projectId}/review`,
+        cta: "Review drafts",
+        tone: hasBlockedDrafts ? ("red" as const) : ("amber" as const),
+      };
+    }
+    if (ready.length > 0) {
+      return {
+        title: "Publish approved work",
+        detail: `${ready.length} approved variant${ready.length === 1 ? "" : "s"} can be distributed now that the canonical page is live.`,
+        href: `/projects/${projectId}/publish`,
+        cta: "Open publish",
+        tone: "green" as const,
+      };
+    }
+    if (topics.length === 0) {
+      return {
+        title: "Generate the first growth plan",
+        detail: "Turn the domain context into a backlog of content opportunities before CiteLoop starts drafting.",
+        href: `/projects/${projectId}/plan`,
+        cta: "Generate content plan",
+        tone: "blue" as const,
+      };
+    }
+    return {
+      title: "Refresh context before the next cycle",
+      detail: "Keep product facts and evidence current so the next plan is based on what your site actually says today.",
+      href: `/projects/${projectId}/context`,
+      cta: "Open context",
+      tone: "green" as const,
+    };
   }, [failedPublish.length, hasBlockedDrafts, profile, projectId, ready.length, reviewArticles.length, topics.length]);
-
-  const alsoWaiting = [
-    reviewArticles.length > 0 && { label: `${reviewArticles.length} drafts need review`, href: `/projects/${projectId}/review`, tone: "amber" as const },
-    ready.length > 0 && { label: `${ready.length} variants ready`, href: `/projects/${projectId}/publish`, tone: "green" as const },
-    failedPublish.length > 0 && { label: `${failedPublish.length} publishing issues`, href: `/projects/${projectId}/publish`, tone: "red" as const },
-    automationWarnings.length > 0 && { label: `${automationWarnings.length} automation warnings`, href: `/projects/${projectId}/settings/activity`, tone: "amber" as const },
-    topics.length === 0 && { label: "No content plan yet", href: `/projects/${projectId}/plan`, tone: "neutral" as const },
-  ].filter(Boolean) as Array<{ label: string; href: string; tone: "neutral" | "red" | "amber" | "green" }>;
 
   const contextEvidenceCount = evidenceCount(inventory);
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
@@ -254,24 +309,99 @@ export function Workspace({ projectId }: { projectId: string }) {
   const opportunitiesConverted = seoOpportunities.filter((opportunity) =>
     ["accepted", "planned", "converted"].includes(opportunity.status),
   ).length;
-  const activeLoopCount =
-    seoOpportunities.filter((opportunity) => !["dismissed", "archived"].includes(opportunity.status)).length +
-    reviewArticles.length +
-    ready.length;
-  const momentumItems = [
+  const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
+  const searchDataConnected = hasConnectedSearchData(seoOverview);
+  const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
+  const impressions28d = normalizeNumeric(seoOverview?.last_28_days?.impressions_28d ?? null);
+  const measuringActions = sumCounts(seoOverview?.actions_by_status, ["published", "measuring", "completed"]);
+  const aiCitationSignals = seoOpportunities.filter((opportunity) =>
+    `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
+  ).length;
+  const growthHeadline = searchDataConnected || publishedThisMonth > 0 || measuringActions > 0
+    ? "CiteLoop is measuring growth from published work"
+    : "Growth measurement is limited";
+  const growthDetail = searchDataConnected
+    ? "Verified Search Console data is connected, so CiteLoop can report clicks, impressions, and which content is moving."
+    : "Search Console is not connected yet. CiteLoop can show content progress and public crawl signals now; connect first-party data to prove traffic growth.";
+  const growthImpactItems = [
     {
-      label: "Published this month",
-      value: published.filter((article) => isThisMonth(article.published_at)).length,
-      detail: "canonical articles live",
+      label: "AI citations",
+      value: aiCitationSignals > 0 ? aiCitationSignals : "-",
+      detail: aiCitationSignals > 0 ? "citation-related opportunities detected" : "AI-answer tracking is not connected yet",
+      icon: Sparkles,
+      muted: aiCitationSignals === 0,
     },
-    { label: "Drafts approved", value: approved.length, detail: "ready for publish or distribution" },
-    { label: "Opportunities converted", value: opportunitiesConverted, detail: "visibility signals entered the content loop" },
-    { label: "Active loop items", value: activeLoopCount, detail: "moving through plan, review, publish, or visibility" },
+    {
+      label: "Organic traffic",
+      value: searchDataConnected ? metric(clicks28d) : "Limited",
+      detail: searchDataConnected ? `${metric(impressions28d)} impressions in the last 28 days` : "Connect Search Console for clicks and impressions",
+      icon: BarChart3,
+      muted: !searchDataConnected,
+    },
+    {
+      label: "Published pages",
+      value: publishedThisMonth,
+      detail: "canonical pages live this month",
+      icon: FileText,
+      muted: publishedThisMonth === 0,
+    },
+    {
+      label: "Opportunities in motion",
+      value: opportunitiesConverted + reviewArticles.length + ready.length + measuringActions,
+      detail: "planned, under review, publishing, or measuring",
+      icon: Search,
+      muted: opportunitiesConverted + reviewArticles.length + ready.length + measuringActions === 0,
+    },
   ];
-  const visibilityCapability =
-    seoOverview?.capability_mode && seoOverview.capability_mode !== "public_only"
-      ? "Verified search data is available for visibility reporting."
-      : "Search Console is not connected yet. CiteLoop is tracking public crawl and content progress only.";
+  const measurementCoverage = [
+    { label: "Search Console", detail: searchDataConnected ? "Connected" : "Not connected", tone: searchDataConnected ? ("green" as const) : ("amber" as const) },
+    { label: "Public crawl", detail: sourcePageCount > 0 ? `${sourcePageCount} pages` : "Waiting", tone: sourcePageCount > 0 ? ("green" as const) : ("amber" as const) },
+    { label: "Content outcomes", detail: measuringActions > 0 ? `${measuringActions} measuring` : "No outcomes yet", tone: measuringActions > 0 ? ("green" as const) : ("neutral" as const) },
+  ];
+  const loopSteps = [
+    {
+      label: "Find opportunities",
+      value: seoOpportunities.length,
+      detail: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for signals",
+      href: `/projects/${projectId}/visibility`,
+      tone: seoOpportunities.length > 0 ? ("green" as const) : ("neutral" as const),
+    },
+    {
+      label: "Plan content",
+      value: topics.length,
+      detail: topics.length > 0 ? "items in the content plan" : "plan not started",
+      href: `/projects/${projectId}/plan`,
+      tone: topics.length > 0 ? ("green" as const) : ("amber" as const),
+    },
+    {
+      label: "Create drafts",
+      value: reviewArticles.length + approved.length,
+      detail: reviewArticles.length + approved.length > 0 ? "drafts created or approved" : "no drafts yet",
+      href: `/projects/${projectId}/plan`,
+      tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : ("neutral" as const),
+    },
+    {
+      label: "Review",
+      value: reviewArticles.length,
+      detail: reviewArticles.length > 0 ? "waiting for your approval" : "nothing waiting",
+      href: `/projects/${projectId}/review`,
+      tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
+    },
+    {
+      label: "Publish",
+      value: publishedThisMonth,
+      detail: failedPublish.length > 0 ? "publishing needs attention" : "published this month",
+      href: `/projects/${projectId}/publish`,
+      tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ("neutral" as const),
+    },
+    {
+      label: "Measure results",
+      value: searchDataConnected ? metric(clicks28d) : "-",
+      detail: searchDataConnected ? "clicks in the last 28 days" : "limited until connected",
+      href: `/projects/${projectId}/visibility`,
+      tone: searchDataConnected ? ("green" as const) : ("amber" as const),
+    },
+  ];
   const loopItems = [
     ...seoOpportunities.slice(0, 3).map((opportunity) => ({
       id: `opportunity-${opportunity.id}`,
@@ -319,85 +449,148 @@ export function Workspace({ projectId }: { projectId: string }) {
       )}
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
             <div className="flex items-center gap-2">
-              <Badge tone="blue">Next action</Badge>
-              <span className="text-xs font-semibold text-slate-400">Why this</span>
+              <Badge tone="green">Growth Overview</Badge>
+              <span className="text-xs font-semibold text-slate-400">{project?.name ?? "Project"}</span>
             </div>
-            <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
+            <h1 className="mt-4 max-w-[760px] text-3xl font-bold leading-9 tracking-tight text-slate-950 md:text-4xl md:leading-[2.7rem]">
+              {growthHeadline}
+            </h1>
+            <p className="mt-3 max-w-[70ch] text-sm leading-6 text-slate-600">{growthDetail}</p>
           </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_280px]">
-            <div>
-              <h2 className="text-2xl font-bold leading-8 text-slate-950">{nextAction.title}</h2>
-              <p className="mt-2 max-w-[64ch] text-sm leading-6 text-slate-600">{nextAction.detail}</p>
-              <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
-                <TextInput
-                  value={landing}
-                  onChange={(event) => setLanding(event.target.value)}
-                  placeholder="https://product-domain.com"
-                  className="w-full"
-                />
-                <Button
-                  disabled={!!busy || !landing.trim()}
-                  variant="primary"
-                  onClick={() => run("Context refresh", () => api.runInsight(projectId, landing.trim()), "Context refreshed; crawl may continue in background")}
-                >
-                  <Wand2 size={16} />
-                  Refresh context
-                </Button>
-                <Button
-                  disabled={!!busy || !profile}
-                  title={!profile ? "Refresh context before generating a content plan" : undefined}
-                  onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
-                >
-                  Generate content plan
-                </Button>
-              </div>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-3">
-              <div className="text-xs font-bold uppercase text-slate-400">Also waiting</div>
-              <div className="mt-2 grid gap-2">
-                {alsoWaiting.length === 0 ? (
-                  <div className="text-sm text-slate-500">No urgent queues. Keep context fresh for the next cycle.</div>
-                ) : (
-                  alsoWaiting.map((item) => (
-                    <a key={item.label} href={item.href} className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700 hover:text-[#d93820]">
-                      <span>{item.label}</span>
-                      <Badge tone={item.tone}>open</Badge>
-                    </a>
-                  ))
-                )}
-              </div>
+          <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
+            <RefreshCw size={14} />
+            Refresh
+          </Button>
+        </div>
+
+        <div className="mt-6 grid gap-4 xl:grid-cols-[1fr_340px]">
+          <div>
+            <div className="mb-3 text-sm font-bold text-slate-900">Growth impact</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {growthImpactItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.label} className={cx("rounded-xl border border-slate-200 px-4 py-3", item.muted ? "bg-slate-50" : "bg-white")}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
+                      <Icon size={17} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
+                    </div>
+                    <div className={cx("mt-3 text-3xl font-bold leading-none", item.muted ? "text-slate-500" : "text-slate-950")}>{item.value}</div>
+                    <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-bold text-slate-900">Next growth move</div>
+              <Badge tone={nextGrowthMove.tone}>now</Badge>
+            </div>
+            <h2 className="mt-3 text-xl font-bold leading-7 text-slate-950">{nextGrowthMove.title}</h2>
+            <p className="mt-2 text-sm leading-5 text-slate-600">{nextGrowthMove.detail}</p>
+            <a
+              href={nextGrowthMove.href}
+              className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
+            >
+              {nextGrowthMove.cta}
+              <ArrowRight size={15} />
+            </a>
+
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="text-xs font-bold uppercase text-slate-400">Measurement coverage</div>
+              <div className="mt-3 grid gap-2">
+                {measurementCoverage.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-semibold text-slate-700">{item.label}</span>
+                    <Badge tone={item.tone}>{item.detail}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+          <TextInput
+            value={landing}
+            onChange={(event) => setLanding(event.target.value)}
+            placeholder="https://product-domain.com"
+            className="w-full"
+          />
+          <Button
+            disabled={!!busy || !landing.trim()}
+            variant="primary"
+            onClick={() => run("Context refresh", () => api.runInsight(projectId, landing.trim()), "Context refreshed; crawl may continue in background")}
+          >
+            <Wand2 size={16} />
+            Refresh context
+          </Button>
+          <Button
+            disabled={!!busy || !profile}
+            title={!profile ? "Refresh context before generating a content plan" : undefined}
+            onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
+          >
+            Generate content plan
+          </Button>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader title="Growth loop" eyebrow="How CiteLoop turns work into measurable growth" />
+        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+          {loopSteps.map((step, index) => (
+            <a
+              key={step.label}
+              href={step.href}
+              className="group relative rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm transition-colors hover:bg-slate-50"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <Badge tone={step.tone}>{step.value}</Badge>
+                {index < loopSteps.length - 1 && <ArrowRight size={14} className="hidden text-slate-300 transition-colors group-hover:text-slate-500 lg:block" />}
+              </div>
+              <div className="mt-3 font-bold leading-5 text-slate-900">{step.label}</div>
+              <div className="mt-1 text-xs leading-4 text-slate-500">{step.detail}</div>
+            </a>
+          ))}
         </div>
       </section>
 
       <section>
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <div>
-            <SectionHeader title="Results / Momentum" eyebrow={project?.name ?? "Project"} />
-            <div className="grid gap-3 sm:grid-cols-2">
-              {momentumItems.map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
-                  <div className="mt-2 text-3xl font-bold leading-none text-slate-950">{item.value}</div>
-                  <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-5 text-slate-600">
-              {visibilityCapability}
-            </div>
+            <SectionHeader title="Recent growth signals" eyebrow="What changed recently" />
+            {loopItems.length === 0 ? (
+              <EmptyState
+                title="No growth signals yet"
+                detail="Opportunities, drafts, published pages, and measured outcomes will appear here as the loop starts moving."
+              />
+            ) : (
+              <div className="grid gap-2">
+                {loopItems.map((item) => (
+                  <a
+                    key={item.id}
+                    href={item.href}
+                    className="flex min-h-[46px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-slate-900">{item.title}</div>
+                      <div className="mt-0.5 text-[13px] font-semibold text-slate-400">{item.stage}</div>
+                    </div>
+                    <Badge tone={item.tone}>growth loop</Badge>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
-            <SectionHeader title="Context health" />
+            <SectionHeader title="CiteLoop knowledge" />
             <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-semibold text-slate-900">{contextHealth.label}</div>
@@ -414,38 +607,13 @@ export function Workspace({ projectId }: { projectId: string }) {
                   <div className="mt-1 text-lg font-bold text-slate-900">{contextEvidenceCount}</div>
                 </div>
               </div>
-              <a href={`/projects/${projectId}/context`} className="mt-4 inline-flex text-sm font-semibold text-[#d93820]">
-                Open Context
+              <a href={`/projects/${projectId}/context`} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820]">
+                Open context
+                <ArrowRight size={14} />
               </a>
             </div>
           </div>
         </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Loop progress" eyebrow="Visibility to content loop" />
-        {loopItems.length === 0 ? (
-          <EmptyState
-            title="No active loop items yet"
-            detail="Visibility opportunities will appear here after they are detected, added to Content Plan, drafted, published, and measured."
-          />
-        ) : (
-          <div className="grid gap-2">
-            {loopItems.map((item) => (
-              <a
-                key={item.id}
-                href={item.href}
-                className="flex min-h-[46px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-900">{item.title}</div>
-                  <div className="mt-0.5 text-[13px] font-semibold text-slate-400">{item.stage}</div>
-                </div>
-                <Badge tone={item.tone}>loop</Badge>
-              </a>
-            ))}
-          </div>
-        )}
       </section>
 
       <section>
@@ -590,7 +758,7 @@ export function Workspace({ projectId }: { projectId: string }) {
 
       {automationWarnings.length > 0 && (
         <section>
-          <SectionHeader title="Activity warning summary" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Activity log</a>} />
+          <SectionHeader title="Automation needs attention" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Activity log</a>} />
           <div className="grid gap-2">
             {automationWarnings.map((run) => (
               <div

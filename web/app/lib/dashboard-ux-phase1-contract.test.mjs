@@ -118,10 +118,21 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
   }
 });
 
-test("home exposes a user-facing next action and does not show run internals by default", () => {
+test("home leads with growth outcomes and does not show run internals by default", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
-  for (const copy of ["Next action", "Why this", "Also waiting", "Refresh context", "Generate content plan"]) {
+  for (const copy of [
+    "Growth Overview",
+    "Growth impact",
+    "AI citations",
+    "Organic traffic",
+    "Published pages",
+    "Next growth move",
+    "Growth loop",
+    "Measurement coverage",
+    "Refresh context",
+    "Generate content plan",
+  ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
@@ -130,17 +141,20 @@ test("home exposes a user-facing next action and does not show run internals by 
   }
 });
 
-test("home phase 2 exposes momentum, loop progress, and context health from existing product data", () => {
+test("home explains growth limits and loop status from existing product data", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Results / Momentum",
-    "Loop progress",
-    "Context health",
-    "Activity warning summary",
-    "Published this month",
-    "Opportunities converted",
-    "Evidence coverage",
+    "Growth measurement is limited",
+    "Search Console is not connected yet",
+    "Review drafts to unlock growth",
+    "Find opportunities",
+    "Plan content",
+    "Create drafts",
+    "Review",
+    "Publish",
+    "Measure results",
+    "CiteLoop knowledge",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
@@ -156,6 +170,9 @@ test("home phase 2 exposes momentum, loop progress, and context health from exis
 
   assert.doesNotMatch(workspace, /Automation healthy/);
   assert.doesNotMatch(workspace, /No failed or degraded activity needs attention right now/);
+  assert.doesNotMatch(workspace, /Actionable momentum/);
+  assert.doesNotMatch(workspace, /Results \/ Momentum/);
+  assert.doesNotMatch(workspace, /Active loop items/);
 });
 
 test("settings exposes activity log as the secondary home for automation audit details", () => {
