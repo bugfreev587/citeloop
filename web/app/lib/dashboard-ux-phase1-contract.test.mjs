@@ -203,11 +203,10 @@ test("home explains growth limits and loop status from existing product data", (
   assert.doesNotMatch(workspace, /Automation healthy/);
 });
 
-test("home growth loop renders as a seven-card flywheel with context feeding opportunities", () => {
+test("home growth loop renders compact linked status cards with clear flywheel arrows", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Overview",
     "Context",
     "Context feeds Find opportunities",
     "Find opportunities connects to Plan content",
@@ -217,17 +216,27 @@ test("home growth loop renders as a seven-card flywheel with context feeding opp
     "Publish connects to Measure results",
     "Measure results connects back to Find opportunities",
     "waiting for analytics signal",
+    "source pages are ready for planning and review",
+    "topics are in the content backlog",
+    "drafts are created or approved",
+    "Open {card.label}",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
+  assert.match(workspace, /metricValue/);
+  assert.match(workspace, /metricLabel/);
   assert.match(workspace, /data-loop-position=\{card\.position\}/);
   for (const position of ["0", "1", "2", "3", "4", "5", "6"]) {
     assert.match(workspace, new RegExp(`position: ${position}`));
   }
 
+  assert.match(workspace, /h-12 w-12/);
+  assert.match(workspace, /ConnectorIcon size=\{22\}/);
   assert.match(workspace, /grid-cols-\[1fr_1fr_1fr\]/);
   assert.match(workspace, /loopConnectorLabels/);
+  assert.doesNotMatch(workspace, />Overview</);
+  assert.doesNotMatch(workspace, /min-h-\[172px\]/);
   assert.doesNotMatch(workspace, /xl:grid-cols-6/);
 });
 

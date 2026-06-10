@@ -113,10 +113,10 @@ function loopGridClass(position: number) {
 
 function loopConnectorClass(direction: "right" | "down" | "left" | "up") {
   const classes = {
-    right: "-right-5 top-1/2 -translate-y-1/2",
-    down: "left-1/2 -bottom-5 -translate-x-1/2",
-    left: "-left-5 top-1/2 -translate-y-1/2",
-    up: "left-1/2 -top-5 -translate-x-1/2",
+    right: "-right-6 top-1/2 -translate-y-1/2",
+    down: "left-1/2 -bottom-6 -translate-x-1/2",
+    left: "-left-6 top-1/2 -translate-y-1/2",
+    up: "left-1/2 -top-6 -translate-x-1/2",
   };
   return classes[direction];
 }
@@ -398,79 +398,88 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 0,
       label: "Context",
-      status: contextHealth.label,
-      detail: contextHealth.detail,
-      overview: `${sourcePageCount} source page${sourcePageCount === 1 ? "" : "s"} and ${contextEvidenceCount} evidence snippet${contextEvidenceCount === 1 ? "" : "s"} feed every content decision.`,
+      metricValue: sourcePageCount,
+      metricLabel: sourcePageCount === 1 ? "source page" : "source pages",
+      detail: contextEvidenceCount > 0
+        ? `${contextEvidenceCount} evidence snippet${contextEvidenceCount === 1 ? "" : "s"} are ready for planning and review`
+        : sourcePageCount > 0
+          ? "source pages are ready for planning and review"
+          : "refresh context to collect source pages and evidence",
       href: `/projects/${projectId}/context`,
       tone: contextHealth.tone,
+      accentClass: "text-emerald-700",
       connectorLabel: loopConnectorLabels.contextToFind,
       connectorDirection: "down" as const,
     },
     {
       position: 1,
       label: "Find opportunities",
-      status: seoOpportunities.length > 0 ? `${seoOpportunities.length} found` : "Waiting",
+      metricValue: seoOpportunities.length,
+      metricLabel: seoOpportunities.length === 1 ? "opportunity" : "opportunities",
       detail: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for analytics signal",
-      overview: searchDataConnected
-        ? "Search demand, public crawl, and visibility changes show what should become the next growth opportunity."
-        : "Connect analytics or Search Console so CiteLoop can find opportunities from real demand, not guesses.",
       href: `/projects/${projectId}/visibility`,
       tone: seoOpportunities.length > 0 ? ("green" as const) : ("neutral" as const),
+      accentClass: seoOpportunities.length > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.findToPlan,
       connectorDirection: "right" as const,
     },
     {
       position: 2,
       label: "Plan content",
-      status: topics.length > 0 ? `${topics.length} planned` : "Not started",
-      detail: topics.length > 0 ? "items in the content plan" : "plan not started",
-      overview: "Opportunities become a backlog with audience, angle, evidence, and publish timing attached.",
+      metricValue: topics.length,
+      metricLabel: topics.length === 1 ? "topic" : "topics",
+      detail: topics.length > 0 ? "topics are in the content backlog" : "content backlog is not started",
       href: `/projects/${projectId}/plan`,
       tone: topics.length > 0 ? ("green" as const) : ("amber" as const),
+      accentClass: topics.length > 0 ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.planToCreate,
       connectorDirection: "down" as const,
     },
     {
       position: 3,
       label: "Create drafts",
-      status: reviewArticles.length + approved.length > 0 ? `${reviewArticles.length + approved.length} drafts` : "Waiting",
-      detail: reviewArticles.length + approved.length > 0 ? "drafts created or approved" : "no drafts yet",
-      overview: "CiteLoop turns planned work into evidence-backed drafts that are ready for your judgment.",
+      metricValue: reviewArticles.length + approved.length,
+      metricLabel: reviewArticles.length + approved.length === 1 ? "draft" : "drafts",
+      detail: reviewArticles.length + approved.length > 0 ? "drafts are created or approved" : "no drafts yet",
       href: `/projects/${projectId}/plan`,
       tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : ("neutral" as const),
+      accentClass: reviewArticles.length + approved.length > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.createToReview,
       connectorDirection: "left" as const,
     },
     {
       position: 4,
       label: "Review",
-      status: reviewArticles.length > 0 ? `${reviewArticles.length} waiting` : "Clear",
-      detail: reviewArticles.length > 0 ? "waiting for your approval" : "nothing waiting",
-      overview: "You approve the claims, source support, and positioning before anything moves toward publishing.",
+      metricValue: reviewArticles.length,
+      metricLabel: reviewArticles.length === 1 ? "draft" : "drafts",
+      detail: reviewArticles.length > 0 ? "drafts are waiting for approval" : "nothing waiting",
       href: `/projects/${projectId}/review`,
       tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
+      accentClass: reviewArticles.length > 0 ? "text-amber-700" : "text-emerald-700",
       connectorLabel: loopConnectorLabels.reviewToPublish,
       connectorDirection: "left" as const,
     },
     {
       position: 5,
       label: "Publish",
-      status: failedPublish.length > 0 ? "Needs fix" : `${publishedThisMonth} live`,
+      metricValue: publishedThisMonth,
+      metricLabel: publishedThisMonth === 1 ? "page live" : "pages live",
       detail: failedPublish.length > 0 ? "publishing needs attention" : "published this month",
-      overview: "Approved work goes live, gets distributed where needed, and becomes something CiteLoop can measure.",
       href: `/projects/${projectId}/publish`,
       tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ("neutral" as const),
+      accentClass: failedPublish.length > 0 ? "text-red-700" : publishedThisMonth > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.publishToMeasure,
       connectorDirection: "up" as const,
     },
     {
       position: 6,
       label: "Measure results",
-      status: searchDataConnected ? `${metric(clicks28d)} clicks` : "Limited",
+      metricValue: searchDataConnected ? metric(clicks28d) : "-",
+      metricLabel: searchDataConnected ? "clicks" : "results",
       detail: searchDataConnected ? "clicks in the last 28 days" : "limited until connected",
-      overview: "Traffic, citations, and outcome signals close the loop by creating the next set of opportunities.",
       href: `/projects/${projectId}/visibility`,
       tone: searchDataConnected ? ("green" as const) : ("amber" as const),
+      accentClass: searchDataConnected ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.measureToFind,
       connectorDirection: "right" as const,
     },
@@ -671,7 +680,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 data-loop-position={card.position}
                 href={card.href}
                 className={cx(
-                  "group relative min-h-[172px] rounded-lg border border-slate-200 bg-white px-4 py-4 text-sm transition-colors hover:bg-slate-50",
+                  "group relative min-h-[132px] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300 hover:bg-slate-50",
                   loopGridClass(card.position),
                 )}
               >
@@ -679,24 +688,27 @@ export function Workspace({ projectId }: { projectId: string }) {
                 <span
                   aria-hidden="true"
                   className={cx(
-                    "pointer-events-none absolute z-10 hidden h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition-colors group-hover:text-[#d93820] lg:flex",
+                    "pointer-events-none absolute z-10 hidden h-12 w-12 items-center justify-center rounded-full border border-red-100 bg-red-50 text-[#d93820] shadow-[0_10px_22px_-14px_rgba(217,56,32,0.8)] transition-colors group-hover:border-[#d93820] group-hover:bg-[#d93820] group-hover:text-white lg:flex",
                     loopConnectorClass(card.connectorDirection),
                   )}
                 >
-                  <ConnectorIcon size={15} />
+                  <ConnectorIcon size={22} />
                 </span>
                 <div className="flex items-start justify-between gap-3">
                   <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-500">
                     {card.position}
                   </span>
-                  <Badge tone={card.tone}>{card.status}</Badge>
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#d93820] opacity-80 transition-opacity group-hover:opacity-100">
+                    Open {card.label}
+                    <ArrowRight size={13} />
+                  </span>
                 </div>
-                <div className="mt-4 text-base font-bold leading-5 text-slate-950">{card.label}</div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className={cx("text-3xl font-bold leading-none tracking-normal", card.accentClass)}>{card.metricValue}</span>
+                  <span className="text-sm font-semibold leading-5 text-slate-500">{card.metricLabel}</span>
+                </div>
+                <div className="mt-2 text-base font-bold leading-5 text-slate-950">{card.label}</div>
                 <div className="mt-1 text-sm leading-5 text-slate-500">{card.detail}</div>
-                <div className="mt-4 border-t border-slate-100 pt-3">
-                  <div className="text-xs font-bold uppercase text-slate-400">Overview</div>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">{card.overview}</p>
-                </div>
               </a>
             );
           })}
