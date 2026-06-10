@@ -42,6 +42,10 @@ function draftFromTopic(topic: Topic): TopicDraft {
   };
 }
 
+function isBacklogStatus(status: string) {
+  return status === "backlog" || status === "scheduled" || status === "generating";
+}
+
 export function TopicsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -92,6 +96,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       return channelMatch && queryMatch;
     });
   }, [channel, query, topics]);
+
+  const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
 
   async function runStrategist() {
     setBusy("strategist");
@@ -271,12 +277,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       </section>
 
       <section>
-        <SectionHeader title="Backlog" action={<Badge tone="neutral">{filtered.length}</Badge>} />
-        {filtered.length === 0 ? (
-          <EmptyState title="No topics found" detail="Run Strategist or adjust filters to populate the backlog." />
+        <SectionHeader title="Backlog" action={<Badge tone="neutral">{backlogTopics.length}</Badge>} />
+        {backlogTopics.length === 0 ? (
+          <EmptyState title="No backlog topics found" detail="Drafted topics move to Review; run Strategist or adjust filters to populate the backlog." />
         ) : (
           <div className="grid gap-2">
-            {filtered.map((topic) => {
+            {backlogTopics.map((topic) => {
               const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";
               const editBusy = busy === `edit-${topic.id}`;
               const scheduleBusy = busy === `schedule-${topic.id}`;

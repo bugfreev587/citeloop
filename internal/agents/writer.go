@@ -12,6 +12,7 @@ import (
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 )
 
@@ -62,8 +63,13 @@ func (w *Writer) Generate(ctx context.Context, projectID uuid.UUID, topic db.Top
 		}
 	}
 
-	// mark topic drafted
-	_, _ = w.Q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: topic.ID, Status: "drafted"})
+	nextStatus, err := topicstate.Transition(topicstate.Status(topic.Status), topicstate.EventMarkDrafted)
+	if err != nil {
+		return created, err
+	}
+	if _, err := w.Q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: topic.ID, Status: string(nextStatus)}); err != nil {
+		return created, err
+	}
 	return created, nil
 }
 

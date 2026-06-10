@@ -28,6 +28,7 @@ import (
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/secretbox"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -240,14 +241,30 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 	for _, t := range candidates {
 		// Idempotency: skip if a non-rejected article already exists (§5.4).
 		n, err := q.CountNonRejectedArticlesForTopic(ctx, t.ID)
-		if err != nil || n > 0 {
+		if err != nil {
 			continue
 		}
-		if _, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: "generating"}); err != nil {
+		if n > 0 {
+			if reconciled, changed, err := topicstate.ReconcileExistingDrafts(topicstate.Status(t.Status)); err != nil {
+				s.Log.Warn("generation candidate topic draft reconciliation rejected", "topic", t.ID, "status", t.Status, "err", err)
+			} else if changed {
+				if _, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(reconciled)}); err != nil {
+					s.Log.Warn("generation candidate topic draft reconciliation failed", "topic", t.ID, "err", err)
+				}
+			}
+			continue
+		}
+		nextStatus, err := topicstate.Transition(topicstate.Status(t.Status), topicstate.EventStartGeneration)
+		if err != nil {
+			s.Log.Warn("topic generation transition rejected", "topic", t.ID, "status", t.Status, "err", err)
+			continue
+		}
+		generatingTopic, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(nextStatus)})
+		if err != nil {
 			s.Log.Warn("mark generating failed", "topic", t.ID, "err", err)
 			continue
 		}
-		if _, err := writer.Generate(ctx, p.ID, t); err != nil {
+		if _, err := writer.Generate(ctx, p.ID, generatingTopic); err != nil {
 			s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
 			s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
 			// leave topic in generating; next tick may retry. Do not block others.

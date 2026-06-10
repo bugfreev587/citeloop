@@ -11,6 +11,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/search"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 )
 
@@ -90,7 +91,7 @@ func (a *Strategist) Run(ctx context.Context, projectID uuid.UUID, cfg config.Pr
 			Format:        ptr(s.Format),
 			Priority:      int32(s.Priority),
 			InternalLinks: toJSON(s.InternalLinks),
-			Status:        "backlog",
+			Status:        string(topicstate.StatusBacklog),
 		})
 		if err != nil {
 			a.Log.Warn("create topic failed", "title", s.Title, "err", err)

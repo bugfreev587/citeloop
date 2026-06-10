@@ -8,6 +8,7 @@ import (
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -288,7 +289,11 @@ func (s *Server) rejectArticleScoped(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	// topic back to backlog so it can be re-picked (§5.5).
-	_, _ = s.Q.UpdateTopicStatus(r.Context(), db.UpdateTopicStatusParams{ID: a.TopicID, Status: "backlog"})
+	if topic, err := s.Q.GetTopic(r.Context(), a.TopicID); err == nil {
+		if nextStatus, err := topicstate.Transition(topicstate.Status(topic.Status), topicstate.EventRejectDraft); err == nil {
+			_, _ = s.Q.UpdateTopicStatus(r.Context(), db.UpdateTopicStatusParams{ID: a.TopicID, Status: string(nextStatus)})
+		}
+	}
 	writeJSON(w, 200, a)
 }
 
