@@ -174,6 +174,14 @@ test("home phase 1 behaves like a compact control center instead of a module ind
   assert.doesNotMatch(workspace, /Automation healthy/);
 });
 
+test("home momentum tile action labels stay on one line in compact metric cards", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(workspace, /flex min-w-0 items-start justify-between gap-3/);
+  assert.match(workspace, /min-w-0 text-\[13px\] font-bold leading-5 text-slate-500/);
+  assert.match(workspace, /<Badge tone=\{item\.tone\} className="shrink-0 whitespace-nowrap">/);
+});
+
 test("settings exposes activity log as the secondary home for automation audit details", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
 

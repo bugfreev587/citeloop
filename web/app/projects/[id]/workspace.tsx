@@ -406,9 +406,11 @@ export function Workspace({ projectId }: { projectId: string }) {
                   href={item.href}
                   className="rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
-                    <Badge tone={item.tone}>{item.actionLabel}</Badge>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0 text-[13px] font-bold leading-5 text-slate-500">{item.label}</div>
+                    <Badge tone={item.tone} className="shrink-0 whitespace-nowrap">
+                      {item.actionLabel}
+                    </Badge>
                   </div>
                   <div className="mt-2 text-3xl font-bold leading-none text-slate-950">{item.value}</div>
                   <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
