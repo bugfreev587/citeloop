@@ -73,6 +73,12 @@ export type Project = {
 
 export type ReviewGroup = { topic_id: string; topic?: Topic; articles: Article[] };
 
+export type GenerateTopicResult = {
+  status: "generating" | "ready";
+  topic?: Topic;
+  articles: Article[];
+};
+
 export type DistributeItem = {
   article: Article;
   compose_url: string;
@@ -717,6 +723,17 @@ function normalizeReviewGroup(raw: any): ReviewGroup {
   };
 }
 
+function normalizeGenerateTopicResult(raw: any): GenerateTopicResult {
+  if (Array.isArray(raw)) {
+    return { status: "ready", articles: raw.map(normalizeArticle) };
+  }
+  return {
+    status: raw?.status === "generating" ? "generating" : "ready",
+    topic: raw?.topic ? normalizeTopic(raw.topic) : undefined,
+    articles: arrayFrom(raw?.articles).map(normalizeArticle),
+  };
+}
+
 function normalizeDistributeItem(raw: any): DistributeItem {
   return {
     article: normalizeArticle(raw.article),
@@ -1226,8 +1243,8 @@ export function createApi(auth?: AuthOptions) {
     return normalizeTopic(raw);
   },
   generateTopic: async (id: string, topicID: string) => {
-    const raw = await req<any[]>(`/projects/${id}/topics/${topicID}/generate`, { method: "POST" }, auth);
-    return arrayFrom(raw).map(normalizeArticle);
+    const raw = await req<any>(`/projects/${id}/topics/${topicID}/generate`, { method: "POST" }, auth);
+    return normalizeGenerateTopicResult(raw);
   },
   listReview: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/review`, undefined, auth);

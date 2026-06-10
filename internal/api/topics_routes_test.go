@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -45,5 +47,23 @@ func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestGenerateTopicRouteStartsBackgroundGeneration(t *testing.T) {
+	source, err := os.ReadFile("handlers_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+
+	if !strings.Contains(body, "http.StatusAccepted") {
+		t.Fatal("generate topic should accept background generation without holding the HTTP request open")
+	}
+	if !strings.Contains(body, "startTopicGeneration") {
+		t.Fatal("generate topic should dispatch writer and QA work outside the request path")
+	}
+	if strings.Contains(body, "arts, err := ag.Generate(r.Context(), id, topic)") {
+		t.Fatal("generate topic must not run Writer+QA synchronously on the request context")
 	}
 }

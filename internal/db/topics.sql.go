@@ -390,6 +390,38 @@ func (q *Queries) SetTopicScheduledAtForProject(ctx context.Context, arg SetTopi
 	return i, err
 }
 
+const startTopicGenerationForProject = `-- name: StartTopicGenerationForProject :one
+update topics set status = 'generating'
+where id = $1 and project_id = $2 and status in ('backlog','scheduled')
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at
+`
+
+type StartTopicGenerationForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) StartTopicGenerationForProject(ctx context.Context, arg StartTopicGenerationForProjectParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, startTopicGenerationForProject, arg.ID, arg.ProjectID)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateTopic = `-- name: UpdateTopic :one
 update topics set
   channel = $3,
@@ -467,6 +499,39 @@ type UpdateTopicStatusParams struct {
 
 func (q *Queries) UpdateTopicStatus(ctx context.Context, arg UpdateTopicStatusParams) (Topic, error) {
 	row := q.db.QueryRow(ctx, updateTopicStatus, arg.ID, arg.Status)
+	var i Topic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Channel,
+		&i.Title,
+		&i.TargetKeyword,
+		&i.TargetPrompt,
+		&i.Angle,
+		&i.Format,
+		&i.Priority,
+		&i.InternalLinks,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateTopicStatusForProject = `-- name: UpdateTopicStatusForProject :one
+update topics set status = $3
+where id = $1 and project_id = $2
+returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at
+`
+
+type UpdateTopicStatusForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) UpdateTopicStatusForProject(ctx context.Context, arg UpdateTopicStatusForProjectParams) (Topic, error) {
+	row := q.db.QueryRow(ctx, updateTopicStatusForProject, arg.ID, arg.ProjectID, arg.Status)
 	var i Topic
 	err := row.Scan(
 		&i.ID,

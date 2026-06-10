@@ -35,6 +35,16 @@ returning *;
 update topics set status = $2 where id = $1
 returning *;
 
+-- name: UpdateTopicStatusForProject :one
+update topics set status = $3
+where id = $1 and project_id = $2
+returning *;
+
+-- name: StartTopicGenerationForProject :one
+update topics set status = 'generating'
+where id = $1 and project_id = $2 and status in ('backlog','scheduled')
+returning *;
+
 -- name: SetTopicScheduledAt :one
 update topics set scheduled_at = $2 where id = $1
 returning *;
