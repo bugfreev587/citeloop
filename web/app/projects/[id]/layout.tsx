@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { ProjectShell } from "../../components/project-shell";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "../../lib/auth-config";
+import { canUseInternalTools } from "../../lib/admin-access";
 import { createApi, Project } from "../../lib/api";
 
 export default async function ProjectLayout({
@@ -14,9 +15,16 @@ export default async function ProjectLayout({
 
   const { id } = await params;
   let token: string | null = null;
+  let canAccessSettings = true;
   if (clerkServerAuthConfigured) {
-    const { getToken } = await auth();
+    const { getToken, userId, sessionClaims } = await auth();
     token = await getToken();
+    canAccessSettings = canUseInternalTools({
+      userId,
+      sessionClaims,
+      adminUserIDs: process.env.CITELOOP_ADMIN_USER_IDS,
+      clerkSecretKey: process.env.CLERK_SECRET_KEY,
+    });
   }
   const api = createApi(token ? { token } : undefined);
   let project: Project | null = null;
@@ -27,7 +35,7 @@ export default async function ProjectLayout({
   }
 
   return (
-    <ProjectShell project={project} projectId={id}>
+    <ProjectShell project={project} projectId={id} canAccessSettings={canAccessSettings}>
       {children}
     </ProjectShell>
   );

@@ -149,10 +149,17 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }
 
   async function schedule(topic: Topic) {
+    const nextScheduledAt = fromDateTimeLocal(scheduleDrafts[topic.id] ?? "");
+    if (nextScheduledAt === null && topic.scheduled_at) {
+      const ok = window.confirm(
+        `Clear the scheduled date for “${topic.title}”? It will no longer publish on a set date.`,
+      );
+      if (!ok) return;
+    }
     setBusy(`schedule-${topic.id}`);
     setMessage(null);
     try {
-      const updated = await api.scheduleTopic(projectId, topic.id, fromDateTimeLocal(scheduleDrafts[topic.id] ?? ""));
+      const updated = await api.scheduleTopic(projectId, topic.id, nextScheduledAt);
       replaceTopic(updated);
       setMessage({ title: updated.scheduled_at ? "Topic scheduled" : "Schedule cleared", detail: updated.title, tone: "green" });
     } catch (e: any) {
@@ -163,6 +170,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }
 
   async function archive(topic: Topic) {
+    const ok = window.confirm(`Remove “${topic.title}” from the content plan? You can restore it later from the archived filter.`);
+    if (!ok) return;
     setBusy(`archive-${topic.id}`);
     setMessage(null);
     try {
@@ -198,7 +207,16 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         return;
       }
       await refresh();
-      setMessage({ title: "Topic generated", detail: `${result.articles.length} articles moved toward review.`, tone: "green" });
+      const existing = result.articles?.length ?? 0;
+      setMessage(
+        existing > 0
+          ? {
+              title: "Draft already exists",
+              detail: `This topic already has ${existing} draft${existing === 1 ? "" : "s"} in the review queue. Open Review to approve or regenerate.`,
+              tone: "amber",
+            }
+          : { title: "Topic generated", detail: "Draft is ready in the review queue.", tone: "green" },
+      );
     } catch (e: any) {
       setMessage({
         title: "Generate failed",

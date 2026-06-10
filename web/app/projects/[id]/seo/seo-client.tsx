@@ -548,7 +548,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
         <SectionHeader title="AI visibility" eyebrow={showGeoScore ? "Observed answer coverage" : "Capability-aware status"} />
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "insufficient_data"}</div>
+            <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "Insufficient data"}</div>
             <p className="mt-1 text-sm text-slate-500">Visibility score</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -744,7 +744,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
         />
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "insufficient_data"}</div>
+            <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "Insufficient data"}</div>
             <p className="mt-1 text-sm text-slate-500">Visibility score</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">

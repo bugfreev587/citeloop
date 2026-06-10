@@ -25,6 +25,29 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
   }
 });
 
+test("settings nav entry is hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
+  const shell = read("components/project-shell.tsx");
+  // Shell must accept and apply a canAccessSettings gate so non-admin users do not see a Settings entry that 404s.
+  assert.match(shell, /canAccessSettings/);
+  assert.match(shell, /item\.href !== "settings" \|\| canAccessSettings/);
+  assert.match(shell, /visibleNav\.map/);
+
+  const layout = read("projects/[id]/layout.tsx");
+  assert.match(layout, /canUseInternalTools/);
+  assert.match(layout, /canAccessSettings=\{canAccessSettings\}/);
+});
+
+test("destructive content-plan and distribution actions confirm before running", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  // Archive and schedule-clear are reversible-but-surprising; both must confirm.
+  assert.match(topics, /Remove .* from the content plan\?/);
+  assert.match(topics, /Clear the scheduled date/);
+
+  const workspace = read("projects/[id]/workspace.tsx");
+  assert.match(workspace, /Mark this variant as distributed\?/);
+  assert.match(workspace, /Copied to clipboard/);
+});
+
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",
