@@ -182,6 +182,11 @@ function ReviewArticle({
   // Once the automatic repair budget is spent (or a human decision is required), the
   // "CiteLoop automatically reruns repair" copy is no longer true — show honest next steps.
   const repairExhausted = article.requires_human_decision || (article.repair_attempts ?? 0) >= 2;
+  const blockingSummary = article.qa_blocking
+    ? article.qa_issues.length > 0
+      ? explainQAIssue(article.qa_issues[0]).title
+      : "QA has not cleared this draft"
+    : null;
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -235,6 +240,13 @@ function ReviewArticle({
           </Button>
         </div>
       </div>
+
+      {blockingSummary && (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
+          <ShieldAlert size={13} />
+          Approve is locked: {blockingSummary}. See the details below to resolve it.
+        </div>
+      )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.95fr)] 2xl:grid-cols-[minmax(560px,1fr)_minmax(560px,1fr)]">
         <div className="min-w-0 space-y-4">
