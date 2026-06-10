@@ -166,3 +166,12 @@ test("content plan shows visible feedback while strategist is running", () => {
   assert.match(topics, /animate-spin/);
   assert.match(topics, /Running strategist/);
 });
+
+test("content plan treats topic generation as a per-topic background operation", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /generatingIds/);
+  assert.match(topics, /isGenerating/);
+  assert.match(topics, /Starting draft generation/);
+  assert.doesNotMatch(topics, /disabled=\{!!busy \|\| topic\.status === "archived"\} size="sm" variant="primary" onClick=\{\(\) => generate\(topic\)\}/);
+});

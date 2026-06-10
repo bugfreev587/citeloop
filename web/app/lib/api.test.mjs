@@ -151,6 +151,36 @@ test("listRuns calls the project runs endpoint", async () => {
   }
 });
 
+test("generateTopic normalizes accepted background generation responses", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 202,
+      json: async () => ({
+        status: "generating",
+        topic: { id: "topic-1", project_id: "project-1", title: "Draft me", status: "generating" },
+        articles: null,
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const result = await createApi().generateTopic("project-1", "topic-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/topics/topic-1/generate");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(result.status, "generating");
+    assert.equal(result.topic.id, "topic-1");
+    assert.deepEqual(result.articles, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

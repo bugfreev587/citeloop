@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -270,7 +273,7 @@ func (s *Server) archiveTopic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
-// generateTopic runs Writer+QA for a single topic on demand (§5.3).
+// generateTopic accepts Writer+QA work for a single topic on demand (§5.3).
 func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 	id, err := s.projectID(r)
 	if err != nil {
@@ -287,6 +290,10 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "topic not found")
 		return
 	}
+	if topic.Status == "archived" {
+		writeErr(w, http.StatusConflict, "topic is archived")
+		return
+	}
 	existing, err := s.Q.ListArticlesByTopicForProject(r.Context(), db.ListArticlesByTopicForProjectParams{TopicID: topicID, ProjectID: id})
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -299,16 +306,86 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(nonRejected) > 0 {
-		writeJSON(w, 200, nonRejected)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "articles": emptySlice(nonRejected)})
 		return
 	}
-	ag := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
-	arts, err := ag.Generate(r.Context(), id, topic)
+	if topic.Status == "generating" {
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "generating", "topic": topic, "articles": []db.Article{}})
+		return
+	}
+	if s.Pool == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database pool unavailable")
+		return
+	}
+	started, err := s.Q.StartTopicGenerationForProject(r.Context(), db.StartTopicGenerationForProjectParams{ID: topicID, ProjectID: id})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			current, getErr := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: id})
+			if getErr != nil {
+				writeErr(w, 404, "topic not found")
+				return
+			}
+			if current.Status != "generating" {
+				writeErr(w, http.StatusConflict, "topic is not ready for generation")
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{"status": "generating", "topic": current, "articles": []db.Article{}})
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, emptySlice(arts))
+	s.startTopicGeneration(id, topicID)
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "generating", "topic": started, "articles": []db.Article{}})
+}
+
+func (s *Server) startTopicGeneration(projectID, topicID uuid.UUID) {
+	go s.generateTopicInBackground(projectID, topicID)
+}
+
+func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	q := db.New(s.Pool)
+	topic, err := q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: topicID, ProjectID: projectID})
+	if err != nil {
+		s.Log.Error("manual generation topic lookup failed", "project", projectID, "topic", topicID, "err", err)
+		return
+	}
+	n, err := q.CountNonRejectedArticlesForTopic(ctx, topicID)
+	if err != nil {
+		s.Log.Error("manual generation article check failed", "project", projectID, "topic", topicID, "err", err)
+		s.resetTopicAfterGenerationFailure(ctx, q, topic)
+		return
+	}
+	if n > 0 {
+		return
+	}
+
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	if _, err := writer.Generate(ctx, projectID, topic); err != nil {
+		s.Log.Error("manual generation failed", "project", projectID, "topic", topicID, "err", err)
+		if n, countErr := q.CountNonRejectedArticlesForTopic(ctx, topicID); countErr == nil && n == 0 {
+			s.resetTopicAfterGenerationFailure(ctx, q, topic)
+		}
+		return
+	}
+	s.Log.Info("manual generation accepted into review queue", "project", projectID, "topic", topic.Title)
+}
+
+func (s *Server) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Queries, topic db.Topic) {
+	status := "backlog"
+	if topic.ScheduledAt.Valid {
+		status = "scheduled"
+	}
+	if _, err := q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
+		ID:        topic.ID,
+		ProjectID: topic.ProjectID,
+		Status:    status,
+	}); err != nil {
+		s.Log.Warn("reset topic after generation failure failed", "project", topic.ProjectID, "topic", topic.ID, "err", err)
+	}
 }
 
 func (s *Server) tickGenerate(w http.ResponseWriter, r *http.Request) {

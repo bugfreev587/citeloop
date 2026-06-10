@@ -51,6 +51,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
+  const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState<Message>(null);
   const strategistRunning = busy === "strategist";
 
@@ -59,6 +60,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       const next = await api.listTopics(projectId);
       setTopics(next);
       setScheduleDrafts(Object.fromEntries(next.map((topic) => [topic.id, toDateTimeLocal(topic.scheduled_at)])));
+      setGeneratingIds((current) => {
+        const stillGenerating = new Set(next.filter((topic) => topic.status === "generating").map((topic) => topic.id));
+        return Object.fromEntries(Object.entries(current).filter(([id]) => stillGenerating.has(id)));
+      });
     } catch (e: any) {
       setMessage({ title: "Topics unavailable", detail: e.message, tone: "amber" });
     }
@@ -67,6 +72,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
+    if (!hasGenerating) return;
+    const interval = window.setInterval(refresh, 10_000);
+    return () => window.clearInterval(interval);
+  }, [generatingIds, refresh, topics]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -166,12 +178,27 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }
 
   async function generate(topic: Topic) {
-    setBusy(topic.id);
+    setGeneratingIds((current) => ({ ...current, [topic.id]: true }));
     setMessage(null);
+    let keepGenerating = false;
     try {
-      const articles = await api.generateTopic(projectId, topic.id);
+      const result = await api.generateTopic(projectId, topic.id);
+      if (result.topic) {
+        replaceTopic(result.topic);
+      } else {
+        await refresh();
+      }
+      if (result.status === "generating") {
+        keepGenerating = true;
+        setMessage({
+          title: "Starting draft generation",
+          detail: "Writer and QA are running in the background. Review queue will update when drafts are ready.",
+          tone: "green",
+        });
+        return;
+      }
       await refresh();
-      setMessage({ title: "Topic generated", detail: `${articles.length} articles moved toward review.`, tone: "green" });
+      setMessage({ title: "Topic generated", detail: `${result.articles.length} articles moved toward review.`, tone: "green" });
     } catch (e: any) {
       setMessage({
         title: "Generate failed",
@@ -179,7 +206,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         tone: "red",
       });
     } finally {
-      setBusy(null);
+      if (!keepGenerating) {
+        setGeneratingIds((current) => {
+          const next = { ...current };
+          delete next[topic.id];
+          return next;
+        });
+      }
     }
   }
 
@@ -190,7 +223,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title="Topics"
           eyebrow="Backlog and schedule intent"
           action={
-            <Button aria-busy={strategistRunning} disabled={!!busy} variant="primary" onClick={runStrategist}>
+            <Button aria-busy={strategistRunning} disabled={strategistRunning} variant="primary" onClick={runStrategist}>
               {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
               {strategistRunning ? "Running strategist" : "Run Strategist"}
             </Button>
@@ -212,7 +245,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <option value="syndication">Syndication</option>
             <option value="both">Both</option>
           </select>
-          <Button disabled={!!busy} onClick={refresh}>
+          <Button disabled={strategistRunning} onClick={refresh}>
             <RefreshCw size={16} />
             Refresh
           </Button>
@@ -225,7 +258,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <EmptyState title="No topics found" detail="Run Strategist or adjust filters to populate the backlog." />
         ) : (
           <div className="grid gap-2">
-            {filtered.map((topic) => (
+            {filtered.map((topic) => {
+              const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";
+              const editBusy = busy === `edit-${topic.id}`;
+              const scheduleBusy = busy === `schedule-${topic.id}`;
+              const archiveBusy = busy === `archive-${topic.id}`;
+              const topicLocked = topic.status === "archived" || isGenerating;
+              return (
               <div key={topic.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
@@ -249,7 +288,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <Button
-                      disabled={!!busy || topic.status === "archived"}
+                      disabled={topicLocked || editBusy}
                       size="sm"
                       variant="ghost"
                       onClick={() => startEdit(topic)}
@@ -257,11 +296,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <Pencil size={14} />
                       Edit
                     </Button>
-                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="primary" onClick={() => generate(topic)}>
-                      <Wand2 size={14} />
-                      Generate
+                    <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="primary" onClick={() => generate(topic)}>
+                      {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Wand2 size={14} />}
+                      {isGenerating ? "Generating" : "Generate"}
                     </Button>
-                    <Button disabled={!!busy || topic.status === "archived"} size="sm" variant="danger" onClick={() => archive(topic)}>
+                    <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
                       <Archive size={14} />
                       Archive
                     </Button>
@@ -316,11 +355,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       </Field>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Button disabled={!!busy} size="sm" variant="ghost" onClick={cancelEdit}>
+                      <Button disabled={editBusy} size="sm" variant="ghost" onClick={cancelEdit}>
                         <X size={14} />
                         Cancel
                       </Button>
-                      <Button disabled={!!busy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
+                      <Button disabled={editBusy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
                         <Check size={14} />
                         Save
                       </Button>
@@ -336,13 +375,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
                     />
                   </Field>
-                  <Button disabled={!!busy || topic.status === "archived"} size="sm" onClick={() => schedule(topic)}>
+                  <Button disabled={topicLocked || scheduleBusy} size="sm" onClick={() => schedule(topic)}>
                     <CalendarDays size={14} />
                     Schedule
                   </Button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
