@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BarChart3, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles, Wand2 } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -86,6 +86,46 @@ function hasConnectedSearchData(overview: SEOOverview | null) {
   if (!overview) return false;
   if (overview.capability_mode === "managed_content_connected" || overview.capability_mode === "customer_site_connected") return true;
   return overview.integrations.some((integration) => integration.provider === "google_search_console" && integration.status === "connected");
+}
+
+const loopConnectorLabels = {
+  contextToFind: "Context feeds Find opportunities",
+  findToPlan: "Find opportunities connects to Plan content",
+  planToCreate: "Plan content connects to Create drafts",
+  createToReview: "Create drafts connects to Review",
+  reviewToPublish: "Review connects to Publish",
+  publishToMeasure: "Publish connects to Measure results",
+  measureToFind: "Measure results connects back to Find opportunities",
+} as const;
+
+function loopGridClass(position: number) {
+  const classes: Record<number, string> = {
+    0: "lg:col-start-2 lg:row-start-1",
+    1: "lg:col-start-2 lg:row-start-2",
+    2: "lg:col-start-3 lg:row-start-2",
+    3: "lg:col-start-3 lg:row-start-3",
+    4: "lg:col-start-2 lg:row-start-3",
+    5: "lg:col-start-1 lg:row-start-3",
+    6: "lg:col-start-1 lg:row-start-2",
+  };
+  return classes[position] ?? "";
+}
+
+function loopConnectorClass(direction: "right" | "down" | "left" | "up") {
+  const classes = {
+    right: "-right-5 top-1/2 -translate-y-1/2",
+    down: "left-1/2 -bottom-5 -translate-x-1/2",
+    left: "-left-5 top-1/2 -translate-y-1/2",
+    up: "left-1/2 -top-5 -translate-x-1/2",
+  };
+  return classes[direction];
+}
+
+function loopConnectorIcon(direction: "right" | "down" | "left" | "up") {
+  if (direction === "down") return ArrowDown;
+  if (direction === "left") return ArrowLeft;
+  if (direction === "up") return ArrowUp;
+  return ArrowRight;
 }
 
 export function Workspace({ projectId }: { projectId: string }) {
@@ -354,48 +394,85 @@ export function Workspace({ projectId }: { projectId: string }) {
     { label: "Public crawl", detail: sourcePageCount > 0 ? `${sourcePageCount} pages` : "Waiting", tone: sourcePageCount > 0 ? ("green" as const) : ("amber" as const) },
     { label: "Content outcomes", detail: measuringActions > 0 ? `${measuringActions} measuring` : "No outcomes yet", tone: measuringActions > 0 ? ("green" as const) : ("neutral" as const) },
   ];
-  const loopSteps = [
+  const loopCards = [
     {
+      position: 0,
+      label: "Context",
+      status: contextHealth.label,
+      detail: contextHealth.detail,
+      overview: `${sourcePageCount} source page${sourcePageCount === 1 ? "" : "s"} and ${contextEvidenceCount} evidence snippet${contextEvidenceCount === 1 ? "" : "s"} feed every content decision.`,
+      href: `/projects/${projectId}/context`,
+      tone: contextHealth.tone,
+      connectorLabel: loopConnectorLabels.contextToFind,
+      connectorDirection: "down" as const,
+    },
+    {
+      position: 1,
       label: "Find opportunities",
-      value: seoOpportunities.length,
-      detail: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for signals",
+      status: seoOpportunities.length > 0 ? `${seoOpportunities.length} found` : "Waiting",
+      detail: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for analytics signal",
+      overview: searchDataConnected
+        ? "Search demand, public crawl, and visibility changes show what should become the next growth opportunity."
+        : "Connect analytics or Search Console so CiteLoop can find opportunities from real demand, not guesses.",
       href: `/projects/${projectId}/visibility`,
       tone: seoOpportunities.length > 0 ? ("green" as const) : ("neutral" as const),
+      connectorLabel: loopConnectorLabels.findToPlan,
+      connectorDirection: "right" as const,
     },
     {
+      position: 2,
       label: "Plan content",
-      value: topics.length,
+      status: topics.length > 0 ? `${topics.length} planned` : "Not started",
       detail: topics.length > 0 ? "items in the content plan" : "plan not started",
+      overview: "Opportunities become a backlog with audience, angle, evidence, and publish timing attached.",
       href: `/projects/${projectId}/plan`,
       tone: topics.length > 0 ? ("green" as const) : ("amber" as const),
+      connectorLabel: loopConnectorLabels.planToCreate,
+      connectorDirection: "down" as const,
     },
     {
+      position: 3,
       label: "Create drafts",
-      value: reviewArticles.length + approved.length,
+      status: reviewArticles.length + approved.length > 0 ? `${reviewArticles.length + approved.length} drafts` : "Waiting",
       detail: reviewArticles.length + approved.length > 0 ? "drafts created or approved" : "no drafts yet",
+      overview: "CiteLoop turns planned work into evidence-backed drafts that are ready for your judgment.",
       href: `/projects/${projectId}/plan`,
       tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : ("neutral" as const),
+      connectorLabel: loopConnectorLabels.createToReview,
+      connectorDirection: "left" as const,
     },
     {
+      position: 4,
       label: "Review",
-      value: reviewArticles.length,
+      status: reviewArticles.length > 0 ? `${reviewArticles.length} waiting` : "Clear",
       detail: reviewArticles.length > 0 ? "waiting for your approval" : "nothing waiting",
+      overview: "You approve the claims, source support, and positioning before anything moves toward publishing.",
       href: `/projects/${projectId}/review`,
       tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
+      connectorLabel: loopConnectorLabels.reviewToPublish,
+      connectorDirection: "left" as const,
     },
     {
+      position: 5,
       label: "Publish",
-      value: publishedThisMonth,
+      status: failedPublish.length > 0 ? "Needs fix" : `${publishedThisMonth} live`,
       detail: failedPublish.length > 0 ? "publishing needs attention" : "published this month",
+      overview: "Approved work goes live, gets distributed where needed, and becomes something CiteLoop can measure.",
       href: `/projects/${projectId}/publish`,
       tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ("neutral" as const),
+      connectorLabel: loopConnectorLabels.publishToMeasure,
+      connectorDirection: "up" as const,
     },
     {
+      position: 6,
       label: "Measure results",
-      value: searchDataConnected ? metric(clicks28d) : "-",
+      status: searchDataConnected ? `${metric(clicks28d)} clicks` : "Limited",
       detail: searchDataConnected ? "clicks in the last 28 days" : "limited until connected",
+      overview: "Traffic, citations, and outcome signals close the loop by creating the next set of opportunities.",
       href: `/projects/${projectId}/visibility`,
       tone: searchDataConnected ? ("green" as const) : ("amber" as const),
+      connectorLabel: loopConnectorLabels.measureToFind,
+      connectorDirection: "right" as const,
     },
   ];
   const loopItems = [
@@ -585,21 +662,44 @@ export function Workspace({ projectId }: { projectId: string }) {
 
       <section>
         <SectionHeader title="Growth loop" eyebrow="How CiteLoop turns work into measurable growth" />
-        <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-          {loopSteps.map((step, index) => (
-            <a
-              key={step.label}
-              href={step.href}
-              className="group relative rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm transition-colors hover:bg-slate-50"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <Badge tone={step.tone}>{step.value}</Badge>
-                {index < loopSteps.length - 1 && <ArrowRight size={14} className="hidden text-slate-300 transition-colors group-hover:text-slate-500 lg:block" />}
-              </div>
-              <div className="mt-3 font-bold leading-5 text-slate-900">{step.label}</div>
-              <div className="mt-1 text-xs leading-4 text-slate-500">{step.detail}</div>
-            </a>
-          ))}
+        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr] lg:grid-rows-[auto_auto_auto]">
+          {loopCards.map((card) => {
+            const ConnectorIcon = loopConnectorIcon(card.connectorDirection);
+            return (
+              <a
+                key={card.position}
+                data-loop-position={card.position}
+                href={card.href}
+                className={cx(
+                  "group relative min-h-[172px] rounded-lg border border-slate-200 bg-white px-4 py-4 text-sm transition-colors hover:bg-slate-50",
+                  loopGridClass(card.position),
+                )}
+              >
+                <span className="sr-only">{card.connectorLabel}</span>
+                <span
+                  aria-hidden="true"
+                  className={cx(
+                    "pointer-events-none absolute z-10 hidden h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition-colors group-hover:text-[#d93820] lg:flex",
+                    loopConnectorClass(card.connectorDirection),
+                  )}
+                >
+                  <ConnectorIcon size={15} />
+                </span>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-500">
+                    {card.position}
+                  </span>
+                  <Badge tone={card.tone}>{card.status}</Badge>
+                </div>
+                <div className="mt-4 text-base font-bold leading-5 text-slate-950">{card.label}</div>
+                <div className="mt-1 text-sm leading-5 text-slate-500">{card.detail}</div>
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <div className="text-xs font-bold uppercase text-slate-400">Overview</div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">{card.overview}</p>
+                </div>
+              </a>
+            );
+          })}
         </div>
       </section>
 
