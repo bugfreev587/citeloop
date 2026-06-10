@@ -133,6 +133,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                   <ReviewArticle
                     key={article.id}
                     article={article}
+                    projectId={projectId}
                     busy={busy === article.id}
                     repairing={!!repairing[article.id]}
                     repairFailure={repairFailures[article.id]}
@@ -155,6 +156,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
 function ReviewArticle({
   article,
+  projectId,
   busy,
   repairing,
   repairFailure,
@@ -164,6 +166,7 @@ function ReviewArticle({
   detailHref,
 }: {
   article: Article;
+  projectId: string;
   busy: boolean;
   repairing: boolean;
   repairFailure?: string;
@@ -176,6 +179,9 @@ function ReviewArticle({
   const [content, setContent] = useState(article.content_md);
   const title = articleReviewTitle(article);
   const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
+  // Once the automatic repair budget is spent (or a human decision is required), the
+  // "CiteLoop automatically reruns repair" copy is no longer true — show honest next steps.
+  const repairExhausted = article.requires_human_decision || (article.repair_attempts ?? 0) >= 2;
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -243,7 +249,9 @@ function ReviewArticle({
             onSave={onSave}
           />
 
-          {article.qa_issues.length > 0 && <QAIssuePanel issues={article.qa_issues} />}
+          {article.qa_issues.length > 0 && (
+            <QAIssuePanel issues={article.qa_issues} contextHref={`/projects/${projectId}/context`} exhausted={repairExhausted} />
+          )}
 
           <SEOContributionPanel rows={seoContributions} />
         </div>
@@ -383,7 +391,7 @@ function ContributionRow({ row }: { row: SEOContribution }) {
   );
 }
 
-function QAIssuePanel({ issues }: { issues: string[] }) {
+function QAIssuePanel({ issues, contextHref, exhausted }: { issues: string[]; contextHref: string; exhausted: boolean }) {
   return (
     <section className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900">
       <div className="mb-2 inline-flex items-center gap-2 text-sm font-bold">
@@ -397,7 +405,18 @@ function QAIssuePanel({ issues }: { issues: string[] }) {
             <div key={`${issue}-${index}`} className="rounded-md border border-red-100 bg-white/65 p-3">
               <div className="text-sm font-semibold">{explained.title}</div>
               <div className="mt-1 text-xs leading-5 text-red-800">{explained.detail}</div>
-              <div className="mt-2 text-xs font-semibold text-red-900">{explained.action}</div>
+              <div className="mt-2 text-xs font-semibold text-red-900">
+                {exhausted
+                  ? "Automatic repair is exhausted. Add or fix the evidence in Context, or edit the draft below, then re-save to rerun QA."
+                  : explained.action}
+              </div>
+              <a
+                href={contextHref}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#d93820] hover:underline"
+              >
+                <ExternalLink size={12} />
+                Fix evidence in Context
+              </a>
               <div className="mt-2 break-words font-mono text-[11px] leading-4 text-red-700/70">{explained.raw}</div>
             </div>
           );
