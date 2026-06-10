@@ -84,6 +84,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [backgroundCrawl, setBackgroundCrawl] = useState(false);
   const bgBaselineRef = useRef(0);
   const bgAttemptsRef = useRef(0);
@@ -382,7 +383,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
           <EmptyState title="No evidence snippets yet" detail="Refresh context or add evidence to source pages so claims can be safely reused in drafts." />
         ) : (
           <div className="grid gap-3">
-            {evidenceRows.slice(0, 8).map((row) => (
+            {evidenceRows.slice(0, showAllEvidence ? evidenceRows.length : 8).map((row) => (
               <div key={row.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="font-semibold text-slate-900">{row.claim}</div>
@@ -399,6 +400,15 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 </div>
               </div>
             ))}
+            {evidenceRows.length > 8 && (
+              <button
+                type="button"
+                onClick={() => setShowAllEvidence((value) => !value)}
+                className="justify-self-start text-sm font-semibold text-[#d93820] hover:underline"
+              >
+                {showAllEvidence ? "Show fewer" : `Show all ${evidenceRows.length}`}
+              </button>
+            )}
           </div>
         )}
       </section>

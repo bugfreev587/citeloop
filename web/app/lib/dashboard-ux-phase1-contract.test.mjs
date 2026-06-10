@@ -50,6 +50,20 @@ test("context and home surface a background-crawl completion signal instead of s
   assert.match(workspace, /Your domain context is ready/);
 });
 
+test("visibility degrades search metrics and signals truncated loop, context paginates evidence", () => {
+  const visibility = read("projects/[id]/seo/seo-client.tsx");
+  // Placeholder search metrics are visually dimmed + labelled when GSC is not connected.
+  assert.match(visibility, /The numbers below are placeholders/);
+  assert.match(visibility, /opacity-60/);
+  // Loop closure tells the user when it is truncated instead of silently capping at 5.
+  assert.match(visibility, /Showing \{loopRows\.length\} of \{loopTotal\}/);
+
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+  // Evidence library no longer silently hides items behind a fixed slice of 8.
+  assert.match(context, /Show all \$\{evidenceRows\.length\}/);
+  assert.match(context, /showAllEvidence/);
+});
+
 test("settings maps raw errors to user copy, confirms a budget pause, and drops dev jargon", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   assert.match(settings, /function friendlyError/);
