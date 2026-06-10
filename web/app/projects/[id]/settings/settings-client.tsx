@@ -29,6 +29,36 @@ function toFloat(value: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// Map raw backend/API error strings to actionable user copy. Falls back to the
+// raw message so nothing is hidden, but common validation/auth failures read
+// like guidance instead of server jargon.
+function friendlyError(raw: unknown) {
+  const message = String(raw ?? "").trim();
+  const lower = message.toLowerCase();
+  if (lower.includes("repo") && lower.includes("base_url")) {
+    return "Add both the GitHub repository (owner/repo) and your site's base URL before saving.";
+  }
+  if (lower.includes("base_url") || lower.includes("base url")) {
+    return "Enter a valid site base URL, e.g. https://example.com.";
+  }
+  if (lower.includes("repo")) {
+    return "Enter the GitHub repository as owner/repo.";
+  }
+  if (lower.includes("webhook") || (lower.includes("url") && lower.includes("required"))) {
+    return "Enter a valid webhook URL (a Slack or Discord incoming webhook).";
+  }
+  if (lower.includes("token")) {
+    return "The token was rejected. Check that it is valid and has write access to the repository.";
+  }
+  if (lower.includes("401") || lower.includes("403") || lower.includes("permission") || lower.includes("forbidden")) {
+    return "Permission denied. Re-check the connected credentials and their access scope.";
+  }
+  if (lower.includes("404") || lower.includes("not found")) {
+    return "Not found. Check the repository, branch, and content path.";
+  }
+  return message || "Something went wrong. Please try again.";
+}
+
 const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
   { value: "slack_webhook", label: "Slack" },
   { value: "discord_webhook", label: "Discord" },
@@ -149,6 +179,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   async function save() {
+    if ((config.monthly_budget_usd ?? 0) <= 0) {
+      const ok = window.confirm("Set the monthly budget to $0? This pauses all automated generation and SEO work until you raise it.");
+      if (!ok) return;
+    }
     setBusy(true);
     setMessage(null);
     try {
@@ -160,9 +194,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       };
       await api.updateConfig(projectId, fullPayload);
       setConfig(fullPayload);
-      setMessage({ title: "Settings saved", detail: "Full config payload was sent to avoid zeroing omitted fields.", tone: "green" });
+      setMessage({ title: "Settings saved", detail: "Cadence, budget, and crawl settings are updated.", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Settings save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Settings save failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setBusy(false);
     }
@@ -186,13 +220,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Notification channel saved", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Channel save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Channel save failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
   }
 
   async function deleteChannel(channelID: string) {
+    if (!window.confirm("Delete this notification channel? Subscriptions using it will stop delivering.")) return;
     setNotificationBusy(`delete-${channelID}`);
     setMessage(null);
     try {
@@ -246,7 +281,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       });
       setMessage({ title: "Publisher connection saved", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Publisher save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Publisher save failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -273,7 +308,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
       setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Credential save failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Credential save failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -346,12 +381,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     <div className="space-y-7">
       <SectionHeader title="Settings" eyebrow="Project config" />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
-
-      <Notice
-        title="Config update is full-payload"
-        detail="The current backend PUT /config replaces the entire config. This form always submits a complete payload and validates numeric fields through controlled inputs."
-        tone="amber"
-      />
 
       <section>
         <SectionHeader title="Activity Log" eyebrow="Automation audit" />

@@ -50,6 +50,16 @@ test("context and home surface a background-crawl completion signal instead of s
   assert.match(workspace, /Your domain context is ready/);
 });
 
+test("settings maps raw errors to user copy, confirms a budget pause, and drops dev jargon", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  assert.match(settings, /function friendlyError/);
+  assert.match(settings, /detail: friendlyError\(e\.message\)/);
+  // Budget -> $0 pauses automation; it must confirm first.
+  assert.match(settings, /pauses all automated generation/);
+  // The internal "PUT /config replaces the entire config" notice should be gone.
+  assert.doesNotMatch(settings, /replaces the entire config/);
+});
+
 test("review surfaces honest repair state and a deep link to fix evidence in context", () => {
   const review = read("projects/[id]/review/review-client.tsx");
   assert.match(review, /Fix evidence in Context/);
