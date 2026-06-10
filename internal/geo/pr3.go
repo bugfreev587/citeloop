@@ -8,6 +8,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -138,7 +139,7 @@ func (s Service) AcceptGEOAssetBrief(ctx context.Context, projectID, briefID uui
 		Format:        stringPtr("geo_asset_brief"),
 		Priority:      8,
 		InternalLinks: accepted.InternalLinkPlan,
-		Status:        "backlog",
+		Status:        string(topicstate.StatusBacklog),
 		ScheduledAt:   pgtype.Timestamptz{},
 	})
 	if err != nil {

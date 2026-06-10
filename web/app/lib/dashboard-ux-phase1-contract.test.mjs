@@ -242,3 +242,11 @@ test("content plan treats topic generation as a per-topic background operation",
   assert.match(topics, /Starting draft generation/);
   assert.doesNotMatch(topics, /disabled=\{!!busy \|\| topic\.status === "archived"\} size="sm" variant="primary" onClick=\{\(\) => generate\(topic\)\}/);
 });
+
+test("content plan backlog excludes drafted topics", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /function isBacklogStatus/);
+  assert.match(topics, /backlogTopics/);
+  assert.match(topics, /isBacklogStatus\(topic\.status\)/);
+});

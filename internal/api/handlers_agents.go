@@ -14,6 +14,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/publisher"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -242,6 +243,19 @@ func (s *Server) scheduleTopic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "scheduled_at must be RFC3339")
 		return
 	}
+	current, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	event := topicstate.EventClearSchedule
+	if scheduledAt.Valid {
+		event = topicstate.EventSchedule
+	}
+	if _, err := topicstate.Transition(topicstate.Status(current.Status), event); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	updated, err := s.Q.SetTopicScheduledAtForProject(r.Context(), db.SetTopicScheduledAtForProjectParams{
 		ID:          topicID,
 		ProjectID:   projectID,
@@ -263,6 +277,15 @@ func (s *Server) archiveTopic(w http.ResponseWriter, r *http.Request) {
 	topicID, err := s.topicID(r)
 	if err != nil {
 		writeErr(w, 400, "bad topic id")
+		return
+	}
+	current, err := s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: topicID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, 404, "topic not found")
+		return
+	}
+	if _, err := topicstate.Transition(topicstate.Status(current.Status), topicstate.EventArchive); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	updated, err := s.Q.ArchiveTopicForProject(r.Context(), db.ArchiveTopicForProjectParams{ID: topicID, ProjectID: projectID})
@@ -290,7 +313,7 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "topic not found")
 		return
 	}
-	if topic.Status == "archived" {
+	if topic.Status == string(topicstate.StatusArchived) {
 		writeErr(w, http.StatusConflict, "topic is archived")
 		return
 	}
@@ -306,11 +329,20 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(nonRejected) > 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "articles": emptySlice(nonRejected)})
+		topic, err = s.reconcileDraftedTopicStatus(r.Context(), s.Q, topic)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "topic": topic, "articles": emptySlice(nonRejected)})
 		return
 	}
-	if topic.Status == "generating" {
+	if topic.Status == string(topicstate.StatusGenerating) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"status": "generating", "topic": topic, "articles": []db.Article{}})
+		return
+	}
+	if _, err := topicstate.Transition(topicstate.Status(topic.Status), topicstate.EventStartGeneration); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	if s.Pool == nil {
@@ -325,7 +357,7 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, 404, "topic not found")
 				return
 			}
-			if current.Status != "generating" {
+			if current.Status != string(topicstate.StatusGenerating) {
 				writeErr(w, http.StatusConflict, "topic is not ready for generation")
 				return
 			}
@@ -360,6 +392,9 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 		return
 	}
 	if n > 0 {
+		if _, err := s.reconcileDraftedTopicStatus(ctx, q, topic); err != nil {
+			s.Log.Warn("manual generation topic draft reconciliation failed", "project", projectID, "topic", topicID, "err", err)
+		}
 		return
 	}
 
@@ -374,15 +409,31 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 	s.Log.Info("manual generation accepted into review queue", "project", projectID, "topic", topic.Title)
 }
 
+func (s *Server) reconcileDraftedTopicStatus(ctx context.Context, q *db.Queries, topic db.Topic) (db.Topic, error) {
+	next, changed, err := topicstate.ReconcileExistingDrafts(topicstate.Status(topic.Status))
+	if err != nil {
+		return db.Topic{}, err
+	}
+	if changed {
+		return q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
+			ID:        topic.ID,
+			ProjectID: topic.ProjectID,
+			Status:    string(next),
+		})
+	}
+	return topic, nil
+}
+
 func (s *Server) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Queries, topic db.Topic) {
-	status := "backlog"
-	if topic.ScheduledAt.Valid {
-		status = "scheduled"
+	status, err := topicstate.GenerationFailureStatus(topicstate.Status(topic.Status), topic.ScheduledAt.Valid)
+	if err != nil {
+		s.Log.Warn("generation failure topic state transition rejected", "project", topic.ProjectID, "topic", topic.ID, "status", topic.Status, "err", err)
+		return
 	}
 	if _, err := q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
 		ID:        topic.ID,
 		ProjectID: topic.ProjectID,
-		Status:    status,
+		Status:    string(status),
 	}); err != nil {
 		s.Log.Warn("reset topic after generation failure failed", "project", topic.ProjectID, "topic", topic.ID, "err", err)
 	}
