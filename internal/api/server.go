@@ -34,6 +34,7 @@ type Server struct {
 
 	OnboardingRunner       projectOnboardingRunner
 	InsightInventoryRunner insightInventoryRunner
+	SEOOnboardingRunner    seoOnboardingRunner
 }
 
 func (s *Server) Router() http.Handler {

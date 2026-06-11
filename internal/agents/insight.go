@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/crawl"
@@ -18,6 +20,8 @@ type Insight struct {
 	Deps
 	Log *slog.Logger
 }
+
+const inventoryWorkerLimit = 3
 
 type CrawlSummary struct {
 	LandingURL      string   `json:"landing_url"`
@@ -48,10 +52,13 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 	summary := summarizeCrawl(landingURL, res)
 
 	// 1) Product Profile from landing + article corpus.
+	profileStarted := time.Now()
 	profile, resp, err := a.extractProfile(ctx, res)
+	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL}, map[string]any{
 		"profile":       profile,
 		"crawl_summary": summary,
+		"duration_ms":   profileDurationMS,
 	}, resp, err)
 	if err != nil {
 		return nil, 0, summary, fmt.Errorf("profile extraction: %w", err)
@@ -83,11 +90,15 @@ func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, land
 	}
 	summary := summarizeCrawl(landingURL, res)
 
+	profileStarted := time.Now()
 	profile, resp, err := a.extractProfile(ctx, res)
+	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "landing"}, map[string]any{
 		"profile":        profile,
 		"profile_source": "landing",
+		"profile_stage":  "provisional",
 		"landing_url":    summary.LandingURL,
+		"duration_ms":    profileDurationMS,
 	}, resp, err)
 	if err != nil {
 		return nil, summary, fmt.Errorf("profile extraction: %w", err)
@@ -120,11 +131,15 @@ func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID
 		"crawl_summary": summary,
 	}, llm.CompletionResp{}, nil)
 
+	profileStarted := time.Now()
 	profile, resp, err := a.extractProfile(ctx, res)
+	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "full_crawl"}, map[string]any{
 		"profile":        profile,
 		"profile_source": "full_crawl",
+		"profile_stage":  "full",
 		"crawl_summary":  summary,
+		"duration_ms":    profileDurationMS,
 	}, resp, err)
 	if err != nil {
 		return count, summary, fmt.Errorf("profile upgrade: %w", err)
@@ -196,16 +211,66 @@ func (a *Insight) saveProfile(ctx context.Context, projectID uuid.UUID, profile 
 }
 
 func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res *crawl.Result) int {
-	count := 0
 	if res == nil {
-		return count
+		return 0
 	}
+	pages := make([]*crawl.Page, 0, len(res.Articles))
 	for _, page := range res.Articles {
-		if page == nil {
-			continue
+		if page != nil {
+			pages = append(pages, page)
 		}
-		item, iresp, ierr := a.extractInventory(ctx, page)
-		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "inventory", "url": page.URL}, item, iresp, ierr)
+	}
+	if len(pages) == 0 {
+		return 0
+	}
+
+	workers := inventoryWorkerLimit
+	if len(pages) < workers {
+		workers = len(pages)
+	}
+	jobs := make(chan *crawl.Page)
+	results := make(chan inventoryExtractionResult, len(pages))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for page := range jobs {
+				started := time.Now()
+				item, resp, ierr := a.extractInventory(ctx, page)
+				results <- inventoryExtractionResult{
+					page:       page,
+					item:       item,
+					resp:       resp,
+					err:        ierr,
+					durationMS: elapsedMS(started),
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, page := range pages {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- page:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	count := 0
+	for result := range results {
+		page := result.page
+		item := result.item
+		iresp := result.resp
+		ierr := result.err
+		runOutput := map[string]any{"item": item, "duration_ms": result.durationMS}
+		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "inventory", "url": page.URL}, runOutput, iresp, ierr)
 		if ierr != nil {
 			a.Log.Warn("inventory extraction failed", "url", page.URL, "err", ierr)
 			continue
@@ -227,6 +292,18 @@ func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res
 		count++
 	}
 	return count
+}
+
+type inventoryExtractionResult struct {
+	page       *crawl.Page
+	item       *InventoryItem
+	resp       llm.CompletionResp
+	err        error
+	durationMS int64
+}
+
+func elapsedMS(started time.Time) int64 {
+	return time.Since(started).Milliseconds()
 }
 
 func (a *Insight) extractProfile(ctx context.Context, res *crawl.Result) (*Profile, llm.CompletionResp, error) {

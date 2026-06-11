@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -79,6 +82,42 @@ func TestProfileSourceURLsIncludesArticlesForFullProfile(t *testing.T) {
 	for i := range want {
 		if urls[i] != want[i] {
 			t.Fatalf("source urls = %#v, want %#v", urls, want)
+		}
+	}
+}
+
+func TestRunQuickProfileRecordsProvisionalStage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html><head><title>Home</title></head><body><main>Landing positioning for a provisional profile.</main></body></html>`))
+	}))
+	defer srv.Close()
+
+	store := &insightDBSpy{}
+	provider := &sequenceLLM{resps: []string{
+		`{"positioning":"Provisional profile","value_props":["Fast"],"features":["Landing"],"icp":["Operators"],"tone":"clear","key_terms":["profile"],"competitors":[],"differentiators":["Quick context"]}`,
+	}}
+	insight := NewInsight(Deps{Q: db.New(store), LLM: provider}, nil)
+
+	_, _, err := insight.RunQuickProfile(context.Background(), uuid.New(), srv.URL, config.CrawlConfig{
+		RequestTimeoutMs: 1000,
+		RateLimitRPS:     1000,
+		RespectRobots:    false,
+	})
+	if err != nil {
+		t.Fatalf("RunQuickProfile: %v", err)
+	}
+
+	run := store.findRun("profile")
+	if run == nil {
+		t.Fatalf("expected profile generation run, got %#v", store.runs)
+	}
+	if !strings.Contains(string(run.input), `"scope":"landing"`) {
+		t.Fatalf("profile run input = %s, want landing scope", string(run.input))
+	}
+	output := string(run.output)
+	for _, want := range []string{`"profile_source":"landing"`, `"profile_stage":"provisional"`, `"duration_ms":`} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("profile run output = %s, want %s", output, want)
 		}
 	}
 }
@@ -159,20 +198,113 @@ func TestRunInventoryFromCrawlUpgradesProfileWithArticleSources(t *testing.T) {
 	}
 	if run := store.findRun("profile"); run == nil || !strings.Contains(string(run.input), "full_crawl") {
 		t.Fatalf("expected full_crawl profile run, got %#v", store.runs)
+	} else {
+		output := string(run.output)
+		for _, want := range []string{`"profile_stage":"full"`, `"duration_ms":`} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("full profile run output = %s, want %s", output, want)
+			}
+		}
 	}
 	if len(provider.reqs) < 2 || !strings.Contains(provider.reqs[1].Prompt, "Article-specific proof") {
 		t.Fatalf("full profile prompt did not include article corpus: %#v", provider.reqs)
 	}
 }
 
+func TestPersistInventoryUsesBoundedParallelWorkers(t *testing.T) {
+	release := make(chan struct{})
+	provider := &blockingInventoryLLM{release: release}
+	insight := NewInsight(Deps{Q: db.New(&insightDBSpy{}), LLM: provider}, nil)
+	res := &crawl.Result{
+		Articles: []*crawl.Page{
+			{URL: "https://example.com/blog/a", Title: "A", Text: "A text"},
+			{URL: "https://example.com/blog/b", Title: "B", Text: "B text"},
+			{URL: "https://example.com/blog/c", Title: "C", Text: "C text"},
+			{URL: "https://example.com/blog/d", Title: "D", Text: "D text"},
+			{URL: "https://example.com/blog/e", Title: "E", Text: "E text"},
+		},
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		done <- insight.persistInventory(context.Background(), uuid.New(), res)
+	}()
+
+	if !provider.waitForStarted(2, 500*time.Millisecond) {
+		close(release)
+		<-done
+		t.Fatal("inventory extraction did not start a second page while the first was still running")
+	}
+	close(release)
+
+	count := <-done
+	if count != len(res.Articles) {
+		t.Fatalf("inventory count = %d, want %d", count, len(res.Articles))
+	}
+	if provider.maxActive < 2 {
+		t.Fatalf("max active inventory calls = %d, want at least 2", provider.maxActive)
+	}
+	if provider.maxActive > inventoryWorkerLimit {
+		t.Fatalf("max active inventory calls = %d, want <= %d", provider.maxActive, inventoryWorkerLimit)
+	}
+}
+
 type capturedRun struct {
 	input  []byte
+	output []byte
 	status string
 	err    *string
 }
 
 type capturedProfileInsert struct {
 	sourceURLs json.RawMessage
+}
+
+type blockingInventoryLLM struct {
+	mu        sync.Mutex
+	started   int
+	active    int
+	maxActive int
+	release   <-chan struct{}
+}
+
+func (p *blockingInventoryLLM) Complete(ctx context.Context, req llm.CompletionReq) (llm.CompletionResp, error) {
+	p.mu.Lock()
+	p.started++
+	p.active++
+	if p.active > p.maxActive {
+		p.maxActive = p.active
+	}
+	p.mu.Unlock()
+
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return llm.CompletionResp{}, ctx.Err()
+	}
+
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	return llm.CompletionResp{
+		Text:   `{"title":"Inventory","target_keyword":"inventory","topics":["inventory"],"summary":"Summary","evidence_snippets":["UniPost schedules posts."]}`,
+		Model:  "blocking-test",
+		Tokens: 100,
+	}, nil
+}
+
+func (p *blockingInventoryLLM) waitForStarted(want int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		p.mu.Lock()
+		started := p.started
+		p.mu.Unlock()
+		if started >= want {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }
 
 type insightDBSpy struct {
@@ -194,7 +326,8 @@ func (s *insightDBSpy) QueryRow(_ context.Context, query string, args ...interfa
 		status, _ := args[7].(string)
 		errValue, _ := args[8].(*string)
 		input, _ := args[2].([]byte)
-		s.runs = append(s.runs, capturedRun{input: input, status: status, err: errValue})
+		output, _ := args[3].([]byte)
+		s.runs = append(s.runs, capturedRun{input: input, output: output, status: status, err: errValue})
 		return scanRow{values: []any{
 			uuid.New(), args[0].(uuid.UUID), args[1].(string), args[2].([]byte), args[3].([]byte),
 			args[4].(*string), args[5].(*int32), args[6].(pgtype.Numeric), status, errValue, pgtype.Timestamptz{},

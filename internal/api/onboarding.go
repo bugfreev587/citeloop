@@ -27,6 +27,7 @@ type insightInventoryInput struct {
 }
 
 type insightInventoryRunner func(context.Context, insightInventoryInput)
+type seoOnboardingRunner func(context.Context, projectOnboardingInput)
 
 func (s *Server) startProjectOnboarding(projectID uuid.UUID, siteURL string) {
 	siteURL = strings.TrimSpace(siteURL)
@@ -83,9 +84,21 @@ func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingI
 		log.Warn("project onboarding quick profile failed", "project_id", in.ProjectID, "err", err)
 	} else {
 		log.Info("project onboarding quick profile complete", "project_id", in.ProjectID, "landing", summary.LandingURL)
-		s.runInsightInventoryCrawl(ctx, insightInventoryInput{ProjectID: in.ProjectID, LandingURL: in.SiteURL, Crawl: cfg.Crawl})
+		s.startInsightInventoryCrawl(in.ProjectID, in.SiteURL, cfg.Crawl)
 	}
 
+	runner := s.SEOOnboardingRunner
+	if runner == nil {
+		runner = s.runProjectSEOOnboarding
+	}
+	runner(ctx, in)
+}
+
+func (s *Server) runProjectSEOOnboarding(ctx context.Context, in projectOnboardingInput) {
+	log := s.Log
+	if log == nil {
+		log = slog.Default()
+	}
 	svc := s.seoService()
 	syncResult, err := svc.Sync(ctx, in.ProjectID, in.SiteURL)
 	if err != nil {
