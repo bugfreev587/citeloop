@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { ArrowRight, BookOpen, Database, PenLine, Send } from "lucide-react";
+import { ArrowRight, BookOpen, Database, LogIn, PenLine, Send, UserPlus } from "lucide-react";
 import { ProjectCreateForm } from "./project-create-form";
 import { Badge, EmptyState, Notice } from "./components/ui";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "./lib/auth-config";
@@ -15,13 +15,17 @@ export default async function Home() {
     const { getToken } = await auth();
     token = await getToken();
   }
+  const signedOut = clerkServerAuthConfigured && !token;
+
   const api = createApi(token ? { token } : undefined);
   let projects: Project[] = [];
   let error: string | null = null;
-  try {
-    projects = await api.listProjects();
-  } catch (e: any) {
-    error = e.message;
+  if (!signedOut) {
+    try {
+      projects = await api.listProjects();
+    } catch (e: any) {
+      error = e.message;
+    }
   }
 
   return (
@@ -29,8 +33,28 @@ export default async function Home() {
       <div className="mx-auto grid max-w-5xl gap-8 lg:grid-cols-[1fr_320px]">
         <section className="min-w-0">
           <div className="mb-8">
-            <div className="mb-4 flex justify-end">
-              {clerkServerAuthConfigured && <UserButton />}
+            <div className="mb-4 flex items-center justify-end gap-2">
+              {clerkServerAuthConfigured &&
+                (signedOut ? (
+                  <>
+                    <Link
+                      href="/sign-in"
+                      className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+                    >
+                      <LogIn size={16} />
+                      Sign in
+                    </Link>
+                    <Link
+                      href="/sign-up"
+                      className="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-slate-700"
+                    >
+                      <UserPlus size={16} />
+                      Get started free
+                    </Link>
+                  </>
+                ) : (
+                  <UserButton />
+                ))}
             </div>
             <div className="mb-3 inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600">
               Status, actions, timeline
@@ -52,18 +76,51 @@ export default async function Home() {
 
           {error && (
             <div className="mb-4">
-              <Notice
-                title="API server unavailable"
-                detail={`Could not reach the API (${error}). Start the Go service or set NEXT_PUBLIC_API_URL.`}
-                tone="amber"
-              />
+              {error.startsWith("401") || error.startsWith("403") ? (
+                <Notice
+                  title="Not authorized"
+                  detail={`The API rejected this session (${error}). Sign in again; if it persists, the API's CLERK_SECRET_KEY does not match this app's Clerk instance.`}
+                  tone="amber"
+                />
+              ) : (
+                <Notice
+                  title="API server unavailable"
+                  detail={`Could not reach the API (${error}). Start the Go service or set NEXT_PUBLIC_API_URL.`}
+                  tone="amber"
+                />
+              )}
             </div>
           )}
 
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-xl font-bold leading-7 text-slate-900">Projects</h2>
-            <Badge tone="neutral">{projects.length} total</Badge>
+            {!signedOut && <Badge tone="neutral">{projects.length} total</Badge>}
           </div>
+
+          {signedOut && (
+            <div className="rounded-xl border border-slate-200 bg-white px-5 py-6">
+              <div className="text-base font-bold text-slate-900">Sign in to see your projects</div>
+              <p className="mt-1 text-sm text-slate-600">
+                Create an account or sign in to connect a product URL and start the content engine.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Link
+                  href="/sign-up"
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-slate-700"
+                >
+                  <UserPlus size={16} />
+                  Create an account
+                </Link>
+                <Link
+                  href="/sign-in"
+                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+                >
+                  <LogIn size={16} />
+                  Sign in
+                </Link>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-3">
             {projects.map((project) => (
@@ -82,7 +139,7 @@ export default async function Home() {
                 />
               </Link>
             ))}
-            {!error && projects.length === 0 && (
+            {!signedOut && !error && projects.length === 0 && (
               <EmptyState
                 title="No projects yet"
                 detail="Connect your product URL to create the first control center."
@@ -92,7 +149,7 @@ export default async function Home() {
         </section>
 
         <aside className="grid gap-4 self-start">
-          <ProjectCreateForm />
+          {!signedOut && <ProjectCreateForm />}
           <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Database size={16} />
