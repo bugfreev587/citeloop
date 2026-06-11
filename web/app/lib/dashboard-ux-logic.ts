@@ -81,6 +81,25 @@ export type HomeSectionCandidate = {
   priority: number;
 };
 
+export type ContextBuildStepState = "pending" | "active" | "done";
+
+export type ContextBuildProgressInput = {
+  hasProfile: boolean;
+  sourcePageCount: number;
+  evidenceCount: number;
+  pollCount: number;
+  pollLimit: number;
+};
+
+export type ContextBuildProgress = {
+  active: boolean;
+  exhausted: boolean;
+  title: string;
+  detail: string;
+  progress: number;
+  steps: Array<{ label: string; state: ContextBuildStepState }>;
+};
+
 export type ProfileDraft = {
   positioning: string;
   icp: string;
@@ -234,6 +253,89 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       href: `/projects/${input.projectId}/plan`,
       actionLabel: "Generate content plan",
     },
+  };
+}
+
+function boundedRatio(value: number, limit: number) {
+  const safeLimit = Math.max(1, limit);
+  return Math.max(0, Math.min(value, safeLimit)) / safeLimit;
+}
+
+export function contextBuildProgress({
+  hasProfile,
+  sourcePageCount,
+  evidenceCount,
+  pollCount,
+  pollLimit,
+}: ContextBuildProgressInput): ContextBuildProgress {
+  const hasSources = sourcePageCount > 0;
+  const hasEvidence = evidenceCount > 0;
+  const active = !(hasProfile && hasSources && hasEvidence);
+  const exhausted = active && pollCount >= pollLimit;
+  const pollRatio = boundedRatio(pollCount, pollLimit);
+
+  if (!active) {
+    return {
+      active: false,
+      exhausted: false,
+      title: "Domain context is ready",
+      detail: "CiteLoop has a product profile, source pages, and evidence for planning.",
+      progress: 100,
+      steps: [
+        { label: "Product profile", state: "done" },
+        { label: "Source pages", state: "done" },
+        { label: "Evidence snippets", state: "done" },
+      ],
+    };
+  }
+
+  if (!hasProfile) {
+    return {
+      active: true,
+      exhausted,
+      title: "Building domain context",
+      detail: exhausted
+        ? "CiteLoop is still waiting for the product profile. Open Context to refresh from the service URL if this does not move soon."
+        : "CiteLoop is creating the product profile from the service URL. Home checks for updates automatically.",
+      progress: Math.min(60, 10 + Math.round(pollRatio * 50)),
+      steps: [
+        { label: "Product profile", state: "active" },
+        { label: "Source pages", state: "pending" },
+        { label: "Evidence snippets", state: "pending" },
+      ],
+    };
+  }
+
+  if (!hasSources) {
+    return {
+      active: true,
+      exhausted,
+      title: "Building domain context",
+      detail: exhausted
+        ? "The profile is ready, but source pages have not appeared yet. Refresh Context with the service URL if the crawl is blocked."
+        : "The profile is ready. CiteLoop is reading public pages and preparing source-backed evidence.",
+      progress: Math.min(82, 50 + Math.round(pollRatio * 32)),
+      steps: [
+        { label: "Product profile", state: "done" },
+        { label: "Source pages", state: "active" },
+        { label: "Evidence snippets", state: "pending" },
+      ],
+    };
+  }
+
+  return {
+    active: true,
+    exhausted,
+    title: "Building domain context",
+    detail: exhausted
+      ? "Source pages are ready, but evidence snippets are still missing. Review the source pages in Context before generating content."
+      : "Source pages are ready. CiteLoop is extracting evidence snippets that drafts can safely reuse.",
+    progress: Math.min(94, 82 + Math.round(pollRatio * 12)),
+    steps: [
+      { label: "Product profile", state: "done" },
+      { label: "Source pages", state: "done" },
+      { label: "Evidence snippets", state: "active" },
+    ],
   };
 }
 

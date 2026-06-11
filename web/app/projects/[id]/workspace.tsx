@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, CheckCircle2, Circle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -16,6 +16,7 @@ import {
 } from "../../lib/api";
 import {
   buildHomeEventStream,
+  contextBuildProgress,
   visibilityLifecycleLabel,
   visibilityLifecycleTone,
   visibleHomeSectionIds,
@@ -25,6 +26,9 @@ import { useApi } from "../../lib/use-api";
 import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
+
+const ONBOARDING_POLL_LIMIT = 18;
+const ONBOARDING_POLL_MS = 8000;
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
@@ -145,6 +149,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [onboardingPollCount, setOnboardingPollCount] = useState(0);
 
   const refresh = useCallback(async () => {
     setApiError(null);
@@ -175,8 +180,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       setRuns(runRows);
       setSeoOverview(overview);
       setSeoOpportunities(opportunities);
+      return { profile: profileRow, inventory: inventoryRows };
     } catch (e: any) {
       setApiError(e.message);
+      return null;
     }
   }, [api, projectId]);
 
@@ -184,37 +191,60 @@ export function Workspace({ projectId }: { projectId: string }) {
     refresh();
   }, [refresh]);
 
+  const contextEvidenceCount = evidenceCount(inventory);
+  const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
+  const contextProgress = contextBuildProgress({
+    hasProfile: Boolean(profile),
+    sourcePageCount,
+    evidenceCount: contextEvidenceCount,
+    pollCount: onboardingPollCount,
+    pollLimit: ONBOARDING_POLL_LIMIT,
+  });
+  const projectLoaded = Boolean(project);
+
   // After project creation, onboarding (crawl + product profile) runs in the background.
-  // While the project still has no profile, poll so Home flips from "Needs context" to a
-  // ready state on its own instead of stranding a fresh user on an empty dashboard.
+  // Home keeps checking the profile and inventory so fresh projects do not strand users
+  // on an empty Context page while the detached onboarding jobs finish.
   const onboardingAttemptsRef = useRef(0);
   useEffect(() => {
-    if (profile) return;
+    if (!projectLoaded || !contextProgress.active) {
+      onboardingAttemptsRef.current = 0;
+      setOnboardingPollCount(0);
+      return;
+    }
     onboardingAttemptsRef.current = 0;
+    setOnboardingPollCount(0);
     let cancelled = false;
     const interval = window.setInterval(async () => {
       onboardingAttemptsRef.current += 1;
+      const attempt = onboardingAttemptsRef.current;
+      if (!cancelled) setOnboardingPollCount(attempt);
       try {
-        const next = await api.getProfile(projectId);
-        if (cancelled) return;
-        if (next) {
-          await refresh();
-          if (cancelled) return;
-          setMessage({ tone: "green", title: "Your domain context is ready", detail: "CiteLoop finished reading your site. Review the context, then generate a content plan." });
+        const next = await refresh();
+        if (cancelled || !next) return;
+        const nextEvidenceCount = evidenceCount(next.inventory);
+        const nextSourcePageCount = Math.max(next.inventory.length, next.profile?.source_urls?.length ?? 0);
+        if (next.profile && nextSourcePageCount > 0 && nextEvidenceCount > 0) {
+          setMessage({
+            tone: "green",
+            title: "Your domain context is ready",
+            detail: "CiteLoop finished reading your site. Review the context, then generate a content plan.",
+          });
+          window.clearInterval(interval);
           return;
         }
       } catch {
         // ignore transient errors and keep polling until the cap
       }
-      if (onboardingAttemptsRef.current >= 18 && !cancelled) {
+      if (attempt >= ONBOARDING_POLL_LIMIT && !cancelled) {
         window.clearInterval(interval);
       }
-    }, 8000);
+    }, ONBOARDING_POLL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [profile, api, projectId, refresh]);
+  }, [projectLoaded, contextProgress.active, refresh]);
 
   const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
     setBusy(label);
@@ -261,8 +291,6 @@ export function Workspace({ projectId }: { projectId: string }) {
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
   const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
 
-  const contextEvidenceCount = evidenceCount(inventory);
-  const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
   const contextHealth = !profile
     ? {
         label: "Needs context",
@@ -538,6 +566,58 @@ export function Workspace({ projectId }: { projectId: string }) {
             Refresh
           </Button>
         </div>
+
+        {contextProgress.active && (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Building domain context progress"
+            className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <Badge tone={contextProgress.exhausted ? "amber" : "blue"}>Initial context</Badge>
+                <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">{contextProgress.title}</h2>
+                <p className="mt-1 max-w-[70ch] text-sm leading-5 text-amber-900">{contextProgress.detail}</p>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-amber-100">
+                <Loader2 size={14} className="animate-spin text-[#d93820]" />
+                Checking automatically
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-bold uppercase text-slate-500">
+                <span>Estimated progress</span>
+                <span>{contextProgress.progress}%</span>
+              </div>
+              <div
+                className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-inset ring-amber-100"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={contextProgress.progress}
+              >
+                <div className="h-full rounded-full bg-[#d93820] transition-all duration-500" style={{ width: `${contextProgress.progress}%` }} />
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {contextProgress.steps.map((step) => (
+                <div key={step.label} className="flex min-h-[40px] items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-amber-100">
+                  {step.state === "done" ? (
+                    <CheckCircle2 size={16} className="text-green-600" />
+                  ) : step.state === "active" ? (
+                    <Loader2 size={16} className="animate-spin text-[#d93820]" />
+                  ) : (
+                    <Circle size={16} className="text-slate-300" />
+                  )}
+                  <span className={cx("font-semibold", step.state === "pending" ? "text-slate-400" : "text-slate-800")}>{step.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]">
           <div className="relative min-h-[240px] overflow-hidden rounded-[18px] border border-slate-200 bg-white p-5">

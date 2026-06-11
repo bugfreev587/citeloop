@@ -63,9 +63,19 @@ test("context and home surface a background-crawl completion signal instead of s
   assert.match(context, /will appear here automatically/);
 
   const workspace = read("projects/[id]/workspace.tsx");
-  // Home polls for the onboarding profile so a freshly created project flips to a ready state on its own.
-  assert.match(workspace, /if \(profile\) return;/);
+  // Home polls for profile + inventory so a freshly created project flips to a ready state on its own.
+  assert.match(workspace, /contextProgress\.active/);
+  assert.match(workspace, /api\.listInventory\(projectId\)/);
   assert.match(workspace, /Your domain context is ready/);
+});
+
+test("home shows asynchronous context-building progress during onboarding", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(workspace, /contextBuildProgress/);
+  assert.match(workspace, /onboardingPollCount/);
+  assert.match(workspace, /Building domain context/);
+  assert.match(workspace, /Estimated progress/);
 });
 
 test("visibility degrades search metrics and signals truncated loop, context paginates evidence", () => {

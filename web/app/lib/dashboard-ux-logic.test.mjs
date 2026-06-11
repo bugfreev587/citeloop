@@ -256,3 +256,42 @@ test("visibilityLifecycleLabel matches real opportunity and content action enums
   assert.equal(visibilityLifecycleTone("failed"), "red");
   assert.equal(visibilityLifecycleTone("completed"), "green");
 });
+
+test("contextBuildProgress explains asynchronous onboarding stages", async () => {
+  const { contextBuildProgress } = await loadDashboardUXLogicModule();
+
+  const waitingForProfile = contextBuildProgress({
+    hasProfile: false,
+    sourcePageCount: 0,
+    evidenceCount: 0,
+    pollCount: 2,
+    pollLimit: 18,
+  });
+  assert.equal(waitingForProfile.active, true);
+  assert.equal(waitingForProfile.title, "Building domain context");
+  assert.match(waitingForProfile.detail, /product profile/i);
+  assert.equal(waitingForProfile.steps[0].state, "active");
+  assert.equal(waitingForProfile.progress, 16);
+
+  const waitingForSources = contextBuildProgress({
+    hasProfile: true,
+    sourcePageCount: 0,
+    evidenceCount: 0,
+    pollCount: 4,
+    pollLimit: 18,
+  });
+  assert.equal(waitingForSources.steps[0].state, "done");
+  assert.equal(waitingForSources.steps[1].state, "active");
+  assert.match(waitingForSources.detail, /public pages/i);
+
+  const ready = contextBuildProgress({
+    hasProfile: true,
+    sourcePageCount: 3,
+    evidenceCount: 7,
+    pollCount: 9,
+    pollLimit: 18,
+  });
+  assert.equal(ready.active, false);
+  assert.equal(ready.progress, 100);
+  assert.equal(ready.steps.every((step) => step.state === "done"), true);
+});
