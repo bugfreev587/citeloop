@@ -113,10 +113,10 @@ function loopGridClass(position: number) {
 
 function loopConnectorClass(direction: "right" | "down" | "left" | "up") {
   const classes = {
-    right: "-right-6 top-1/2 -translate-y-1/2",
-    down: "left-1/2 -bottom-6 -translate-x-1/2",
-    left: "-left-6 top-1/2 -translate-y-1/2",
-    up: "left-1/2 -top-6 -translate-x-1/2",
+    right: "-right-12 top-1/2 -translate-y-1/2",
+    down: "left-1/2 -bottom-12 -translate-x-1/2",
+    left: "-left-12 top-1/2 -translate-y-1/2",
+    up: "left-1/2 -top-12 -translate-x-1/2",
   };
   return classes[direction];
 }
@@ -398,13 +398,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 0,
       label: "Context",
-      metricValue: sourcePageCount,
-      metricLabel: sourcePageCount === 1 ? "source page" : "source pages",
-      detail: contextEvidenceCount > 0
-        ? `${contextEvidenceCount} evidence snippet${contextEvidenceCount === 1 ? "" : "s"} are ready for planning and review`
-        : sourcePageCount > 0
-          ? "source pages are ready for planning and review"
-          : "refresh context to collect source pages and evidence",
+      statusLines: [
+        { value: sourcePageCount, label: sourcePageCount === 1 ? "source page" : "source pages" },
+        { value: contextEvidenceCount, label: contextEvidenceCount === 1 ? "evidence snippet" : "evidence snippets" },
+      ],
       href: `/projects/${projectId}/context`,
       tone: contextHealth.tone,
       accentClass: "text-emerald-700",
@@ -414,9 +411,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 1,
       label: "Find opportunities",
-      metricValue: seoOpportunities.length,
-      metricLabel: seoOpportunities.length === 1 ? "opportunity" : "opportunities",
-      detail: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for analytics signal",
+      statusLines: [
+        { value: seoOpportunities.length, label: seoOpportunities.length === 1 ? "opportunity" : "opportunities" },
+        { text: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for analytics signal" },
+      ],
       href: `/projects/${projectId}/visibility`,
       tone: seoOpportunities.length > 0 ? ("green" as const) : ("neutral" as const),
       accentClass: seoOpportunities.length > 0 ? "text-emerald-700" : "text-slate-500",
@@ -426,9 +424,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 2,
       label: "Plan content",
-      metricValue: topics.length,
-      metricLabel: topics.length === 1 ? "topic" : "topics",
-      detail: topics.length > 0 ? "topics are in the content backlog" : "content backlog is not started",
+      statusLines: [
+        { value: topics.length, label: topics.length === 1 ? "topic in the content backlog" : "topics in the content backlog" },
+        { text: topics.length > 0 ? "ready for drafting" : "content backlog is not started" },
+      ],
       href: `/projects/${projectId}/plan`,
       tone: topics.length > 0 ? ("green" as const) : ("amber" as const),
       accentClass: topics.length > 0 ? "text-emerald-700" : "text-amber-700",
@@ -438,9 +437,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 3,
       label: "Create drafts",
-      metricValue: reviewArticles.length + approved.length,
-      metricLabel: reviewArticles.length + approved.length === 1 ? "draft" : "drafts",
-      detail: reviewArticles.length + approved.length > 0 ? "drafts are created or approved" : "no drafts yet",
+      statusLines: [
+        { value: reviewArticles.length + approved.length, label: reviewArticles.length + approved.length === 1 ? "draft created or approved" : "drafts created or approved" },
+        { text: reviewArticles.length + approved.length > 0 ? "ready to review or publish" : "no drafts yet" },
+      ],
       href: `/projects/${projectId}/plan`,
       tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : ("neutral" as const),
       accentClass: reviewArticles.length + approved.length > 0 ? "text-emerald-700" : "text-slate-500",
@@ -450,9 +450,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 4,
       label: "Review",
-      metricValue: reviewArticles.length,
-      metricLabel: reviewArticles.length === 1 ? "draft" : "drafts",
-      detail: reviewArticles.length > 0 ? "drafts are waiting for approval" : "nothing waiting",
+      statusLines: [
+        { value: reviewArticles.length, label: reviewArticles.length === 1 ? "draft waiting for approval" : "drafts waiting for approval" },
+        { text: reviewArticles.length > 0 ? "claims and evidence need your decision" : "nothing waiting" },
+      ],
       href: `/projects/${projectId}/review`,
       tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
       accentClass: reviewArticles.length > 0 ? "text-amber-700" : "text-emerald-700",
@@ -462,9 +463,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 5,
       label: "Publish",
-      metricValue: publishedThisMonth,
-      metricLabel: publishedThisMonth === 1 ? "page live" : "pages live",
-      detail: failedPublish.length > 0 ? "publishing needs attention" : "published this month",
+      statusLines: [
+        { value: publishedThisMonth, label: publishedThisMonth === 1 ? "page live this month" : "pages live this month" },
+        { text: failedPublish.length > 0 ? "publishing needs attention" : "published this month" },
+      ],
       href: `/projects/${projectId}/publish`,
       tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ("neutral" as const),
       accentClass: failedPublish.length > 0 ? "text-red-700" : publishedThisMonth > 0 ? "text-emerald-700" : "text-slate-500",
@@ -474,9 +476,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 6,
       label: "Measure results",
-      metricValue: searchDataConnected ? metric(clicks28d) : "-",
-      metricLabel: searchDataConnected ? "clicks" : "results",
-      detail: searchDataConnected ? "clicks in the last 28 days" : "limited until connected",
+      statusLines: [
+        { value: searchDataConnected ? metric(clicks28d) : "-", label: searchDataConnected ? "clicks in the last 28 days" : "results" },
+        { text: searchDataConnected ? `${metric(impressions28d)} impressions measured` : "limited until connected" },
+      ],
       href: `/projects/${projectId}/visibility`,
       tone: searchDataConnected ? ("green" as const) : ("amber" as const),
       accentClass: searchDataConnected ? "text-emerald-700" : "text-amber-700",
@@ -671,7 +674,7 @@ export function Workspace({ projectId }: { projectId: string }) {
 
       <section>
         <SectionHeader title="Growth loop" eyebrow="How CiteLoop turns work into measurable growth" />
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr] lg:grid-rows-[auto_auto_auto]">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr] lg:grid-rows-[auto_auto_auto] lg:gap-x-14 lg:gap-y-14">
           {loopCards.map((card) => {
             const ConnectorIcon = loopConnectorIcon(card.connectorDirection);
             return (
@@ -680,7 +683,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 data-loop-position={card.position}
                 href={card.href}
                 className={cx(
-                  "group relative min-h-[132px] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300 hover:bg-slate-50",
+                  "group relative min-h-[112px] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300 hover:bg-slate-50",
                   loopGridClass(card.position),
                 )}
               >
@@ -688,27 +691,36 @@ export function Workspace({ projectId }: { projectId: string }) {
                 <span
                   aria-hidden="true"
                   className={cx(
-                    "pointer-events-none absolute z-10 hidden h-12 w-12 items-center justify-center rounded-full border border-red-100 bg-red-50 text-[#d93820] shadow-[0_10px_22px_-14px_rgba(217,56,32,0.8)] transition-colors group-hover:border-[#d93820] group-hover:bg-[#d93820] group-hover:text-white lg:flex",
+                    "pointer-events-none absolute z-10 hidden h-10 w-10 items-center justify-center rounded-full border border-red-100 bg-red-50 text-[#d93820] shadow-[0_10px_22px_-16px_rgba(217,56,32,0.85)] transition-colors group-hover:border-[#d93820] group-hover:bg-[#d93820] group-hover:text-white lg:flex",
                     loopConnectorClass(card.connectorDirection),
                   )}
                 >
-                  <ConnectorIcon size={22} />
+                  <ConnectorIcon size={20} />
                 </span>
-                <div className="flex items-start justify-between gap-3">
+                <div className="grid grid-cols-[2rem_1fr_2rem] items-center gap-2">
                   <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-500">
                     {card.position}
                   </span>
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#d93820] opacity-80 transition-opacity group-hover:opacity-100">
-                    Open {card.label}
-                    <ArrowRight size={13} />
+                  <div className="text-center text-base font-bold leading-5 text-slate-950">{card.label}</div>
+                  <span className="inline-flex h-7 w-7 items-center justify-center justify-self-end rounded-md text-[#d93820] opacity-75 transition-colors group-hover:bg-red-50 group-hover:opacity-100">
+                    <span className="sr-only">Open {card.label}</span>
+                    <ArrowRight size={15} />
                   </span>
                 </div>
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className={cx("text-3xl font-bold leading-none tracking-normal", card.accentClass)}>{card.metricValue}</span>
-                  <span className="text-sm font-semibold leading-5 text-slate-500">{card.metricLabel}</span>
+                <div className="mt-3 space-y-1.5 text-center">
+                  {card.statusLines.map((line, index) =>
+                    "value" in line ? (
+                      <div key={`${card.position}-${index}`} className="flex items-baseline justify-center gap-2">
+                        <span className={cx("text-xl font-bold leading-none tracking-normal", card.accentClass)}>{line.value}</span>
+                        <span className="text-sm font-semibold leading-5 text-slate-500">{line.label}</span>
+                      </div>
+                    ) : (
+                      <div key={`${card.position}-${index}`} className="text-sm font-semibold leading-5 text-slate-500">
+                        {line.text}
+                      </div>
+                    ),
+                  )}
                 </div>
-                <div className="mt-2 text-base font-bold leading-5 text-slate-950">{card.label}</div>
-                <div className="mt-1 text-sm leading-5 text-slate-500">{card.detail}</div>
               </a>
             );
           })}

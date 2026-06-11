@@ -203,7 +203,7 @@ test("home explains growth limits and loop status from existing product data", (
   assert.doesNotMatch(workspace, /Automation healthy/);
 });
 
-test("home growth loop renders compact linked status cards with clear flywheel arrows", () => {
+test("home growth loop renders linked status cards with arrows between cards", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
@@ -216,27 +216,34 @@ test("home growth loop renders compact linked status cards with clear flywheel a
     "Publish connects to Measure results",
     "Measure results connects back to Find opportunities",
     "waiting for analytics signal",
-    "source pages are ready for planning and review",
-    "topics are in the content backlog",
-    "drafts are created or approved",
-    "Open {card.label}",
+    "source pages",
+    "evidence snippets",
+    "topics in the content backlog",
+    "drafts created or approved",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
-  assert.match(workspace, /metricValue/);
-  assert.match(workspace, /metricLabel/);
+  assert.match(workspace, /statusLines/);
+  assert.match(workspace, /grid-cols-\[2rem_1fr_2rem\]/);
+  assert.match(workspace, /className="text-center text-base font-bold leading-5 text-slate-950"/);
+  assert.match(workspace, /href=\{card\.href\}/);
   assert.match(workspace, /data-loop-position=\{card\.position\}/);
   for (const position of ["0", "1", "2", "3", "4", "5", "6"]) {
     assert.match(workspace, new RegExp(`position: ${position}`));
   }
 
-  assert.match(workspace, /h-12 w-12/);
-  assert.match(workspace, /ConnectorIcon size=\{22\}/);
+  assert.match(workspace, /lg:gap-x-14 lg:gap-y-14/);
+  assert.match(workspace, /h-10 w-10/);
+  assert.match(workspace, /ConnectorIcon size=\{20\}/);
+  assert.match(workspace, /text-xl/);
   assert.match(workspace, /grid-cols-\[1fr_1fr_1fr\]/);
   assert.match(workspace, /loopConnectorLabels/);
   assert.doesNotMatch(workspace, />Overview</);
   assert.doesNotMatch(workspace, /min-h-\[172px\]/);
+  assert.doesNotMatch(workspace, /metricValue/);
+  assert.doesNotMatch(workspace, /-right-6/);
+  assert.doesNotMatch(workspace, /-bottom-6/);
   assert.doesNotMatch(workspace, /xl:grid-cols-6/);
 });
 
