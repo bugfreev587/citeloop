@@ -164,6 +164,27 @@ test("home leads with growth outcomes and does not show run internals by default
   }
 });
 
+test("home growth metrics use unwrapped SuperX-style cards", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const copy of [
+    "growthMetricCards",
+    "growthTrendPath",
+    "MetricIcon",
+    "Growth metric trend",
+    "AI citations",
+    "Organic traffic",
+    "Published pages",
+    "Opportunities in motion",
+  ]) {
+    assert.match(workspace, new RegExp(copy));
+  }
+
+  assert.match(workspace, /xl:grid-cols-\[minmax\(0,1\.6fr\)_minmax\(360px,1fr\)\]/);
+  assert.match(workspace, /rounded-\[18px\] border border-slate-200 bg-white/);
+  assert.doesNotMatch(workspace, /<section className="rounded-2xl border border-slate-200 bg-white p-5/);
+});
+
 test("home explains growth limits and loop status from existing product data", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
@@ -229,6 +250,8 @@ test("home growth loop renders linked status cards with arrows between cards", (
   assert.match(workspace, /className="text-center text-base font-bold leading-5 text-slate-950"/);
   assert.match(workspace, /href=\{card\.href\}/);
   assert.match(workspace, /data-loop-position=\{card\.position\}/);
+  assert.doesNotMatch(workspace, /Open \{card\.label\}/);
+  assert.doesNotMatch(workspace, /<ArrowRight size=\{15\} \/>/);
   for (const position of ["0", "1", "2", "3", "4", "5", "6"]) {
     assert.match(workspace, new RegExp(`position: ${position}`));
   }

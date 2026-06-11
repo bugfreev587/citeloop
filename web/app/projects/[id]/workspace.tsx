@@ -359,7 +359,8 @@ export function Workspace({ projectId }: { projectId: string }) {
   const growthDetail = searchDataConnected
     ? "Verified Search Console data is connected, so CiteLoop can report clicks, impressions, and which content is moving."
     : "Search Console is not connected yet. CiteLoop can show content progress and public crawl signals now; connect first-party data to prove traffic growth.";
-  const growthImpactItems = [
+  const growthTrendPath = "M4 92 C 32 58, 56 46, 88 48 S 148 54, 180 34 S 238 12, 292 18 S 342 32, 392 16";
+  const growthMetricCards = [
     {
       label: "AI citations",
       value: aiCitationSignals > 0 ? aiCitationSignals : "-",
@@ -580,7 +581,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       )}
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.35)]">
+      <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -598,27 +599,55 @@ export function Workspace({ projectId }: { projectId: string }) {
           </Button>
         </div>
 
-        <div className="mt-6 grid gap-4 xl:grid-cols-[1fr_340px]">
-          <div>
-            <div className="mb-3 text-sm font-bold text-slate-900">Growth impact</div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {growthImpactItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.label} className={cx("rounded-xl border border-slate-200 px-4 py-3", item.muted ? "bg-slate-50" : "bg-white")}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[13px] font-bold text-slate-500">{item.label}</div>
-                      <Icon size={17} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
-                    </div>
-                    <div className={cx("mt-3 text-3xl font-bold leading-none", item.muted ? "text-slate-500" : "text-slate-950")}>{item.value}</div>
-                    <div className="mt-2 text-sm leading-5 text-slate-500">{item.detail}</div>
-                  </div>
-                );
-              })}
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]">
+          <div className="relative min-h-[240px] overflow-hidden rounded-[18px] border border-slate-200 bg-white p-5">
+            <div className="relative z-10 text-xs font-bold uppercase tracking-wide text-slate-400">Growth impact</div>
+            <div className="relative z-10 mt-2 flex flex-wrap items-baseline gap-3">
+              <div className={cx("text-4xl font-bold leading-none", searchDataConnected ? "text-slate-950" : "text-slate-500")}>
+                {searchDataConnected ? metric(clicks28d) : "Limited"}
+              </div>
+              {searchDataConnected && <span className="text-sm font-bold text-emerald-600">measuring</span>}
             </div>
+            <p className="relative z-10 mt-2 max-w-[54ch] text-sm leading-6 text-slate-500">{growthDetail}</p>
+            <svg
+              aria-label="Growth metric trend"
+              viewBox="0 0 400 120"
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-[96px] w-full text-sky-500 sm:h-[135px]"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="growthMetricFill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="currentColor" stopOpacity="0.38" />
+                  <stop offset="100%" stopColor="currentColor" stopOpacity="0.04" />
+                </linearGradient>
+              </defs>
+              <path d={`${growthTrendPath} L 396 120 L 4 120 Z`} fill="url(#growthMetricFill)" />
+              <path d={growthTrendPath} fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="4" />
+            </svg>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            {growthMetricCards.map((item) => {
+              const MetricIcon = item.icon;
+              return (
+                <div key={item.label} className={cx("rounded-[18px] border border-slate-200 bg-white p-4", item.muted && "text-slate-500")}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                      <MetricIcon size={17} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
+                      {item.label}
+                    </div>
+                    {!item.muted && <span className="text-xs font-bold text-emerald-600">active</span>}
+                  </div>
+                  <div className={cx("mt-4 text-2xl font-bold leading-none", item.muted ? "text-slate-500" : "text-slate-950")}>{item.value}</div>
+                  <div className="mt-2 text-sm font-semibold leading-5 text-slate-400">{item.detail}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-[18px] border border-slate-200 bg-white p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-bold text-slate-900">Next growth move</div>
               <Badge tone={nextGrowthMove.tone}>now</Badge>
@@ -630,24 +659,24 @@ export function Workspace({ projectId }: { projectId: string }) {
               className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
             >
               {nextGrowthMove.cta}
-              <ArrowRight size={15} />
+              <ArrowRight size={14} />
             </a>
+          </div>
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
-              <div className="text-xs font-bold uppercase text-slate-400">Measurement coverage</div>
-              <div className="mt-3 grid gap-2">
-                {measurementCoverage.map((item) => (
-                  <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-semibold text-slate-700">{item.label}</span>
-                    <Badge tone={item.tone}>{item.detail}</Badge>
-                  </div>
-                ))}
-              </div>
+          <div className="rounded-[18px] border border-slate-200 bg-white p-4">
+            <div className="text-xs font-bold uppercase text-slate-400">Measurement coverage</div>
+            <div className="mt-3 grid gap-2">
+              {measurementCoverage.map((item) => (
+                <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="font-semibold text-slate-700">{item.label}</span>
+                  <Badge tone={item.tone}>{item.detail}</Badge>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+        <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
           <TextInput
             value={landing}
             onChange={(event) => setLanding(event.target.value)}
@@ -702,10 +731,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                     {card.position}
                   </span>
                   <div className="text-center text-base font-bold leading-5 text-slate-950">{card.label}</div>
-                  <span className="inline-flex h-7 w-7 items-center justify-center justify-self-end rounded-md text-[#d93820] opacity-75 transition-colors group-hover:bg-red-50 group-hover:opacity-100">
-                    <span className="sr-only">Open {card.label}</span>
-                    <ArrowRight size={15} />
-                  </span>
+                  <span aria-hidden="true" className="h-7 w-7" />
                 </div>
                 <div className="mt-3 space-y-1.5 text-center">
                   {card.statusLines.map((line, index) =>
