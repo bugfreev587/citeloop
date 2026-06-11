@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, Copy, ExternalLink, FileText, RefreshCw, Search, Sparkles } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -22,7 +22,7 @@ import {
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, TextInput, cx, formatDate, formatScore } from "../../components/ui";
+import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -130,7 +130,6 @@ function loopConnectorIcon(direction: "right" | "down" | "left" | "up") {
 
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
-  const [landing, setLanding] = useState("");
   const [project, setProject] = useState<Project | null>(null);
   const [profile, setProfile] = useState<ProductProfile | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -261,60 +260,6 @@ export function Workspace({ projectId }: { projectId: string }) {
   );
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
   const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
-  const nextGrowthMove = useMemo(() => {
-    if (!profile) {
-      return {
-        title: "Refresh context to start growth",
-        detail: "CiteLoop needs product facts, source pages, and evidence before it can plan content that should grow visibility.",
-        href: `/projects/${projectId}/context`,
-        cta: "Refresh context",
-        tone: "amber" as const,
-      };
-    }
-    if (failedPublish.length > 0) {
-      return {
-        title: "Fix publishing to restore growth tracking",
-        detail: "A published page could not be confirmed online, so CiteLoop cannot safely measure or distribute related work.",
-        href: `/projects/${projectId}/publish`,
-        cta: "Open publish",
-        tone: "red" as const,
-      };
-    }
-    if (hasBlockedDrafts || reviewArticles.length > 0) {
-      return {
-        title: "Review drafts to unlock growth",
-        detail: `${reviewArticles.length} draft${reviewArticles.length === 1 ? "" : "s"} can move into publishing once you approve the evidence, claims, and positioning.`,
-        href: `/projects/${projectId}/review`,
-        cta: "Review drafts",
-        tone: hasBlockedDrafts ? ("red" as const) : ("amber" as const),
-      };
-    }
-    if (ready.length > 0) {
-      return {
-        title: "Publish approved work",
-        detail: `${ready.length} approved variant${ready.length === 1 ? "" : "s"} can be distributed now that the canonical page is live.`,
-        href: `/projects/${projectId}/publish`,
-        cta: "Open publish",
-        tone: "green" as const,
-      };
-    }
-    if (topics.length === 0) {
-      return {
-        title: "Generate the first growth plan",
-        detail: "Turn the domain context into a backlog of content opportunities before CiteLoop starts drafting.",
-        href: `/projects/${projectId}/plan`,
-        cta: "Generate content plan",
-        tone: "blue" as const,
-      };
-    }
-    return {
-      title: "Refresh context before the next cycle",
-      detail: "Keep product facts and evidence current so the next plan is based on what your site actually says today.",
-      href: `/projects/${projectId}/context`,
-      cta: "Open context",
-      tone: "green" as const,
-    };
-  }, [failedPublish.length, hasBlockedDrafts, profile, projectId, ready.length, reviewArticles.length, topics.length]);
 
   const contextEvidenceCount = evidenceCount(inventory);
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
@@ -322,7 +267,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     ? {
         label: "Needs context",
         tone: "amber" as const,
-        detail: "Refresh context so CiteLoop can extract product facts and evidence from this domain.",
+        detail: "CiteLoop is still gathering product facts and evidence from this domain.",
       }
     : sourcePageCount === 0
       ? {
@@ -389,11 +334,6 @@ export function Workspace({ projectId }: { projectId: string }) {
       icon: Search,
       muted: opportunitiesConverted + reviewArticles.length + ready.length + measuringActions === 0,
     },
-  ];
-  const measurementCoverage = [
-    { label: "Search Console", detail: searchDataConnected ? "Connected" : "Not connected", tone: searchDataConnected ? ("green" as const) : ("amber" as const) },
-    { label: "Public crawl", detail: sourcePageCount > 0 ? `${sourcePageCount} pages` : "Waiting", tone: sourcePageCount > 0 ? ("green" as const) : ("amber" as const) },
-    { label: "Content outcomes", detail: measuringActions > 0 ? `${measuringActions} measuring` : "No outcomes yet", tone: measuringActions > 0 ? ("green" as const) : ("neutral" as const) },
   ];
   const loopCards = [
     {
@@ -646,59 +586,6 @@ export function Workspace({ projectId }: { projectId: string }) {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-bold text-slate-900">Next growth move</div>
-              <Badge tone={nextGrowthMove.tone}>now</Badge>
-            </div>
-            <h2 className="mt-3 text-xl font-bold leading-7 text-slate-950">{nextGrowthMove.title}</h2>
-            <p className="mt-2 text-sm leading-5 text-slate-600">{nextGrowthMove.detail}</p>
-            <a
-              href={nextGrowthMove.href}
-              className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
-            >
-              {nextGrowthMove.cta}
-              <ArrowRight size={14} />
-            </a>
-          </div>
-
-          <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-            <div className="text-xs font-bold uppercase text-slate-400">Measurement coverage</div>
-            <div className="mt-3 grid gap-2">
-              {measurementCoverage.map((item) => (
-                <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-semibold text-slate-700">{item.label}</span>
-                  <Badge tone={item.tone}>{item.detail}</Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
-          <TextInput
-            value={landing}
-            onChange={(event) => setLanding(event.target.value)}
-            placeholder="https://product-domain.com"
-            className="w-full"
-          />
-          <Button
-            disabled={!!busy || !landing.trim()}
-            variant="primary"
-            onClick={() => run("Context refresh", () => api.runInsight(projectId, landing.trim()), "Context refreshed; crawl may continue in background")}
-          >
-            <Wand2 size={16} />
-            Refresh context
-          </Button>
-          <Button
-            disabled={!!busy || !profile}
-            title={!profile ? "Refresh context before generating a content plan" : undefined}
-            onClick={() => run("Content plan", () => api.runStrategist(projectId), "Content plan generated")}
-          >
-            Generate content plan
-          </Button>
-        </div>
       </section>
 
       <section>

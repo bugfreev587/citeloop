@@ -150,11 +150,7 @@ test("home leads with growth outcomes and does not show run internals by default
     "AI citations",
     "Organic traffic",
     "Published pages",
-    "Next growth move",
     "Growth loop",
-    "Measurement coverage",
-    "Refresh context",
-    "Generate content plan",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
@@ -162,6 +158,28 @@ test("home leads with growth outcomes and does not show run internals by default
   for (const internalCopy of ["Run Insight", "Run Strategist", "Publish tick", "Recent runs", "tokens"]) {
     assert.doesNotMatch(workspace, new RegExp(internalCopy));
   }
+});
+
+test("home removes manual planning controls and secondary growth panels", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+  const dashboardLogic = read("lib/dashboard-ux-logic.ts");
+
+  for (const removed of [
+    "Next growth move",
+    "Measurement coverage",
+    "Refresh context",
+    "Generate content plan",
+    "Review drafts to unlock growth",
+    "TextInput",
+    "Wand2",
+    "api.runInsight",
+    "api.runStrategist",
+    "nextGrowthMove",
+    "measurementCoverage",
+  ]) {
+    assert.doesNotMatch(workspace, new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(dashboardLogic, /Refresh context when product facts change/);
 });
 
 test("home growth metrics use unwrapped SuperX-style cards", () => {
@@ -191,7 +209,6 @@ test("home explains growth limits and loop status from existing product data", (
   for (const copy of [
     "Growth measurement is limited",
     "Search Console is not connected yet",
-    "Review drafts to unlock growth",
     "Find opportunities",
     "Plan content",
     "Create drafts",

@@ -276,9 +276,9 @@ export function buildHomeEventStream({
     items: [],
     emptyAction: {
       title: "All set for now",
-      detail: "No live work or scheduled publish slot is waiting. Refresh context when product facts change.",
+      detail: "No live work or scheduled publish slot is waiting. Growth signals will appear here as the loop starts moving.",
       href: `/projects/${projectId}/context`,
-      actionLabel: "Refresh context",
+      actionLabel: "Open context",
     },
   };
 }
