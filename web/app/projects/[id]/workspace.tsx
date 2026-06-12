@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, CheckCircle2, Circle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, CheckCircle2, Circle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -16,7 +16,7 @@ import {
 } from "../../lib/api";
 import {
   buildHomeEventStream,
-  contextBuildProgress,
+  contextBuildTracks,
   visibilityLifecycleLabel,
   visibilityLifecycleTone,
   visibleHomeSectionIds,
@@ -144,6 +144,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [failedPublish, setFailedPublish] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [runs, setRuns] = useState<GenerationRun[]>([]);
+  const [insightRuns, setInsightRuns] = useState<GenerationRun[]>([]);
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -154,7 +155,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, overview, opportunities] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -165,6 +166,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listArticles(projectId, "publish_failed"),
         api.listDistribute(projectId),
         api.listRuns(projectId, { limit: 5 }),
+        api.listRuns(projectId, { agent: "insight", limit: 50 }).catch(() => []),
         api.getSEOOverview(projectId).catch(() => null),
         api.listSEOOpportunities(projectId, { limit: 5 }).catch(() => []),
       ]);
@@ -178,9 +180,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       setFailedPublish(failed);
       setReady(dist);
       setRuns(runRows);
+      setInsightRuns(insightRunRows);
       setSeoOverview(overview);
       setSeoOpportunities(opportunities);
-      return { profile: profileRow, inventory: inventoryRows };
+      return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
       setApiError(e.message);
       return null;
@@ -192,13 +195,16 @@ export function Workspace({ projectId }: { projectId: string }) {
   }, [refresh]);
 
   const contextEvidenceCount = evidenceCount(inventory);
+  const contextEvidencePageCount = inventory.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0).length;
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
-  const contextProgress = contextBuildProgress({
+  const contextBuild = contextBuildTracks({
     hasProfile: Boolean(profile),
     sourcePageCount,
+    evidencePageCount: contextEvidencePageCount,
     evidenceCount: contextEvidenceCount,
     pollCount: onboardingPollCount,
     pollLimit: ONBOARDING_POLL_LIMIT,
+    runs: insightRuns,
   });
   const projectLoaded = Boolean(project);
 
@@ -207,7 +213,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   // on an empty Context page while the detached onboarding jobs finish.
   const onboardingAttemptsRef = useRef(0);
   useEffect(() => {
-    if (!projectLoaded || !contextProgress.active) {
+    if (!projectLoaded || !contextBuild.active) {
       onboardingAttemptsRef.current = 0;
       setOnboardingPollCount(0);
       return;
@@ -223,8 +229,18 @@ export function Workspace({ projectId }: { projectId: string }) {
         const next = await refresh();
         if (cancelled || !next) return;
         const nextEvidenceCount = evidenceCount(next.inventory);
+        const nextEvidencePageCount = next.inventory.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0).length;
         const nextSourcePageCount = Math.max(next.inventory.length, next.profile?.source_urls?.length ?? 0);
-        if (next.profile && nextSourcePageCount > 0 && nextEvidenceCount > 0) {
+        const nextContextBuild = contextBuildTracks({
+          hasProfile: Boolean(next.profile),
+          sourcePageCount: nextSourcePageCount,
+          evidencePageCount: nextEvidencePageCount,
+          evidenceCount: nextEvidenceCount,
+          pollCount: attempt,
+          pollLimit: ONBOARDING_POLL_LIMIT,
+          runs: next.insightRuns,
+        });
+        if (!nextContextBuild.active) {
           setMessage({
             tone: "green",
             title: "Your domain context is ready",
@@ -244,7 +260,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [projectLoaded, contextProgress.active, refresh]);
+  }, [projectLoaded, contextBuild.active, refresh]);
 
   const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
     setBusy(label);
@@ -567,7 +583,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           </Button>
         </div>
 
-        {contextProgress.active && (
+        {contextBuild.active && (
           <div
             role="status"
             aria-live="polite"
@@ -576,9 +592,9 @@ export function Workspace({ projectId }: { projectId: string }) {
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <Badge tone={contextProgress.exhausted ? "amber" : "blue"}>Initial context</Badge>
-                <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">{contextProgress.title}</h2>
-                <p className="mt-1 max-w-[70ch] text-sm leading-5 text-amber-900">{contextProgress.detail}</p>
+                <Badge tone={contextBuild.exhausted ? "amber" : "blue"}>Parallel context build</Badge>
+                <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">{contextBuild.title}</h2>
+                <p className="mt-1 max-w-[70ch] text-sm leading-5 text-amber-900">{contextBuild.detail}</p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-amber-100">
                 <Loader2 size={14} className="animate-spin text-[#d93820]" />
@@ -586,33 +602,45 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
             </div>
 
-            <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs font-bold uppercase text-slate-500">
-                <span>Estimated progress</span>
-                <span>{contextProgress.progress}%</span>
-              </div>
-              <div
-                className="h-2 overflow-hidden rounded-full bg-white ring-1 ring-inset ring-amber-100"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={contextProgress.progress}
-              >
-                <div className="h-full rounded-full bg-[#d93820] transition-all duration-500" style={{ width: `${contextProgress.progress}%` }} />
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              {contextProgress.steps.map((step) => (
-                <div key={step.label} className="flex min-h-[40px] items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-amber-100">
-                  {step.state === "done" ? (
-                    <CheckCircle2 size={16} className="text-green-600" />
-                  ) : step.state === "active" ? (
-                    <Loader2 size={16} className="animate-spin text-[#d93820]" />
-                  ) : (
-                    <Circle size={16} className="text-slate-300" />
-                  )}
-                  <span className={cx("font-semibold", step.state === "pending" ? "text-slate-400" : "text-slate-800")}>{step.label}</span>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              {contextBuild.tracks.map((track) => (
+                <div key={track.id} className="min-h-[118px] rounded-lg bg-white px-3 py-3 ring-1 ring-amber-100">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {track.state === "done" ? (
+                        <CheckCircle2 size={16} className="shrink-0 text-green-600" />
+                      ) : track.state === "attention" ? (
+                        <AlertTriangle size={16} className="shrink-0 text-amber-600" />
+                      ) : track.state === "running" ? (
+                        <Loader2 size={16} className="shrink-0 animate-spin text-[#d93820]" />
+                      ) : (
+                        <Circle size={16} className="shrink-0 text-slate-300" />
+                      )}
+                      <div className="truncate text-sm font-bold text-slate-900">{track.label}</div>
+                    </div>
+                    <div className="shrink-0 text-xs font-bold text-slate-500">{track.progress}%</div>
+                  </div>
+                  <div
+                    className="mt-3 h-2 overflow-hidden rounded-full bg-amber-50 ring-1 ring-inset ring-amber-100"
+                    role="progressbar"
+                    aria-label={`${track.label} progress`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={track.progress}
+                  >
+                    <div
+                      className={cx(
+                        "h-full rounded-full transition-all duration-500",
+                        track.state === "done" ? "bg-green-600" : track.state === "attention" ? "bg-amber-500" : "bg-[#d93820]",
+                      )}
+                      style={{ width: `${track.progress}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3 text-xs font-bold text-slate-400">
+                    <span>{track.current}/{track.target}</span>
+                    <span className="capitalize">{track.state}</span>
+                  </div>
+                  <p className="mt-2 text-[13px] font-semibold leading-5 text-slate-500">{track.detail}</p>
                 </div>
               ))}
             </div>

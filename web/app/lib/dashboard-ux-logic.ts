@@ -81,23 +81,41 @@ export type HomeSectionCandidate = {
   priority: number;
 };
 
-export type ContextBuildStepState = "pending" | "active" | "done";
+export type ContextBuildTrackState = "waiting" | "running" | "done" | "attention";
 
-export type ContextBuildProgressInput = {
+export type ContextBuildRun = {
+  input?: Record<string, any> | null;
+  output?: Record<string, any> | null;
+  status?: string | null;
+  error?: string | null;
+};
+
+export type ContextBuildTracksInput = {
   hasProfile: boolean;
   sourcePageCount: number;
+  evidencePageCount: number;
   evidenceCount: number;
   pollCount: number;
   pollLimit: number;
+  runs?: ContextBuildRun[];
 };
 
-export type ContextBuildProgress = {
+export type ContextBuildTrack = {
+  id: "profile" | "source-crawl" | "evidence";
+  label: string;
+  detail: string;
+  state: ContextBuildTrackState;
+  progress: number;
+  current: number;
+  target: number;
+};
+
+export type ContextBuildTracks = {
   active: boolean;
   exhausted: boolean;
   title: string;
   detail: string;
-  progress: number;
-  steps: Array<{ label: string; state: ContextBuildStepState }>;
+  tracks: ContextBuildTrack[];
 };
 
 export type ProfileDraft = {
@@ -256,23 +274,112 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
   };
 }
 
-function boundedRatio(value: number, limit: number) {
-  const safeLimit = Math.max(1, limit);
-  return Math.max(0, Math.min(value, safeLimit)) / safeLimit;
+function boundedPercent(current: number, target: number) {
+  const safeTarget = Math.max(1, target);
+  return Math.max(0, Math.min(100, Math.round((Math.max(0, current) / safeTarget) * 100)));
 }
 
-export function contextBuildProgress({
+function runStep(run: ContextBuildRun) {
+  const step = run.input?.step;
+  return typeof step === "string" ? step : "";
+}
+
+function latestCrawlSummary(runs: ContextBuildRun[]) {
+  for (const run of runs) {
+    const summary = run.output?.crawl_summary;
+    if (runStep(run) === "crawl_summary" && summary && typeof summary === "object") {
+      return summary as Record<string, any>;
+    }
+  }
+  return null;
+}
+
+function numericSummaryValue(summary: Record<string, any> | null, key: string) {
+  const value = summary?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+const contextBuildTargetPages = 20;
+
+export function contextBuildTracks({
   hasProfile,
   sourcePageCount,
+  evidencePageCount,
   evidenceCount,
   pollCount,
   pollLimit,
-}: ContextBuildProgressInput): ContextBuildProgress {
-  const hasSources = sourcePageCount > 0;
-  const hasEvidence = evidenceCount > 0;
-  const active = !(hasProfile && hasSources && hasEvidence);
-  const exhausted = active && pollCount >= pollLimit;
-  const pollRatio = boundedRatio(pollCount, pollLimit);
+  runs = [],
+}: ContextBuildTracksInput): ContextBuildTracks {
+  const pollingExhausted = pollCount >= pollLimit;
+  const summary = latestCrawlSummary(runs);
+  const fetchedCount = numericSummaryValue(summary, "fetched_count");
+  const inventoryCount = numericSummaryValue(summary, "inventory_count");
+  const crawlErrors = Array.isArray(summary?.errors) ? summary.errors.length : 0;
+  const inventoryRuns = runs.filter((run) => runStep(run) === "inventory");
+  const inventoryProcessedCount = Math.max(inventoryRuns.length, inventoryCount);
+  const inventoryErrorCount = inventoryRuns.filter((run) => run.status === "error" || run.status === "failed").length;
+  const crawlFailed = runs.some((run) => runStep(run) === "crawl" && (run.status === "error" || run.status === "failed"));
+  const profileFailed = runs.some((run) => runStep(run) === "profile" && (run.status === "error" || run.status === "failed"));
+  const observedSourceCount = Math.max(sourcePageCount, fetchedCount);
+  const sourceTarget = Math.max(1, Math.min(contextBuildTargetPages, observedSourceCount || contextBuildTargetPages));
+  const evidenceTarget = Math.max(1, Math.min(contextBuildTargetPages, fetchedCount || sourcePageCount || contextBuildTargetPages));
+  const sourceComplete = fetchedCount > 0 || sourcePageCount >= sourceTarget;
+  const evidenceComplete =
+    evidencePageCount >= evidenceTarget ||
+    (evidencePageCount > 0 && inventoryProcessedCount >= evidenceTarget) ||
+    (evidencePageCount > 0 && pollingExhausted);
+  const active = !(hasProfile && sourceComplete && evidenceComplete);
+  const exhausted = active && pollingExhausted;
+  const profileState: ContextBuildTrackState = hasProfile ? "done" : exhausted && profileFailed ? "attention" : "running";
+  const sourceState: ContextBuildTrackState = sourceComplete ? "done" : exhausted && crawlFailed ? "attention" : "running";
+  const evidenceState: ContextBuildTrackState =
+    evidenceComplete ? "done" : sourcePageCount === 0 && fetchedCount === 0 ? "waiting" : exhausted && evidenceCount === 0 ? "attention" : "running";
+  const skippedPages = crawlErrors + inventoryErrorCount;
+  const tracks: ContextBuildTrack[] = [
+    {
+      id: "profile",
+      label: "Product profile",
+      state: profileState,
+      progress: hasProfile ? 100 : 0,
+      current: hasProfile ? 1 : 0,
+      target: 1,
+      detail: hasProfile
+        ? "Product facts are saved."
+        : profileState === "attention"
+          ? "Profile extraction needs attention."
+          : "Extracting product facts from the service URL.",
+    },
+    {
+      id: "source-crawl",
+      label: "Source crawl",
+      state: sourceState,
+      progress: sourceComplete ? 100 : boundedPercent(sourcePageCount, sourceTarget),
+      current: Math.min(sourceTarget, observedSourceCount),
+      target: sourceTarget,
+      detail: sourceComplete
+        ? skippedPages > 0
+          ? `Crawl finished with ${skippedPages} skipped page${skippedPages === 1 ? "" : "s"}.`
+          : "Public source pages are fetched."
+        : sourceState === "attention"
+          ? "The crawl hit an error; CiteLoop will continue with available pages."
+          : "Fetching up to 20 public pages; slow or failed URLs are skipped.",
+    },
+    {
+      id: "evidence",
+      label: "Evidence snippets",
+      state: evidenceState,
+      progress: evidenceComplete ? 100 : boundedPercent(evidencePageCount, evidenceTarget),
+      current: Math.min(evidenceTarget, evidencePageCount),
+      target: evidenceTarget,
+      detail: evidenceComplete
+        ? `Evidence is available from ${evidencePageCount} source page${evidencePageCount === 1 ? "" : "s"}.`
+        : evidenceState === "waiting"
+          ? "Starts as soon as source pages are available."
+          : evidenceState === "attention"
+            ? "Evidence extraction has not produced usable snippets yet."
+            : "Extracting source-backed snippets in parallel.",
+    },
+  ];
 
   if (!active) {
     return {
@@ -280,46 +387,7 @@ export function contextBuildProgress({
       exhausted: false,
       title: "Domain context is ready",
       detail: "CiteLoop has a product profile, source pages, and evidence for planning.",
-      progress: 100,
-      steps: [
-        { label: "Product profile", state: "done" },
-        { label: "Source pages", state: "done" },
-        { label: "Evidence snippets", state: "done" },
-      ],
-    };
-  }
-
-  if (!hasProfile) {
-    return {
-      active: true,
-      exhausted,
-      title: "Building domain context",
-      detail: exhausted
-        ? "CiteLoop is still waiting for the product profile. Open Context to refresh from the service URL if this does not move soon."
-        : "CiteLoop is creating the product profile from the service URL. Home checks for updates automatically.",
-      progress: Math.min(60, 10 + Math.round(pollRatio * 50)),
-      steps: [
-        { label: "Product profile", state: "active" },
-        { label: "Source pages", state: "pending" },
-        { label: "Evidence snippets", state: "pending" },
-      ],
-    };
-  }
-
-  if (!hasSources) {
-    return {
-      active: true,
-      exhausted,
-      title: "Building domain context",
-      detail: exhausted
-        ? "The profile is ready, but source pages have not appeared yet. Refresh Context with the service URL if the crawl is blocked."
-        : "The profile is ready. CiteLoop is reading public pages and preparing source-backed evidence.",
-      progress: Math.min(82, 50 + Math.round(pollRatio * 32)),
-      steps: [
-        { label: "Product profile", state: "done" },
-        { label: "Source pages", state: "active" },
-        { label: "Evidence snippets", state: "pending" },
-      ],
+      tracks,
     };
   }
 
@@ -328,14 +396,9 @@ export function contextBuildProgress({
     exhausted,
     title: "Building domain context",
     detail: exhausted
-      ? "Source pages are ready, but evidence snippets are still missing. Review the source pages in Context before generating content."
-      : "Source pages are ready. CiteLoop is extracting evidence snippets that drafts can safely reuse.",
-    progress: Math.min(94, 82 + Math.round(pollRatio * 12)),
-    steps: [
-      { label: "Product profile", state: "done" },
-      { label: "Source pages", state: "done" },
-      { label: "Evidence snippets", state: "active" },
-    ],
+      ? "Parallel context build is still checking results. CiteLoop skips slow or failed pages instead of waiting for every URL."
+      : "Parallel context build is running. Each track updates from saved profile, crawl, and evidence results.",
+    tracks,
   };
 }
 

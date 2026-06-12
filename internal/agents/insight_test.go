@@ -249,6 +249,45 @@ func TestPersistInventoryUsesBoundedParallelWorkers(t *testing.T) {
 	}
 }
 
+func TestPersistInventoryCapsEvidencePages(t *testing.T) {
+	res := &crawl.Result{Articles: make([]*crawl.Page, 0, 22)}
+	for i := 0; i < 22; i++ {
+		res.Articles = append(res.Articles, &crawl.Page{
+			URL:   "https://example.com/blog/page-" + string(rune('a'+i)),
+			Title: "Page",
+			Text:  "Evidence text",
+		})
+	}
+	insight := NewInsight(Deps{Q: db.New(&insightDBSpy{}), LLM: &inventoryJSONLLM{}}, nil)
+
+	count := insight.persistInventory(context.Background(), uuid.New(), res)
+
+	if count != 20 {
+		t.Fatalf("inventory count = %d, want 20", count)
+	}
+}
+
+func TestPersistInventoryTimesOutSlowPagesAndKeepsSuccessfulEvidence(t *testing.T) {
+	provider := &selectiveInventoryLLM{}
+	insight := NewInsight(Deps{Q: db.New(&insightDBSpy{}), LLM: provider}, nil)
+	insight.inventoryExtractionTimeout = 50 * time.Millisecond
+	res := &crawl.Result{
+		Articles: []*crawl.Page{
+			{URL: "https://example.com/blog/slow", Title: "Slow", Text: "Slow text"},
+			{URL: "https://example.com/blog/fast", Title: "Fast", Text: "Fast text"},
+		},
+	}
+
+	count := insight.persistInventory(context.Background(), uuid.New(), res)
+
+	if count != 1 {
+		t.Fatalf("inventory count = %d, want 1 successful page", count)
+	}
+	if !provider.slowCancelled() {
+		t.Fatal("slow inventory page was not cancelled by the per-page timeout")
+	}
+}
+
 type capturedRun struct {
 	input  []byte
 	output []byte
@@ -266,6 +305,42 @@ type blockingInventoryLLM struct {
 	active    int
 	maxActive int
 	release   <-chan struct{}
+}
+
+type inventoryJSONLLM struct{}
+
+func (p *inventoryJSONLLM) Complete(ctx context.Context, req llm.CompletionReq) (llm.CompletionResp, error) {
+	return llm.CompletionResp{
+		Text:   `{"title":"Inventory","target_keyword":"inventory","topics":["inventory"],"summary":"Summary","evidence_snippets":["UniPost schedules posts."]}`,
+		Model:  "inventory-json-test",
+		Tokens: 100,
+	}, nil
+}
+
+type selectiveInventoryLLM struct {
+	mu                 sync.Mutex
+	slowCancelledByCtx bool
+}
+
+func (p *selectiveInventoryLLM) Complete(ctx context.Context, req llm.CompletionReq) (llm.CompletionResp, error) {
+	if strings.Contains(req.Prompt, "/slow") {
+		<-ctx.Done()
+		p.mu.Lock()
+		p.slowCancelledByCtx = true
+		p.mu.Unlock()
+		return llm.CompletionResp{Model: "selective-test"}, ctx.Err()
+	}
+	return llm.CompletionResp{
+		Text:   `{"title":"Fast","target_keyword":"fast","topics":["fast"],"summary":"Fast summary","evidence_snippets":["Fast article evidence."]}`,
+		Model:  "selective-test",
+		Tokens: 100,
+	}, nil
+}
+
+func (p *selectiveInventoryLLM) slowCancelled() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.slowCancelledByCtx
 }
 
 func (p *blockingInventoryLLM) Complete(ctx context.Context, req llm.CompletionReq) (llm.CompletionResp, error) {

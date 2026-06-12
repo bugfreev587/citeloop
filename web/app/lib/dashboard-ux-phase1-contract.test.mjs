@@ -64,18 +64,24 @@ test("context and home surface a background-crawl completion signal instead of s
 
   const workspace = read("projects/[id]/workspace.tsx");
   // Home polls for profile + inventory so a freshly created project flips to a ready state on its own.
-  assert.match(workspace, /contextProgress\.active/);
+  assert.match(workspace, /contextBuild\.active/);
   assert.match(workspace, /api\.listInventory\(projectId\)/);
   assert.match(workspace, /Your domain context is ready/);
 });
 
-test("home shows asynchronous context-building progress during onboarding", () => {
+test("home shows parallel context-building tracks during onboarding", () => {
   const workspace = read("projects/[id]/workspace.tsx");
+  const dashboardLogic = read("lib/dashboard-ux-logic.ts");
 
-  assert.match(workspace, /contextBuildProgress/);
+  assert.match(workspace, /contextBuildTracks/);
   assert.match(workspace, /onboardingPollCount/);
+  assert.match(workspace, /Parallel context build/);
   assert.match(workspace, /Building domain context/);
-  assert.match(workspace, /Estimated progress/);
+  assert.match(dashboardLogic, /Product profile/);
+  assert.match(dashboardLogic, /Source crawl/);
+  assert.match(dashboardLogic, /Evidence snippets/);
+  assert.match(workspace, /contextBuild\.tracks\.map/);
+  assert.doesNotMatch(workspace, /Estimated progress/);
 });
 
 test("visibility degrades search metrics and signals truncated loop, context paginates evidence", () => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/agents"
@@ -12,6 +13,10 @@ import (
 )
 
 const projectOnboardingTimeout = 5 * time.Minute
+const onboardingInventoryMaxPages = 20
+const onboardingInventorySitemapURLCap = 80
+const onboardingInventoryRequestTimeoutMs = 5000
+const onboardingInventoryMinRateLimitRPS = 3
 
 type projectOnboardingInput struct {
 	ProjectID uuid.UUID
@@ -51,6 +56,7 @@ func (s *Server) startInsightInventoryCrawl(projectID uuid.UUID, landingURL stri
 	if landingURL == "" {
 		return
 	}
+	crawlCfg = boundedOnboardingCrawlConfig(crawlCfg)
 	runner := s.InsightInventoryRunner
 	if runner == nil {
 		runner = s.runInsightInventoryCrawl
@@ -61,6 +67,22 @@ func (s *Server) startInsightInventoryCrawl(projectID uuid.UUID, landingURL stri
 		defer cancel()
 		runner(ctx, in)
 	}()
+}
+
+func boundedOnboardingCrawlConfig(crawlCfg config.CrawlConfig) config.CrawlConfig {
+	if crawlCfg.MaxPages <= 0 || crawlCfg.MaxPages > onboardingInventoryMaxPages {
+		crawlCfg.MaxPages = onboardingInventoryMaxPages
+	}
+	if crawlCfg.SitemapURLCap <= 0 || crawlCfg.SitemapURLCap > onboardingInventorySitemapURLCap {
+		crawlCfg.SitemapURLCap = onboardingInventorySitemapURLCap
+	}
+	if crawlCfg.RequestTimeoutMs <= 0 || crawlCfg.RequestTimeoutMs > onboardingInventoryRequestTimeoutMs {
+		crawlCfg.RequestTimeoutMs = onboardingInventoryRequestTimeoutMs
+	}
+	if crawlCfg.RateLimitRPS < onboardingInventoryMinRateLimitRPS {
+		crawlCfg.RateLimitRPS = onboardingInventoryMinRateLimitRPS
+	}
+	return crawlCfg
 }
 
 func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingInput) {
@@ -79,19 +101,28 @@ func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingI
 		return
 	}
 
-	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
-	if _, summary, err := ag.RunQuickProfile(ctx, in.ProjectID, in.SiteURL, cfg.Crawl); err != nil {
-		log.Warn("project onboarding quick profile failed", "project_id", in.ProjectID, "err", err)
-	} else {
-		log.Info("project onboarding quick profile complete", "project_id", in.ProjectID, "landing", summary.LandingURL)
-		s.startInsightInventoryCrawl(in.ProjectID, in.SiteURL, cfg.Crawl)
-	}
+	s.startInsightInventoryCrawl(in.ProjectID, in.SiteURL, cfg.Crawl)
 
-	runner := s.SEOOnboardingRunner
-	if runner == nil {
-		runner = s.runProjectSEOOnboarding
-	}
-	runner(ctx, in)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
+		if _, summary, err := ag.RunQuickProfile(ctx, in.ProjectID, in.SiteURL, cfg.Crawl); err != nil {
+			log.Warn("project onboarding quick profile failed", "project_id", in.ProjectID, "err", err)
+		} else {
+			log.Info("project onboarding quick profile complete", "project_id", in.ProjectID, "landing", summary.LandingURL)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		runner := s.SEOOnboardingRunner
+		if runner == nil {
+			runner = s.runProjectSEOOnboarding
+		}
+		runner(ctx, in)
+	}()
+	wg.Wait()
 }
 
 func (s *Server) runProjectSEOOnboarding(ctx context.Context, in projectOnboardingInput) {

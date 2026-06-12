@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,6 +108,42 @@ func TestStartInsightInventoryCrawlRunsAsDetachedBackgroundTask(t *testing.T) {
 	close(release)
 }
 
+func TestStartInsightInventoryCrawlUsesBoundedOnboardingCrawlConfig(t *testing.T) {
+	projectID := uuid.New()
+	called := make(chan insightInventoryInput, 1)
+	srv := &Server{
+		InsightInventoryRunner: func(ctx context.Context, in insightInventoryInput) {
+			called <- in
+		},
+	}
+	cfg := config.CrawlConfig{
+		MaxPages:         200,
+		SitemapURLCap:    2000,
+		RequestTimeoutMs: 8000,
+		RateLimitRPS:     1,
+	}
+
+	srv.startInsightInventoryCrawl(projectID, "https://unipost.dev", cfg)
+
+	select {
+	case got := <-called:
+		if got.Crawl.MaxPages != 20 {
+			t.Fatalf("crawl max pages = %d, want 20", got.Crawl.MaxPages)
+		}
+		if got.Crawl.SitemapURLCap != 80 {
+			t.Fatalf("sitemap url cap = %d, want 80", got.Crawl.SitemapURLCap)
+		}
+		if got.Crawl.RequestTimeoutMs != 5000 {
+			t.Fatalf("request timeout = %d, want 5000", got.Crawl.RequestTimeoutMs)
+		}
+		if got.Crawl.RateLimitRPS != 3 {
+			t.Fatalf("rate limit rps = %d, want 3", got.Crawl.RateLimitRPS)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("background inventory crawl was not started")
+	}
+}
+
 func TestStartInsightInventoryCrawlSkipsEmptyLandingURL(t *testing.T) {
 	called := make(chan insightInventoryInput, 1)
 	srv := &Server{
@@ -124,20 +161,21 @@ func TestStartInsightInventoryCrawlSkipsEmptyLandingURL(t *testing.T) {
 	}
 }
 
-func TestRunProjectOnboardingStartsInventoryBeforeSEOCompletes(t *testing.T) {
+func TestRunProjectOnboardingStartsIndependentTracksBeforeQuickProfileCompletes(t *testing.T) {
 	projectID := uuid.New()
 	landing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`<html><head><title>UniPost</title></head><body><main>UniPost schedules social posts across platforms.</main></body></html>`))
 	}))
 	defer landing.Close()
 
+	profileLLM := &blockingOnboardingLLM{started: make(chan struct{}, 1), release: make(chan struct{})}
 	inventoryStarted := make(chan insightInventoryInput, 1)
 	seoStarted := make(chan projectOnboardingInput, 1)
 	releaseInventory := make(chan struct{})
 	releaseSEO := make(chan struct{})
 	srv := &Server{
 		Q:   db.New(&onboardingDBSpy{projectID: projectID}),
-		LLM: llm.NewMock(),
+		LLM: profileLLM,
 		InsightInventoryRunner: func(ctx context.Context, in insightInventoryInput) {
 			inventoryStarted <- in
 			<-releaseInventory
@@ -154,10 +192,17 @@ func TestRunProjectOnboardingStartsInventoryBeforeSEOCompletes(t *testing.T) {
 		close(done)
 	}()
 	defer func() {
+		close(profileLLM.release)
 		close(releaseInventory)
 		close(releaseSEO)
 		<-done
 	}()
+
+	select {
+	case <-profileLLM.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("quick profile did not start")
+	}
 
 	select {
 	case got := <-inventoryStarted:
@@ -174,8 +219,27 @@ func TestRunProjectOnboardingStartsInventoryBeforeSEOCompletes(t *testing.T) {
 			t.Fatalf("seo project id = %s, want %s", got.ProjectID, projectID)
 		}
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("seo onboarding should start while inventory crawl is still running")
+		t.Fatal("seo onboarding should start while quick profile is still running")
 	}
+}
+
+type blockingOnboardingLLM struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingOnboardingLLM) Complete(ctx context.Context, req llm.CompletionReq) (llm.CompletionResp, error) {
+	p.once.Do(func() { p.started <- struct{}{} })
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return llm.CompletionResp{}, ctx.Err()
+	}
+	return llm.CompletionResp{
+		Text:  `{"positioning":"Provisional profile","value_props":["Fast"],"features":["Landing"],"icp":["Operators"],"tone":"clear","key_terms":["profile"],"competitors":[],"differentiators":["Quick context"]}`,
+		Model: "blocking-onboarding",
+	}, nil
 }
 
 type onboardingDBSpy struct {

@@ -257,41 +257,60 @@ test("visibilityLifecycleLabel matches real opportunity and content action enums
   assert.equal(visibilityLifecycleTone("completed"), "green");
 });
 
-test("contextBuildProgress explains asynchronous onboarding stages", async () => {
-  const { contextBuildProgress } = await loadDashboardUXLogicModule();
+test("contextBuildTracks reports parallel onboarding work from observed outputs", async () => {
+  const { contextBuildTracks } = await loadDashboardUXLogicModule();
 
-  const waitingForProfile = contextBuildProgress({
+  const starting = contextBuildTracks({
     hasProfile: false,
     sourcePageCount: 0,
+    evidencePageCount: 0,
     evidenceCount: 0,
     pollCount: 2,
     pollLimit: 18,
+    runs: [],
   });
-  assert.equal(waitingForProfile.active, true);
-  assert.equal(waitingForProfile.title, "Building domain context");
-  assert.match(waitingForProfile.detail, /product profile/i);
-  assert.equal(waitingForProfile.steps[0].state, "active");
-  assert.equal(waitingForProfile.progress, 16);
+  assert.equal(starting.active, true);
+  assert.equal(starting.title, "Building domain context");
+  assert.equal(starting.progress, undefined);
+  assert.deepEqual(
+    starting.tracks.map((track) => track.label),
+    ["Product profile", "Source crawl", "Evidence snippets"],
+  );
+  assert.deepEqual(
+    starting.tracks.map((track) => track.state),
+    ["running", "running", "waiting"],
+  );
 
-  const waitingForSources = contextBuildProgress({
+  const withPartialEvidence = contextBuildTracks({
     hasProfile: true,
-    sourcePageCount: 0,
-    evidenceCount: 0,
+    sourcePageCount: 12,
+    evidencePageCount: 8,
+    evidenceCount: 20,
     pollCount: 4,
     pollLimit: 18,
+    runs: [
+      {
+        input: { step: "crawl_summary" },
+        output: { crawl_summary: { fetched_count: 20, errors: ["skip https://example.com/blog/slow: timeout"] } },
+        status: "ok",
+      },
+    ],
   });
-  assert.equal(waitingForSources.steps[0].state, "done");
-  assert.equal(waitingForSources.steps[1].state, "active");
-  assert.match(waitingForSources.detail, /public pages/i);
+  assert.equal(withPartialEvidence.tracks[0].state, "done");
+  assert.equal(withPartialEvidence.tracks[1].state, "done");
+  assert.equal(withPartialEvidence.tracks[2].state, "running");
+  assert.equal(withPartialEvidence.tracks[1].progress, 100);
+  assert.equal(withPartialEvidence.tracks[2].progress, 40);
 
-  const ready = contextBuildProgress({
+  const ready = contextBuildTracks({
     hasProfile: true,
-    sourcePageCount: 3,
-    evidenceCount: 7,
+    sourcePageCount: 20,
+    evidencePageCount: 20,
+    evidenceCount: 40,
     pollCount: 9,
     pollLimit: 18,
+    runs: [],
   });
   assert.equal(ready.active, false);
-  assert.equal(ready.progress, 100);
-  assert.equal(ready.steps.every((step) => step.state === "done"), true);
+  assert.equal(ready.tracks.every((track) => track.state === "done"), true);
 });

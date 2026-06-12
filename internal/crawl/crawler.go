@@ -12,12 +12,14 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
 )
 
 const userAgent = "CiteLoopBot/0.1 (+https://citeloop.dev/bot)"
+const articleFetchWorkerLimit = 4
 
 // Page is a fetched and extracted article page.
 type Page struct {
@@ -115,26 +117,91 @@ func (c *Crawler) Run(ctx context.Context, landingURL string) (*Result, error) {
 	res.Discovered = urls
 	res.Truncated = truncated
 
-	for _, u := range urls {
-		select {
-		case <-ctx.Done():
-			return res, ctx.Err()
-		default:
-		}
-		pu, err := url.Parse(u)
-		if err != nil {
-			continue
-		}
-		p, err := c.fetch(ctx, pu, rb)
-		if err != nil {
-			msg := fmt.Sprintf("skip %s: %v", u, err)
-			c.log.Warn("article fetch failed", "url", u, "err", err)
-			res.Errors = append(res.Errors, msg)
-			continue
-		}
-		res.Articles = append(res.Articles, p)
+	res.Articles, res.Errors = c.fetchArticles(ctx, urls, rb)
+	if err := ctx.Err(); err != nil {
+		return res, err
 	}
 	return res, nil
+}
+
+type articleFetchJob struct {
+	index int
+	raw   string
+}
+
+type articleFetchResult struct {
+	index int
+	raw   string
+	page  *Page
+	err   error
+}
+
+func (c *Crawler) fetchArticles(ctx context.Context, urls []string, rb *robots) ([]*Page, []string) {
+	if len(urls) == 0 {
+		return nil, nil
+	}
+	workers := articleFetchWorkerLimit
+	if len(urls) < workers {
+		workers = len(urls)
+	}
+	jobs := make(chan articleFetchJob)
+	results := make(chan articleFetchResult, len(urls))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				select {
+				case <-ctx.Done():
+					results <- articleFetchResult{index: job.index, raw: job.raw, err: ctx.Err()}
+					continue
+				default:
+				}
+				pu, err := url.Parse(job.raw)
+				if err == nil {
+					var page *Page
+					page, err = c.fetch(ctx, pu, rb)
+					results <- articleFetchResult{index: job.index, raw: job.raw, page: page, err: err}
+					continue
+				}
+				results <- articleFetchResult{index: job.index, raw: job.raw, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for index, raw := range urls {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- articleFetchJob{index: index, raw: raw}:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	ordered := make([]*Page, len(urls))
+	var errors []string
+	for result := range results {
+		if result.err != nil {
+			msg := fmt.Sprintf("skip %s: %v", result.raw, result.err)
+			c.log.Warn("article fetch failed", "url", result.raw, "err", result.err)
+			errors = append(errors, msg)
+			continue
+		}
+		ordered[result.index] = result.page
+	}
+	pages := make([]*Page, 0, len(urls))
+	for _, page := range ordered {
+		if page != nil {
+			pages = append(pages, page)
+		}
+	}
+	return pages, errors
 }
 
 // discover returns normalized, deduped, article-classified URLs within bounds.

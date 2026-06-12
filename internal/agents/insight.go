@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -12,16 +13,20 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Insight is the cognition agent (PRD §5.1): crawl within bounds, then extract a
 // versioned Product Profile and per-article Content Inventory with evidence.
 type Insight struct {
 	Deps
-	Log *slog.Logger
+	Log                        *slog.Logger
+	inventoryExtractionTimeout time.Duration
 }
 
 const inventoryWorkerLimit = 3
+const maxInventoryEvidencePages = 20
+const defaultInventoryExtractionTimeout = 20 * time.Second
 
 type CrawlSummary struct {
 	LandingURL      string   `json:"landing_url"`
@@ -104,11 +109,15 @@ func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, land
 		return nil, summary, fmt.Errorf("profile extraction: %w", err)
 	}
 
-	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, false))
+	saved, inserted, err := a.saveProfileIfMissing(ctx, projectID, profile, profileSourceURLs(landingURL, res, false))
 	if err != nil {
 		return nil, summary, err
 	}
-	a.Log.Info("quick insight profile complete", "version", saved.Version, "landing", summary.LandingURL)
+	if inserted {
+		a.Log.Info("quick insight profile complete", "version", saved.Version, "landing", summary.LandingURL)
+	} else {
+		a.Log.Info("quick insight profile skipped active profile overwrite", "version", saved.Version, "landing", summary.LandingURL)
+	}
 	return profile, summary, nil
 }
 
@@ -210,6 +219,18 @@ func (a *Insight) saveProfile(ctx context.Context, projectID uuid.UUID, profile 
 	})
 }
 
+func (a *Insight) saveProfileIfMissing(ctx context.Context, projectID uuid.UUID, profile *Profile, sourceURLs []string) (db.ProductProfile, bool, error) {
+	existing, err := a.Q.GetActiveProfile(ctx, projectID)
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.ProductProfile{}, false, err
+	}
+	saved, err := a.saveProfile(ctx, projectID, profile, sourceURLs)
+	return saved, true, err
+}
+
 func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res *crawl.Result) int {
 	if res == nil {
 		return 0
@@ -219,6 +240,9 @@ func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res
 		if page != nil {
 			pages = append(pages, page)
 		}
+	}
+	if len(pages) > maxInventoryEvidencePages {
+		pages = pages[:maxInventoryEvidencePages]
 	}
 	if len(pages) == 0 {
 		return 0
@@ -237,7 +261,9 @@ func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res
 			defer wg.Done()
 			for page := range jobs {
 				started := time.Now()
-				item, resp, ierr := a.extractInventory(ctx, page)
+				pageCtx, cancel := a.inventoryExtractionContext(ctx)
+				item, resp, ierr := a.extractInventory(pageCtx, page)
+				cancel()
 				results <- inventoryExtractionResult{
 					page:       page,
 					item:       item,
@@ -292,6 +318,14 @@ func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res
 		count++
 	}
 	return count
+}
+
+func (a *Insight) inventoryExtractionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := a.inventoryExtractionTimeout
+	if timeout <= 0 {
+		timeout = defaultInventoryExtractionTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 type inventoryExtractionResult struct {
