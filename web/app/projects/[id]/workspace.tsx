@@ -217,11 +217,16 @@ export function Workspace({ projectId }: { projectId: string }) {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void refresh();
     };
+    const refreshOnPageShow = () => {
+      void refresh();
+    };
     window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refreshOnPageShow);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refreshOnPageShow);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [refresh]);

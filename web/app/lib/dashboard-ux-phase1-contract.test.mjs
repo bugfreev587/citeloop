@@ -283,6 +283,7 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /HOME_REFRESH_MS/);
   assert.match(workspace, /window\.setInterval\(refresh, HOME_REFRESH_MS\)/);
   assert.match(workspace, /window\.addEventListener\("focus", refresh\)/);
+  assert.match(workspace, /window\.addEventListener\("pageshow", refreshOnPageShow\)/);
   assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(workspace, /seoActions/);
   assert.match(workspace, /planItemCount/);
