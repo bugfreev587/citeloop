@@ -459,7 +459,7 @@ test("content plan treats topic generation as a per-topic background operation",
 test("content plan backlog excludes drafted topics", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
-  assert.match(topics, /function isBacklogStatus/);
+  assert.match(topics, /isBacklogStatus/);
   assert.match(topics, /backlogTopics/);
   assert.match(topics, /isBacklogStatus\(topic\.status\)/);
 });
@@ -480,12 +480,15 @@ test("content plan helps users choose from backlog topics and supports density v
     assert.match(topics, new RegExp(copy));
   }
 
-  assert.match(topics, /type PlanView = "list" \| "grid" \| "compact"/);
+  assert.match(topics, /PlanView/);
   assert.match(topics, /setView\("list"\)/);
   assert.match(topics, /setView\("grid"\)/);
   assert.match(topics, /setView\("compact"\)/);
   assert.match(topics, /lg:grid-cols-2/);
   assert.match(topics, /2xl:grid-cols-3/);
+  assert.match(topics, /aria-pressed=\{view === "grid"\}/);
+  assert.match(topics, /planHealthForTopics\(topics\)/);
+  assert.match(topics, /\{planHealth\.backlog\}/);
 });
 
 test("content plan edit form keeps priority inside the card at narrow widths", () => {

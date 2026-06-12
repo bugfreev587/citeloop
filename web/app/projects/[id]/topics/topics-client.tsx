@@ -3,11 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
 import { Topic } from "../../../lib/api";
+import type { PlanView } from "../../../lib/content-plan-logic";
+import {
+  isBacklogStatus,
+  planHealthForTopics,
+  recommendedTopicIds,
+  topicCardSpanClass,
+  topicPickSignal,
+  topicWhy,
+} from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
-type PlanView = "list" | "grid" | "compact";
 type TopicDraft = {
   channel: string;
   title: string;
@@ -41,37 +49,6 @@ function draftFromTopic(topic: Topic): TopicDraft {
     format: topic.format ?? "",
     priority: String(topic.priority),
   };
-}
-
-function isBacklogStatus(status: string) {
-  return status === "backlog" || status === "scheduled" || status === "generating";
-}
-
-function topicPickScore(topic: Topic) {
-  const briefComplete = Boolean((topic.target_keyword || topic.target_prompt) && topic.angle && topic.format);
-  return (
-    topic.priority * 10 +
-    (topic.scheduled_at ? 8 : 0) +
-    Math.min(topic.internal_links.length, 5) * 2 +
-    (topic.channel === "both" ? 3 : 0) +
-    (briefComplete ? 4 : 0)
-  );
-}
-
-function topicWhy(topic: Topic) {
-  if (topic.angle) return topic.angle;
-  if (topic.target_prompt) return `Answers: ${topic.target_prompt}`;
-  if (topic.target_keyword) return `Targets: ${topic.target_keyword}`;
-  return "Generated from current context gaps and available evidence.";
-}
-
-function topicPickSignal(topic: Topic) {
-  if (topic.priority > 0) return "Priority set by plan";
-  if (topic.scheduled_at) return "Scheduled intent";
-  if (topic.internal_links.length >= 3) return "Strong internal-link base";
-  if (topic.channel === "both") return "Covers blog + syndication";
-  if ((topic.target_keyword || topic.target_prompt) && topic.angle && topic.format) return "Complete brief";
-  return "Needs priority decision";
 }
 
 export function TopicsClient({ projectId }: { projectId: string }) {
@@ -127,25 +104,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [channel, query, topics]);
 
   const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
-  const planHealth = useMemo(
-    () => ({
-      readyToDraft: backlogTopics.filter((topic) => topic.status === "backlog" && !topic.scheduled_at).length,
-      scheduledIntent: backlogTopics.filter((topic) => topic.scheduled_at).length,
-      needsPriority: backlogTopics.filter((topic) => topic.priority <= 0).length,
-    }),
-    [backlogTopics],
-  );
+  const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
   const recommendedIds = useMemo(() => {
-    return new Set(
-      [...backlogTopics]
-        .sort((a, b) => {
-          const score = topicPickScore(b) - topicPickScore(a);
-          if (score !== 0) return score;
-          return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
-        })
-        .slice(0, 3)
-        .map((topic) => topic.id),
-    );
+    return new Set(recommendedTopicIds(backlogTopics));
   }, [backlogTopics]);
   const topicGridClass = cx(
     "grid gap-3",
@@ -315,7 +276,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="text-xs font-semibold uppercase text-slate-400">Backlog</div>
-            <div className="mt-2 text-2xl font-bold text-slate-950">{backlogTopics.length}</div>
+            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.backlog}</div>
             <div className="mt-1 text-sm text-slate-500">Topics waiting for draft generation.</div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -353,6 +314,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <button
               type="button"
               title="List view"
+              aria-pressed={view === "list"}
               onClick={() => setView("list")}
               className={cx(
                 "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
@@ -365,6 +327,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <button
               type="button"
               title="Two-column view"
+              aria-pressed={view === "grid"}
               onClick={() => setView("grid")}
               className={cx(
                 "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
@@ -377,6 +340,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <button
               type="button"
               title="Three-column view"
+              aria-pressed={view === "compact"}
               onClick={() => setView("compact")}
               className={cx(
                 "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
@@ -413,7 +377,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 className={cx(
                   "rounded-xl border border-slate-200 bg-white px-4 py-3",
                   view !== "list" && "min-h-[260px]",
-                  editingId === topic.id && view !== "list" && "lg:col-span-2 2xl:col-span-3",
+                  topicCardSpanClass(view, editingId === topic.id),
                 )}
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
