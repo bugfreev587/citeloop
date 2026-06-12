@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, CalendarDays, Check, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
+import { Archive, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
 import { Topic } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+type PlanView = "list" | "grid" | "compact";
 type TopicDraft = {
   channel: string;
   title: string;
@@ -46,12 +47,40 @@ function isBacklogStatus(status: string) {
   return status === "backlog" || status === "scheduled" || status === "generating";
 }
 
+function topicPickScore(topic: Topic) {
+  const briefComplete = Boolean((topic.target_keyword || topic.target_prompt) && topic.angle && topic.format);
+  return (
+    topic.priority * 10 +
+    (topic.scheduled_at ? 8 : 0) +
+    Math.min(topic.internal_links.length, 5) * 2 +
+    (topic.channel === "both" ? 3 : 0) +
+    (briefComplete ? 4 : 0)
+  );
+}
+
+function topicWhy(topic: Topic) {
+  if (topic.angle) return topic.angle;
+  if (topic.target_prompt) return `Answers: ${topic.target_prompt}`;
+  if (topic.target_keyword) return `Targets: ${topic.target_keyword}`;
+  return "Generated from current context gaps and available evidence.";
+}
+
+function topicPickSignal(topic: Topic) {
+  if (topic.priority > 0) return "Priority set by plan";
+  if (topic.scheduled_at) return "Scheduled intent";
+  if (topic.internal_links.length >= 3) return "Strong internal-link base";
+  if (topic.channel === "both") return "Covers blog + syndication";
+  if ((topic.target_keyword || topic.target_prompt) && topic.angle && topic.format) return "Complete brief";
+  return "Needs priority decision";
+}
+
 export function TopicsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
+  const [view, setView] = useState<PlanView>("grid");
   const [query, setQuery] = useState("");
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
@@ -98,6 +127,31 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [channel, query, topics]);
 
   const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
+  const planHealth = useMemo(
+    () => ({
+      readyToDraft: backlogTopics.filter((topic) => topic.status === "backlog" && !topic.scheduled_at).length,
+      scheduledIntent: backlogTopics.filter((topic) => topic.scheduled_at).length,
+      needsPriority: backlogTopics.filter((topic) => topic.priority <= 0).length,
+    }),
+    [backlogTopics],
+  );
+  const recommendedIds = useMemo(() => {
+    return new Set(
+      [...backlogTopics]
+        .sort((a, b) => {
+          const score = topicPickScore(b) - topicPickScore(a);
+          if (score !== 0) return score;
+          return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
+        })
+        .slice(0, 3)
+        .map((topic) => topic.id),
+    );
+  }, [backlogTopics]);
+  const topicGridClass = cx(
+    "grid gap-3",
+    view === "grid" && "lg:grid-cols-2",
+    view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
+  );
 
   async function runStrategist() {
     setBusy("strategist");
@@ -244,8 +298,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     <div className="space-y-7">
       <section>
         <SectionHeader
-          title="Topics"
-          eyebrow="Backlog and schedule intent"
+          title="Content Plan"
+          eyebrow="Backlog, schedule intent, and draft choices"
           action={
             <Button aria-busy={strategistRunning} disabled={strategistRunning} variant="primary" onClick={runStrategist}>
               {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
@@ -256,8 +310,34 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
       </section>
 
+      <section>
+        <SectionHeader title="Plan health" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-400">Backlog</div>
+            <div className="mt-2 text-2xl font-bold text-slate-950">{backlogTopics.length}</div>
+            <div className="mt-1 text-sm text-slate-500">Topics waiting for draft generation.</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-400">Ready to draft</div>
+            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.readyToDraft}</div>
+            <div className="mt-1 text-sm text-slate-500">Unscheduled backlog items available now.</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-400">Scheduled intent</div>
+            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.scheduledIntent}</div>
+            <div className="mt-1 text-sm text-slate-500">Topic dates are inherited when canonical drafts are approved.</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-400">Needs priority</div>
+            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.needsPriority}</div>
+            <div className="mt-1 text-sm text-slate-500">Use the recommendation signals when priorities are tied.</div>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
           <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search topics" />
           <select
             value={channel}
@@ -269,6 +349,44 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <option value="syndication">Syndication</option>
             <option value="both">Both</option>
           </select>
+          <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+            <button
+              type="button"
+              title="List view"
+              onClick={() => setView("list")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+              )}
+            >
+              <List size={14} />
+              List
+            </button>
+            <button
+              type="button"
+              title="Two-column view"
+              onClick={() => setView("grid")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+              )}
+            >
+              <LayoutGrid size={14} />
+              Two
+            </button>
+            <button
+              type="button"
+              title="Three-column view"
+              onClick={() => setView("compact")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+              )}
+            >
+              <Columns3 size={14} />
+              Three
+            </button>
+          </div>
           <Button disabled={strategistRunning} onClick={refresh}>
             <RefreshCw size={16} />
             Refresh
@@ -281,15 +399,23 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         {backlogTopics.length === 0 ? (
           <EmptyState title="No backlog topics found" detail="Drafted topics move to Review; run Strategist or adjust filters to populate the backlog." />
         ) : (
-          <div className="grid gap-2">
+          <div className={topicGridClass}>
             {backlogTopics.map((topic) => {
               const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";
               const editBusy = busy === `edit-${topic.id}`;
               const scheduleBusy = busy === `schedule-${topic.id}`;
               const archiveBusy = busy === `archive-${topic.id}`;
               const topicLocked = topic.status === "archived" || isGenerating;
+              const recommended = recommendedIds.has(topic.id);
               return (
-              <div key={topic.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div
+                key={topic.id}
+                className={cx(
+                  "rounded-xl border border-slate-200 bg-white px-4 py-3",
+                  view !== "list" && "min-h-[260px]",
+                  editingId === topic.id && view !== "list" && "lg:col-span-2 2xl:col-span-3",
+                )}
+              >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -297,9 +423,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
                         {topic.status}
                       </Badge>
-                      <span className="text-xs font-semibold text-slate-400">priority {topic.priority}</span>
+                      {recommended && <Badge tone="green">Recommended next</Badge>}
+                      <Badge tone={topic.priority > 0 ? "neutral" : "amber"}>priority {topic.priority}</Badge>
                     </div>
-                    <div className="mt-2 text-base font-bold text-slate-900">{topic.title}</div>
+                    <div className="mt-2 break-words text-base font-bold text-slate-900">{topic.title}</div>
                     <div className="mt-1 text-sm text-slate-500">
                       {topic.target_keyword || topic.target_prompt || "No target keyword or prompt captured."}
                     </div>
@@ -308,6 +435,16 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <span>{topic.angle || "No angle"}</span>
                       <span>{topic.internal_links.length} internal links</span>
                       <span>scheduled {formatDate(topic.scheduled_at)}</span>
+                    </div>
+                    <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-sm">
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Why this exists</div>
+                        <div className="mt-1 line-clamp-2 text-slate-600">{topicWhy(topic)}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                        <span className="text-slate-400">Pick signal</span>
+                        <span>{topicPickSignal(topic)}</span>
+                      </div>
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
@@ -332,51 +469,81 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 </div>
                 {editingId === topic.id && draft && (
                   <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
-                    <div className="grid gap-3 md:grid-cols-[160px_1fr_120px]">
-                      <Field label="Channel">
-                        <select
-                          value={draft.channel}
-                          onChange={(event) => setDraft({ ...draft, channel: event.target.value })}
-                          className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
-                        >
-                          <option value="blog">Blog</option>
-                          <option value="syndication">Syndication</option>
-                          <option value="both">Both</option>
-                        </select>
-                      </Field>
-                      <Field label="Title">
-                        <TextInput value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
-                      </Field>
-                      <Field label="Priority">
-                        <TextInput
-                          type="number"
-                          value={draft.priority}
-                          onChange={(event) => setDraft({ ...draft, priority: event.target.value })}
-                        />
-                      </Field>
+                    <div className="grid gap-3 lg:grid-cols-[minmax(120px,160px)_minmax(0,1fr)_minmax(96px,120px)]">
+                      <div className="min-w-0">
+                        <Field label="Channel">
+                          <select
+                            value={draft.channel}
+                            onChange={(event) => setDraft({ ...draft, channel: event.target.value })}
+                            className="h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
+                          >
+                            <option value="blog">Blog</option>
+                            <option value="syndication">Syndication</option>
+                            <option value="both">Both</option>
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="min-w-0">
+                        <Field label="Title">
+                          <TextInput
+                            className="min-w-0"
+                            value={draft.title}
+                            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="min-w-0">
+                        <Field label="Priority">
+                          <TextInput
+                            className="min-w-0"
+                            type="number"
+                            value={draft.priority}
+                            onChange={(event) => setDraft({ ...draft, priority: event.target.value })}
+                          />
+                        </Field>
+                      </div>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <Field label="Target keyword">
-                        <TextInput
-                          value={draft.target_keyword}
-                          onChange={(event) => setDraft({ ...draft, target_keyword: event.target.value })}
-                        />
-                      </Field>
-                      <Field label="Format">
-                        <TextInput value={draft.format} onChange={(event) => setDraft({ ...draft, format: event.target.value })} />
-                      </Field>
+                      <div className="min-w-0">
+                        <Field label="Target keyword">
+                          <TextInput
+                            className="min-w-0"
+                            value={draft.target_keyword}
+                            onChange={(event) => setDraft({ ...draft, target_keyword: event.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="min-w-0">
+                        <Field label="Format">
+                          <TextInput
+                            className="min-w-0"
+                            value={draft.format}
+                            onChange={(event) => setDraft({ ...draft, format: event.target.value })}
+                          />
+                        </Field>
+                      </div>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
-                      <Field label="Angle">
-                        <TextArea rows={3} value={draft.angle} onChange={(event) => setDraft({ ...draft, angle: event.target.value })} />
-                      </Field>
-                      <Field label="Target prompt">
-                        <TextArea
-                          rows={3}
-                          value={draft.target_prompt}
-                          onChange={(event) => setDraft({ ...draft, target_prompt: event.target.value })}
-                        />
-                      </Field>
+                      <div className="min-w-0">
+                        <Field label="Angle">
+                          <TextArea
+                            className="min-w-0"
+                            rows={3}
+                            value={draft.angle}
+                            onChange={(event) => setDraft({ ...draft, angle: event.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="min-w-0">
+                        <Field label="Target prompt">
+                          <TextArea
+                            className="min-w-0"
+                            rows={3}
+                            value={draft.target_prompt}
+                            onChange={(event) => setDraft({ ...draft, target_prompt: event.target.value })}
+                          />
+                        </Field>
+                      </div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button disabled={editBusy} size="sm" variant="ghost" onClick={cancelEdit}>
@@ -390,15 +557,23 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 )}
-                <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3 md:flex-row md:items-end md:justify-end">
-                  <Field label="Scheduled at">
-                    <TextInput
-                      type="datetime-local"
-                      value={scheduleDrafts[topic.id] ?? ""}
-                      disabled={topic.status === "archived"}
-                      onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
-                    />
-                  </Field>
+                <div
+                  className={cx(
+                    "mt-3 grid gap-2 border-t border-slate-100 pt-3",
+                    view === "list" ? "md:grid-cols-[minmax(0,320px)_auto] md:items-end md:justify-end" : "sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <Field label="Scheduled at">
+                      <TextInput
+                        className="min-w-0"
+                        type="datetime-local"
+                        value={scheduleDrafts[topic.id] ?? ""}
+                        disabled={topic.status === "archived"}
+                        onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
+                      />
+                    </Field>
+                  </div>
                   <Button disabled={topicLocked || scheduleBusy} size="sm" onClick={() => schedule(topic)}>
                     <CalendarDays size={14} />
                     Schedule

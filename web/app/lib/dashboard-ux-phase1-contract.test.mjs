@@ -463,3 +463,35 @@ test("content plan backlog excludes drafted topics", () => {
   assert.match(topics, /backlogTopics/);
   assert.match(topics, /isBacklogStatus\(topic\.status\)/);
 });
+
+test("content plan helps users choose from backlog topics and supports density views", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  for (const copy of [
+    "Content Plan",
+    "Plan health",
+    "Ready to draft",
+    "Scheduled intent",
+    "Needs priority",
+    "Recommended next",
+    "Why this exists",
+    "Pick signal",
+  ]) {
+    assert.match(topics, new RegExp(copy));
+  }
+
+  assert.match(topics, /type PlanView = "list" \| "grid" \| "compact"/);
+  assert.match(topics, /setView\("list"\)/);
+  assert.match(topics, /setView\("grid"\)/);
+  assert.match(topics, /setView\("compact"\)/);
+  assert.match(topics, /lg:grid-cols-2/);
+  assert.match(topics, /2xl:grid-cols-3/);
+});
+
+test("content plan edit form keeps priority inside the card at narrow widths", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /lg:grid-cols-\[minmax\(120px,160px\)_minmax\(0,1fr\)_minmax\(96px,120px\)\]/);
+  assert.match(topics, /min-w-0/);
+  assert.doesNotMatch(topics, /md:grid-cols-\[160px_1fr_120px\]/);
+});
