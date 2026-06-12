@@ -161,7 +161,7 @@ test("visibleHomeSectionIds keeps the control center compact in steady state", a
   assert.deepEqual(budget.overflowIds, ["this-week", "waiting-canonical"]);
 });
 
-test("sidebarPrimaryAction uses the current highest-priority action and falls back to Home", async () => {
+test("sidebarPrimaryAction uses the current highest-priority action and hides when there is no sidebar CTA", async () => {
   const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
 
   const urgent = sidebarPrimaryAction({
@@ -187,8 +187,7 @@ test("sidebarPrimaryAction uses the current highest-priority action and falls ba
     topicsCount: 5,
   });
 
-  assert.equal(healthy.title, "Open Home");
-  assert.equal(healthy.href, "/projects/project_1");
+  assert.equal(healthy, null);
 });
 
 test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", async () => {
@@ -213,12 +212,12 @@ test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", 
     topicsCount: 0,
   });
 
-	  assert.equal(blocked.title, "Review blocked");
-	  assert.equal(blocked.href, "/projects/project_1/review");
-	  assert.equal(noPlan.title, "Open Home");
-	  assert.equal(noPlan.href, "/projects/project_1");
-	  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
-	});
+  assert.equal(blocked.title, "Review blocked");
+  assert.equal(blocked.href, "/projects/project_1/review");
+  assert.equal(noPlan.title, "Create plan");
+  assert.equal(noPlan.href, "/projects/project_1/plan");
+  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
+});
 
 test("nextWorkspaceAction sends confirmed projects to opportunity review before planning", async () => {
   const { nextWorkspaceAction } = await loadDashboardUXLogicModule();

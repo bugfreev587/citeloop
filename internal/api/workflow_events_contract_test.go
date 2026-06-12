@@ -24,7 +24,7 @@ func TestSEOReviewHandlersEnqueueWorkflowEvents(t *testing.T) {
 	}
 }
 
-func TestArticleApproveEnqueuesDraftApprovedWithoutBufferDelay(t *testing.T) {
+func TestArticleApproveEnqueuesDraftApprovedWithProjectSchedulePolicy(t *testing.T) {
 	source, err := os.ReadFile("handlers_review.go")
 	if err != nil {
 		t.Fatal(err)
@@ -34,12 +34,10 @@ func TestArticleApproveEnqueuesDraftApprovedWithoutBufferDelay(t *testing.T) {
 		"workflow.EventDraftApproved",
 		"s.enqueueWorkflowEvent",
 		"approveArticleScoped",
+		"canonicalApprovalScheduleAt",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("article approve must enqueue draft approved workflow event; missing %q", want)
 		}
-	}
-	if strings.Contains(body, "BufferDays") {
-		t.Fatal("article approve must not default unscheduled canonicals to now+buffer_days")
 	}
 }

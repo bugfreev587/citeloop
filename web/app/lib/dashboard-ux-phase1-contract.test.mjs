@@ -29,8 +29,33 @@ test("project shell hides the sidebar primary action when it repeats the active 
   const shell = read("components/project-shell.tsx");
 
   assert.match(shell, /showPrimaryAction/);
-  assert.match(shell, /primaryAction\.href !== pathname/);
-  assert.match(shell, /\{showPrimaryAction && \(/);
+  assert.match(shell, /primaryAction !== null && primaryAction\.href !== pathname/);
+  assert.match(shell, /\{primaryAction && showPrimaryAction && \(/);
+});
+
+test("project shell never renders an Open Home sidebar primary action", () => {
+  const shell = read("components/project-shell.tsx");
+  const dashboardLogic = read("lib/dashboard-ux-logic.ts");
+
+  assert.match(shell, /WorkspaceAction \| null/);
+  assert.match(shell, /return null;/);
+  assert.doesNotMatch(shell, /title: "Open Home"/);
+  assert.doesNotMatch(dashboardLogic, /title: "Open Home"/);
+});
+
+test("project shell groups desktop navigation into SuperX-style sections", () => {
+  const shell = read("components/project-shell.tsx");
+
+  assert.match(shell, /const navSections = \[/);
+  assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"[\s\S]*label: "Context"[\s\S]*label: "Content Plan"/);
+  assert.match(shell, /id: "create"[\s\S]*label: "CREATE"[\s\S]*label: "Review"[\s\S]*label: "Publish"/);
+  for (const label of ["CREATE", "MEASURE", "SYSTEM"]) {
+    assert.match(shell, new RegExp(`label: "${label}"`));
+  }
+  assert.match(shell, /navSections\s*\n\s*\.map/);
+  assert.match(shell, /visibleNavSections\.map/);
+  assert.match(shell, /section\.items\.map/);
+  assert.match(shell, /tracking-\[0\.18em\]/);
 });
 
 test("project shell keeps the fixed-width sidebar primary action to one line when shown", () => {

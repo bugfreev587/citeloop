@@ -637,7 +637,7 @@ Home 的 Growth Loop 卡片不得使用独立推导逻辑。
 给定一篇 canonical draft 处于 `pending_review`：
 
 1. 用户 approve。
-2. 如果 publisher ready 且无 future schedule，系统立即 enqueue publish。
+2. 如果 publisher ready、`auto_advance_enabled=true` 且无 future schedule，系统立即 enqueue publish；关闭 auto-advance 时，无显式排期的 canonical 使用 buffer delay，避免被 publish cron 立即拾取。
 3. Publish 成功后：
    - article status 为 `published`。
    - canonical URL 已回填。
@@ -714,13 +714,14 @@ Home 的 Growth Loop 卡片不得使用独立推导逻辑。
 
 ## 14. Phase 1 产品决策
 
-1. Draft approve 默认立即 publish；如果 topic/article 有显式 future schedule，则尊重 schedule。
-2. `buffer_days` 用于内容库存和 cadence planning，不再用于 approve 后静默延迟。
-3. Phase 1 一个 accepted opportunity 生成一个 topic。
-4. Opportunity batch completion 定义为当前 active context version 下所有 open opportunities 都已 review；review cap 留到后续。
-5. Draft generation 不新增 batch knob，复用现有 budget breaker 和 cadence deficit math。
-6. 冷启动 opportunities 可以进入 Plan 并自动 draft，前提是 profile 已被用户确认，且后续 draft review gate 仍然保留。
-7. Workflow advancement 默认开启，但需要 per-project kill switch，避免自动 draft generation 在异常情况下持续消耗预算。
+1. Draft approve 在 `auto_advance_enabled=true` 时默认立即 publish；如果 topic/article 有显式 future schedule，则始终尊重 schedule。
+2. `auto_advance_enabled=false` 是项目级自动化 kill switch：阻止 opportunity -> plan、plan -> draft、draft approve -> immediate publish，并让无显式排期的 canonical 回到 `buffer_days` delay。
+3. `buffer_days` 用于内容库存和 cadence planning；只有在 auto-advance 关闭且 canonical 没有显式排期时，才作为 approve 后的保护性 delay。
+4. Phase 1 一个 accepted opportunity 生成一个 topic。
+5. Opportunity batch completion 定义为当前 active context version 下所有 open opportunities 都已 review；review cap 留到后续。
+6. Draft generation 不新增 batch knob，复用现有 budget breaker 和 cadence deficit math。
+7. 冷启动 opportunities 可以进入 Plan 并自动 draft，前提是 profile 已被用户确认，且后续 draft review gate 仍然保留。
+8. Workflow advancement 默认开启，但需要 per-project kill switch，避免自动 draft generation 在异常情况下持续消耗预算。
 
 ## 15. 后续产品决策
 

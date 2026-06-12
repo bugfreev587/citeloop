@@ -148,11 +148,11 @@ export function nextWorkspaceAction({
   contextConfirmed = true,
   failedPublishCount,
   hasBlockedDrafts,
-	  reviewCount,
-	  readyCount,
-	  topicsCount,
-	  openOpportunityCount = 0,
-	}: NextWorkspaceActionInput): WorkspaceAction {
+  reviewCount,
+  readyCount,
+  topicsCount,
+  openOpportunityCount = 0,
+}: NextWorkspaceActionInput): WorkspaceAction {
   if (!hasProfile) {
     return {
       title: "Refresh context",
@@ -188,27 +188,27 @@ export function nextWorkspaceAction({
       href: `/projects/${projectId}/review`,
     };
   }
-	  if (readyCount > 0) {
-	    return {
-	      title: "Distribute variants",
-	      detail: "Approved variants are ready after their canonical article went live.",
-	      href: `/projects/${projectId}/publish`,
-	    };
-	  }
-	  if (openOpportunityCount > 0) {
-	    return {
-	      title: "Review opportunities",
-	      detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
-	      href: `/projects/${projectId}/visibility`,
-	    };
-	  }
-	  if (topicsCount === 0) {
-	    return {
-	      title: "Open Home",
-	      detail: "CiteLoop will create the first content plan after reviewed opportunities enter the loop.",
-	      href: `/projects/${projectId}`,
-	    };
-	  }
+  if (readyCount > 0) {
+    return {
+      title: "Distribute variants",
+      detail: "Approved variants are ready after their canonical article went live.",
+      href: `/projects/${projectId}/publish`,
+    };
+  }
+  if (openOpportunityCount > 0) {
+    return {
+      title: "Review opportunities",
+      detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
+      href: `/projects/${projectId}/visibility`,
+    };
+  }
+  if (topicsCount === 0) {
+    return {
+      title: "Create plan",
+      detail: "No opportunity review is waiting; open Content Plan to retry or seed the first backlog.",
+      href: `/projects/${projectId}/plan`,
+    };
+  }
   return {
     title: "Refresh context",
     detail: "Keep product facts, evidence, and positioning current before the next content cycle.",
@@ -282,16 +282,16 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     };
   }
 
-	  return {
-	    items: [],
-	    emptyAction: {
-	      title: "Context is ready",
-	      detail: "Review opportunities when they appear; CiteLoop will advance planning and drafting automatically after the review gate.",
-	      href: `/projects/${input.projectId}/visibility`,
-	      actionLabel: "Review opportunities",
-	    },
-	  };
-	}
+  return {
+    items: [],
+    emptyAction: {
+      title: "Context is ready",
+      detail: "Review opportunities when they appear; CiteLoop will advance planning and drafting automatically after the review gate.",
+      href: `/projects/${input.projectId}/visibility`,
+      actionLabel: "Review opportunities",
+    },
+  };
+}
 
 function boundedPercent(current: number, target: number) {
   const safeTarget = Math.max(1, target);
@@ -524,7 +524,7 @@ export function visibleHomeSectionIds(sections: HomeSectionCandidate[], options:
   };
 }
 
-export function sidebarPrimaryAction(input: NextWorkspaceActionInput): WorkspaceAction {
+export function sidebarPrimaryAction(input: NextWorkspaceActionInput): WorkspaceAction | null {
   const action = nextWorkspaceAction(input);
   if (!input.hasProfile) return action;
   if (input.contextConfirmed === false) return action;
@@ -539,11 +539,14 @@ export function sidebarPrimaryAction(input: NextWorkspaceActionInput): Workspace
       href: `/projects/${input.projectId}/visibility`,
     };
   }
-	  return {
-    title: "Open Home",
-    detail: "Start from the control center before jumping into deeper work.",
-    href: `/projects/${input.projectId}`,
-  };
+  if (input.topicsCount === 0) {
+    return {
+      title: "Create plan",
+      detail: "No opportunity review is waiting; open Content Plan to retry or seed the first backlog.",
+      href: `/projects/${input.projectId}/plan`,
+    };
+  }
+  return null;
 }
 
 export function profilePayloadFromDraft(draft: ProfileDraft, baseProfile: Record<string, any> = {}) {

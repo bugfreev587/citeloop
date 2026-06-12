@@ -60,8 +60,8 @@ func TestWorkflowEventQueriesExposeDurableWorkerSemantics(t *testing.T) {
 	if !strings.Contains(claimPendingWorkflowEvents, "status = 'running'") || !strings.Contains(claimPendingWorkflowEvents, "locked_at = now()") {
 		t.Fatal("ClaimPendingWorkflowEvents must mark claimed events running with locked_at")
 	}
-	if !strings.Contains(reclaimStuckWorkflowEvents, "status = 'running'") || !strings.Contains(reclaimStuckWorkflowEvents, "interval '5 minutes'") {
-		t.Fatal("ReclaimStuckWorkflowEvents must reclaim old running events after five minutes")
+	if !strings.Contains(reclaimStuckWorkflowEvents, "status = 'running'") || !strings.Contains(reclaimStuckWorkflowEvents, "interval '30 minutes'") {
+		t.Fatal("ReclaimStuckWorkflowEvents must avoid reclaiming long LLM generation work before thirty minutes")
 	}
 	if !strings.Contains(markWorkflowEventFailed, "status = case when attempts >= 4 then 'dead' else 'pending' end") {
 		t.Fatal("MarkWorkflowEventFailed must dead-letter events after the fourth attempt")

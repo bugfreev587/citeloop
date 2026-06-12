@@ -64,6 +64,42 @@ func TestSchedulerWorkflowHandlerPublishesApprovedDrafts(t *testing.T) {
 	}
 }
 
+func TestSchedulerWorkflowHandlersGateEventDrivenAutoAdvance(t *testing.T) {
+	source, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"handleContentPlanCreated",
+		"handleDraftApproved",
+		"AutoAdvanceEnabled",
+		"workflow auto advance disabled",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("event-driven workflow handlers must honor auto_advance_enabled; missing %q", want)
+		}
+	}
+}
+
+func TestOpportunityBatchPlanningIsolatesFailedActions(t *testing.T) {
+	source, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"SAVEPOINT workflow_action_",
+		"ROLLBACK TO SAVEPOINT workflow_action_",
+		"RELEASE SAVEPOINT workflow_action_",
+		`Status:    "failed"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("opportunity batch planning must isolate failed actions with savepoints; missing %q", want)
+		}
+	}
+}
+
 func TestSchedulerMaintainsContentActionTraceability(t *testing.T) {
 	source, err := os.ReadFile("scheduler.go")
 	if err != nil {

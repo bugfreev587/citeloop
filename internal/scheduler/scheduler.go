@@ -138,6 +138,14 @@ func (s *Scheduler) handleContentPlanCreated(ctx context.Context, projectID uuid
 	if err != nil {
 		return err
 	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AutoAdvanceEnabled {
+		s.Log.Info("workflow auto advance disabled", "project", projectID, "event", workflow.EventContentPlanCreated)
+		return nil
+	}
 	return s.generateForProject(ctx, project)
 }
 
@@ -145,6 +153,14 @@ func (s *Scheduler) handleDraftApproved(ctx context.Context, projectID uuid.UUID
 	project, err := db.New(s.Pool).GetProject(ctx, projectID)
 	if err != nil {
 		return err
+	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AutoAdvanceEnabled {
+		s.Log.Info("workflow auto advance disabled", "project", projectID, "event", workflow.EventDraftApproved)
+		return nil
 	}
 	if err := s.publishForProject(ctx, project); err != nil {
 		return err
@@ -195,10 +211,7 @@ func (s *Scheduler) handleOpportunityReviewed(ctx context.Context, projectID uui
 	if len(actions) == 0 {
 		return tx.Commit(ctx)
 	}
-	batchKey := projectID.String()
-	if profile, err := q.GetActiveProfile(ctx, projectID); err == nil {
-		batchKey = profile.ID.String()
-	}
+	batchKey := opportunityBatchKey(projectID, actions)
 	_, err = q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
 		ProjectID:  projectID,
 		EventType:  workflow.EventOpportunityBatchDone,
@@ -241,37 +254,86 @@ func (s *Scheduler) handleOpportunityBatchCompleted(ctx context.Context, project
 	if err != nil {
 		return err
 	}
-	for _, action := range actions {
-		opp, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
-		if err != nil {
-			s.Log.Warn("workflow action opportunity lookup failed", "project", projectID, "action", action.ID, "err", err)
-			continue
-		}
-		topic, err := q.CreateTopic(ctx, topicFromContentAction(projectID, action, opp))
-		if err != nil {
-			s.Log.Warn("workflow action topic creation failed", "project", projectID, "action", action.ID, "err", err)
-			continue
-		}
-		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
-			ID:        action.ID,
-			ProjectID: projectID,
-			Status:    "approved",
-		}); err != nil {
+	for i, action := range actions {
+		savepointSQL := fmt.Sprintf("SAVEPOINT workflow_action_%d", i)
+		rollbackSQL := fmt.Sprintf("ROLLBACK TO SAVEPOINT workflow_action_%d", i)
+		releaseSQL := fmt.Sprintf("RELEASE SAVEPOINT workflow_action_%d", i)
+		if _, err := tx.Exec(ctx, savepointSQL); err != nil {
 			return err
 		}
-		if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
-			ProjectID:  projectID,
-			EventType:  workflow.EventContentPlanCreated,
-			DedupeKey:  workflowEventDedupeKey(workflow.EventContentPlanCreated, projectID, action.ID.String()),
-			Payload:    mustJSON(map[string]any{"action_id": action.ID, "topic_id": topic.ID}),
-			EntityType: ptr("topic"),
-			EntityID:   pgtype.UUID{Bytes: topic.ID, Valid: true},
-		}); err != nil {
+		topic, err := s.planOpportunityContentAction(ctx, q, projectID, action)
+		if err != nil {
+			s.Log.Warn("workflow action planning failed", "project", projectID, "action", action.ID, "err", err)
+			if _, rollbackErr := tx.Exec(ctx, rollbackSQL); rollbackErr != nil {
+				return rollbackErr
+			}
+			if _, markErr := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+				ID:        action.ID,
+				ProjectID: projectID,
+				Status:    "failed",
+			}); markErr != nil {
+				return markErr
+			}
+			if _, releaseErr := tx.Exec(ctx, releaseSQL); releaseErr != nil {
+				return releaseErr
+			}
+			continue
+		}
+		if _, err := tx.Exec(ctx, releaseSQL); err != nil {
 			return err
 		}
 		s.Log.Info("workflow planned topic from opportunity action", "project", projectID, "action", action.ID, "topic", topic.ID)
 	}
+	remaining, err := q.ListUnplannedContentActions(ctx, db.ListUnplannedContentActionsParams{
+		ProjectID: projectID,
+		Limit:     1,
+	})
+	if err != nil {
+		return err
+	}
+	if len(remaining) > 0 {
+		batchKey := opportunityBatchKey(projectID, remaining)
+		if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+			ProjectID:  projectID,
+			EventType:  workflow.EventOpportunityBatchDone,
+			DedupeKey:  workflowEventDedupeKey(workflow.EventOpportunityBatchDone, projectID, batchKey),
+			Payload:    mustJSON(map[string]any{"unplanned_actions": len(remaining), "batch_key": batchKey}),
+			EntityType: ptr("project"),
+			EntityID:   pgtype.UUID{Bytes: projectID, Valid: true},
+		}); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
+}
+
+func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Queries, projectID uuid.UUID, action db.ContentAction) (db.Topic, error) {
+	opp, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
+	if err != nil {
+		return db.Topic{}, err
+	}
+	topic, err := q.CreateTopic(ctx, topicFromContentAction(projectID, action, opp))
+	if err != nil {
+		return db.Topic{}, err
+	}
+	if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+		ID:        action.ID,
+		ProjectID: projectID,
+		Status:    "approved",
+	}); err != nil {
+		return db.Topic{}, err
+	}
+	if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+		ProjectID:  projectID,
+		EventType:  workflow.EventContentPlanCreated,
+		DedupeKey:  workflowEventDedupeKey(workflow.EventContentPlanCreated, projectID, action.ID.String()),
+		Payload:    mustJSON(map[string]any{"action_id": action.ID, "topic_id": topic.ID}),
+		EntityType: ptr("topic"),
+		EntityID:   pgtype.UUID{Bytes: topic.ID, Valid: true},
+	}); err != nil {
+		return db.Topic{}, err
+	}
+	return topic, nil
 }
 
 func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity) db.CreateTopicParams {
@@ -306,6 +368,13 @@ func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db
 		Status:                string(topicstate.StatusBacklog),
 		SourceContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
 	}
+}
+
+func opportunityBatchKey(projectID uuid.UUID, actions []db.ContentAction) string {
+	if len(actions) == 0 {
+		return projectID.String()
+	}
+	return actions[0].ID.String()
 }
 
 func workflowEventDedupeKey(eventType string, projectID uuid.UUID, parts ...string) string {

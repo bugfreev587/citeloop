@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/agents"
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/topicstate"
@@ -173,8 +174,9 @@ func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
 }
 
 // approveArticle is the human gate. canonical → approved + scheduled_at written
-// (inherit topic.scheduled_at or immediately due). variant → approved (waits
-// for canonical publish). Blocking articles cannot be approved (§5.5).
+// (inherit topic.scheduled_at or follow the project's auto-advance scheduling).
+// variant → approved (waits for canonical publish). Blocking articles cannot be
+// approved (§5.5).
 func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 	s.approveArticleScoped(w, r, uuid.Nil)
 }
@@ -209,7 +211,8 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 
 	schedAt := pgtype.Timestamptz{}
 	if a.Kind == "canonical" {
-		// scheduled_at single source of truth (§3): inherit topic or become due now.
+		// scheduled_at single source of truth (§3): inherit topic or follow
+		// the project's auto-advance scheduling policy.
 		var topic db.Topic
 		if projectID == uuid.Nil {
 			topic, err = s.Q.GetTopic(r.Context(), a.TopicID)
@@ -220,11 +223,12 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 			writeErr(w, 500, err.Error())
 			return
 		}
-		if topic.ScheduledAt.Valid {
-			schedAt = topic.ScheduledAt
-		} else {
-			schedAt = pgutil.TS(time.Now())
+		cfg, err := s.projectConfigByID(r.Context(), a.ProjectID)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
 		}
+		schedAt = canonicalApprovalScheduleAt(topic.ScheduledAt, cfg, time.Now())
 	}
 
 	var updated db.Article
@@ -257,6 +261,20 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	writeJSON(w, 200, updated)
+}
+
+func canonicalApprovalScheduleAt(topicSchedule pgtype.Timestamptz, cfg config.ProjectConfig, now time.Time) pgtype.Timestamptz {
+	if topicSchedule.Valid {
+		return topicSchedule
+	}
+	if cfg.AutoAdvanceEnabled {
+		return pgutil.TS(now)
+	}
+	bufferDays := cfg.BufferDays
+	if bufferDays < 0 {
+		bufferDays = 0
+	}
+	return pgutil.TS(now.Add(time.Duration(bufferDays) * 24 * time.Hour))
 }
 
 func (s *Server) rejectProjectArticle(w http.ResponseWriter, r *http.Request) {

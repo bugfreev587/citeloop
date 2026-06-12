@@ -21,15 +21,37 @@ import { sidebarPrimaryAction, type NextWorkspaceActionInput, type WorkspaceActi
 import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
 
-const navItems = [
-  { label: "Home", href: "", icon: Home },
-  { label: "Context", href: "context", icon: Database },
-  { label: "Content Plan", href: "plan", icon: ListChecks },
-  { label: "Review", href: "review", icon: PenLine },
-  { label: "Publish", href: "publish", icon: Send },
-  { label: "Visibility", href: "visibility", icon: Search },
-  { label: "Settings", href: "settings", icon: Settings2 },
-  { label: "Admin", href: "admin", icon: KeyRound },
+const navSections = [
+  {
+    id: "primary",
+    label: null,
+    items: [
+      { label: "Home", href: "", icon: Home },
+      { label: "Context", href: "context", icon: Database },
+      { label: "Content Plan", href: "plan", icon: ListChecks },
+    ],
+  },
+  {
+    id: "create",
+    label: "CREATE",
+    items: [
+      { label: "Review", href: "review", icon: PenLine },
+      { label: "Publish", href: "publish", icon: Send },
+    ],
+  },
+  {
+    id: "measure",
+    label: "MEASURE",
+    items: [{ label: "Visibility", href: "visibility", icon: Search }],
+  },
+  {
+    id: "system",
+    label: "SYSTEM",
+    items: [
+      { label: "Settings", href: "settings", icon: Settings2 },
+      { label: "Admin", href: "admin", icon: KeyRound },
+    ],
+  },
 ];
 
 const adminOnlyNavLeaves = new Set(["settings", "admin"]);
@@ -68,27 +90,29 @@ export function ProjectShell({
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
   // Internal routes are admin-gated server-side; hide entries that would only hit a 404.
-  const visibleNav = navItems.filter((item) => !adminOnlyNavLeaves.has(item.href) || canAccessSettings);
-  const primaryAction: WorkspaceAction = useMemo(() => {
+  const visibleNavSections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => !adminOnlyNavLeaves.has(item.href) || canAccessSettings),
+    }))
+    .filter((section) => section.items.length > 0);
+  const visibleNav = visibleNavSections.flatMap((section) => section.items);
+  const primaryAction: WorkspaceAction | null = useMemo(() => {
     if (!actionSummary) {
-      return {
-        title: "Open Home",
-        detail: "Start from the control center before jumping into deeper work.",
-        href: `/projects/${projectId}`,
-      };
+      return null;
     }
     return sidebarPrimaryAction({ ...actionSummary, currentPathname: pathname });
   }, [actionSummary, pathname, projectId]);
-  const showPrimaryAction = primaryAction.href !== pathname;
-  const PrimaryIcon = primaryAction.href.endsWith("/publish")
+  const showPrimaryAction = primaryAction !== null && primaryAction.href !== pathname;
+  const PrimaryIcon = primaryAction?.href.endsWith("/publish")
     ? Send
-    : primaryAction.href.endsWith("/review")
+    : primaryAction?.href.endsWith("/review")
       ? PenLine
-      : primaryAction.href.endsWith("/plan")
+      : primaryAction?.href.endsWith("/plan")
         ? ListChecks
-        : primaryAction.href.endsWith("/context")
+        : primaryAction?.href.endsWith("/context")
           ? Database
-          : primaryAction.href.endsWith("/visibility")
+          : primaryAction?.href.endsWith("/visibility")
             ? Search
             : Home;
 
@@ -135,7 +159,9 @@ export function ProjectShell({
           CiteLoop
         </Link>
 
-        {showPrimaryAction && (
+        <div className="mb-4 h-px w-[185px] bg-slate-200" />
+
+        {primaryAction && showPrimaryAction && (
           <Link
             href={primaryAction.href}
             title={primaryAction.detail}
@@ -146,24 +172,33 @@ export function ProjectShell({
           </Link>
         )}
 
-        <nav className="grid gap-1">
-          {visibleNav.map((item) => {
-            const active = isActive(pathname, projectId, item.href);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.label}
-                href={projectHref(projectId, item.href)}
-                className={cx(
-                  "flex h-9 w-[185px] items-center gap-2.5 rounded-xl px-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
-                  active && "bg-[#fff5f2] font-semibold text-[#d93820]",
-                )}
-              >
-                <Icon size={17} strokeWidth={active ? 2.2 : 2} />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav className="grid gap-5">
+          {visibleNavSections.map((section, sectionIndex) => (
+            <div key={section.id} className="grid gap-1">
+              {section.label && (
+                <div className={cx("px-2 text-[10px] font-bold tracking-[0.18em] text-slate-400", sectionIndex > 0 && "pt-1")}>
+                  {section.label}
+                </div>
+              )}
+              {section.items.map((item) => {
+                const active = isActive(pathname, projectId, item.href);
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.label}
+                    href={projectHref(projectId, item.href)}
+                    className={cx(
+                      "flex h-9 w-[185px] items-center gap-2.5 rounded-xl px-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
+                      active && "bg-[#fff5f2] font-semibold text-[#d93820]",
+                    )}
+                  >
+                    <Icon size={17} strokeWidth={active ? 2.2 : 2} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="mt-auto grid gap-2">
@@ -216,7 +251,7 @@ export function ProjectShell({
           <Link href="/" className="font-bold text-slate-900">
             CiteLoop
           </Link>
-          {showPrimaryAction && (
+          {primaryAction && showPrimaryAction && (
             <Link href={primaryAction.href} className="text-sm font-semibold text-[#d93820]">
               {primaryAction.title}
             </Link>
