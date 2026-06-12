@@ -33,6 +33,15 @@ test("project shell keeps the fixed-width sidebar primary action to one line", (
   assert.match(shell, /className="shrink-0"/);
 });
 
+test("project shell feeds route and opportunity state into the sidebar CTA", () => {
+  const shell = read("components/project-shell.tsx");
+
+  assert.match(shell, /api\.listSEOOpportunities\(projectId/);
+  assert.match(shell, /openOpportunityCount/);
+  assert.match(shell, /currentPathname: pathname/);
+  assert.match(shell, /\[actionSummary, pathname, projectId\]/);
+});
+
 test("project shell uses the review-width canvas for every project page", () => {
   const shell = read("components/project-shell.tsx");
 

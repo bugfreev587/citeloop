@@ -77,8 +77,8 @@ export function ProjectShell({
         href: `/projects/${projectId}`,
       };
     }
-    return sidebarPrimaryAction(actionSummary);
-  }, [actionSummary, projectId]);
+    return sidebarPrimaryAction({ ...actionSummary, currentPathname: pathname });
+  }, [actionSummary, pathname, projectId]);
   const PrimaryIcon = primaryAction.href.endsWith("/publish")
     ? Send
     : primaryAction.href.endsWith("/review")
@@ -87,18 +87,21 @@ export function ProjectShell({
         ? ListChecks
         : primaryAction.href.endsWith("/context")
           ? Database
-          : Home;
+          : primaryAction.href.endsWith("/visibility")
+            ? Search
+            : Home;
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadPrimaryAction() {
-      const [profile, failedPublish, review, ready, topics] = await Promise.all([
+      const [profile, failedPublish, review, ready, topics, opportunities] = await Promise.all([
         api.getProfile(projectId).catch(() => null),
         api.listArticles(projectId, "publish_failed").catch(() => []),
         api.listReview(projectId).catch(() => []),
         api.listDistribute(projectId).catch(() => []),
         api.listTopics(projectId).catch(() => []),
+        api.listSEOOpportunities(projectId, { limit: 10 }).catch(() => []),
       ]);
       if (cancelled) return;
       const reviewArticles = review.flatMap((group) => group.articles);
@@ -113,6 +116,7 @@ export function ProjectShell({
         reviewCount: reviewArticles.length,
         readyCount: ready.length,
         topicsCount: topics.length,
+        openOpportunityCount: opportunities.length,
       });
     }
 

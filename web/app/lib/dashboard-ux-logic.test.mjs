@@ -220,6 +220,27 @@ test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", 
   assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
 });
 
+test("sidebarPrimaryAction follows visibility review work before creating a first plan", async () => {
+  const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+
+  const action = sidebarPrimaryAction({
+    projectId: "project_1",
+    hasProfile: true,
+    contextConfirmed: true,
+    failedPublishCount: 0,
+    hasBlockedDrafts: false,
+    reviewCount: 0,
+    readyCount: 0,
+    topicsCount: 0,
+    openOpportunityCount: 3,
+    currentPathname: "/projects/project_1/visibility",
+  });
+
+  assert.equal(action.title, "Review opportunities");
+  assert.equal(action.href, "/projects/project_1/visibility");
+  assert.match(action.detail, /ready to review/i);
+});
+
 test("profilePayloadFromDraft saves structured fields even when advanced JSON is invalid", async () => {
   const { profilePayloadFromDraft } = await loadDashboardUXLogicModule();
 

@@ -7,6 +7,8 @@ export type NextWorkspaceActionInput = {
   reviewCount: number;
   readyCount: number;
   topicsCount: number;
+  openOpportunityCount?: number;
+  currentPathname?: string;
 };
 
 export type WorkspaceAction = {
@@ -522,6 +524,13 @@ export function sidebarPrimaryAction(input: NextWorkspaceActionInput): Workspace
   if (input.hasBlockedDrafts) return { ...action, title: "Review blocked" };
   if (input.reviewCount > 0) return { ...action, title: "Review drafts" };
   if (input.readyCount > 0) return { ...action, title: "Distribute" };
+  if ((input.openOpportunityCount ?? 0) > 0) {
+    return {
+      title: "Review opportunities",
+      detail: `${input.openOpportunityCount} opportunities are ready to review before creating the first content plan.`,
+      href: `/projects/${input.projectId}/visibility`,
+    };
+  }
   if (input.topicsCount === 0) return { ...action, title: "Create plan" };
   return {
     title: "Open Home",
