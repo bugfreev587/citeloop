@@ -97,6 +97,7 @@ type ChannelMix struct {
 
 // ProjectConfig mirrors projects.config (PRD §3).
 type ProjectConfig struct {
+	SiteURL          string      `json:"site_url,omitempty"`
 	CadencePerWeek   int         `json:"cadence_per_week"`
 	BufferDays       int         `json:"buffer_days"`
 	ChannelMix       ChannelMix  `json:"channel_mix"`

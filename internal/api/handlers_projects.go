@@ -71,9 +71,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		}
 		normalizedSiteURL = normalized
 	}
+	projectConfig := config.Default()
+	projectConfig.SiteURL = normalizedSiteURL
 	p, err := s.Q.CreateProject(r.Context(), db.CreateProjectParams{
 		OwnerID: ownerID, Name: in.Name, Slug: in.Slug,
-		Config: config.Default().JSON(),
+		Config: projectConfig.JSON(),
 	})
 	if err != nil {
 		writeErr(w, 500, err.Error())

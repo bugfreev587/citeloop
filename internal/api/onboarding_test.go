@@ -70,6 +70,52 @@ func TestStartProjectOnboardingSkipsEmptySiteURL(t *testing.T) {
 	}
 }
 
+func TestCreateProjectPersistsSiteURLAndStartsOnboarding(t *testing.T) {
+	projectID := uuid.New()
+	called := make(chan projectOnboardingInput, 1)
+	store := &projectCreateDBSpy{projectID: projectID}
+	srv := &Server{
+		Q: db.New(store),
+		OnboardingRunner: func(ctx context.Context, in projectOnboardingInput) {
+			called <- in
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(`{"site_url":"https://unipost.dev"}`))
+	rec := httptest.NewRecorder()
+	srv.createProject(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var project db.Project
+	if err := json.NewDecoder(rec.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if cfg.SiteURL != "https://unipost.dev/" {
+		t.Fatalf("config site_url = %q", cfg.SiteURL)
+	}
+	if store.seoSiteURL != cfg.SiteURL {
+		t.Fatalf("seo site_url = %q, want %q", store.seoSiteURL, cfg.SiteURL)
+	}
+
+	select {
+	case got := <-called:
+		if got.ProjectID != projectID {
+			t.Fatalf("onboarding project id = %s, want %s", got.ProjectID, projectID)
+		}
+		if got.SiteURL != cfg.SiteURL {
+			t.Fatalf("onboarding site url = %q, want %q", got.SiteURL, cfg.SiteURL)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("background onboarding was not started")
+	}
+}
+
 func TestStartInsightInventoryCrawlRunsAsDetachedBackgroundTask(t *testing.T) {
 	projectID := uuid.New()
 	called := make(chan insightInventoryInput, 1)
@@ -248,6 +294,41 @@ type onboardingDBSpy struct {
 
 func (s *onboardingDBSpy) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+type projectCreateDBSpy struct {
+	projectID  uuid.UUID
+	seoSiteURL string
+}
+
+func (s *projectCreateDBSpy) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (s *projectCreateDBSpy) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (s *projectCreateDBSpy) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "insert into projects"):
+		return onboardingScanRow{values: []any{
+			s.projectID, args[0].(string), args[1].(string), args[2].(string), args[3].(json.RawMessage), pgtype.Timestamptz{},
+		}}
+	case strings.Contains(query, "insert into seo_properties"):
+		s.seoSiteURL = args[1].(string)
+		return onboardingScanRow{values: []any{
+			uuid.New(), args[0].(uuid.UUID), args[1].(string), args[2].(*string), args[3].(*string), args[4].(json.RawMessage),
+			args[5].(*string), args[6].(*string), pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		}}
+	case strings.Contains(query, "insert into seo_integrations"):
+		return onboardingScanRow{values: []any{
+			uuid.New(), args[0].(uuid.UUID), args[1].(string), args[2].(string), args[3].(*string), args[4].(pgtype.Timestamptz),
+			args[5].(*string), pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		}}
+	default:
+		return onboardingScanRow{err: pgx.ErrNoRows}
+	}
 }
 
 func (s *onboardingDBSpy) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {

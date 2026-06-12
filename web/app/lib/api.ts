@@ -22,6 +22,7 @@ export type AuthOptions = {
 };
 
 export type ProjectConfig = {
+  site_url?: string;
   cadence_per_week: number;
   buffer_days: number;
   channel_mix: { blog: number; syndication: number };
@@ -572,6 +573,7 @@ export type GEOExternalSurfaceMonitorResult = {
 
 export function defaultProjectConfig(): ProjectConfig {
   return {
+    site_url: "",
     cadence_per_week: 3,
     buffer_days: 5,
     channel_mix: { blog: 0.6, syndication: 0.4 },
