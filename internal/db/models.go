@@ -648,19 +648,20 @@ type TechnicalCheck struct {
 }
 
 type Topic struct {
-	ID            uuid.UUID          `json:"id"`
-	ProjectID     uuid.UUID          `json:"project_id"`
-	Channel       string             `json:"channel"`
-	Title         string             `json:"title"`
-	TargetKeyword *string            `json:"target_keyword"`
-	TargetPrompt  *string            `json:"target_prompt"`
-	Angle         *string            `json:"angle"`
-	Format        *string            `json:"format"`
-	Priority      int32              `json:"priority"`
-	InternalLinks json.RawMessage    `json:"internal_links"`
-	Status        string             `json:"status"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	Channel               string             `json:"channel"`
+	Title                 string             `json:"title"`
+	TargetKeyword         *string            `json:"target_keyword"`
+	TargetPrompt          *string            `json:"target_prompt"`
+	Angle                 *string            `json:"angle"`
+	Format                *string            `json:"format"`
+	Priority              int32              `json:"priority"`
+	InternalLinks         json.RawMessage    `json:"internal_links"`
+	Status                string             `json:"status"`
+	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	SourceContentActionID pgtype.UUID        `json:"source_content_action_id"`
 }
 
 type UrlIndexSnapshot struct {
@@ -679,4 +680,22 @@ type UrlIndexSnapshot struct {
 	PageFetchState    *string            `json:"page_fetch_state"`
 	RawSummary        json.RawMessage    `json:"raw_summary"`
 	InspectedAt       pgtype.Timestamptz `json:"inspected_at"`
+}
+
+type WorkflowEvent struct {
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	EventType   string             `json:"event_type"`
+	EntityType  *string            `json:"entity_type"`
+	EntityID    pgtype.UUID        `json:"entity_id"`
+	DedupeKey   string             `json:"dedupe_key"`
+	Payload     json.RawMessage    `json:"payload"`
+	Status      string             `json:"status"`
+	Attempts    int32              `json:"attempts"`
+	RunAfter    pgtype.Timestamptz `json:"run_after"`
+	LockedAt    pgtype.Timestamptz `json:"locked_at"`
+	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
+	Error       *string            `json:"error"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }

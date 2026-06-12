@@ -46,6 +46,19 @@ func (q *Queries) ContentActionCounts(ctx context.Context, projectID uuid.UUID) 
 	return items, nil
 }
 
+const countOpenSEOOpportunities = `-- name: CountOpenSEOOpportunities :one
+select count(*)::bigint from seo_opportunities
+where project_id = $1
+  and status = 'open'
+`
+
+func (q *Queries) CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenSEOOpportunities, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createContentAction = `-- name: CreateContentAction :one
 insert into content_actions
   (project_id, opportunity_id, action_type, status, target_article_id, target_url,
@@ -580,6 +593,140 @@ func (q *Queries) ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]Seo
 		return nil, err
 	}
 	return items, nil
+}
+
+const listUnplannedContentActions = `-- name: ListUnplannedContentActions :many
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at from content_actions ca
+left join topics t
+  on t.source_content_action_id = ca.id
+where ca.project_id = $1
+  and ca.status = 'ready_for_review'
+  and t.id is null
+order by ca.created_at asc
+limit $2
+for update of ca skip locked
+`
+
+type ListUnplannedContentActionsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Limit     int32     `json:"limit"`
+}
+
+func (q *Queries) ListUnplannedContentActions(ctx context.Context, arg ListUnplannedContentActionsParams) ([]ContentAction, error) {
+	rows, err := q.db.Query(ctx, listUnplannedContentActions, arg.ProjectID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContentAction
+	for rows.Next() {
+		var i ContentAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.ActionType,
+			&i.Status,
+			&i.TargetArticleID,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.TargetContentHashBefore,
+			&i.TargetContentHashAfter,
+			&i.DraftArticleID,
+			&i.BaselineWindow,
+			&i.MeasurementWindow,
+			&i.PublishedAt,
+			&i.OutcomeSummary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markContentActionDraftReady = `-- name: MarkContentActionDraftReady :one
+update content_actions set
+  status = 'ready_for_review',
+  draft_article_id = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at
+`
+
+type MarkContentActionDraftReadyParams struct {
+	ID             uuid.UUID   `json:"id"`
+	ProjectID      uuid.UUID   `json:"project_id"`
+	DraftArticleID pgtype.UUID `json:"draft_article_id"`
+}
+
+func (q *Queries) MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, markContentActionDraftReady, arg.ID, arg.ProjectID, arg.DraftArticleID)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markContentActionMeasuringForDraftArticle = `-- name: MarkContentActionMeasuringForDraftArticle :one
+update content_actions set
+  status = 'measuring',
+  published_at = now(),
+  updated_at = now()
+where project_id = $1 and draft_article_id = $2
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at
+`
+
+type MarkContentActionMeasuringForDraftArticleParams struct {
+	ProjectID      uuid.UUID   `json:"project_id"`
+	DraftArticleID pgtype.UUID `json:"draft_article_id"`
+}
+
+func (q *Queries) MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, markContentActionMeasuringForDraftArticle, arg.ProjectID, arg.DraftArticleID)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const sEODataDayCount = `-- name: SEODataDayCount :one

@@ -376,9 +376,11 @@ export function Workspace({ projectId }: { projectId: string }) {
             detail: "Context is confirmed and can support opportunity finding, content planning, and review.",
           };
 
-  const opportunitiesInPlanCount = seoActions.length;
-  const opportunitiesConverted = opportunitiesInPlanCount;
-  const planItemCount = topics.length + opportunitiesInPlanCount;
+	  const opportunitiesInPlanCount = seoActions.length;
+	  const opportunitiesConverted = opportunitiesInPlanCount;
+	  const planItemCount = topics.length + opportunitiesInPlanCount;
+	  const planGenerationPending = opportunitiesInPlanCount > 0 && topics.length === 0;
+	  const draftGenerationRunning = topics.length > 0 && reviewArticles.length + approved.length === 0;
   const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
   const searchDataConnected = hasConnectedSearchData(seoOverview);
   const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
@@ -515,28 +517,34 @@ export function Workspace({ projectId }: { projectId: string }) {
       metrics: [
         { value: planItemCount, label: planItemCount === 1 ? "item in the content plan" : "items in the content plan" },
         {
-          text: topics.length > 0
-            ? "ready for drafting"
-            : opportunitiesInPlanCount > 0
-              ? "opportunities queued from visibility"
-              : "content backlog is not started",
-        },
-      ],
-      status: !contextConfirmed
+	          text: topics.length > 0
+	            ? "drafting starts automatically"
+	            : opportunitiesInPlanCount > 0
+	              ? "reviewed opportunities are being planned"
+	              : "content backlog is not started",
+	        },
+	      ],
+	      status: !contextConfirmed
         ? {
             label: "Locked until Context is confirmed",
             detail: "A confirmed Context keeps the first plan grounded in reviewed facts and evidence.",
             tone: "amber" as const,
           }
-        : planItemCount > 0
-          ? {
-              label: topics.length > 0 ? "Ready for drafting" : "Opportunities in plan",
-              detail:
-                topics.length > 0
-                  ? "The backlog has topics that can move into draft generation."
-                  : "Visibility opportunities are queued as content actions for the next planning pass.",
-              tone: "green" as const,
-            }
+	        : planGenerationPending
+	          ? {
+	              label: "Generating content plan from reviewed opportunities",
+	              detail: "Reviewed opportunities are being turned into topics by the workflow worker. No action needed.",
+	              tone: "blue" as const,
+	            }
+	        : planItemCount > 0
+	          ? {
+	              label: topics.length > 0 ? "Content plan ready" : "Opportunities in plan",
+	              detail:
+	                topics.length > 0
+	                  ? "Topics are available; draft generation starts automatically until review, budget, or safety gates stop it."
+	                  : "Visibility opportunities are queued as content actions for the next planning pass.",
+	              tone: "green" as const,
+	            }
           : seoOpportunities.length > 0
             ? {
                 label: "Ready to plan",
@@ -548,10 +556,18 @@ export function Workspace({ projectId }: { projectId: string }) {
                 detail: "Opportunity discovery runs after Context confirmation.",
                 tone: "neutral" as const,
               },
-      action: {
-        label: !contextConfirmed ? "Confirm Context" : planItemCount > 0 ? "Open content plan" : seoOpportunities.length > 0 ? "Plan from opportunities" : "Open Visibility",
-        href: !contextConfirmed ? `/projects/${projectId}/context` : planItemCount > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
-      },
+	      action: {
+	        label: !contextConfirmed
+	          ? "Confirm Context"
+	          : planGenerationPending
+	            ? "No action needed"
+	            : planItemCount > 0
+	              ? "Open content plan"
+	              : seoOpportunities.length > 0
+	                ? "Review opportunities"
+	                : "Open Visibility",
+	        href: !contextConfirmed ? `/projects/${projectId}/context` : planItemCount > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
+	      },
       tone: planItemCount > 0 ? ("green" as const) : !contextConfirmed ? ("amber" as const) : seoOpportunities.length > 0 ? ("blue" as const) : ("neutral" as const),
       accentClass: planItemCount > 0 ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.planToCreate,
@@ -564,27 +580,27 @@ export function Workspace({ projectId }: { projectId: string }) {
         { value: reviewArticles.length + approved.length, label: reviewArticles.length + approved.length === 1 ? "draft created or approved" : "drafts created or approved" },
         { text: reviewArticles.length + approved.length > 0 ? "ready to review or publish" : "no drafts yet" },
       ],
-      status: reviewArticles.length + approved.length > 0
-        ? {
-            label: "Drafts in motion",
-            detail: "Drafts are ready for review or already approved for publishing.",
-            tone: "green" as const,
-          }
-        : topics.length > 0
-          ? {
-              label: "Ready to generate",
-              detail: "Select a planned topic to create the next draft.",
-              tone: "blue" as const,
-            }
+	      status: reviewArticles.length + approved.length > 0
+	        ? {
+	            label: "Drafts in motion",
+	            detail: "Drafts are ready for review or already approved for publishing.",
+	            tone: "green" as const,
+	          }
+	        : topics.length > 0
+	          ? {
+	              label: "Draft generation running",
+	              detail: "Writer and QA run from planned topics automatically. No action needed unless a draft reaches Review.",
+	              tone: "blue" as const,
+	            }
           : {
               label: "Waiting for content plan",
               detail: "Drafting starts after the backlog has confirmed topics.",
               tone: "neutral" as const,
             },
-      action: {
-        label: reviewArticles.length > 0 ? "Review drafts" : topics.length > 0 ? "Create draft" : "Open plan",
-        href: reviewArticles.length > 0 ? `/projects/${projectId}/review` : `/projects/${projectId}/plan`,
-      },
+	      action: {
+	        label: reviewArticles.length > 0 ? "Review drafts" : draftGenerationRunning ? "No action needed" : "Open plan",
+	        href: reviewArticles.length > 0 ? `/projects/${projectId}/review` : `/projects/${projectId}/plan`,
+	      },
       tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : topics.length > 0 ? ("blue" as const) : ("neutral" as const),
       accentClass: reviewArticles.length + approved.length > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.createToReview,
@@ -976,13 +992,14 @@ export function Workspace({ projectId }: { projectId: string }) {
                         <div className="mt-1 text-xs font-semibold leading-4 text-slate-500">{card.status.detail}</div>
                       </div>
                     </div>
-                    <a
-                      href={card.action.href}
-                      className="mt-3 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#d93820] transition-colors hover:border-[#d93820] hover:bg-red-50"
-                    >
-                      <span className="min-w-0 truncate">{card.action.label}</span>
-                      <ExternalLink size={13} className="shrink-0" />
-                    </a>
+	                    <div className="mt-3 text-[11px] font-bold uppercase leading-4 tracking-normal text-slate-400">Action item</div>
+	                    <a
+	                      href={card.action.href}
+	                      className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#d93820] transition-colors hover:border-[#d93820] hover:bg-red-50"
+	                    >
+	                      <span className="min-w-0 truncate">{card.action.label}</span>
+	                      <ExternalLink size={13} className="shrink-0" />
+	                    </a>
                   </div>
                 </div>
               </div>

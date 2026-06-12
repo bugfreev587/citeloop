@@ -9,8 +9,10 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/topicstate"
+	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // listReview returns pending_review articles grouped by topic so a canonical and
@@ -171,7 +173,7 @@ func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
 }
 
 // approveArticle is the human gate. canonical → approved + scheduled_at written
-// (inherit topic.scheduled_at or now()+buffer_days). variant → approved (waits
+// (inherit topic.scheduled_at or immediately due). variant → approved (waits
 // for canonical publish). Blocking articles cannot be approved (§5.5).
 func (s *Server) approveArticle(w http.ResponseWriter, r *http.Request) {
 	s.approveArticleScoped(w, r, uuid.Nil)
@@ -205,9 +207,9 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	var schedAt time.Time
+	schedAt := pgtype.Timestamptz{}
 	if a.Kind == "canonical" {
-		// scheduled_at single source of truth (§3): inherit topic or now+buffer.
+		// scheduled_at single source of truth (§3): inherit topic or become due now.
 		var topic db.Topic
 		if projectID == uuid.Nil {
 			topic, err = s.Q.GetTopic(r.Context(), a.TopicID)
@@ -218,11 +220,10 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 			writeErr(w, 500, err.Error())
 			return
 		}
-		cfg, _ := s.projectConfig(r, a.ProjectID)
 		if topic.ScheduledAt.Valid {
-			schedAt = topic.ScheduledAt.Time
+			schedAt = topic.ScheduledAt
 		} else {
-			schedAt = time.Now().Add(time.Duration(cfg.BufferDays) * 24 * time.Hour)
+			schedAt = pgutil.TS(time.Now())
 		}
 	}
 
@@ -231,20 +232,28 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		updated, err = s.Q.ApproveArticle(r.Context(), db.ApproveArticleParams{
 			ID:          aid,
 			Status:      "approved",
-			ScheduledAt: pgutil.TS(schedAt), // zero time for variants is harmless; unlock is gated on canonical publish
+			ScheduledAt: schedAt,
 			ReviewedBy:  &in.ReviewedBy,
 		})
 	} else {
 		updated, err = s.Q.ApproveArticleForProject(r.Context(), db.ApproveArticleForProjectParams{
 			ID:          aid,
 			Status:      "approved",
-			ScheduledAt: pgutil.TS(schedAt),
+			ScheduledAt: schedAt,
 			ReviewedBy:  &in.ReviewedBy,
 			ProjectID:   projectID,
 		})
 	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := s.enqueueWorkflowEvent(r.Context(), updated.ProjectID, workflow.EventDraftApproved, "article", updated.ID, workflowDedupeKey(workflow.EventDraftApproved, updated.ProjectID, updated.ID), map[string]any{
+		"article_id": updated.ID,
+		"kind":       updated.Kind,
+		"status":     updated.Status,
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, 200, updated)

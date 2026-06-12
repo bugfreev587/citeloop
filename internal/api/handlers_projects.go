@@ -10,6 +10,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
+	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -217,6 +218,12 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !wasConfirmed && isConfirmed {
+		if err := s.enqueueWorkflowEvent(r.Context(), id, workflow.EventContextConfirmed, "product_profile", active.ID, workflowDedupeKey(workflow.EventContextConfirmed, id, active.ID), map[string]any{
+			"profile_id": active.ID,
+		}); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 		s.startContextOpportunityDiscovery(id)
 	}
 	writeJSON(w, 200, updated)

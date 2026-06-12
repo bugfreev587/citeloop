@@ -1,7 +1,7 @@
 -- name: CreateTopic :one
 insert into topics
-  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, sqlc.narg(source_content_action_id))
 returning *;
 
 -- name: GetTopic :one
@@ -27,7 +27,8 @@ update topics set
   priority = $9,
   internal_links = $10,
   status = $11,
-  scheduled_at = $12
+  scheduled_at = $12,
+  source_content_action_id = sqlc.narg(source_content_action_id)
 where id = $1 and project_id = $2
 returning *;
 
@@ -67,7 +68,10 @@ returning *;
 select * from topics
 where project_id = $1
   and status in ('backlog','scheduled')
-order by priority desc, created_at asc
+order by
+  case when source_content_action_id is not null then 0 else 1 end,
+  priority desc,
+  created_at asc
 limit $2
 for update skip locked;
 

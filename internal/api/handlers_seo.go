@@ -11,6 +11,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
+	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -180,6 +181,13 @@ func (s *Server) updateSEOOpportunityStatus(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusNotFound, "opportunity not found")
 		return
 	}
+	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", oppID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, oppID, status), map[string]any{
+		"opportunity_id": oppID,
+		"status":         status,
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, opp)
 }
 
@@ -231,6 +239,14 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_, _ = s.Q.UpdateSEOOpportunityStatus(r.Context(), db.UpdateSEOOpportunityStatusParams{ID: oppID, ProjectID: projectID, Status: "converted"})
+	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", oppID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, oppID, "converted"), map[string]any{
+		"opportunity_id": oppID,
+		"action_id":      action.ID,
+		"status":         "converted",
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, action)
 }
 

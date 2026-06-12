@@ -97,22 +97,24 @@ type ChannelMix struct {
 
 // ProjectConfig mirrors projects.config (PRD §3).
 type ProjectConfig struct {
-	SiteURL          string      `json:"site_url,omitempty"`
-	CadencePerWeek   int         `json:"cadence_per_week"`
-	BufferDays       int         `json:"buffer_days"`
-	ChannelMix       ChannelMix  `json:"channel_mix"`
-	BrandVoice       string      `json:"brand_voice"`
-	MonthlyBudgetUSD float64     `json:"monthly_budget_usd"`
-	Crawl            CrawlConfig `json:"crawl"`
+	SiteURL            string      `json:"site_url,omitempty"`
+	CadencePerWeek     int         `json:"cadence_per_week"`
+	BufferDays         int         `json:"buffer_days"`
+	ChannelMix         ChannelMix  `json:"channel_mix"`
+	BrandVoice         string      `json:"brand_voice"`
+	MonthlyBudgetUSD   float64     `json:"monthly_budget_usd"`
+	AutoAdvanceEnabled bool        `json:"auto_advance_enabled"`
+	Crawl              CrawlConfig `json:"crawl"`
 }
 
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
-		CadencePerWeek:   3,
-		BufferDays:       5,
-		ChannelMix:       ChannelMix{Blog: 0.6, Syndication: 0.4},
-		MonthlyBudgetUSD: 50,
+		CadencePerWeek:     3,
+		BufferDays:         5,
+		ChannelMix:         ChannelMix{Blog: 0.6, Syndication: 0.4},
+		MonthlyBudgetUSD:   50,
+		AutoAdvanceEnabled: true,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,

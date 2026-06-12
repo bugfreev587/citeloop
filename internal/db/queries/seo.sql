@@ -190,6 +190,11 @@ update seo_opportunities set
 where id = $1 and project_id = $2
 returning *;
 
+-- name: CountOpenSEOOpportunities :one
+select count(*)::bigint from seo_opportunities
+where project_id = $1
+  and status = 'open';
+
 -- name: CreateContentAction :one
 insert into content_actions
   (project_id, opportunity_id, action_type, status, target_article_id, target_url,
@@ -224,6 +229,33 @@ update content_actions set
   updated_at = now()
 where id = $1 and project_id = $2
 returning *;
+
+-- name: MarkContentActionDraftReady :one
+update content_actions set
+  status = 'ready_for_review',
+  draft_article_id = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- name: MarkContentActionMeasuringForDraftArticle :one
+update content_actions set
+  status = 'measuring',
+  published_at = now(),
+  updated_at = now()
+where project_id = $1 and draft_article_id = $2
+returning *;
+
+-- name: ListUnplannedContentActions :many
+select ca.* from content_actions ca
+left join topics t
+  on t.source_content_action_id = ca.id
+where ca.project_id = $1
+  and ca.status = 'ready_for_review'
+  and t.id is null
+order by ca.created_at asc
+limit $2
+for update of ca skip locked;
 
 -- name: ListPublishedCanonicalArticlesForSEO :many
 select * from articles

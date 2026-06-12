@@ -54,7 +54,9 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	_, _ = c.AddFunc("@weekly", func() { s.TickGEO(ctx) })
 	// Notification worker pass every 10 seconds for webhook retry/dead handling.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickNotifications(ctx) })
+	// Workflow worker pass every 10 seconds for durable growth-loop advancement.
+	_, _ = c.AddFunc("@every 10s", func() { s.TickWorkflow(ctx) })
 	c.Start()
-	slog.Default().Info("scheduler started", "generate", "daily@02:00", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "geo", "weekly", "notifications", "every 10s")
+	slog.Default().Info("scheduler started", "generate", "daily@02:00", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "geo", "weekly", "notifications", "every 10s", "workflow", "every 10s")
 	return c
 }

@@ -13,6 +13,9 @@ func TestParseDefaults(t *testing.T) {
 	if c.BufferDays != 5 || c.Crawl.MaxPages != 200 {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
+	if !c.AutoAdvanceEnabled {
+		t.Fatal("auto_advance_enabled should default to true")
+	}
 }
 
 // Regression: an explicit buffer_days:0 must be honored, not coerced to default.
@@ -41,6 +44,16 @@ func TestParsePartialCrawl(t *testing.T) {
 	}
 	if c.Crawl.MaxDepth != 3 {
 		t.Fatalf("sibling crawl.max_depth default lost: %d", c.Crawl.MaxDepth)
+	}
+}
+
+func TestParseExplicitAutoAdvanceDisabled(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"auto_advance_enabled":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AutoAdvanceEnabled {
+		t.Fatal("auto_advance_enabled:false should disable workflow advancement")
 	}
 }
 

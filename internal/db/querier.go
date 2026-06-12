@@ -15,9 +15,11 @@ type Querier interface {
 	ApproveArticle(ctx context.Context, arg ApproveArticleParams) (Article, error)
 	ApproveArticleForProject(ctx context.Context, arg ApproveArticleForProjectParams) (Article, error)
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)
+	ClaimPendingWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
+	CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
 	// publishing (not backlog, not terminal). The scheduler uses this to fill only
 	// the buffer-window deficit instead of regenerating every tick (§5.4).
@@ -38,6 +40,7 @@ type Querier interface {
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
+	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
 	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
@@ -80,6 +83,7 @@ type Querier interface {
 	ListArticlesByTopicForProject(ctx context.Context, arg ListArticlesByTopicForProjectParams) ([]Article, error)
 	ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsParams) ([]AutopilotRun, error)
 	ListContentActions(ctx context.Context, arg ListContentActionsParams) ([]ContentAction, error)
+	ListDeadWorkflowEventsForProject(ctx context.Context, arg ListDeadWorkflowEventsForProjectParams) ([]WorkflowEvent, error)
 	ListEnabledNotificationSubscriptionsForEvent(ctx context.Context, arg ListEnabledNotificationSubscriptionsForEventParams) ([]NotificationSubscription, error)
 	ListGEOAssetBriefs(ctx context.Context, arg ListGEOAssetBriefsParams) ([]GeoAssetBrief, error)
 	ListGEOCompetitors(ctx context.Context, arg ListGEOCompetitorsParams) ([]GeoCompetitor, error)
@@ -112,6 +116,9 @@ type Querier interface {
 	ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]SeoRun, error)
 	ListSafeModeEvents(ctx context.Context, arg ListSafeModeEventsParams) ([]SafeModeEvent, error)
 	ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error)
+	ListUnplannedContentActions(ctx context.Context, arg ListUnplannedContentActionsParams) ([]ContentAction, error)
+	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
+	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
 	MarkNotificationChannelVerified(ctx context.Context, arg MarkNotificationChannelVerifiedParams) (NotificationChannel, error)
@@ -121,17 +128,21 @@ type Querier interface {
 	MarkPublished(ctx context.Context, arg MarkPublishedParams) (Article, error)
 	MarkPublisherConnectionError(ctx context.Context, arg MarkPublisherConnectionErrorParams) (PublisherConnection, error)
 	MarkPublisherConnectionVerified(ctx context.Context, arg MarkPublisherConnectionVerifiedParams) (PublisherConnection, error)
+	MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error)
+	MarkWorkflowEventSucceeded(ctx context.Context, id uuid.UUID) (WorkflowEvent, error)
 	// Cumulative cost for the current calendar month (cost breaker basis, §5.4).
 	MonthlySpend(ctx context.Context, projectID uuid.UUID) (pgtype.Numeric, error)
 	NextProfileVersion(ctx context.Context, projectID uuid.UUID) (int32, error)
 	PreparePublishAttempt(ctx context.Context, arg PreparePublishAttemptParams) (Article, error)
 	// Consecutive failures heuristic for alerting (§5.2/§5.4).
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
+	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
 	RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (NotificationDelivery, error)
 	RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error)
+	RetryWorkflowEvent(ctx context.Context, arg RetryWorkflowEventParams) (WorkflowEvent, error)
 	RevokePublisherCredentialForConnection(ctx context.Context, arg RevokePublisherCredentialForConnectionParams) (PublisherCredential, error)
 	SEODataDayCount(ctx context.Context, arg SEODataDayCountParams) (int64, error)
 	SEOOpportunityCounts(ctx context.Context, projectID uuid.UUID) ([]SEOOpportunityCountsRow, error)

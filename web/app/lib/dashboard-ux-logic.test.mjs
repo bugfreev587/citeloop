@@ -67,8 +67,8 @@ test("buildActionableMomentum hides zero values and returns the next useful empt
 
   assert.deepEqual(momentum.items, []);
   assert.equal(momentum.emptyAction.title, "Context is ready");
-  assert.equal(momentum.emptyAction.actionLabel, "Generate content plan");
-  assert.equal(momentum.emptyAction.href, "/projects/project_1/plan");
+  assert.equal(momentum.emptyAction.actionLabel, "Review opportunities");
+  assert.equal(momentum.emptyAction.href, "/projects/project_1/visibility");
 });
 
 test("buildActionableMomentum turns non-zero metrics into actions", async () => {
@@ -213,11 +213,31 @@ test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", 
     topicsCount: 0,
   });
 
-  assert.equal(blocked.title, "Review blocked");
-  assert.equal(blocked.href, "/projects/project_1/review");
-  assert.equal(noPlan.title, "Create plan");
-  assert.equal(noPlan.href, "/projects/project_1/plan");
-  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
+	  assert.equal(blocked.title, "Review blocked");
+	  assert.equal(blocked.href, "/projects/project_1/review");
+	  assert.equal(noPlan.title, "Open Home");
+	  assert.equal(noPlan.href, "/projects/project_1");
+	  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
+	});
+
+test("nextWorkspaceAction sends confirmed projects to opportunity review before planning", async () => {
+  const { nextWorkspaceAction } = await loadDashboardUXLogicModule();
+
+  const action = nextWorkspaceAction({
+    projectId: "project_1",
+    hasProfile: true,
+    contextConfirmed: true,
+    failedPublishCount: 0,
+    hasBlockedDrafts: false,
+    reviewCount: 0,
+    readyCount: 0,
+    topicsCount: 0,
+    openOpportunityCount: 2,
+  });
+
+  assert.equal(action.title, "Review opportunities");
+  assert.equal(action.href, "/projects/project_1/visibility");
+  assert.match(action.detail, /ready to review/i);
 });
 
 test("sidebarPrimaryAction follows visibility review work before creating a first plan", async () => {

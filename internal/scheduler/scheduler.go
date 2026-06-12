@@ -29,6 +29,7 @@ import (
 	"github.com/citeloop/citeloop/internal/secretbox"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/citeloop/citeloop/internal/topicstate"
+	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -98,6 +99,237 @@ func (s *Scheduler) TickNotifications(ctx context.Context) {
 	if processed > 0 {
 		s.Log.Info("notification deliveries processed", "count", processed)
 	}
+}
+
+func (s *Scheduler) TickWorkflow(ctx context.Context) {
+	worker := workflow.Worker{
+		Store:  db.New(s.Pool),
+		Handle: s.handleWorkflowEvent,
+		Limit:  20,
+	}
+	processed, err := worker.ProcessOnce(ctx)
+	if err != nil {
+		s.Log.Error("workflow worker failed", "err", err)
+		return
+	}
+	if processed > 0 {
+		s.Log.Info("workflow events processed", "count", processed)
+	}
+}
+
+func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEvent) error {
+	switch event.EventType {
+	case workflow.EventOpportunityReviewed:
+		return s.handleOpportunityReviewed(ctx, event.ProjectID)
+	case workflow.EventOpportunityBatchDone:
+		return s.handleOpportunityBatchCompleted(ctx, event.ProjectID)
+	case workflow.EventContentPlanCreated:
+		return s.handleContentPlanCreated(ctx, event.ProjectID)
+	case workflow.EventDraftApproved:
+		return s.handleDraftApproved(ctx, event.ProjectID)
+	default:
+		s.Log.Info("workflow event ignored", "type", event.EventType, "project", event.ProjectID)
+		return nil
+	}
+}
+
+func (s *Scheduler) handleContentPlanCreated(ctx context.Context, projectID uuid.UUID) error {
+	project, err := db.New(s.Pool).GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	return s.generateForProject(ctx, project)
+}
+
+func (s *Scheduler) handleDraftApproved(ctx context.Context, projectID uuid.UUID) error {
+	project, err := db.New(s.Pool).GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if err := s.publishForProject(ctx, project); err != nil {
+		return err
+	}
+	if err := s.reconcilePublishForProject(ctx, project); err != nil {
+		return err
+	}
+	s.unlockVariants(ctx)
+	return nil
+}
+
+func (s *Scheduler) handleOpportunityReviewed(ctx context.Context, projectID uuid.UUID) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(projectID)); err != nil {
+		return err
+	}
+	q := db.New(tx)
+	project, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AutoAdvanceEnabled {
+		s.Log.Info("workflow auto advance disabled", "project", projectID)
+		return tx.Commit(ctx)
+	}
+	open, err := q.CountOpenSEOOpportunities(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if open > 0 {
+		return tx.Commit(ctx)
+	}
+	actions, err := q.ListUnplannedContentActions(ctx, db.ListUnplannedContentActionsParams{
+		ProjectID: projectID,
+		Limit:     50,
+	})
+	if err != nil {
+		return err
+	}
+	if len(actions) == 0 {
+		return tx.Commit(ctx)
+	}
+	batchKey := projectID.String()
+	if profile, err := q.GetActiveProfile(ctx, projectID); err == nil {
+		batchKey = profile.ID.String()
+	}
+	_, err = q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+		ProjectID:  projectID,
+		EventType:  workflow.EventOpportunityBatchDone,
+		DedupeKey:  workflowEventDedupeKey(workflow.EventOpportunityBatchDone, projectID, batchKey),
+		Payload:    mustJSON(map[string]any{"unplanned_actions": len(actions), "batch_key": batchKey}),
+		EntityType: ptr("project"),
+		EntityID:   pgtype.UUID{Bytes: projectID, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Scheduler) handleOpportunityBatchCompleted(ctx context.Context, projectID uuid.UUID) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(projectID)); err != nil {
+		return err
+	}
+	q := db.New(tx)
+	project, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AutoAdvanceEnabled {
+		return tx.Commit(ctx)
+	}
+	actions, err := q.ListUnplannedContentActions(ctx, db.ListUnplannedContentActionsParams{
+		ProjectID: projectID,
+		Limit:     50,
+	})
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		opp, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
+		if err != nil {
+			s.Log.Warn("workflow action opportunity lookup failed", "project", projectID, "action", action.ID, "err", err)
+			continue
+		}
+		topic, err := q.CreateTopic(ctx, topicFromContentAction(projectID, action, opp))
+		if err != nil {
+			s.Log.Warn("workflow action topic creation failed", "project", projectID, "action", action.ID, "err", err)
+			continue
+		}
+		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+			ID:        action.ID,
+			ProjectID: projectID,
+			Status:    "approved",
+		}); err != nil {
+			return err
+		}
+		if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+			ProjectID:  projectID,
+			EventType:  workflow.EventContentPlanCreated,
+			DedupeKey:  workflowEventDedupeKey(workflow.EventContentPlanCreated, projectID, action.ID.String()),
+			Payload:    mustJSON(map[string]any{"action_id": action.ID, "topic_id": topic.ID}),
+			EntityType: ptr("topic"),
+			EntityID:   pgtype.UUID{Bytes: topic.ID, Valid: true},
+		}); err != nil {
+			return err
+		}
+		s.Log.Info("workflow planned topic from opportunity action", "project", projectID, "action", action.ID, "topic", topic.ID)
+	}
+	return tx.Commit(ctx)
+}
+
+func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity) db.CreateTopicParams {
+	title := firstNonEmpty(
+		action.ActionType,
+		stringPtrValue(opp.RecommendedAction),
+		"Improve search visibility",
+	)
+	if opp.Query != nil && strings.TrimSpace(*opp.Query) != "" && !strings.Contains(strings.ToLower(title), strings.ToLower(strings.TrimSpace(*opp.Query))) {
+		title = title + ": " + strings.TrimSpace(*opp.Query)
+	}
+	targetPrompt := firstNonEmpty(stringPtrValue(opp.Query), stringPtrValue(opp.ExpectedImpact), action.ActionType)
+	angle := firstNonEmpty(stringPtrValue(opp.ExpectedImpact), action.ActionType)
+	priority := int32(pgutil.Float(opp.PriorityScore))
+	if priority <= 0 {
+		priority = 50
+	}
+	internalLinks := []map[string]string{}
+	if action.TargetUrl != nil && strings.TrimSpace(*action.TargetUrl) != "" {
+		internalLinks = append(internalLinks, map[string]string{"url": strings.TrimSpace(*action.TargetUrl)})
+	}
+	return db.CreateTopicParams{
+		ProjectID:             projectID,
+		Channel:               "blog",
+		Title:                 title,
+		TargetKeyword:         opp.Query,
+		TargetPrompt:          ptr(targetPrompt),
+		Angle:                 ptr(angle),
+		Format:                ptr("article"),
+		Priority:              priority,
+		InternalLinks:         mustJSON(internalLinks),
+		Status:                string(topicstate.StatusBacklog),
+		SourceContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
+	}
+}
+
+func workflowEventDedupeKey(eventType string, projectID uuid.UUID, parts ...string) string {
+	key := eventType + ":" + projectID.String()
+	for _, part := range parts {
+		key += ":" + part
+	}
+	return key
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Scheduler) TickReviewOverdue(ctx context.Context) {
@@ -192,6 +424,10 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 	if err != nil {
 		return err
 	}
+	if !cfg.AutoAdvanceEnabled {
+		s.Log.Info("generation skipped; workflow auto advance disabled", "project", p.ID)
+		return nil
+	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -264,15 +500,50 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 			s.Log.Warn("mark generating failed", "topic", t.ID, "err", err)
 			continue
 		}
-		if _, err := writer.Generate(ctx, p.ID, generatingTopic); err != nil {
+		sourceActionID := uuid.UUID{}
+		if generatingTopic.SourceContentActionID.Valid {
+			sourceActionID = uuid.UUID(generatingTopic.SourceContentActionID.Bytes)
+			if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+				ID:        sourceActionID,
+				ProjectID: p.ID,
+				Status:    "drafting",
+			}); err != nil {
+				s.Log.Warn("mark content action drafting failed", "topic", t.ID, "action", sourceActionID, "err", err)
+			}
+		}
+		articles, err := writer.Generate(ctx, p.ID, generatingTopic)
+		if err != nil {
 			s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
 			s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
 			// leave topic in generating; next tick may retry. Do not block others.
 			continue
 		}
+		if sourceActionID != uuid.Nil {
+			if canonicalID := canonicalArticleID(articles); canonicalID != uuid.Nil {
+				if _, err := q.MarkContentActionDraftReady(ctx, db.MarkContentActionDraftReadyParams{
+					ID:             sourceActionID,
+					ProjectID:      p.ID,
+					DraftArticleID: pgtype.UUID{Bytes: canonicalID, Valid: true},
+				}); err != nil {
+					s.Log.Warn("mark content action draft ready failed", "topic", t.ID, "action", sourceActionID, "article", canonicalID, "err", err)
+				}
+			}
+		}
 		s.Log.Info("generated into review queue", "project", p.ID, "topic", t.Title)
 	}
 	return tx.Commit(ctx)
+}
+
+func canonicalArticleID(articles []db.Article) uuid.UUID {
+	for _, article := range articles {
+		if article.Kind == "canonical" {
+			return article.ID
+		}
+	}
+	if len(articles) > 0 {
+		return articles[0].ID
+	}
+	return uuid.Nil
 }
 
 // TickGEO runs the weekly GEO observation loop (§12.3).
@@ -404,6 +675,7 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 		}
 		// Published canonical feeds back into inventory (§5.6).
 		s.feedInventory(ctx, q, published, res.URL)
+		s.markContentActionMeasuring(ctx, q, published)
 		s.Log.Info("auto-published canonical", "article", a.ID, "url", res.URL)
 	}
 	return nil
@@ -504,9 +776,22 @@ func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project
 			return err
 		}
 		s.feedInventory(ctx, q, published, res.URL)
+		s.markContentActionMeasuring(ctx, q, published)
 		s.Log.Info("publish state reconciled", "article", a.ID, "url", res.URL)
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Scheduler) markContentActionMeasuring(ctx context.Context, q *db.Queries, article db.Article) {
+	if q == nil || article.Kind != "canonical" {
+		return
+	}
+	if _, err := q.MarkContentActionMeasuringForDraftArticle(ctx, db.MarkContentActionMeasuringForDraftArticleParams{
+		ProjectID:      article.ProjectID,
+		DraftArticleID: pgtype.UUID{Bytes: article.ID, Valid: true},
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.Log.Warn("mark content action measuring failed", "article", article.ID, "err", err)
+	}
 }
 
 func (s *Scheduler) unlockVariants(ctx context.Context) {

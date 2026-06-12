@@ -285,11 +285,15 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /window\.addEventListener\("focus", refresh\)/);
   assert.match(workspace, /window\.addEventListener\("pageshow", refreshOnPageShow\)/);
   assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
-  assert.match(workspace, /seoActions/);
-  assert.match(workspace, /planItemCount/);
-  assert.match(workspace, /opportunitiesInPlanCount/);
-  assert.match(workspace, /all reviewed opportunities have moved into plan/i);
-});
+	  assert.match(workspace, /seoActions/);
+	  assert.match(workspace, /planItemCount/);
+	  assert.match(workspace, /opportunitiesInPlanCount/);
+	  assert.match(workspace, /all reviewed opportunities have moved into plan/i);
+	  assert.match(workspace, /Generating content plan from reviewed opportunities/);
+	  assert.match(workspace, /Draft generation running/);
+	  assert.match(workspace, /No action needed/);
+	  assert.doesNotMatch(workspace, /Select a planned topic to create the next draft/);
+	});
 
 test("home growth loop renders linked status cards with arrows between cards", () => {
   const workspace = read("projects/[id]/workspace.tsx");

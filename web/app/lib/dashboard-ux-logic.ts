@@ -148,10 +148,11 @@ export function nextWorkspaceAction({
   contextConfirmed = true,
   failedPublishCount,
   hasBlockedDrafts,
-  reviewCount,
-  readyCount,
-  topicsCount,
-}: NextWorkspaceActionInput): WorkspaceAction {
+	  reviewCount,
+	  readyCount,
+	  topicsCount,
+	  openOpportunityCount = 0,
+	}: NextWorkspaceActionInput): WorkspaceAction {
   if (!hasProfile) {
     return {
       title: "Refresh context",
@@ -187,20 +188,27 @@ export function nextWorkspaceAction({
       href: `/projects/${projectId}/review`,
     };
   }
-  if (readyCount > 0) {
-    return {
-      title: "Distribute variants",
-      detail: "Approved variants are ready after their canonical article went live.",
-      href: `/projects/${projectId}/publish`,
-    };
-  }
-  if (topicsCount === 0) {
-    return {
-      title: "Generate content plan",
-      detail: "Create a first backlog from your domain context before drafting content.",
-      href: `/projects/${projectId}/plan`,
-    };
-  }
+	  if (readyCount > 0) {
+	    return {
+	      title: "Distribute variants",
+	      detail: "Approved variants are ready after their canonical article went live.",
+	      href: `/projects/${projectId}/publish`,
+	    };
+	  }
+	  if (openOpportunityCount > 0) {
+	    return {
+	      title: "Review opportunities",
+	      detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
+	      href: `/projects/${projectId}/visibility`,
+	    };
+	  }
+	  if (topicsCount === 0) {
+	    return {
+	      title: "Open Home",
+	      detail: "CiteLoop will create the first content plan after reviewed opportunities enter the loop.",
+	      href: `/projects/${projectId}`,
+	    };
+	  }
   return {
     title: "Refresh context",
     detail: "Keep product facts, evidence, and positioning current before the next content cycle.",
@@ -274,16 +282,16 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     };
   }
 
-  return {
-    items: [],
-    emptyAction: {
-      title: "Context is ready",
-      detail: "Generate the first content plan to start moving items through the loop.",
-      href: `/projects/${input.projectId}/plan`,
-      actionLabel: "Generate content plan",
-    },
-  };
-}
+	  return {
+	    items: [],
+	    emptyAction: {
+	      title: "Context is ready",
+	      detail: "Review opportunities when they appear; CiteLoop will advance planning and drafting automatically after the review gate.",
+	      href: `/projects/${input.projectId}/visibility`,
+	      actionLabel: "Review opportunities",
+	    },
+	  };
+	}
 
 function boundedPercent(current: number, target: number) {
   const safeTarget = Math.max(1, target);
@@ -531,8 +539,7 @@ export function sidebarPrimaryAction(input: NextWorkspaceActionInput): Workspace
       href: `/projects/${input.projectId}/visibility`,
     };
   }
-  if (input.topicsCount === 0) return { ...action, title: "Create plan" };
-  return {
+	  return {
     title: "Open Home",
     detail: "Start from the control center before jumping into deeper work.",
     href: `/projects/${input.projectId}`,

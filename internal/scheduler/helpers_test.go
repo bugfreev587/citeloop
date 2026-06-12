@@ -29,6 +29,10 @@ func TestSchedulerExposesNotificationTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickNotifications
 }
 
+func TestSchedulerExposesWorkflowTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickWorkflow
+}
+
 func TestSchedulerExposesReviewOverdueTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickReviewOverdue
 }
@@ -49,6 +53,9 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	source := string(raw)
 	if !strings.Contains(source, "TickNotifications") || !strings.Contains(source, "@every 10s") {
 		t.Fatal("Start must register TickNotifications every 10 seconds")
+	}
+	if !strings.Contains(source, "TickWorkflow") || !strings.Contains(source, "@every 10s") {
+		t.Fatal("Start must register TickWorkflow every 10 seconds")
 	}
 	if !strings.Contains(source, "TickReviewOverdue") || !strings.Contains(source, "@every 30m") {
 		t.Fatal("Start must register TickReviewOverdue every 30 minutes")
