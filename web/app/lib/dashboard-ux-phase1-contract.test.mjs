@@ -25,7 +25,15 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
   }
 });
 
-test("project shell keeps the fixed-width sidebar primary action to one line", () => {
+test("project shell hides the sidebar primary action when it repeats the active page", () => {
+  const shell = read("components/project-shell.tsx");
+
+  assert.match(shell, /showPrimaryAction/);
+  assert.match(shell, /primaryAction\.href !== pathname/);
+  assert.match(shell, /\{showPrimaryAction && \(/);
+});
+
+test("project shell keeps the fixed-width sidebar primary action to one line when shown", () => {
   const shell = read("components/project-shell.tsx");
 
   assert.match(shell, /overflow-hidden/);

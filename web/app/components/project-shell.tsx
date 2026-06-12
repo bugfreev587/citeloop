@@ -79,6 +79,7 @@ export function ProjectShell({
     }
     return sidebarPrimaryAction({ ...actionSummary, currentPathname: pathname });
   }, [actionSummary, pathname, projectId]);
+  const showPrimaryAction = primaryAction.href !== pathname;
   const PrimaryIcon = primaryAction.href.endsWith("/publish")
     ? Send
     : primaryAction.href.endsWith("/review")
@@ -134,14 +135,16 @@ export function ProjectShell({
           CiteLoop
         </Link>
 
-        <Link
-          href={primaryAction.href}
-          title={primaryAction.detail}
-          className="mb-4 flex h-10 w-[185px] items-center justify-start gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
-        >
-          <PrimaryIcon className="shrink-0" size={17} strokeWidth={2} />
-          <span className="min-w-0 truncate whitespace-nowrap">{primaryAction.title}</span>
-        </Link>
+        {showPrimaryAction && (
+          <Link
+            href={primaryAction.href}
+            title={primaryAction.detail}
+            className="mb-4 flex h-10 w-[185px] items-center justify-start gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
+          >
+            <PrimaryIcon className="shrink-0" size={17} strokeWidth={2} />
+            <span className="min-w-0 truncate whitespace-nowrap">{primaryAction.title}</span>
+          </Link>
+        )}
 
         <nav className="grid gap-1">
           {visibleNav.map((item) => {
@@ -153,7 +156,7 @@ export function ProjectShell({
                 href={projectHref(projectId, item.href)}
                 className={cx(
                   "flex h-9 w-[185px] items-center gap-2.5 rounded-xl px-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-950",
-                  active && "bg-white font-semibold text-[#d93820]",
+                  active && "bg-[#fff5f2] font-semibold text-[#d93820]",
                 )}
               >
                 <Icon size={17} strokeWidth={active ? 2.2 : 2} />
@@ -213,9 +216,11 @@ export function ProjectShell({
           <Link href="/" className="font-bold text-slate-900">
             CiteLoop
           </Link>
-          <Link href={primaryAction.href} className="text-sm font-semibold text-[#d93820]">
-            {primaryAction.title}
-          </Link>
+          {showPrimaryAction && (
+            <Link href={primaryAction.href} className="text-sm font-semibold text-[#d93820]">
+              {primaryAction.title}
+            </Link>
+          )}
         </div>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {visibleNav.map((item) => (
