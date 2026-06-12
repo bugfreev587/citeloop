@@ -10,6 +10,7 @@ import {
   ProductProfile,
   Project,
   ReviewGroup,
+  SEOContentAction,
   SEOOpportunity,
   SEOOverview,
   Topic,
@@ -29,6 +30,7 @@ type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; det
 
 const ONBOARDING_POLL_LIMIT = 18;
 const ONBOARDING_POLL_MS = 8000;
+const HOME_REFRESH_MS = 5000;
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
@@ -160,6 +162,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [insightRuns, setInsightRuns] = useState<GenerationRun[]>([]);
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
+  const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -168,7 +171,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities, actions] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -181,7 +184,8 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listRuns(projectId, { limit: 5 }),
         api.listRuns(projectId, { agent: "insight", limit: 50 }).catch(() => []),
         api.getSEOOverview(projectId).catch(() => null),
-        api.listSEOOpportunities(projectId, { limit: 5 }).catch(() => []),
+        api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
+        api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
       ]);
       setProject(p);
       setProfile(profileRow);
@@ -196,6 +200,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setInsightRuns(insightRunRows);
       setSeoOverview(overview);
       setSeoOpportunities(opportunities);
+      setSeoActions(actions);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
       setApiError(e.message);
@@ -205,6 +210,20 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const interval = window.setInterval(refresh, HOME_REFRESH_MS);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [refresh]);
 
   const contextEvidenceCount = evidenceCount(inventory);
@@ -352,9 +371,9 @@ export function Workspace({ projectId }: { projectId: string }) {
             detail: "Context is confirmed and can support opportunity finding, content planning, and review.",
           };
 
-  const opportunitiesConverted = seoOpportunities.filter((opportunity) =>
-    ["accepted", "planned", "converted"].includes(opportunity.status),
-  ).length;
+  const opportunitiesInPlanCount = seoActions.length;
+  const opportunitiesConverted = opportunitiesInPlanCount;
+  const planItemCount = topics.length + opportunitiesInPlanCount;
   const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
   const searchDataConnected = hasConnectedSearchData(seoOverview);
   const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
@@ -394,10 +413,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
     {
       label: "Opportunities in motion",
-      value: opportunitiesConverted + reviewArticles.length + ready.length + measuringActions,
+      value: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions,
       detail: "planned, under review, publishing, or measuring",
       icon: Search,
-      muted: opportunitiesConverted + reviewArticles.length + ready.length + measuringActions === 0,
+      muted: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions === 0,
     },
   ];
   const loopCards = [
@@ -430,6 +449,8 @@ export function Workspace({ projectId }: { projectId: string }) {
         {
           text: seoOpportunities.length > 0
             ? "opportunities ready to review"
+            : opportunitiesInPlanCount > 0
+              ? `${opportunitiesInPlanCount} in content plan`
             : contextBuild.active
               ? "waiting for Context tracks"
               : !contextConfirmed
@@ -455,17 +476,31 @@ export function Workspace({ projectId }: { projectId: string }) {
                 detail: "Opportunity candidates are available for planning or dismissal.",
                 tone: "green" as const,
               }
+            : opportunitiesInPlanCount > 0
+              ? {
+                  label: "Review complete",
+                  detail: "All reviewed opportunities have moved into plan or were dismissed.",
+                  tone: "green" as const,
+                }
             : {
                 label: "Scanning public-source opportunities",
                 detail: "Context is confirmed; CiteLoop can use public pages before analytics is connected.",
                 tone: "blue" as const,
               },
       action: {
-        label: contextBuild.active ? "Track Context" : !contextConfirmed ? "Confirm Context" : seoOpportunities.length > 0 ? "Review opportunities" : "Open Visibility",
+        label: contextBuild.active
+          ? "Track Context"
+          : !contextConfirmed
+            ? "Confirm Context"
+            : seoOpportunities.length > 0
+              ? "Review opportunities"
+              : opportunitiesInPlanCount > 0
+                ? "Review plan queue"
+                : "Open Visibility",
         href: contextBuild.active || !contextConfirmed ? `/projects/${projectId}/context` : `/projects/${projectId}/visibility`,
       },
-      tone: seoOpportunities.length > 0 ? ("green" as const) : contextBuild.active ? ("blue" as const) : contextNeedsConfirmation ? ("amber" as const) : ("neutral" as const),
-      accentClass: seoOpportunities.length > 0 ? "text-emerald-700" : "text-slate-500",
+      tone: seoOpportunities.length > 0 || opportunitiesInPlanCount > 0 ? ("green" as const) : contextBuild.active ? ("blue" as const) : contextNeedsConfirmation ? ("amber" as const) : ("neutral" as const),
+      accentClass: seoOpportunities.length > 0 || opportunitiesInPlanCount > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.findToPlan,
       connectorDirection: "right" as const,
     },
@@ -473,8 +508,14 @@ export function Workspace({ projectId }: { projectId: string }) {
       position: 2,
       label: "Plan content",
       metrics: [
-        { value: topics.length, label: topics.length === 1 ? "topic in the content backlog" : "topics in the content backlog" },
-        { text: topics.length > 0 ? "ready for drafting" : "content backlog is not started" },
+        { value: planItemCount, label: planItemCount === 1 ? "item in the content plan" : "items in the content plan" },
+        {
+          text: topics.length > 0
+            ? "ready for drafting"
+            : opportunitiesInPlanCount > 0
+              ? "opportunities queued from visibility"
+              : "content backlog is not started",
+        },
       ],
       status: !contextConfirmed
         ? {
@@ -482,10 +523,13 @@ export function Workspace({ projectId }: { projectId: string }) {
             detail: "A confirmed Context keeps the first plan grounded in reviewed facts and evidence.",
             tone: "amber" as const,
           }
-        : topics.length > 0
+        : planItemCount > 0
           ? {
-              label: "Ready for drafting",
-              detail: "The backlog has topics that can move into draft generation.",
+              label: topics.length > 0 ? "Ready for drafting" : "Opportunities in plan",
+              detail:
+                topics.length > 0
+                  ? "The backlog has topics that can move into draft generation."
+                  : "Visibility opportunities are queued as content actions for the next planning pass.",
               tone: "green" as const,
             }
           : seoOpportunities.length > 0
@@ -500,11 +544,11 @@ export function Workspace({ projectId }: { projectId: string }) {
                 tone: "neutral" as const,
               },
       action: {
-        label: !contextConfirmed ? "Confirm Context" : topics.length > 0 ? "Open content plan" : seoOpportunities.length > 0 ? "Plan from opportunities" : "Open Visibility",
-        href: !contextConfirmed ? `/projects/${projectId}/context` : topics.length > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
+        label: !contextConfirmed ? "Confirm Context" : planItemCount > 0 ? "Open content plan" : seoOpportunities.length > 0 ? "Plan from opportunities" : "Open Visibility",
+        href: !contextConfirmed ? `/projects/${projectId}/context` : planItemCount > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
       },
-      tone: topics.length > 0 ? ("green" as const) : !contextConfirmed ? ("amber" as const) : seoOpportunities.length > 0 ? ("blue" as const) : ("neutral" as const),
-      accentClass: topics.length > 0 ? "text-emerald-700" : "text-amber-700",
+      tone: planItemCount > 0 ? ("green" as const) : !contextConfirmed ? ("amber" as const) : seoOpportunities.length > 0 ? ("blue" as const) : ("neutral" as const),
+      accentClass: planItemCount > 0 ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.planToCreate,
       connectorDirection: "down" as const,
     },
@@ -650,6 +694,13 @@ export function Workspace({ projectId }: { projectId: string }) {
       tone: "blue" as const,
       href: `/projects/${projectId}/plan`,
     })),
+    ...seoActions.slice(0, 2).map((action) => ({
+      id: `seo-action-${action.id}`,
+      title: action.action_type || "Visibility opportunity action",
+      stage: "Added to Content Plan",
+      tone: "blue" as const,
+      href: `/projects/${projectId}/visibility`,
+    })),
     ...reviewArticles.slice(0, 2).map((article) => ({
       id: `review-${article.id}`,
       title: articleTitle(article),
@@ -694,6 +745,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         id: `opportunity-${opportunity.id}`,
         title: opportunityTitle(opportunity),
         detail: "Visibility opportunity detected",
+        href: `/projects/${projectId}/visibility`,
+      })),
+      ...seoActions.slice(0, 1).map((action) => ({
+        id: `seo-action-${action.id}`,
+        title: action.action_type || "Visibility opportunity action",
+        detail: "Added to Content Plan",
         href: `/projects/${projectId}/visibility`,
       })),
     ],

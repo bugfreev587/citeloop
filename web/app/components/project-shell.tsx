@@ -102,7 +102,7 @@ export function ProjectShell({
         api.listReview(projectId).catch(() => []),
         api.listDistribute(projectId).catch(() => []),
         api.listTopics(projectId).catch(() => []),
-        api.listSEOOpportunities(projectId, { limit: 10 }).catch(() => []),
+        api.listSEOOpportunities(projectId, { status: "open", limit: 10 }).catch(() => []),
       ]);
       if (cancelled) return;
       const reviewArticles = review.flatMap((group) => group.articles);

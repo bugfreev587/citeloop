@@ -44,7 +44,7 @@ test("project shell keeps the fixed-width sidebar primary action to one line whe
 test("project shell feeds route and opportunity state into the sidebar CTA", () => {
   const shell = read("components/project-shell.tsx");
 
-  assert.match(shell, /api\.listSEOOpportunities\(projectId/);
+  assert.match(shell, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 10 \}\)/);
   assert.match(shell, /openOpportunityCount/);
   assert.match(shell, /currentPathname: pathname/);
   assert.match(shell, /\[actionSummary, pathname, projectId\]/);
@@ -262,7 +262,8 @@ test("home explains growth limits and loop status from existing product data", (
     "api.getProfile(projectId)",
     "api.listInventory(projectId)",
     "api.getSEOOverview(projectId)",
-    "api.listSEOOpportunities(projectId",
+    'api.listSEOOpportunities(projectId, { status: "open", limit: 50 })',
+    "api.listSEOContentActions(projectId, { limit: 50 })",
   ]) {
     assert.match(workspace, new RegExp(apiCall.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -274,6 +275,19 @@ test("home explains growth limits and loop status from existing product data", (
   assert.doesNotMatch(workspace, /No failed or degraded activity needs attention right now/);
   assert.doesNotMatch(workspace, /label: "Needs evidence"/);
   assert.doesNotMatch(workspace, /Automation healthy/);
+});
+
+test("home keeps every loop card fresh from page-level state", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(workspace, /HOME_REFRESH_MS/);
+  assert.match(workspace, /window\.setInterval\(refresh, HOME_REFRESH_MS\)/);
+  assert.match(workspace, /window\.addEventListener\("focus", refresh\)/);
+  assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(workspace, /seoActions/);
+  assert.match(workspace, /planItemCount/);
+  assert.match(workspace, /opportunitiesInPlanCount/);
+  assert.match(workspace, /all reviewed opportunities have moved into plan/i);
 });
 
 test("home growth loop renders linked status cards with arrows between cards", () => {
@@ -294,7 +308,7 @@ test("home growth loop renders linked status cards with arrows between cards", (
     "Status",
     "source pages",
     "evidence snippets",
-    "topics in the content backlog",
+    "items in the content plan",
     "drafts created or approved",
   ]) {
     assert.match(workspace, new RegExp(copy));
