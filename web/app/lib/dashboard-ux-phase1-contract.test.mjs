@@ -498,3 +498,29 @@ test("content plan edit form keeps priority inside the card at narrow widths", (
   assert.match(topics, /min-w-0/);
   assert.doesNotMatch(topics, /md:grid-cols-\[160px_1fr_120px\]/);
 });
+
+test("content plan topic cards separate top chips, body copy, and footer actions", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  for (const marker of [
+    "data-content-plan-card-top",
+    "data-content-plan-card-body",
+    "data-content-plan-card-footer",
+    "data-content-plan-card-schedule",
+    "data-content-plan-card-actions",
+  ]) {
+    assert.match(topics, new RegExp(marker));
+  }
+
+  const topIndex = topics.indexOf("data-content-plan-card-top");
+  const bodyIndex = topics.indexOf("data-content-plan-card-body");
+  const footerIndex = topics.indexOf("data-content-plan-card-footer");
+  const scheduleIndex = topics.indexOf("data-content-plan-card-schedule");
+  const actionsIndex = topics.indexOf("data-content-plan-card-actions");
+
+  assert.ok(topIndex < bodyIndex, "status chips should render before the title and content");
+  assert.ok(bodyIndex < footerIndex, "title and content should render before footer controls");
+  assert.ok(footerIndex < scheduleIndex, "schedule controls should live inside the card footer");
+  assert.ok(footerIndex < actionsIndex, "edit, generate, and archive controls should live inside the card footer");
+  assert.ok(actionsIndex > scheduleIndex, "actions should sit after the schedule control in the footer row");
+});

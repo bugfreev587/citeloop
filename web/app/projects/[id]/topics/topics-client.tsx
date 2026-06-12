@@ -13,7 +13,7 @@ import {
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TopicDraft = {
@@ -375,60 +375,38 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               <div
                 key={topic.id}
                 className={cx(
-                  "rounded-xl border border-slate-200 bg-white px-4 py-3",
+                  "flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3",
                   view !== "list" && "min-h-[260px]",
                   topicCardSpanClass(view, editingId === topic.id),
                 )}
               >
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="blue">{topic.channel}</Badge>
-                      <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
-                        {topic.status}
-                      </Badge>
-                      {recommended && <Badge tone="green">Recommended next</Badge>}
-                      <Badge tone={topic.priority > 0 ? "neutral" : "amber"}>priority {topic.priority}</Badge>
-                    </div>
-                    <div className="mt-2 break-words text-base font-bold text-slate-900">{topic.title}</div>
-                    <div className="mt-1 text-sm text-slate-500">
-                      {topic.target_keyword || topic.target_prompt || "No target keyword or prompt captured."}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-3 text-xs font-semibold text-slate-400">
-                      <span>{topic.format || "No format"}</span>
-                      <span>{topic.angle || "No angle"}</span>
-                      <span>{topic.internal_links.length} internal links</span>
-                      <span>scheduled {formatDate(topic.scheduled_at)}</span>
-                    </div>
-                    <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-sm">
-                      <div>
-                        <div className="text-xs font-semibold uppercase text-slate-400">Why this exists</div>
-                        <div className="mt-1 line-clamp-2 text-slate-600">{topicWhy(topic)}</div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                        <span className="text-slate-400">Pick signal</span>
-                        <span>{topicPickSignal(topic)}</span>
-                      </div>
-                    </div>
+                <div data-content-plan-card-top className="flex flex-wrap items-center gap-2">
+                  <Badge tone="blue">{topic.channel}</Badge>
+                  <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
+                    {topic.status}
+                  </Badge>
+                  {recommended && <Badge tone="green">Recommended next</Badge>}
+                  <Badge tone={topic.priority > 0 ? "neutral" : "amber"}>priority {topic.priority}</Badge>
+                </div>
+                <div data-content-plan-card-body className="mt-3 min-w-0 flex-1">
+                  <div className="break-words text-base font-bold text-slate-900">{topic.title}</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {topic.target_keyword || topic.target_prompt || "No target keyword or prompt captured."}
                   </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <Button
-                      disabled={topicLocked || editBusy}
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => startEdit(topic)}
-                    >
-                      <Pencil size={14} />
-                      Edit
-                    </Button>
-                    <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="primary" onClick={() => generate(topic)}>
-                      {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Wand2 size={14} />}
-                      {isGenerating ? "Generating" : "Generate"}
-                    </Button>
-                    <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
-                      <Archive size={14} />
-                      Archive
-                    </Button>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs font-semibold text-slate-400">
+                    <span>{topic.format || "No format"}</span>
+                    <span>{topic.angle || "No angle"}</span>
+                    <span>{topic.internal_links.length} internal links</span>
+                  </div>
+                  <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-sm">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Why this exists</div>
+                      <div className="mt-1 line-clamp-2 text-slate-600">{topicWhy(topic)}</div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                      <span className="text-slate-400">Pick signal</span>
+                      <span>{topicPickSignal(topic)}</span>
+                    </div>
                   </div>
                 </div>
                 {editingId === topic.id && draft && (
@@ -522,26 +500,54 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   </div>
                 )}
                 <div
+                  data-content-plan-card-footer
                   className={cx(
-                    "mt-3 grid gap-2 border-t border-slate-100 pt-3",
-                    view === "list" ? "md:grid-cols-[minmax(0,320px)_auto] md:items-end md:justify-end" : "sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end",
+                    "mt-4 flex flex-col gap-3 border-t border-slate-100 pt-3",
+                    view === "list" ? "md:flex-row md:items-end md:justify-between" : "lg:flex-row lg:items-end lg:justify-between",
                   )}
                 >
-                  <div className="min-w-0">
-                    <Field label="Scheduled at">
-                      <TextInput
-                        className="min-w-0"
-                        type="datetime-local"
-                        value={scheduleDrafts[topic.id] ?? ""}
-                        disabled={topic.status === "archived"}
-                        onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
-                      />
-                    </Field>
+                  <div
+                    data-content-plan-card-schedule
+                    className={cx(
+                      "grid min-w-0 flex-1 gap-2",
+                      view === "list" ? "sm:grid-cols-[minmax(0,320px)_auto] sm:items-end" : "sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <Field label="Scheduled at">
+                        <TextInput
+                          className="min-w-0"
+                          type="datetime-local"
+                          value={scheduleDrafts[topic.id] ?? ""}
+                          disabled={topic.status === "archived"}
+                          onChange={(event) => setScheduleDrafts((current) => ({ ...current, [topic.id]: event.target.value }))}
+                        />
+                      </Field>
+                    </div>
+                    <Button disabled={topicLocked || scheduleBusy} size="sm" onClick={() => schedule(topic)}>
+                      <CalendarDays size={14} />
+                      Schedule
+                    </Button>
                   </div>
-                  <Button disabled={topicLocked || scheduleBusy} size="sm" onClick={() => schedule(topic)}>
-                    <CalendarDays size={14} />
-                    Schedule
-                  </Button>
+                  <div data-content-plan-card-actions className="flex shrink-0 flex-wrap justify-end gap-2">
+                    <Button
+                      disabled={topicLocked || editBusy}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(topic)}
+                    >
+                      <Pencil size={14} />
+                      Edit
+                    </Button>
+                    <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="primary" onClick={() => generate(topic)}>
+                      {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Wand2 size={14} />}
+                      {isGenerating ? "Generating" : "Generate"}
+                    </Button>
+                    <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
+                      <Archive size={14} />
+                      Archive
+                    </Button>
+                  </div>
                 </div>
               </div>
               );
