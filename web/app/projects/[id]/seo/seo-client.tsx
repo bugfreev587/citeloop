@@ -17,10 +17,10 @@ import {
   SEOPolicy,
   SafeModeEvent,
 } from "../../../lib/api";
-import { visibilityLifecycleLabel, visibilityLifecycleTone } from "../../../lib/dashboard-ux-logic";
+import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -167,24 +167,6 @@ export function SEOClient({ projectId }: { projectId: string }) {
     ...(brief?.geo_blockers ?? []),
   ].slice(0, 4);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
-  const loopRows = [
-    ...opportunities.slice(0, 4).map((opportunity) => ({
-      id: `opportunity-${opportunity.id}`,
-      title: opportunityTitle(opportunity),
-      stage: visibilityLifecycleLabel(opportunity.status),
-      tone: visibilityLifecycleTone(opportunity.status),
-      detail: opportunity.expected_impact || opportunity.page_url || opportunity.normalized_page_url || "Visibility signal",
-    })),
-    ...actions.slice(0, 3).map((action) => ({
-      id: `action-${action.id}`,
-      title: action.action_type,
-      stage: visibilityLifecycleLabel(action.status),
-      tone: visibilityLifecycleTone(action.status),
-      detail: action.target_url || action.normalized_target_url || "Content action",
-    })),
-  ].slice(0, 5);
-  const loopTotal = opportunities.length + actions.length;
-
   async function saveSettings() {
     setBusy("settings");
     setMessage(null);
@@ -449,15 +431,15 @@ export function SEOClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <SectionHeader
-        title="Visibility"
-        eyebrow="SEO and AI-answer visibility for your domain"
+        title="Review opportunities"
+        eyebrow="Find opportunities"
         action={
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={refresh} disabled={!!busy}>
               <RefreshCw size={14} />
               Refresh
             </Button>
-            <Button size="sm" variant="primary" onClick={runSync} disabled={!!busy}>
+            <Button size="sm" onClick={runSync} disabled={!!busy}>
               <Search size={14} />
               Sync
             </Button>
@@ -466,133 +448,108 @@ export function SEOClient({ projectId }: { projectId: string }) {
       />
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
-      {overview?.data_source_warnings?.map((warning) => (
-        <Notice key={warning} title="SEO data warning" detail={warning} tone="amber" />
-      ))}
 
-      <section>
-        <SectionHeader
-          title="Visibility overview"
-          eyebrow={capabilityLabel(visibilityMode)}
-          action={<Badge tone={overview?.handoff_ready_for_autopilot ? "green" : "amber"}>{capabilityLabel(visibilityMode)}</Badge>}
-        />
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <div className="text-sm font-bold text-slate-900">Top opportunities</div>
-                <p className="mt-1 text-sm leading-5 text-slate-500">
-                  The next content or crawl fixes most likely to improve SEO and AI-answer visibility.
+                <Badge tone={opportunities.length ? "green" : "neutral"}>
+                  {opportunities.length ? "Ready to review" : "No review needed"}
+                </Badge>
+                <h3 className="mt-3 text-2xl font-bold leading-8 text-slate-950">
+                  {opportunities.length} {opportunities.length === 1 ? "opportunity" : "opportunities"} need review
+                </h3>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  Choose the opportunities worth turning into content work. Add the useful ones to Content Plan and dismiss anything that is not a fit.
                 </p>
               </div>
-              <Badge tone={opportunities.length ? "amber" : "neutral"}>{opportunities.length}</Badge>
+              <Badge tone={overview?.cold_start ? "amber" : "green"}>{capabilityLabel(visibilityMode)}</Badge>
             </div>
-            <div className="mt-3 grid gap-2">
-              {opportunities.slice(0, 3).map((opportunity) => (
-                <div key={opportunity.id} className="rounded-lg border border-slate-100 px-3 py-2">
-                  <div className="font-semibold text-slate-900">{opportunityTitle(opportunity)}</div>
-                  <div className="mt-1 text-sm leading-5 text-slate-500">{opportunity.expected_impact || opportunity.type}</div>
-                </div>
+          </div>
+
+          {opportunities.length === 0 ? (
+            <EmptyState
+              title="No opportunities to review"
+              detail="Refresh or Sync after Context changes. New opportunities will appear here as review cards."
+            />
+          ) : (
+            <div className="grid gap-3">
+              {opportunities.map((opp, index) => (
+                <article key={opp.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="blue">Opportunity {index + 1}</Badge>
+                        <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
+                        <span className="text-xs font-semibold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
+                      </div>
+                      <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {opp.expected_impact || "Review this opportunity against your confirmed Context before adding it to the content backlog."}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={busy === opp.id}>
+                        <FileText size={14} />
+                        Add to Content Plan
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={busy === opp.id}>
+                        Dismiss
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold uppercase text-slate-400">Source page</div>
+                      <div className="mt-1 truncate font-medium text-slate-700">{opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="neutral">{opp.type}</Badge>
+                      <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
+                    </div>
+                  </div>
+                </article>
               ))}
-              {opportunities.length === 0 && <div className="text-sm text-slate-500">No open opportunities. Refresh Visibility after new search or AI-answer signals arrive.</div>}
+            </div>
+          )}
+        </div>
+
+        <aside className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-sm font-bold text-slate-900">What to review</div>
+            <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+              <p>Does the recommendation match the confirmed Context?</p>
+              <p>Is the source page or evidence strong enough to support the claim?</p>
+              <p>Would this create a useful topic for the next content backlog?</p>
             </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">Major blockers</div>
-            <div className="mt-3 grid gap-2">
-              {visibilityBlockers.map((blocker) => (
-                <Notice key={blocker} title="Visibility blocker" detail={blocker} tone="amber" />
-              ))}
-              {visibilityBlockers.length === 0 && <div className="text-sm text-slate-500">No major blockers detected from current public crawl and connected data.</div>}
+            <div className="text-sm font-bold text-slate-900">Review result</div>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div className="text-2xl font-bold text-slate-950">{opportunities.length}</div>
+                <div className="mt-1 text-slate-500">open</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-slate-950">{actions.length}</div>
+                <div className="mt-1 text-slate-500">in plan</div>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Search visibility" eyebrow={gscStatus === "connected" ? "Verified search data" : "Public crawl only"} />
-        {gscStatus !== "connected" && (
-          <Notice
-            title="Search Console is not connected"
-            detail="The numbers below are placeholders. Connect first-party search data to show verified clicks, impressions, CTR, and position."
-            tone="amber"
-          />
-        )}
-        <div className={cx("grid gap-3 md:grid-cols-4", gscStatus !== "connected" && "opacity-60")}>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <BarChart3 className="mb-3 text-slate-400" size={18} />
-            <div className="text-sm font-bold text-slate-900">{metric(overview?.last_28_days?.clicks_28d)}</div>
-            <p className="mt-1 text-sm leading-5 text-slate-500">Clicks, 28d</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <Search className="mb-3 text-slate-400" size={18} />
-            <div className="text-sm font-bold text-slate-900">{metric(overview?.last_28_days?.impressions_28d)}</div>
-            <p className="mt-1 text-sm leading-5 text-slate-500">Impressions, 28d</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <CheckCircle2 className="mb-3 text-slate-400" size={18} />
-            <div className="text-sm font-bold text-slate-900">{percent(overview?.last_28_days?.ctr_28d)}</div>
-            <p className="mt-1 text-sm leading-5 text-slate-500">CTR, 28d</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <ShieldAlert className="mb-3 text-slate-400" size={18} />
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-              {overview?.technical?.checked_urls ?? 0}
-              <Badge tone={overview?.cold_start ? "amber" : "green"}>{overview?.cold_start ? "limited" : "ready"}</Badge>
+          {visibilityBlockers.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="font-bold">Data note</div>
+              <p className="mt-2 leading-6">
+                Measurement signals are limited, but review can continue with context-backed opportunities.
+              </p>
             </div>
-            <p className="mt-1 text-sm leading-5 text-slate-500">Technical URLs</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="AI visibility" eyebrow={showGeoScore ? "Observed answer coverage" : "Capability-aware status"} />
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "Insufficient data"}</div>
-            <p className="mt-1 text-sm text-slate-500">Visibility score</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{percent(geoCoverage)}</div>
-            <p className="mt-1 text-sm text-slate-500">Answer coverage</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{crawlerOkCount}/{crawlerSnapshots.length || 0}</div>
-            <p className="mt-1 text-sm text-slate-500">AI crawler access</p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">{assetBriefs.length}</div>
-            <p className="mt-1 text-sm text-slate-500">Citation-ready briefs</p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Loop closure" eyebrow="Opportunity to content to measurement" />
-        {loopRows.length === 0 ? (
-          <EmptyState title="No active visibility loop yet" detail="Opportunity detected items will appear here, then move through Added to Content Plan, Drafted, Published, and Measuring impact." />
-        ) : (
-          <div className="grid gap-2">
-            {loopRows.map((row) => (
-              <div key={row.id} className="flex min-h-[46px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-900">{row.title}</div>
-                  <div className="mt-0.5 truncate text-[13px] font-semibold text-slate-400">{row.detail}</div>
-                </div>
-                <Badge tone={row.tone}>{row.stage}</Badge>
-              </div>
-            ))}
-            {loopTotal > loopRows.length && (
-              <div className="px-1 text-xs font-semibold text-slate-400">
-                Showing {loopRows.length} of {loopTotal}. See Opportunities and Content actions below for the full list.
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </aside>
       </section>
 
       <details className="rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="cursor-pointer text-sm font-bold text-slate-900">Advanced diagnostics</summary>
+        <summary className="cursor-pointer text-sm font-bold text-slate-900">Measurement and diagnostics</summary>
         <div className="mt-5 space-y-7">
       <section>
         <SectionHeader
@@ -1018,10 +975,14 @@ export function SEOClient({ projectId }: { projectId: string }) {
         </div>
       </details>
 
-      <section>
-        <SectionHeader title={brief?.title ?? "Visibility brief"} action={<Badge tone={brief?.mode === "cold_start" ? "amber" : "green"}>{brief?.mode ?? "loading"}</Badge>} />
+      <details className="rounded-xl border border-slate-200 bg-white p-4">
+        <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm font-bold text-slate-900">
+          <span>{brief?.title ?? "Visibility brief"}</span>
+          <Badge tone={brief?.mode === "cold_start" ? "amber" : "green"}>{brief?.mode ?? "loading"}</Badge>
+        </summary>
+        <div className="mt-4">
         {brief ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             {brief.blockers.length > 0 && (
               <div className="mb-4 grid gap-2">
                 {brief.blockers.map((blocker) => (
@@ -1071,57 +1032,12 @@ export function SEOClient({ projectId }: { projectId: string }) {
         ) : (
           <EmptyState title="Loading brief" detail="Fetching latest SEO brief." />
         )}
-      </section>
+        </div>
+      </details>
 
-      <section>
-        <SectionHeader title="Opportunities" action={<Badge tone="blue">{opportunities.length}</Badge>} />
-        {opportunities.length === 0 ? (
-          <EmptyState title="No open opportunities" detail="Cold-start health checks and GSC-backed recommendations will appear here." />
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Type</th>
-                  <th className="px-4 py-3 font-semibold">Page</th>
-                  <th className="px-4 py-3 font-semibold">Score</th>
-                  <th className="px-4 py-3 font-semibold">Risk</th>
-                  <th className="px-4 py-3 font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {opportunities.map((opp) => (
-                  <tr key={opp.id}>
-                    <td className="px-4 py-3 font-medium text-slate-900">{opp.type}</td>
-                    <td className="max-w-[260px] truncate px-4 py-3 text-slate-600">{opp.page_url ?? opp.normalized_page_url}</td>
-                    <td className="px-4 py-3 text-slate-600">{metric(opp.priority_score)}</td>
-                    <td className="px-4 py-3">
-                      <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "unknown"}</Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" onClick={() => createAction(opp)} disabled={busy === opp.id}>
-                          <FileText size={14} />
-                          Add to Content Plan
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={busy === opp.id}>
-                          Dismiss
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
+      {actions.length > 0 && (
       <section>
         <SectionHeader title="Content actions" action={<Badge tone="neutral">{actions.length}</Badge>} />
-        {actions.length === 0 ? (
-          <EmptyState title="No SEO content actions" detail="Accepted opportunities become reviewable content actions here." />
-        ) : (
           <div className="grid gap-2">
             {actions.map((action) => (
               <div key={action.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
@@ -1138,8 +1054,8 @@ export function SEOClient({ projectId }: { projectId: string }) {
               </div>
             ))}
           </div>
-        )}
       </section>
+      )}
     </div>
   );
 }

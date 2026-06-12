@@ -85,13 +85,14 @@ test("home shows parallel context-building tracks during onboarding", () => {
   assert.doesNotMatch(workspace, /Estimated progress/);
 });
 
-test("visibility degrades search metrics and signals truncated loop, context paginates evidence", () => {
+test("visibility defaults to opportunity review and keeps measurement details secondary", () => {
   const visibility = read("projects/[id]/seo/seo-client.tsx");
-  // Placeholder search metrics are visually dimmed + labelled when GSC is not connected.
-  assert.match(visibility, /The numbers below are placeholders/);
-  assert.match(visibility, /opacity-60/);
-  // Loop closure tells the user when it is truncated instead of silently capping at 5.
-  assert.match(visibility, /Showing \{loopRows\.length\} of \{loopTotal\}/);
+  assert.match(visibility, /Review opportunities/);
+  assert.match(visibility, /need review/);
+  assert.match(visibility, /Add to Content Plan/);
+  assert.match(visibility, /Measurement and diagnostics/);
+  assert.doesNotMatch(visibility, /The numbers below are placeholders/);
+  assert.doesNotMatch(visibility, /Showing \{loopRows\.length\} of \{loopTotal\}/);
 
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
   // Evidence library no longer silently hides items behind a fixed slice of 8.
@@ -340,27 +341,26 @@ test("context page is a user-reviewable product cognition center, not a raw know
   }
 });
 
-test("visibility page presents SEO and AI-answer outcomes before advanced diagnostics", () => {
+test("visibility page presents opportunity review before measurement diagnostics", () => {
   const visibility = read("projects/[id]/seo/seo-client.tsx");
 
   for (const copy of [
-    "Visibility",
-    "SEO and AI-answer visibility for your domain",
-    "Visibility overview",
-    "Search visibility",
-    "AI visibility",
-    "Loop closure",
-    "Opportunity detected",
-    "Added to Content Plan",
-    "Measuring impact",
+    "Review opportunities",
+    "Find opportunities",
+    "What to review",
+    "Review result",
+    "Measurement and diagnostics",
+    "Visibility brief",
     "Add to Content Plan",
-    "Advanced diagnostics",
+    "Dismiss",
     "Public crawl only",
   ]) {
     assert.match(visibility, new RegExp(copy));
   }
 
   assert.doesNotMatch(visibility, /title="SEO"/);
+  assert.doesNotMatch(visibility, /title="Visibility overview"/);
+  assert.doesNotMatch(visibility, /title="Opportunities"/);
 });
 
 test("activity log defaults to user-facing attention events and hides run internals in details", () => {
