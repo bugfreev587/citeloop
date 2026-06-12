@@ -44,6 +44,32 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 	return i, err
 }
 
+const deleteProjectForOwner = `-- name: DeleteProjectForOwner :one
+delete from projects
+where id = $1
+  and owner_id = $2
+returning id, owner_id, name, slug, config, created_at
+`
+
+type DeleteProjectForOwnerParams struct {
+	ID      uuid.UUID `json:"id"`
+	OwnerID string    `json:"owner_id"`
+}
+
+func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, deleteProjectForOwner, arg.ID, arg.OwnerID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getProject = `-- name: GetProject :one
 select id, owner_id, name, slug, config, created_at from projects where id = $1
 `

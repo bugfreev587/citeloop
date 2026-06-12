@@ -942,6 +942,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/projects", { method: "POST", body: JSON.stringify(body) }, auth);
     return normalizeProject(raw);
   },
+  deleteProject: async (id: string) => {
+    const raw = await req<any>(`/projects/${id}/`, { method: "DELETE" }, auth);
+    return normalizeProject(raw);
+  },
   getProject: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
     return normalizeProject(raw);

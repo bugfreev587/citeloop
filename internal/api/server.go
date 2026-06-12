@@ -61,6 +61,7 @@ func (s *Server) Router() http.Handler {
 		r.Route("/projects/{projectID}", func(r chi.Router) {
 			r.Use(s.requireProjectOwner)
 			r.Get("/", s.getProject)
+			r.Delete("/", s.deleteProject)
 			r.Put("/config", s.updateConfig)
 
 			r.Post("/insight", s.runInsight)

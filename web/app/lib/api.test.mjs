@@ -229,6 +229,30 @@ test("createProject supports URL-first onboarding payloads", async () => {
   }
 });
 
+test("deleteProject hard-deletes through the project endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "project-1", name: "unipost.dev", slug: "unipost-dev" }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const project = await createApi().deleteProject("project-1");
+
+    assert.equal(project.id, "project-1");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/");
+    assert.equal(calls[0].init.method, "DELETE");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("SEO APIs normalize null nested arrays from cold-start projects", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({

@@ -31,3 +31,9 @@ update projects set config = $2
 where id = $1
   and owner_id = $3
 returning *;
+
+-- name: DeleteProjectForOwner :one
+delete from projects
+where id = $1
+  and owner_id = $2
+returning *;

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
   Database,
+  FolderKanban,
   Home,
   ListChecks,
   PenLine,
@@ -40,6 +41,10 @@ function isActive(pathname: string, projectId: string, leaf: string) {
 
 function isDocsActive(pathname: string, projectId: string) {
   return pathname === "/docs" || pathname.startsWith("/docs/") || pathname.startsWith(`/projects/${projectId}/docs`);
+}
+
+function isProjectsActive(pathname: string) {
+  return pathname === "/projects";
 }
 
 export function ProjectShell({
@@ -158,6 +163,16 @@ export function ProjectShell({
             </div>
           </div>
           <Link
+            href="/projects"
+            className={cx(
+              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+              isProjectsActive(pathname) && "bg-slate-50 font-semibold text-[#d93820]",
+            )}
+          >
+            <FolderKanban size={16} />
+            Projects
+          </Link>
+          <Link
             href="/docs"
             className={cx(
               "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
@@ -204,6 +219,15 @@ export function ProjectShell({
               {item.label}
             </Link>
           ))}
+          <Link
+            href="/projects"
+            className={cx(
+              "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
+              isProjectsActive(pathname) && "border-[#d93820] text-[#d93820]",
+            )}
+          >
+            Projects
+          </Link>
           <Link
             href="/docs"
             className={cx(

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) projectID(r *http.Request) (uuid.UUID, error) {
@@ -97,6 +99,36 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.startProjectOnboarding(p.ID, normalizedSiteURL)
 	writeJSON(w, 201, p)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	id, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	ownerID := s.ownerID(r)
+	if ownerID == "" {
+		writeErr(w, http.StatusForbidden, "project owner required")
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	p, err := s.Q.DeleteProjectForOwner(r.Context(), db.DeleteProjectForOwnerParams{
+		ID:      id,
+		OwnerID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "project not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {

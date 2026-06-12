@@ -37,6 +37,7 @@ type Querier interface {
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
+	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
 	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
