@@ -201,9 +201,14 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if len(in.Profile) == 0 {
+		in.Profile = active.Profile
+	}
 	if in.SourceUrls == nil {
 		in.SourceUrls = active.SourceUrls
 	}
+	wasConfirmed := profileHasContextConfirmation(active.Profile)
+	isConfirmed := profileHasContextConfirmation(in.Profile)
 	updated, err := s.Q.UpdateProfile(r.Context(), db.UpdateProfileParams{
 		ID: active.ID, Profile: in.Profile, SourceUrls: in.SourceUrls,
 	})
@@ -211,7 +216,26 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if !wasConfirmed && isConfirmed {
+		s.startContextOpportunityDiscovery(id)
+	}
 	writeJSON(w, 200, updated)
+}
+
+func profileHasContextConfirmation(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return false
+	}
+	for _, key := range []string{"context_confirmed_at", "confirmed_at"} {
+		if value, ok := profile[key].(string); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) listInventory(w http.ResponseWriter, r *http.Request) {

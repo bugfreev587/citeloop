@@ -132,6 +132,19 @@ function loopConnectorIcon(direction: "right" | "down" | "left" | "up") {
   return ArrowRight;
 }
 
+type LoopStatusTone = "green" | "amber" | "blue" | "red" | "neutral";
+
+function loopStatusDotClass(tone: LoopStatusTone) {
+  const classes: Record<LoopStatusTone, string> = {
+    green: "bg-emerald-500",
+    amber: "bg-amber-500",
+    blue: "bg-blue-500",
+    red: "bg-red-500",
+    neutral: "bg-slate-300",
+  };
+  return classes[tone];
+}
+
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
   const [project, setProject] = useState<Project | null>(null);
@@ -197,6 +210,8 @@ export function Workspace({ projectId }: { projectId: string }) {
   const contextEvidenceCount = evidenceCount(inventory);
   const contextEvidencePageCount = inventory.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0).length;
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
+  const contextConfirmed = Boolean(profile?.profile?.context_confirmed_at || profile?.profile?.confirmed_at);
+  const contextNeedsConfirmation = Boolean(profile) && sourcePageCount > 0 && contextEvidenceCount > 0 && !contextConfirmed;
   const contextBuild = contextBuildTracks({
     hasProfile: Boolean(profile),
     sourcePageCount,
@@ -325,10 +340,16 @@ export function Workspace({ projectId }: { projectId: string }) {
             tone: "amber" as const,
             detail: "Source pages are present, but supported claims still need evidence snippets.",
           }
+        : !contextConfirmed
+          ? {
+              label: "Needs confirmation",
+              tone: "amber" as const,
+              detail: "Context has source pages and evidence. Review the facts, edit anything wrong, then confirm it before opportunities run.",
+            }
         : {
             label: "Ready",
             tone: "green" as const,
-            detail: "CiteLoop has source pages and evidence to support content planning and review.",
+            detail: "Context is confirmed and can support opportunity finding, content planning, and review.",
           };
 
   const opportunitiesConverted = seoOpportunities.filter((opportunity) =>
@@ -383,11 +404,19 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 0,
       label: "Context",
-      statusLines: [
+      metrics: [
         { value: sourcePageCount, label: sourcePageCount === 1 ? "source page" : "source pages" },
         { value: contextEvidenceCount, label: contextEvidenceCount === 1 ? "evidence snippet" : "evidence snippets" },
       ],
-      href: `/projects/${projectId}/context`,
+      status: {
+        label: contextHealth.label,
+        detail: contextHealth.detail,
+        tone: contextHealth.tone,
+      },
+      action: {
+        label: contextBuild.active ? "Track context build" : contextNeedsConfirmation ? "Review and confirm Context" : "Open Context",
+        href: `/projects/${projectId}/context`,
+      },
       tone: contextHealth.tone,
       accentClass: "text-emerald-700",
       connectorLabel: loopConnectorLabels.contextToFind,
@@ -396,12 +425,46 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 1,
       label: "Find opportunities",
-      statusLines: [
+      metrics: [
         { value: seoOpportunities.length, label: seoOpportunities.length === 1 ? "opportunity" : "opportunities" },
-        { text: seoOpportunities.length > 0 ? "visibility signals found" : "waiting for analytics signal" },
+        {
+          text: seoOpportunities.length > 0
+            ? "opportunities ready to review"
+            : contextBuild.active
+              ? "waiting for Context tracks"
+              : !contextConfirmed
+              ? "blocked until Context is confirmed"
+              : "checking public and source-backed signals",
+        },
       ],
-      href: `/projects/${projectId}/visibility`,
-      tone: seoOpportunities.length > 0 ? ("green" as const) : ("neutral" as const),
+      status: contextBuild.active
+        ? {
+            label: "Waiting for Context build",
+            detail: "Profile, crawl, and evidence tracks are still running.",
+            tone: "blue" as const,
+          }
+        : contextNeedsConfirmation
+          ? {
+              label: "Blocked by Context confirmation",
+              detail: "Confirm the generated Context so CiteLoop can start finding opportunities from trusted evidence.",
+              tone: "amber" as const,
+            }
+          : seoOpportunities.length > 0
+            ? {
+                label: "Ready to review",
+                detail: "Opportunity candidates are available for planning or dismissal.",
+                tone: "green" as const,
+              }
+            : {
+                label: "Scanning public-source opportunities",
+                detail: "Context is confirmed; CiteLoop can use public pages before analytics is connected.",
+                tone: "blue" as const,
+              },
+      action: {
+        label: contextBuild.active ? "Track Context" : !contextConfirmed ? "Confirm Context" : seoOpportunities.length > 0 ? "Review opportunities" : "Open Visibility",
+        href: contextBuild.active || !contextConfirmed ? `/projects/${projectId}/context` : `/projects/${projectId}/visibility`,
+      },
+      tone: seoOpportunities.length > 0 ? ("green" as const) : contextBuild.active ? ("blue" as const) : contextNeedsConfirmation ? ("amber" as const) : ("neutral" as const),
       accentClass: seoOpportunities.length > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.findToPlan,
       connectorDirection: "right" as const,
@@ -409,12 +472,38 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 2,
       label: "Plan content",
-      statusLines: [
+      metrics: [
         { value: topics.length, label: topics.length === 1 ? "topic in the content backlog" : "topics in the content backlog" },
         { text: topics.length > 0 ? "ready for drafting" : "content backlog is not started" },
       ],
-      href: `/projects/${projectId}/plan`,
-      tone: topics.length > 0 ? ("green" as const) : ("amber" as const),
+      status: !contextConfirmed
+        ? {
+            label: "Locked until Context is confirmed",
+            detail: "A confirmed Context keeps the first plan grounded in reviewed facts and evidence.",
+            tone: "amber" as const,
+          }
+        : topics.length > 0
+          ? {
+              label: "Ready for drafting",
+              detail: "The backlog has topics that can move into draft generation.",
+              tone: "green" as const,
+            }
+          : seoOpportunities.length > 0
+            ? {
+                label: "Ready to plan",
+                detail: "Use reviewed opportunities to create the first content backlog.",
+                tone: "blue" as const,
+              }
+            : {
+                label: "Waiting for opportunities",
+                detail: "Opportunity discovery runs after Context confirmation.",
+                tone: "neutral" as const,
+              },
+      action: {
+        label: !contextConfirmed ? "Confirm Context" : topics.length > 0 ? "Open content plan" : seoOpportunities.length > 0 ? "Plan from opportunities" : "Open Visibility",
+        href: !contextConfirmed ? `/projects/${projectId}/context` : topics.length > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
+      },
+      tone: topics.length > 0 ? ("green" as const) : !contextConfirmed ? ("amber" as const) : seoOpportunities.length > 0 ? ("blue" as const) : ("neutral" as const),
       accentClass: topics.length > 0 ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.planToCreate,
       connectorDirection: "down" as const,
@@ -422,12 +511,32 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 3,
       label: "Create drafts",
-      statusLines: [
+      metrics: [
         { value: reviewArticles.length + approved.length, label: reviewArticles.length + approved.length === 1 ? "draft created or approved" : "drafts created or approved" },
         { text: reviewArticles.length + approved.length > 0 ? "ready to review or publish" : "no drafts yet" },
       ],
-      href: `/projects/${projectId}/plan`,
-      tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : ("neutral" as const),
+      status: reviewArticles.length + approved.length > 0
+        ? {
+            label: "Drafts in motion",
+            detail: "Drafts are ready for review or already approved for publishing.",
+            tone: "green" as const,
+          }
+        : topics.length > 0
+          ? {
+              label: "Ready to generate",
+              detail: "Select a planned topic to create the next draft.",
+              tone: "blue" as const,
+            }
+          : {
+              label: "Waiting for content plan",
+              detail: "Drafting starts after the backlog has confirmed topics.",
+              tone: "neutral" as const,
+            },
+      action: {
+        label: reviewArticles.length > 0 ? "Review drafts" : topics.length > 0 ? "Create draft" : "Open plan",
+        href: reviewArticles.length > 0 ? `/projects/${projectId}/review` : `/projects/${projectId}/plan`,
+      },
+      tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : topics.length > 0 ? ("blue" as const) : ("neutral" as const),
       accentClass: reviewArticles.length + approved.length > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.createToReview,
       connectorDirection: "left" as const,
@@ -435,11 +544,25 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 4,
       label: "Review",
-      statusLines: [
+      metrics: [
         { value: reviewArticles.length, label: reviewArticles.length === 1 ? "draft waiting for approval" : "drafts waiting for approval" },
         { text: reviewArticles.length > 0 ? "claims and evidence need your decision" : "nothing waiting" },
       ],
-      href: `/projects/${projectId}/review`,
+      status: reviewArticles.length > 0
+        ? {
+            label: "Needs approval",
+            detail: "Review claims, evidence, and voice before anything is published.",
+            tone: "amber" as const,
+          }
+        : {
+            label: "Clear",
+            detail: "No drafts are waiting for approval right now.",
+            tone: "green" as const,
+          },
+      action: {
+        label: reviewArticles.length > 0 ? "Review drafts" : "Open Review",
+        href: `/projects/${projectId}/review`,
+      },
       tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
       accentClass: reviewArticles.length > 0 ? "text-amber-700" : "text-emerald-700",
       connectorLabel: loopConnectorLabels.reviewToPublish,
@@ -448,12 +571,38 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 5,
       label: "Publish",
-      statusLines: [
+      metrics: [
         { value: publishedThisMonth, label: publishedThisMonth === 1 ? "page live this month" : "pages live this month" },
         { text: failedPublish.length > 0 ? "publishing needs attention" : "published this month" },
       ],
-      href: `/projects/${projectId}/publish`,
-      tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ("neutral" as const),
+      status: failedPublish.length > 0
+        ? {
+            label: "Publishing needs attention",
+            detail: "A publish attempt failed and needs a fix before measurement can continue.",
+            tone: "red" as const,
+          }
+        : ready.length > 0
+          ? {
+              label: "Ready to publish",
+              detail: "Approved variants are waiting to be distributed.",
+              tone: "amber" as const,
+            }
+          : publishedThisMonth > 0
+            ? {
+                label: "Live this month",
+                detail: "Published pages are available for measurement.",
+                tone: "green" as const,
+              }
+            : {
+                label: "Waiting for approved drafts",
+                detail: "Publishing starts after review approval.",
+                tone: "neutral" as const,
+              },
+      action: {
+        label: failedPublish.length > 0 ? "Fix publishing" : ready.length > 0 ? "Publish approved" : "Open Publish",
+        href: `/projects/${projectId}/publish`,
+      },
+      tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ready.length > 0 ? ("amber" as const) : ("neutral" as const),
       accentClass: failedPublish.length > 0 ? "text-red-700" : publishedThisMonth > 0 ? "text-emerald-700" : "text-slate-500",
       connectorLabel: loopConnectorLabels.publishToMeasure,
       connectorDirection: "up" as const,
@@ -461,11 +610,25 @@ export function Workspace({ projectId }: { projectId: string }) {
     {
       position: 6,
       label: "Measure results",
-      statusLines: [
+      metrics: [
         { value: searchDataConnected ? metric(clicks28d) : "-", label: searchDataConnected ? "clicks in the last 28 days" : "results" },
         { text: searchDataConnected ? `${metric(impressions28d)} impressions measured` : "limited until connected" },
       ],
-      href: `/projects/${projectId}/visibility`,
+      status: searchDataConnected
+        ? {
+            label: "Measurement connected",
+            detail: "Search Console data can show clicks, impressions, and growth impact.",
+            tone: "green" as const,
+          }
+        : {
+            label: "Limited until connected",
+            detail: "CiteLoop can track workflow progress now; connect Search Console for traffic proof.",
+            tone: "amber" as const,
+          },
+      action: {
+        label: searchDataConnected ? "View results" : "Connect measurement",
+        href: `/projects/${projectId}/visibility`,
+      },
       tone: searchDataConnected ? ("green" as const) : ("amber" as const),
       accentClass: searchDataConnected ? "text-emerald-700" : "text-amber-700",
       connectorLabel: loopConnectorLabels.measureToFind,
@@ -702,12 +865,11 @@ export function Workspace({ projectId }: { projectId: string }) {
           {loopCards.map((card) => {
             const ConnectorIcon = loopConnectorIcon(card.connectorDirection);
             return (
-              <a
+              <div
                 key={card.position}
                 data-loop-position={card.position}
-                href={card.href}
                 className={cx(
-                  "group relative min-h-[112px] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300 hover:bg-slate-50",
+                  "group relative flex min-h-[196px] flex-col rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300",
                   loopGridClass(card.position),
                 )}
               >
@@ -729,7 +891,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                   <span aria-hidden="true" className="h-7 w-7" />
                 </div>
                 <div className="mt-3 space-y-1.5 text-center">
-                  {card.statusLines.map((line, index) =>
+                  {card.metrics.map((line, index) =>
                     "value" in line ? (
                       <div key={`${card.position}-${index}`} className="flex items-baseline justify-center gap-2">
                         <span className={cx("text-xl font-bold leading-none tracking-normal", card.accentClass)}>{line.value}</span>
@@ -742,7 +904,26 @@ export function Workspace({ projectId }: { projectId: string }) {
                     ),
                   )}
                 </div>
-              </a>
+                <div className="mt-auto pt-3">
+                  <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-left">
+                    <div className="flex items-start gap-2">
+                      <span className={cx("mt-1.5 h-2 w-2 shrink-0 rounded-full", loopStatusDotClass(card.status.tone))} />
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold uppercase leading-4 tracking-normal text-slate-400">Status</div>
+                        <div className="text-sm font-bold leading-5 text-slate-900">{card.status.label}</div>
+                        <div className="mt-1 text-xs font-semibold leading-4 text-slate-500">{card.status.detail}</div>
+                      </div>
+                    </div>
+                    <a
+                      href={card.action.href}
+                      className="mt-3 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#d93820] transition-colors hover:border-[#d93820] hover:bg-red-50"
+                    >
+                      <span className="min-w-0 truncate">{card.action.label}</span>
+                      <ExternalLink size={13} className="shrink-0" />
+                    </a>
+                  </div>
+                </div>
+              </div>
             );
           })}
         </div>

@@ -1,6 +1,7 @@
 export type NextWorkspaceActionInput = {
   projectId: string;
   hasProfile: boolean;
+  contextConfirmed?: boolean;
   failedPublishCount: number;
   hasBlockedDrafts: boolean;
   reviewCount: number;
@@ -142,6 +143,7 @@ export function lines(value: string) {
 export function nextWorkspaceAction({
   projectId,
   hasProfile,
+  contextConfirmed = true,
   failedPublishCount,
   hasBlockedDrafts,
   reviewCount,
@@ -152,6 +154,13 @@ export function nextWorkspaceAction({
     return {
       title: "Refresh context",
       detail: "Confirm product facts, evidence, and positioning before generating a content plan.",
+      href: `/projects/${projectId}/context`,
+    };
+  }
+  if (!contextConfirmed) {
+    return {
+      title: "Confirm context",
+      detail: "Review and confirm the generated Context before CiteLoop finds opportunities.",
       href: `/projects/${projectId}/context`,
     };
   }
@@ -508,6 +517,7 @@ export function visibleHomeSectionIds(sections: HomeSectionCandidate[], options:
 export function sidebarPrimaryAction(input: NextWorkspaceActionInput): WorkspaceAction {
   const action = nextWorkspaceAction(input);
   if (!input.hasProfile) return action;
+  if (input.contextConfirmed === false) return action;
   if (input.failedPublishCount > 0) return action;
   if (input.hasBlockedDrafts) return { ...action, title: "Review blocked" };
   if (input.reviewCount > 0) return { ...action, title: "Review drafts" };

@@ -270,7 +270,10 @@ test("home growth loop renders linked status cards with arrows between cards", (
     "Review connects to Publish",
     "Publish connects to Measure results",
     "Measure results connects back to Find opportunities",
-    "waiting for analytics signal",
+    "Blocked by Context confirmation",
+    "Review and confirm Context",
+    "Scanning public-source opportunities",
+    "Status",
     "source pages",
     "evidence snippets",
     "topics in the content backlog",
@@ -279,12 +282,14 @@ test("home growth loop renders linked status cards with arrows between cards", (
     assert.match(workspace, new RegExp(copy));
   }
 
-  assert.match(workspace, /statusLines/);
+  assert.match(workspace, /metrics/);
+  assert.match(workspace, /action: \{/);
   assert.match(workspace, /grid-cols-\[2rem_1fr_2rem\]/);
   assert.match(workspace, /className="text-center text-base font-bold leading-5 text-slate-950"/);
-  assert.match(workspace, /href=\{card\.href\}/);
+  assert.match(workspace, /href=\{card\.action\.href\}/);
   assert.match(workspace, /data-loop-position=\{card\.position\}/);
-  assert.doesNotMatch(workspace, /Open \{card\.label\}/);
+  assert.match(workspace, /card\.action\.label/);
+  assert.doesNotMatch(workspace, /waiting for analytics signal/);
   assert.doesNotMatch(workspace, /<ArrowRight size=\{15\} \/>/);
   for (const position of ["0", "1", "2", "3", "4", "5", "6"]) {
     assert.match(workspace, new RegExp(`position: ${position}`));

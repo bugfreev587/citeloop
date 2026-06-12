@@ -281,7 +281,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
         ...profilePayloadFromDraft(profileDraft, profile?.profile ?? {}),
         context_confirmed_at: new Date().toISOString(),
       },
-      "Context confirmed",
+      "Context confirmed. Opportunity discovery started",
     );
   }
 

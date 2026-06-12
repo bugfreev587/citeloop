@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -526,11 +527,318 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		return finish("error", result, err)
 	}
 	result.ColdStart = overview.ColdStart
+	if result.GeneratedAnomalies == 0 && result.ColdStart {
+		generated, err := s.generateColdStartOpportunities(ctx, projectID, run.ID, prop)
+		if err != nil {
+			return finish("error", result, err)
+		}
+		if generated > 0 {
+			result.GeneratedAnomalies += generated
+			result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("cold_start_opportunities:%d", generated))
+		}
+	}
 	status := "ok"
 	if result.ColdStart {
 		status = "degraded"
 	}
 	return finish(status, result, nil)
+}
+
+type coldStartOpportunityCandidate struct {
+	Type              string
+	Query             string
+	PageURL           string
+	PriorityScore     float64
+	Confidence        float64
+	RecommendedAction string
+	ExpectedImpact    string
+	Effort            int32
+	RiskLevel         string
+	Evidence          map[string]any
+}
+
+func (s Service) generateColdStartOpportunities(ctx context.Context, projectID uuid.UUID, runID uuid.UUID, prop db.SeoProperty) (int, error) {
+	profile, err := s.Q.GetActiveProfile(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !profileHasContextConfirmation(profile.Profile) {
+		return 0, nil
+	}
+	inventory, err := s.Q.ListInventory(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	candidates := coldStartOpportunityCandidates(profile.Profile, inventory, prop.SiteUrl)
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+	existing, err := s.Q.ListSEOOpportunities(ctx, db.ListSEOOpportunitiesParams{
+		ProjectID: projectID,
+		LimitRows: 200,
+	})
+	if err != nil {
+		return 0, err
+	}
+	seen := map[string]bool{}
+	for _, opportunity := range existing {
+		if opportunity.Query == nil {
+			continue
+		}
+		seen[strings.TrimSpace(*opportunity.Query)] = true
+	}
+
+	normalization := decodeNormalizationConfig(prop.UrlNormalizationConfig)
+	generated := 0
+	for _, candidate := range candidates {
+		if seen[candidate.Query] {
+			continue
+		}
+		normalized, err := NormalizeURL(candidate.PageURL, prop.SiteUrl, normalization)
+		if err != nil {
+			normalized, err = NormalizeURL(prop.SiteUrl, prop.SiteUrl, normalization)
+			if err != nil {
+				return generated, err
+			}
+		}
+		pageURL := candidate.PageURL
+		query := candidate.Query
+		action := candidate.RecommendedAction
+		impact := candidate.ExpectedImpact
+		_, err = s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+			ProjectID:         projectID,
+			Type:              candidate.Type,
+			Status:            "open",
+			PriorityScore:     pgutil.Numeric(candidate.PriorityScore),
+			Confidence:        pgutil.Numeric(candidate.Confidence),
+			PageUrl:           strPtr(pageURL),
+			NormalizedPageUrl: normalized,
+			Evidence:          mustJSON(candidate.Evidence),
+			Query:             &query,
+			RecommendedAction: &action,
+			ExpectedImpact:    &impact,
+			Effort:            candidate.Effort,
+			RiskLevel:         candidate.RiskLevel,
+			CreatedByRunID:    uuidToPG(runID),
+		})
+		if err != nil {
+			return generated, err
+		}
+		seen[candidate.Query] = true
+		generated++
+	}
+	return generated, nil
+}
+
+func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.ContentInventory, siteURL string) []coldStartOpportunityCandidate {
+	var profile map[string]any
+	if err := json.Unmarshal(profileRaw, &profile); err != nil {
+		return nil
+	}
+	siteURL = strings.TrimSpace(siteURL)
+	if siteURL == "" {
+		siteURL = "https://unipost.dev"
+	}
+	positioning := firstProfileText(profile, "positioning", "summary", "description")
+	icp := firstProfileText(profile, "icp", "ideal_customer_profile", "audience")
+	valueProps := profileStringList(profile, "value_props", "value_propositions", "benefits")
+	features := profileStringList(profile, "features", "capabilities")
+	differentiators := profileStringList(profile, "differentiators", "why_us")
+	competitors := profileStringList(profile, "competitors", "alternatives")
+	keyTerms := profileStringList(profile, "key_terms", "keywords", "topics")
+	source, evidenceCount := strongestEvidenceSource(inventory)
+
+	baseEvidence := map[string]any{
+		"source":         "context_confirmation",
+		"positioning":    positioning,
+		"icp":            icp,
+		"value_props":    firstN(valueProps, 5),
+		"features":       firstN(features, 5),
+		"key_terms":      firstN(keyTerms, 8),
+		"source_pages":   len(inventory),
+		"evidence_count": evidenceCount,
+	}
+	candidates := []coldStartOpportunityCandidate{
+		{
+			Type:              "cold_start_context_plan",
+			Query:             "cold-start:context-backed-use-case-pages",
+			PageURL:           siteURL,
+			PriorityScore:     72,
+			Confidence:        68,
+			RecommendedAction: "Plan the first context-backed use-case pages from the confirmed positioning",
+			ExpectedImpact:    "Turns confirmed product facts and evidence into high-intent topics before Search Console data is available.",
+			Effort:            3,
+			RiskLevel:         "low",
+			Evidence:          baseEvidence,
+		},
+	}
+	if len(differentiators) > 0 || len(competitors) > 0 {
+		candidates = append(candidates, coldStartOpportunityCandidate{
+			Type:              "cold_start_competitive_gap",
+			Query:             "cold-start:comparison-and-alternative-pages",
+			PageURL:           siteURL,
+			PriorityScore:     66,
+			Confidence:        62,
+			RecommendedAction: "Create comparison or alternative pages from confirmed differentiators",
+			ExpectedImpact:    "Captures evaluation-stage demand with claims tied back to the confirmed Context profile.",
+			Effort:            4,
+			RiskLevel:         "medium",
+			Evidence: map[string]any{
+				"source":          "context_confirmation",
+				"differentiators": firstN(differentiators, 6),
+				"competitors":     firstN(competitors, 6),
+			},
+		})
+	}
+	if source.Url != "" && evidenceCount > 0 {
+		candidates = append(candidates, coldStartOpportunityCandidate{
+			Type:              "cold_start_evidence_page",
+			Query:             "cold-start:evidence-led-source-page",
+			PageURL:           source.Url,
+			PriorityScore:     64,
+			Confidence:        64,
+			RecommendedAction: "Turn the strongest source page evidence into an opportunity brief",
+			ExpectedImpact:    "Uses the most evidence-rich public page as the starting point for source-backed content planning.",
+			Effort:            2,
+			RiskLevel:         "low",
+			Evidence: map[string]any{
+				"source":             "context_confirmation",
+				"source_page_url":    source.Url,
+				"source_page_title":  source.Title,
+				"evidence_count":     evidenceCount,
+				"source_page_topics": rawJSONList(source.Topics, 6),
+			},
+		})
+	}
+	return candidates
+}
+
+func profileHasContextConfirmation(raw json.RawMessage) bool {
+	var profile map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &profile) != nil {
+		return false
+	}
+	for _, key := range []string{"context_confirmed_at", "confirmed_at"} {
+		if value, ok := profile[key].(string); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func firstProfileText(profile map[string]any, keys ...string) string {
+	for _, key := range keys {
+		values := stringValues(profile[key], 1)
+		if len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
+}
+
+func profileStringList(profile map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		values := stringValues(profile[key], 12)
+		if len(values) > 0 {
+			return values
+		}
+	}
+	return nil
+}
+
+func stringValues(value any, limit int) []string {
+	out := []string{}
+	var walk func(any)
+	walk = func(current any) {
+		if limit > 0 && len(out) >= limit {
+			return
+		}
+		switch v := current.(type) {
+		case string:
+			for _, part := range splitProfileString(v) {
+				if limit > 0 && len(out) >= limit {
+					return
+				}
+				out = append(out, part)
+			}
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(v))
+			for key := range v {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				walk(v[key])
+			}
+		}
+	}
+	walk(value)
+	return compactStrings(out)
+}
+
+func splitProfileString(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	lines := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ';'
+	})
+	if len(lines) <= 1 {
+		return []string{value}
+	}
+	return compactStrings(lines)
+}
+
+func strongestEvidenceSource(inventory []db.ContentInventory) (db.ContentInventory, int) {
+	var best db.ContentInventory
+	bestCount := 0
+	total := 0
+	for _, item := range inventory {
+		count := len(rawJSONList(item.EvidenceSnippets, 1000))
+		total += count
+		if count > bestCount {
+			best = item
+			bestCount = count
+		}
+	}
+	return best, total
+}
+
+func rawJSONList(raw json.RawMessage, limit int) []string {
+	var value any
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	return stringValues(value, limit)
+}
+
+func firstN(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return values[:limit]
+}
+
+func compactStrings(values []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s Service) Brief(ctx context.Context, projectID uuid.UUID) (Brief, error) {

@@ -33,6 +33,25 @@ test("nextWorkspaceAction prioritizes context before content generation", async 
   assert.match(action.detail, /before generating/i);
 });
 
+test("nextWorkspaceAction requires confirmation before opportunity discovery", async () => {
+  const { nextWorkspaceAction, sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+
+  const input = {
+    projectId: "project_1",
+    hasProfile: true,
+    contextConfirmed: false,
+    failedPublishCount: 0,
+    hasBlockedDrafts: false,
+    reviewCount: 0,
+    readyCount: 0,
+    topicsCount: 0,
+  };
+
+  assert.equal(nextWorkspaceAction(input).title, "Confirm context");
+  assert.equal(nextWorkspaceAction(input).href, "/projects/project_1/context");
+  assert.equal(sidebarPrimaryAction(input).title, "Confirm context");
+});
+
 test("buildActionableMomentum hides zero values and returns the next useful empty action", async () => {
   const { buildActionableMomentum } = await loadDashboardUXLogicModule();
 

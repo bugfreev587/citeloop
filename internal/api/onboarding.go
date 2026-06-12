@@ -33,6 +33,7 @@ type insightInventoryInput struct {
 
 type insightInventoryRunner func(context.Context, insightInventoryInput)
 type seoOnboardingRunner func(context.Context, projectOnboardingInput)
+type contextOpportunityRunner func(context.Context, uuid.UUID)
 
 func (s *Server) startProjectOnboarding(projectID uuid.UUID, siteURL string) {
 	siteURL = strings.TrimSpace(siteURL)
@@ -66,6 +67,21 @@ func (s *Server) startInsightInventoryCrawl(projectID uuid.UUID, landingURL stri
 		ctx, cancel := context.WithTimeout(context.Background(), projectOnboardingTimeout)
 		defer cancel()
 		runner(ctx, in)
+	}()
+}
+
+func (s *Server) startContextOpportunityDiscovery(projectID uuid.UUID) {
+	if projectID == uuid.Nil {
+		return
+	}
+	runner := s.ContextOpportunityRunner
+	if runner == nil {
+		runner = s.runContextOpportunityDiscovery
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), projectOnboardingTimeout)
+		defer cancel()
+		runner(ctx, projectID)
 	}()
 }
 
@@ -146,6 +162,28 @@ func (s *Server) runProjectSEOOnboarding(ctx context.Context, in projectOnboardi
 		"project_id", in.ProjectID,
 		"sync_status", syncResult.Status,
 		"analyze_status", analyzeResult.Status,
+	)
+}
+
+func (s *Server) runContextOpportunityDiscovery(ctx context.Context, projectID uuid.UUID) {
+	log := s.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	if s.Q == nil {
+		log.Warn("context opportunity discovery skipped: database unavailable", "project_id", projectID)
+		return
+	}
+	result, err := s.seoService().Analyze(ctx, projectID)
+	if err != nil {
+		log.Warn("context opportunity discovery failed", "project_id", projectID, "err", err)
+		return
+	}
+	log.Info(
+		"context opportunity discovery complete",
+		"project_id", projectID,
+		"status", result.Status,
+		"generated", result.GeneratedAnomalies,
 	)
 }
 

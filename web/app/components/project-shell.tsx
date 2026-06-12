@@ -102,9 +102,12 @@ export function ProjectShell({
       ]);
       if (cancelled) return;
       const reviewArticles = review.flatMap((group) => group.articles);
+      const profilePayload: Record<string, any> | null =
+        profile?.profile && typeof profile.profile === "object" ? profile.profile : null;
       setActionSummary({
         projectId,
         hasProfile: Boolean(profile),
+        contextConfirmed: Boolean(profilePayload?.context_confirmed_at || profilePayload?.confirmed_at),
         failedPublishCount: failedPublish.length,
         hasBlockedDrafts: reviewArticles.some((article) => article.qa_blocking),
         reviewCount: reviewArticles.length,
