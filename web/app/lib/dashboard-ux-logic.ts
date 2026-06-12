@@ -284,6 +284,11 @@ function runStep(run: ContextBuildRun) {
   return typeof step === "string" ? step : "";
 }
 
+function runPhase(run: ContextBuildRun) {
+  const phase = run.input?.phase;
+  return typeof phase === "string" ? phase : "";
+}
+
 function latestCrawlSummary(runs: ContextBuildRun[]) {
   for (const run of runs) {
     const summary = run.output?.crawl_summary;
@@ -320,6 +325,13 @@ export function contextBuildTracks({
   const inventoryErrorCount = inventoryRuns.filter((run) => run.status === "error" || run.status === "failed").length;
   const crawlFailed = runs.some((run) => runStep(run) === "crawl" && (run.status === "error" || run.status === "failed"));
   const profileFailed = runs.some((run) => runStep(run) === "profile" && (run.status === "error" || run.status === "failed"));
+  const profileStarted = runs.some((run) => runStep(run) === "profile" && runPhase(run) === "started");
+  const profileCompletedRun = runs.some((run) => runStep(run) === "profile" && runPhase(run) !== "started" && run.status !== "error");
+  const crawlStarted = runs.some((run) => runStep(run) === "crawl" && runPhase(run) === "started");
+  const crawlSummaryReported = Boolean(summary);
+  const noBackendProgressReported =
+    runs.length === 0 && !hasProfile && sourcePageCount === 0 && evidencePageCount === 0 && evidenceCount === 0;
+  const backendProgressStalled = noBackendProgressReported && pollingExhausted;
   const observedSourceCount = Math.max(sourcePageCount, fetchedCount);
   const sourceTarget = Math.max(1, Math.min(contextBuildTargetPages, observedSourceCount || contextBuildTargetPages));
   const evidenceTarget = Math.max(1, Math.min(contextBuildTargetPages, fetchedCount || sourcePageCount || contextBuildTargetPages));
@@ -330,11 +342,56 @@ export function contextBuildTracks({
     (evidencePageCount > 0 && pollingExhausted);
   const active = !(hasProfile && sourceComplete && evidenceComplete);
   const exhausted = active && pollingExhausted;
-  const profileState: ContextBuildTrackState = hasProfile ? "done" : exhausted && profileFailed ? "attention" : "running";
-  const sourceState: ContextBuildTrackState = sourceComplete ? "done" : exhausted && crawlFailed ? "attention" : "running";
+  const profileStartStalled = exhausted && profileStarted && !hasProfile && !profileFailed && !profileCompletedRun;
+  const crawlStartStalled = exhausted && crawlStarted && !crawlFailed && !crawlSummaryReported && observedSourceCount === 0;
+  const startedProgressStalled = profileStartStalled || crawlStartStalled;
+  const profileNeedsAttention = backendProgressStalled || profileStartStalled || (exhausted && profileFailed);
+  const sourceNeedsAttention = backendProgressStalled || crawlStartStalled || (exhausted && crawlFailed);
+  const evidenceNeedsAttention = backendProgressStalled || startedProgressStalled || (exhausted && evidenceCount === 0);
+  const profileState: ContextBuildTrackState = hasProfile ? "done" : profileNeedsAttention ? "attention" : "running";
+  const sourceState: ContextBuildTrackState = sourceComplete ? "done" : sourceNeedsAttention ? "attention" : "running";
   const evidenceState: ContextBuildTrackState =
-    evidenceComplete ? "done" : sourcePageCount === 0 && fetchedCount === 0 ? "waiting" : exhausted && evidenceCount === 0 ? "attention" : "running";
+    evidenceComplete
+      ? "done"
+      : backendProgressStalled || startedProgressStalled
+        ? "attention"
+        : sourcePageCount === 0 && fetchedCount === 0
+          ? "waiting"
+          : evidenceNeedsAttention
+            ? "attention"
+            : "running";
   const skippedPages = crawlErrors + inventoryErrorCount;
+  const profileDetail = hasProfile
+    ? "Product facts are saved."
+    : backendProgressStalled
+      ? "No backend profile progress has reported yet. Check Admin and API worker logs."
+      : profileStartStalled
+        ? "Profile extraction started but has not finished. Check Admin > LLM settings if this remains."
+      : profileState === "attention"
+        ? "Profile extraction needs attention."
+        : "Extracting product facts from the service URL.";
+  const sourceDetail = sourceComplete
+    ? skippedPages > 0
+      ? `Crawl finished with ${skippedPages} skipped page${skippedPages === 1 ? "" : "s"}.`
+      : "Public source pages are fetched."
+    : sourceState === "attention"
+      ? backendProgressStalled
+        ? "No source-crawl progress has reported yet. Check the API worker."
+        : crawlStartStalled
+          ? "Source crawl started but has not reported fetched pages. Check the API worker if this remains."
+          : "The crawl hit an error; CiteLoop will continue with available pages."
+      : "Fetching up to 20 public pages; slow or failed URLs are skipped.";
+  const evidenceDetail = evidenceComplete
+    ? `Evidence is available from ${evidencePageCount} source page${evidencePageCount === 1 ? "" : "s"}.`
+    : evidenceState === "waiting"
+      ? "Starts as soon as source pages are available."
+      : evidenceState === "attention"
+        ? backendProgressStalled
+          ? "Evidence cannot start until the crawl reports source pages."
+          : startedProgressStalled
+            ? "Evidence is waiting on the profile or source-crawl track to finish reporting."
+            : "Evidence extraction has not produced usable snippets yet."
+        : "Extracting source-backed snippets in parallel.";
   const tracks: ContextBuildTrack[] = [
     {
       id: "profile",
@@ -343,11 +400,7 @@ export function contextBuildTracks({
       progress: hasProfile ? 100 : 0,
       current: hasProfile ? 1 : 0,
       target: 1,
-      detail: hasProfile
-        ? "Product facts are saved."
-        : profileState === "attention"
-          ? "Profile extraction needs attention."
-          : "Extracting product facts from the service URL.",
+      detail: profileDetail,
     },
     {
       id: "source-crawl",
@@ -356,13 +409,7 @@ export function contextBuildTracks({
       progress: sourceComplete ? 100 : boundedPercent(sourcePageCount, sourceTarget),
       current: Math.min(sourceTarget, observedSourceCount),
       target: sourceTarget,
-      detail: sourceComplete
-        ? skippedPages > 0
-          ? `Crawl finished with ${skippedPages} skipped page${skippedPages === 1 ? "" : "s"}.`
-          : "Public source pages are fetched."
-        : sourceState === "attention"
-          ? "The crawl hit an error; CiteLoop will continue with available pages."
-          : "Fetching up to 20 public pages; slow or failed URLs are skipped.",
+      detail: sourceDetail,
     },
     {
       id: "evidence",
@@ -371,13 +418,7 @@ export function contextBuildTracks({
       progress: evidenceComplete ? 100 : boundedPercent(evidencePageCount, evidenceTarget),
       current: Math.min(evidenceTarget, evidencePageCount),
       target: evidenceTarget,
-      detail: evidenceComplete
-        ? `Evidence is available from ${evidencePageCount} source page${evidencePageCount === 1 ? "" : "s"}.`
-        : evidenceState === "waiting"
-          ? "Starts as soon as source pages are available."
-          : evidenceState === "attention"
-            ? "Evidence extraction has not produced usable snippets yet."
-            : "Extracting source-backed snippets in parallel.",
+      detail: evidenceDetail,
     },
   ];
 
@@ -395,9 +436,13 @@ export function contextBuildTracks({
     active: true,
     exhausted,
     title: "Building domain context",
-    detail: exhausted
-      ? "Parallel context build is still checking results. CiteLoop skips slow or failed pages instead of waiting for every URL."
-      : "Parallel context build is running. Each track updates from saved profile, crawl, and evidence results.",
+    detail: backendProgressStalled
+      ? "CiteLoop has not received a backend progress report yet. Check Admin > LLM settings and API worker logs."
+      : startedProgressStalled
+        ? "A backend track started but has not completed. Check Admin > LLM settings and API worker logs."
+      : exhausted
+        ? "Parallel context build is still checking results. CiteLoop skips slow or failed pages instead of waiting for every URL."
+        : "Parallel context build is running. Each track updates from saved profile, crawl, and evidence results.",
     tracks,
   };
 }

@@ -9,6 +9,7 @@ import {
   Database,
   FolderKanban,
   Home,
+  KeyRound,
   ListChecks,
   PenLine,
   Search,
@@ -28,7 +29,10 @@ const navItems = [
   { label: "Publish", href: "publish", icon: Send },
   { label: "Visibility", href: "visibility", icon: Search },
   { label: "Settings", href: "settings", icon: Settings2 },
+  { label: "Admin", href: "admin", icon: KeyRound },
 ];
+
+const adminOnlyNavLeaves = new Set(["settings", "admin"]);
 
 function projectHref(projectId: string, leaf: string) {
   return leaf ? `/projects/${projectId}/${leaf}` : `/projects/${projectId}`;
@@ -63,8 +67,8 @@ export function ProjectShell({
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
-  // Settings is admin-gated server-side; hide the entry for users who would only hit a 404.
-  const visibleNav = navItems.filter((item) => item.href !== "settings" || canAccessSettings);
+  // Internal routes are admin-gated server-side; hide entries that would only hit a 404.
+  const visibleNav = navItems.filter((item) => !adminOnlyNavLeaves.has(item.href) || canAccessSettings);
   const primaryAction: WorkspaceAction = useMemo(() => {
     if (!actionSummary) {
       return {

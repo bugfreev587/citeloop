@@ -10,7 +10,7 @@ const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath))
 test("project shell uses user-facing Phase 1 navigation and hides Runs from primary nav", () => {
   const shell = read("components/project-shell.tsx");
 
-  for (const label of ["Context", "Content Plan", "Review", "Publish", "Visibility", "Settings"]) {
+  for (const label of ["Context", "Content Plan", "Review", "Publish", "Visibility", "Settings", "Admin"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
   }
 
@@ -43,11 +43,12 @@ test("project shell uses the review-width canvas for every project page", () => 
   assert.doesNotMatch(shell, /max-w-\[960px\]/);
 });
 
-test("settings nav entry is hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
+test("internal nav entries are hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
   const shell = read("components/project-shell.tsx");
-  // Shell must accept and apply a canAccessSettings gate so non-admin users do not see a Settings entry that 404s.
+  // Shell must accept and apply a canAccessSettings gate so non-admin users do not see internal entries that 404.
   assert.match(shell, /canAccessSettings/);
-  assert.match(shell, /item\.href !== "settings" \|\| canAccessSettings/);
+  assert.match(shell, /adminOnlyNavLeaves/);
+  assert.match(shell, /!adminOnlyNavLeaves\.has\(item\.href\) \|\| canAccessSettings/);
   assert.match(shell, /visibleNav\.map/);
 
   const layout = read("projects/[id]/layout.tsx");

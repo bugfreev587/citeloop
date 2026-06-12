@@ -88,10 +88,19 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 // RunQuickProfile builds and persists a product profile from the landing page
 // only, so onboarding can make the project usable before full crawl completes.
 func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (*Profile, CrawlSummary, error) {
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "landing", "phase": "started"}, map[string]any{
+		"landing_url":   landingURL,
+		"profile_stage": "started",
+	}, llm.CompletionResp{}, nil)
+
 	cr := crawl.New(crawlCfg, a.Log)
 	res, err := cr.FetchLanding(ctx, landingURL)
 	if err != nil {
-		return nil, CrawlSummary{}, fmt.Errorf("crawl landing: %w", err)
+		runErr := fmt.Errorf("crawl landing: %w", err)
+		recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "landing", "phase": "fetch_landing"}, map[string]any{
+			"landing_url": landingURL,
+		}, llm.CompletionResp{}, runErr)
+		return nil, CrawlSummary{}, runErr
 	}
 	summary := summarizeCrawl(landingURL, res)
 
@@ -124,6 +133,11 @@ func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, land
 // RunInventoryFromCrawl performs the slower full crawl and content inventory
 // pass without replacing the active landing-derived product profile.
 func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID, landingURL string, crawlCfg config.CrawlConfig) (int, CrawlSummary, error) {
+	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "crawl", "landing": landingURL, "scope": "background", "phase": "started"}, map[string]any{
+		"landing_url":  landingURL,
+		"target_pages": crawlCfg.MaxPages,
+	}, llm.CompletionResp{}, nil)
+
 	cr := crawl.New(crawlCfg, a.Log)
 	res, err := cr.Run(ctx, landingURL)
 	if err != nil {

@@ -281,6 +281,41 @@ test("contextBuildTracks reports parallel onboarding work from observed outputs"
     ["running", "running", "waiting"],
   );
 
+  const noBackendReport = contextBuildTracks({
+    hasProfile: false,
+    sourcePageCount: 0,
+    evidencePageCount: 0,
+    evidenceCount: 0,
+    pollCount: 18,
+    pollLimit: 18,
+    runs: [],
+  });
+  assert.equal(noBackendReport.exhausted, true);
+  assert.match(noBackendReport.detail, /backend progress report/i);
+  assert.deepEqual(
+    noBackendReport.tracks.map((track) => track.state),
+    ["attention", "attention", "attention"],
+  );
+
+  const startedButStalled = contextBuildTracks({
+    hasProfile: false,
+    sourcePageCount: 0,
+    evidencePageCount: 0,
+    evidenceCount: 0,
+    pollCount: 18,
+    pollLimit: 18,
+    runs: [
+      { input: { step: "profile", phase: "started" }, output: { profile_stage: "started" }, status: "ok" },
+      { input: { step: "crawl", phase: "started" }, output: { target_pages: 20 }, status: "ok" },
+    ],
+  });
+  assert.match(startedButStalled.detail, /started but has not completed/i);
+  assert.deepEqual(
+    startedButStalled.tracks.map((track) => track.state),
+    ["attention", "attention", "attention"],
+  );
+  assert.match(startedButStalled.tracks[0].detail, /LLM settings/i);
+
   const withPartialEvidence = contextBuildTracks({
     hasProfile: true,
     sourcePageCount: 12,

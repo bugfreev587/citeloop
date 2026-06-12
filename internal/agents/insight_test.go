@@ -122,6 +122,41 @@ func TestRunQuickProfileRecordsProvisionalStage(t *testing.T) {
 	}
 }
 
+func TestRunQuickProfileRecordsStartAndLandingFetchFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "offline", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	store := &insightDBSpy{}
+	insight := NewInsight(Deps{Q: db.New(store), LLM: &sequenceLLM{}}, nil)
+	projectID := uuid.New()
+
+	_, _, err := insight.RunQuickProfile(context.Background(), projectID, srv.URL, config.CrawlConfig{
+		RequestTimeoutMs: 1000,
+		RateLimitRPS:     1000,
+		RespectRobots:    false,
+	})
+	if err == nil {
+		t.Fatal("RunQuickProfile must return landing fetch errors")
+	}
+
+	start := store.findRunWith("profile", `"phase":"started"`)
+	if start == nil {
+		t.Fatalf("expected profile start generation run, got %#v", store.runs)
+	}
+	failure := store.findRunWith("profile", `"phase":"fetch_landing"`)
+	if failure == nil {
+		t.Fatalf("expected profile landing failure generation run, got %#v", store.runs)
+	}
+	if failure.status != "error" {
+		t.Fatalf("landing failure status = %q, want error", failure.status)
+	}
+	if failure.err == nil || !strings.Contains(*failure.err, "crawl landing:") {
+		t.Fatalf("landing failure error = %#v, want crawl landing error", failure.err)
+	}
+}
+
 func TestRunInventoryFromCrawlRecordsCrawlFailureRun(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "offline", http.StatusInternalServerError)
@@ -142,6 +177,10 @@ func TestRunInventoryFromCrawlRecordsCrawlFailureRun(t *testing.T) {
 		t.Fatal("RunInventoryFromCrawl must return crawl errors")
 	}
 
+	start := store.findRunWith("crawl", `"phase":"started"`)
+	if start == nil {
+		t.Fatalf("expected crawl start generation run, got %#v", store.runs)
+	}
 	run := store.findRun("crawl")
 	if run == nil {
 		t.Fatalf("expected crawl failure generation run, got %#v", store.runs)
@@ -429,8 +468,19 @@ func (s *insightDBSpy) QueryRow(_ context.Context, query string, args ...interfa
 
 func (s *insightDBSpy) findRun(step string) *capturedRun {
 	needle := `"step":"` + step + `"`
-	for i := range s.runs {
+	for i := len(s.runs) - 1; i >= 0; i-- {
 		if strings.Contains(string(s.runs[i].input), needle) {
+			return &s.runs[i]
+		}
+	}
+	return nil
+}
+
+func (s *insightDBSpy) findRunWith(step string, inputFragment string) *capturedRun {
+	needle := `"step":"` + step + `"`
+	for i := range s.runs {
+		input := string(s.runs[i].input)
+		if strings.Contains(input, needle) && strings.Contains(input, inputFragment) {
 			return &s.runs[i]
 		}
 	}

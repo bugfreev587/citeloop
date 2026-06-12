@@ -185,6 +185,11 @@ export function AdminClient() {
         detail="Only the provider, base URL, and key tail are returned to the browser after saving."
         tone="neutral"
       />
+      <Notice
+        title="Admin access"
+        detail="Set CITELOOP_ADMIN_USER_IDS to comma-separated Clerk user IDs on both the web and API deployments. If no admin credential is saved, the API falls back to TOKENGATE_API_KEY, TOKENGATE_BASE_URL, and TOKENGATE_MODEL from the server environment."
+        tone="neutral"
+      />
     </div>
   );
 }
