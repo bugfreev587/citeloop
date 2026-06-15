@@ -155,10 +155,19 @@ test("settings maps raw errors to user copy, confirms a budget pause, and drops 
 test("review surfaces honest repair state and a deep link to fix evidence in context", () => {
   const review = read("projects/[id]/review/review-client.tsx");
   const articleDetail = read("projects/[id]/articles/[articleId]/article-detail-client.tsx");
+  assert.match(review, /Ready to approve/);
+  assert.match(review, /Auto repair active/);
+  assert.match(review, /Needs human/);
+  assert.match(review, /Claim evidence map/);
+  assert.match(review, /How this article appears in search/);
+  assert.match(review, /Preview/);
+  assert.match(review, /reviewQueueSummary/);
+  assert.match(review, /selectedArticleId/);
   assert.match(review, /Fix evidence in Context/);
   assert.match(review, /Automatic repair is exhausted/);
   assert.match(review, /repairExhausted/);
   assert.match(review, /Cannot approve:/);
+  assert.doesNotMatch(review, /Web preview/);
   assert.doesNotMatch(review, /qa blocking/);
   assert.match(articleDetail, /Cannot approve:/);
   assert.doesNotMatch(articleDetail, /qa blocking/);

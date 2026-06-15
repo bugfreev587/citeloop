@@ -92,3 +92,139 @@ test("shouldAutoRepairArticle catches QA and SEO repairable drafts", async () =>
   assert.equal(shouldAutoRepairArticle({ ...baseArticle, qa_blocking: true, repair_attempts: 2 }), false);
   assert.equal(shouldAutoRepairArticle({ ...baseArticle, qa_blocking: true, requires_human_decision: true }), false);
 });
+
+test("reviewQueueSummary separates ready, auto-repair, and human-decision work", async () => {
+  const { reviewQueueSummary } = await loadReviewInsightsModule();
+  const ready = {
+    id: "ready-article",
+    content_md: "# Ready\n\n## Body\n\nText",
+    seo_meta: {
+      title: "Ready article",
+      meta_description: "Ready description",
+      slug: "ready-article",
+      h1: "Ready article",
+      target_keyword: "ready keyword",
+    },
+    canonical_url: null,
+    resolved_slug: null,
+    qa_blocking: false,
+    repair_attempts: 0,
+    repair_status: "idle",
+    requires_human_decision: false,
+    qa_feedback: {},
+  };
+  const repairable = {
+    ...ready,
+    id: "repairable-article",
+    qa_blocking: true,
+    repair_attempts: 0,
+    repair_status: "idle",
+  };
+  const activelyRepairing = {
+    ...ready,
+    id: "repairing-article",
+    qa_blocking: true,
+    repair_attempts: 1,
+    repair_status: "repairing",
+  };
+  const exhausted = {
+    ...ready,
+    id: "exhausted-article",
+    qa_blocking: true,
+    repair_attempts: 2,
+    repair_status: "exhausted",
+  };
+  const humanDecision = {
+    ...ready,
+    id: "human-decision-article",
+    qa_blocking: true,
+    repair_attempts: 1,
+    repair_status: "human_decision",
+    requires_human_decision: true,
+  };
+
+  const summary = reviewQueueSummary([
+    { topic_id: "topic-a", articles: [ready, repairable, activelyRepairing] },
+    { topic_id: "topic-b", articles: [exhausted, humanDecision] },
+  ]);
+
+  assert.equal(summary.total, 5);
+  assert.equal(summary.bundleCount, 2);
+  assert.equal(summary.ready, 1);
+  assert.equal(summary.autoRepair, 2);
+  assert.equal(summary.needsHuman, 2);
+  assert.equal(summary.blocked, 4);
+});
+
+test("reviewArticleState keeps repair-exhausted drafts in the human bucket", async () => {
+  const { reviewArticleState } = await loadReviewInsightsModule();
+  const baseArticle = {
+    content_md: "# Draft\n\n## Body\n\nText",
+    seo_meta: {
+      title: "Draft",
+      meta_description: "Draft description",
+      slug: "draft",
+      h1: "Draft",
+      target_keyword: "draft keyword",
+    },
+    canonical_url: null,
+    resolved_slug: null,
+    qa_blocking: true,
+    repair_attempts: 2,
+    repair_status: "exhausted",
+    requires_human_decision: false,
+    qa_feedback: {},
+  };
+
+  const state = reviewArticleState(baseArticle);
+
+  assert.equal(state.kind, "needs_human");
+  assert.equal(state.approvable, false);
+  assert.match(state.detail, /repair budget/i);
+});
+
+test("qaClaimRows reads the QA evidence map without inventing evidence labels", async () => {
+  const { qaClaimRows } = await loadReviewInsightsModule();
+  const article = {
+    qa_feedback: {
+      claims: [
+        { claim: "UniPost supports hosted OAuth.", mapped: true, evidence: "Feature page says UniPost supports hosted OAuth." },
+        { claim: "UniPost is SOC 2 ready.", mapped: false, evidence: "" },
+      ],
+    },
+    qa_issues: ["unmapped product claim: UniPost is SOC 2 ready."],
+  };
+
+  const rows = qaClaimRows(article);
+
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.status), ["mapped", "unmapped"]);
+  assert.equal(rows[0].evidence, "Feature page says UniPost supports hosted OAuth.");
+  assert.equal(rows[1].claim, "UniPost is SOC 2 ready.");
+});
+
+test("searchAppearanceRows only uses current SEO metadata", async () => {
+  const { searchAppearanceRows } = await loadReviewInsightsModule();
+  const article = {
+    content_md: "# OAuth Consent\n\n## Body\n\nText",
+    seo_meta: {
+      title: "OAuth consent screen best practices",
+      meta_description: "Write consent copy users can understand.",
+      slug: "oauth-consent-screen-best-practices",
+      h1: "OAuth Consent",
+      target_keyword: "oauth consent screen",
+    },
+    canonical_url: null,
+    resolved_slug: null,
+  };
+
+  const rows = searchAppearanceRows(article);
+
+  assert.deepEqual(
+    rows.map((row) => row.label),
+    ["Target keyword", "Result title", "Description", "URL slug"],
+  );
+  assert.equal(rows[0].value, "oauth consent screen");
+  assert.equal(rows[3].value, "oauth-consent-screen-best-practices");
+  assert.equal(rows.some((row) => /secondary query|snippet promise|search demand/i.test(row.label + row.value)), false);
+});

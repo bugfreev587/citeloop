@@ -10,6 +10,13 @@ type RepairableArticleLike = ReviewArticleLike & {
   repair_attempts?: number;
   repair_status?: string;
   requires_human_decision?: boolean;
+  qa_feedback?: Record<string, any>;
+  qa_issues?: string[];
+};
+
+type ReviewQueueGroupLike = {
+  topic_id: string;
+  articles: RepairableArticleLike[];
 };
 
 export type SEOContribution = {
@@ -24,6 +31,35 @@ export type ExplainedQAIssue = {
   detail: string;
   action: string;
   raw: string;
+};
+
+export type ReviewArticleState = {
+  kind: "ready" | "auto_repair" | "needs_human";
+  label: string;
+  detail: string;
+  approvable: boolean;
+};
+
+export type ReviewQueueSummary = {
+  total: number;
+  bundleCount: number;
+  ready: number;
+  autoRepair: number;
+  needsHuman: number;
+  blocked: number;
+};
+
+export type QAClaimRow = {
+  claim: string;
+  mapped: boolean;
+  evidence: string;
+  status: "mapped" | "unmapped";
+};
+
+export type SearchAppearanceRow = {
+  label: string;
+  value: string;
+  detail: string;
 };
 
 function textValue(value: any): string {
@@ -136,6 +172,133 @@ export function shouldAutoRepairArticle(article: RepairableArticleLike) {
   if (article.repair_status === "repairing" || article.repair_status === "exhausted" || article.repair_status === "human_decision") return false;
   if (article.qa_blocking) return true;
   return buildSEOContributions(article).some((row) => row.status === "missing" || (row.label === "Search intent" && row.status !== "ready"));
+}
+
+export function reviewArticleState(article: RepairableArticleLike): ReviewArticleState {
+  if (!article.qa_blocking) {
+    return {
+      kind: "ready",
+      label: "Ready to approve",
+      detail: "QA has cleared this draft.",
+      approvable: true,
+    };
+  }
+
+  const repairAttempts = article.repair_attempts ?? 0;
+  if (article.requires_human_decision || repairAttempts >= 2 || article.repair_status === "exhausted" || article.repair_status === "human_decision") {
+    return {
+      kind: "needs_human",
+      label: "Needs human decision",
+      detail: "Automatic repair budget is spent or CiteLoop needs a source decision.",
+      approvable: false,
+    };
+  }
+
+  if (article.repair_status === "repairing") {
+    return {
+      kind: "auto_repair",
+      label: "Auto repair active",
+      detail: "CiteLoop is repairing the draft and will rerun QA.",
+      approvable: false,
+    };
+  }
+
+  if (shouldAutoRepairArticle(article)) {
+    return {
+      kind: "auto_repair",
+      label: "Auto repair queued",
+      detail: "CiteLoop can attempt a safe repair before asking you.",
+      approvable: false,
+    };
+  }
+
+  return {
+    kind: "needs_human",
+    label: "Needs human decision",
+    detail: "QA is blocking approval and no automatic repair path is available.",
+    approvable: false,
+  };
+}
+
+export function reviewQueueSummary(groups: ReviewQueueGroupLike[]): ReviewQueueSummary {
+  const summary: ReviewQueueSummary = {
+    total: 0,
+    bundleCount: groups.length,
+    ready: 0,
+    autoRepair: 0,
+    needsHuman: 0,
+    blocked: 0,
+  };
+
+  for (const article of groups.flatMap((group) => group.articles)) {
+    summary.total += 1;
+    if (article.qa_blocking) summary.blocked += 1;
+    const state = reviewArticleState(article);
+    if (state.kind === "ready") summary.ready += 1;
+    if (state.kind === "auto_repair") summary.autoRepair += 1;
+    if (state.kind === "needs_human") summary.needsHuman += 1;
+  }
+
+  return summary;
+}
+
+export function qaClaimRows(article: Pick<RepairableArticleLike, "qa_feedback" | "qa_issues">): QAClaimRow[] {
+  const claims = Array.isArray(article.qa_feedback?.claims) ? article.qa_feedback?.claims : [];
+  const rows = claims
+    .map((claim) => {
+      const text = textValue(claim?.claim);
+      if (!text) return null;
+      const mapped = Boolean(claim?.mapped);
+      return {
+        claim: text,
+        mapped,
+        evidence: textValue(claim?.evidence),
+        status: mapped ? ("mapped" as const) : ("unmapped" as const),
+      };
+    })
+    .filter((row): row is QAClaimRow => row !== null);
+
+  if (rows.length > 0) return rows;
+
+  return (article.qa_issues ?? [])
+    .map((issue) => issue.match(/^unmapped product claim:\s*(.+)$/i)?.[1])
+    .filter((claim): claim is string => Boolean(claim))
+    .map((claim) => ({
+      claim: claim.trim(),
+      mapped: false,
+      evidence: "",
+      status: "unmapped" as const,
+    }));
+}
+
+export function searchAppearanceRows(article: ReviewArticleLike): SearchAppearanceRow[] {
+  const keyword = textValue(article.seo_meta?.target_keyword) || textValue(article.seo_meta?.keyword);
+  const title = textValue(article.seo_meta?.title);
+  const description = textValue(article.seo_meta?.meta_description);
+  const slug = articleReviewSlug(article);
+
+  return [
+    {
+      label: "Target keyword",
+      value: keyword || "Not specified",
+      detail: "Existing SEO metadata used as the draft's query target.",
+    },
+    {
+      label: "Result title",
+      value: title || "Missing title",
+      detail: "Existing SEO title metadata.",
+    },
+    {
+      label: "Description",
+      value: description || "Missing meta description",
+      detail: "Existing meta description metadata.",
+    },
+    {
+      label: "URL slug",
+      value: slug || "Missing slug",
+      detail: "Existing resolved or SEO slug.",
+    },
+  ];
 }
 
 export function explainQAIssue(issue: string): ExplainedQAIssue {
