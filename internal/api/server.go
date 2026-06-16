@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -36,6 +37,10 @@ type Server struct {
 	InsightInventoryRunner   insightInventoryRunner
 	SEOOnboardingRunner      seoOnboardingRunner
 	ContextOpportunityRunner contextOpportunityRunner
+
+	// emailResolver is a test seam for resolving a Clerk subject to its email;
+	// nil in production, where the Clerk Backend API is used.
+	emailResolver func(ctx context.Context, subject string) string
 }
 
 func (s *Server) Router() http.Handler {
@@ -51,10 +56,13 @@ func (s *Server) Router() http.Handler {
 			r.Use(clerkhttp.RequireHeaderAuthorization())
 		}
 
+		r.Get("/me", s.me)
+
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/admin/llm-credentials", s.getLLMCredentials)
 			r.Put("/admin/llm-credentials", s.updateLLMCredentials)
+			r.Post("/admin/llm-credentials/test", s.testLLMCredentials)
 		})
 
 		r.Get("/projects", s.listProjects)

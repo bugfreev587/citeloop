@@ -36,16 +36,50 @@ func TestOwnerIDFallsBackToDefaultForLocalDev(t *testing.T) {
 	}
 }
 
-func TestAdminAccessRequiresAllowlistOrAdminRoleWhenClerkIsConfigured(t *testing.T) {
-	srv := &Server{Env: config.Env{ClerkSecretKey: "sk_test", AdminUserIDs: "user_admin"}}
+func TestEmailIsAdminMatchesAllowlistCaseInsensitively(t *testing.T) {
+	const allow = "owner@unipost.dev, Admin@Example.com"
+	if !emailIsAdmin("admin@example.com", allow) {
+		t.Fatal("listed email (any case) must be admin")
+	}
+	if !emailIsAdmin("owner@unipost.dev", allow) {
+		t.Fatal("listed email must be admin")
+	}
+	if emailIsAdmin("stranger@example.com", allow) {
+		t.Fatal("unlisted email must not be admin")
+	}
+	if emailIsAdmin("", allow) || emailIsAdmin("admin@example.com", "") {
+		t.Fatal("empty email or empty allowlist must not be admin")
+	}
+}
+
+func TestAdminAccessUsesEmailAllowlistOrAdminRoleWhenClerkIsConfigured(t *testing.T) {
+	srv := &Server{
+		Env: config.Env{ClerkSecretKey: "sk_test", AdminEmails: "admin@example.com"},
+		emailResolver: func(_ context.Context, subject string) string {
+			switch subject {
+			case "user_admin":
+				return "admin@example.com"
+			case "user_member":
+				return "member@example.com"
+			}
+			return ""
+		},
+	}
 
 	if srv.isAdmin(requestWithClaims("user_member", "")) {
 		t.Fatal("ordinary Clerk user must not be an admin")
 	}
 	if !srv.isAdmin(requestWithClaims("user_admin", "")) {
-		t.Fatal("allowlisted Clerk user must be an admin")
+		t.Fatal("admin-email user must be an admin")
 	}
 	if !srv.isAdmin(requestWithClaims("user_org_admin", "org:admin")) {
 		t.Fatal("Clerk org admin role must be accepted")
+	}
+}
+
+func TestAdminAccessOpenInLocalDev(t *testing.T) {
+	srv := &Server{}
+	if !srv.isAdmin(requestWithClaims("anyone", "")) {
+		t.Fatal("local dev (no Clerk key) should allow admin access")
 	}
 }

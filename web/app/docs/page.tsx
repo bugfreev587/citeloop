@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   UploadCloud,
 } from "lucide-react";
+import { AdminDocsLink } from "./admin-link";
 
 const docsNav = [
   { label: "Overview", href: "#overview" },
@@ -149,6 +150,7 @@ export default function DocsPage() {
             CiteLoop
           </Link>
           <div className="flex flex-wrap gap-2">
+            <AdminDocsLink />
             <Link
               href="/"
               className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
