@@ -1,18 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ExternalLink, FileText, RefreshCw, Save, Search, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
   articlePreviewHref,
   articleReviewTitle,
   buildSEOContributions,
-  explainQAIssue,
   qaClaimRows,
   reviewArticleState,
   reviewQueueSummary,
   searchAppearanceRows,
-  shouldAutoRepairArticle,
   type QAClaimRow,
   type ReviewArticleState,
   type SEOContribution,
@@ -26,16 +24,13 @@ type QueueArticle = { article: Article; topicId: string };
 const STATE_ORDER: Record<ReviewArticleState["kind"], number> = {
   needs_human: 0,
   ready: 1,
-  auto_repair: 2,
+  recovering: 2,
 };
 
 export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [repairing, setRepairing] = useState<Record<string, boolean>>({});
-  const [repairAttempted, setRepairAttempted] = useState<Record<string, boolean>>({});
-  const [repairFailures, setRepairFailures] = useState<Record<string, string>>({});
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [content, setContent] = useState("");
@@ -53,85 +48,39 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    const candidate = groups
-      .flatMap((group) => group.articles)
-      .find((article) => shouldAutoRepairArticle(article) && !repairAttempted[article.id] && !repairing[article.id]);
-    if (!candidate) return;
-
-    let cancelled = false;
-    setRepairAttempted((current) => ({ ...current, [candidate.id]: true }));
-    setRepairing((current) => ({ ...current, [candidate.id]: true }));
-    setRepairFailures((current) => {
-      const next = { ...current };
-      delete next[candidate.id];
-      return next;
-    });
-
-    api
-      .fixArticle(projectId, candidate.id)
-      .then(async () => {
-        if (cancelled) return;
-        await refresh();
-        setMessage({ title: "CiteLoop repaired a draft and reran QA", tone: "green" });
-      })
-      .catch((e: any) => {
-        if (cancelled) return;
-        setRepairFailures((current) => ({ ...current, [candidate.id]: e.message }));
-        setMessage({
-          title: "Automatic draft repair failed",
-          detail: e.message,
-          tone: "red",
-        });
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setRepairing((current) => {
-          const next = { ...current };
-          delete next[candidate.id];
-          return next;
-        });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, groups, projectId, refresh, repairAttempted, repairing]);
-
-  const effectiveGroups = useMemo(
-    () =>
-      groups.map((group) => ({
-        ...group,
-        articles: group.articles.map((article) => (repairing[article.id] ? { ...article, repair_status: "repairing" } : article)),
-      })),
-    [groups, repairing],
+  // CiteLoop's recovery loop runs server-side every couple of minutes. While
+  // anything is still being handled, poll so the operator watches the queue drain
+  // itself instead of guessing.
+  const hasRecovering = useMemo(
+    () => groups.some((group) => group.articles.some((article) => reviewArticleState(article).kind === "recovering")),
+    [groups],
   );
+  useEffect(() => {
+    if (!hasRecovering) return;
+    const interval = window.setInterval(refresh, 15_000);
+    return () => window.clearInterval(interval);
+  }, [hasRecovering, refresh]);
 
-  const summary = useMemo(() => reviewQueueSummary(effectiveGroups), [effectiveGroups]);
+  const summary = useMemo(() => reviewQueueSummary(groups), [groups]);
   const queueArticles = useMemo(() => {
-    return effectiveGroups
+    return groups
       .flatMap((group) => group.articles.map((article) => ({ article, topicId: group.topic_id })))
-      .sort((a, b) => {
-        const aState = reviewArticleState(a.article);
-        const bState = reviewArticleState(b.article);
-        return STATE_ORDER[aState.kind] - STATE_ORDER[bState.kind];
-      });
-  }, [effectiveGroups]);
+      .sort((a, b) => STATE_ORDER[reviewArticleState(a.article).kind] - STATE_ORDER[reviewArticleState(b.article).kind]);
+  }, [groups]);
 
-  const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? queueArticles[0] ?? null;
+  const decisionArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "needs_human"), [queueArticles]);
+  const readyArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "ready"), [queueArticles]);
+  const recoveringArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "recovering"), [queueArticles]);
+
+  const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? null;
   const selectedArticle = selectedQueueArticle?.article ?? null;
-  const readyArticles = queueArticles.filter((item) => reviewArticleState(item.article).approvable).map((item) => item.article);
   const selectedBusy = selectedArticle
     ? busy === "bulk-approve" || busy === `approve-${selectedArticle.id}` || busy === `reject-${selectedArticle.id}` || busy === `save-${selectedArticle.id}`
     : false;
 
   useEffect(() => {
-    if (queueArticles.length === 0) {
-      if (selectedArticleId) setSelectedArticleId(null);
-      return;
-    }
-    if (!selectedArticleId || !queueArticles.some((item) => item.article.id === selectedArticleId)) {
-      setSelectedArticleId(queueArticles[0].article.id);
+    if (selectedArticleId && !queueArticles.some((item) => item.article.id === selectedArticleId)) {
+      setSelectedArticleId(null);
     }
   }, [queueArticles, selectedArticleId]);
 
@@ -155,8 +104,8 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     } catch (e: any) {
       const isGate = String(e.message).includes("409");
       setMessage({
-        title: isGate ? "Article is still blocked" : `${label} failed`,
-        detail: isGate ? "The article still has blocking QA issues. Open the draft details for the exact reason." : e.message,
+        title: isGate ? "Draft is still being checked" : `${label} failed`,
+        detail: isGate ? "QA has not cleared this draft yet. CiteLoop is still working on it." : e.message,
         tone: isGate ? "amber" : "red",
       });
     } finally {
@@ -166,15 +115,15 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   async function approveReadyArticles() {
     if (readyArticles.length === 0) return;
-    if (!window.confirm(`Approve ${readyArticles.length} ready drafts?`)) return;
+    if (!window.confirm(`Approve ${readyArticles.length} ready draft${readyArticles.length === 1 ? "" : "s"}?`)) return;
     setBusy("bulk-approve");
     setMessage(null);
     try {
-      for (const article of readyArticles) {
-        await api.approve(projectId, article.id);
+      for (const item of readyArticles) {
+        await api.approve(projectId, item.article.id);
       }
       await refresh();
-      setMessage({ title: `${readyArticles.length} ready drafts approved`, tone: "green" });
+      setMessage({ title: `${readyArticles.length} draft${readyArticles.length === 1 ? "" : "s"} approved`, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Approve ready drafts failed", detail: e.message, tone: "red" });
     } finally {
@@ -182,18 +131,30 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     }
   }
 
+  function onApprove(article: Article) {
+    return mutate("Draft approved", `approve-${article.id}`, () => api.approve(projectId, article.id));
+  }
+  function onReject(article: Article) {
+    return mutate("Draft rejected", `reject-${article.id}`, () => api.reject(projectId, article.id));
+  }
+  function onSave(article: Article, nextContent: string) {
+    return mutate("Content saved and QA re-checked", `save-${article.id}`, () => api.edit(projectId, article.id, { content_md: nextContent }));
+  }
+
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Review queue"
-        eyebrow="The human publishing gate"
+        title="Review"
+        eyebrow="Mostly automatic — you only decide the rare cases"
         action={
           <div className="flex flex-wrap justify-end gap-2">
-            <Button disabled={!!busy || readyArticles.length === 0} size="sm" onClick={approveReadyArticles}>
-              <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving ready drafts" idleIcon={<CheckCircle2 size={14} />}>
-                Approve {readyArticles.length} ready...
-              </ButtonProgress>
-            </Button>
+            {readyArticles.length > 0 && (
+              <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
+                <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+                  Approve {readyArticles.length} ready
+                </ButtonProgress>
+              </Button>
+            )}
             <Button disabled={!!busy} size="sm" onClick={refresh}>
               <RefreshCw size={14} />
               Refresh
@@ -204,42 +165,35 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       {summary.total === 0 ? (
-        <EmptyState title="Nothing pending review" detail="Writer and QA output will appear here before publishing." />
+        <EmptyState
+          title="Nothing needs you"
+          detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real evidence or positioning decision will show up here."
+        />
       ) : (
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="grid border-b border-slate-200 bg-white sm:grid-cols-2 xl:grid-cols-4">
-            <SummaryCard label="Pending review" value={summary.total} detail={`${summary.bundleCount} content bundles`} />
-            <SummaryCard label="Ready to approve" value={summary.ready} detail="QA has cleared these drafts" tone="green" />
-            <SummaryCard label="Auto repair active" value={summary.autoRepair} detail="CiteLoop is reducing manual edits" tone="amber" />
-            <SummaryCard label="Needs human" value={summary.needsHuman} detail="Source or positioning decision needed" tone="red" />
+          <div className="grid border-b border-slate-200 bg-white sm:grid-cols-3">
+            <SummaryCard label="Needs your decision" value={summary.needsHuman} detail="Only genuine evidence calls" tone="red" />
+            <SummaryCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
+            <SummaryCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
           </div>
 
-          <div className="grid min-h-[620px] xl:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)]">
+          <div className="grid min-h-[560px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
             <div className="min-w-0 border-b border-slate-200 xl:border-b-0 xl:border-r">
-              <div className="hidden grid-cols-[76px_minmax(160px,1.35fr)_minmax(105px,0.7fr)_minmax(105px,0.7fr)_94px] gap-2.5 border-b border-slate-200 bg-slate-50 px-3.5 py-3 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 lg:grid">
-                <div>Status</div>
-                <div>Article</div>
-                <div>Claim evidence</div>
-                <div>Search target</div>
-                <div>Action</div>
-              </div>
-              <div className="divide-y divide-slate-200">
-                {queueArticles.map((item) => (
-                  <ReviewQueueRow
-                    key={item.article.id}
-                    item={item}
-                    projectId={projectId}
-                    selected={selectedArticle?.id === item.article.id}
-                    busy={busy === `approve-${item.article.id}` || busy === "bulk-approve"}
-                    repairFailure={repairFailures[item.article.id]}
-                    onSelect={() => setSelectedArticleId(item.article.id)}
-                    onApprove={() => mutate("Article approved", `approve-${item.article.id}`, () => api.approve(projectId, item.article.id))}
-                  />
-                ))}
-              </div>
+              <QueueSection title="Needs your decision" tone="red" items={decisionArticles} selectedId={selectedArticle?.id} busy={busy} onSelect={setSelectedArticleId} onApprove={onApprove} />
+              <QueueSection title="Ready to approve" tone="green" items={readyArticles} selectedId={selectedArticle?.id} busy={busy} onSelect={setSelectedArticleId} onApprove={onApprove} />
+              <QueueSection
+                title="CiteLoop is handling these"
+                tone="amber"
+                items={recoveringArticles}
+                selectedId={selectedArticle?.id}
+                busy={busy}
+                onSelect={setSelectedArticleId}
+                onApprove={onApprove}
+                collapsible
+              />
             </div>
 
-            {selectedArticle && (
+            {selectedArticle ? (
               <ReviewInspector
                 article={selectedArticle}
                 topicId={selectedQueueArticle?.topicId ?? selectedArticle.topic_id}
@@ -248,17 +202,18 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                 approveBusy={busy === `approve-${selectedArticle.id}` || busy === "bulk-approve"}
                 rejectBusy={busy === `reject-${selectedArticle.id}`}
                 saveBusy={busy === `save-${selectedArticle.id}`}
-                repairFailure={repairFailures[selectedArticle.id]}
                 editorOpen={editorOpen}
                 content={content}
                 onContentChange={setContent}
                 onToggleEditor={() => setEditorOpen((value) => !value)}
-                onApprove={() => mutate("Article approved", `approve-${selectedArticle.id}`, () => api.approve(projectId, selectedArticle.id))}
-                onReject={() => mutate("Article rejected", `reject-${selectedArticle.id}`, () => api.reject(projectId, selectedArticle.id))}
-                onSave={(nextContent) =>
-                  mutate("Content saved and QA refreshed", `save-${selectedArticle.id}`, () => api.edit(projectId, selectedArticle.id, { content_md: nextContent }))
-                }
+                onApprove={() => onApprove(selectedArticle)}
+                onReject={() => onReject(selectedArticle)}
+                onSave={(next) => onSave(selectedArticle, next)}
               />
+            ) : (
+              <aside className="hidden items-center justify-center bg-slate-50 p-8 text-center text-sm text-slate-500 xl:flex">
+                Select a draft to see the details.
+              </aside>
             )}
           </div>
         </section>
@@ -271,22 +226,16 @@ function SummaryCard({
   label,
   value,
   detail,
-  tone = "neutral",
+  tone,
 }: {
   label: string;
   value: number;
   detail: string;
-  tone?: "neutral" | "green" | "amber" | "red";
+  tone: "green" | "amber" | "red";
 }) {
-  const valueClass = {
-    neutral: "text-slate-950",
-    green: "text-green-700",
-    amber: "text-amber-700",
-    red: "text-red-700",
-  }[tone];
-
+  const valueClass = { green: "text-green-700", amber: "text-amber-700", red: value > 0 ? "text-red-700" : "text-slate-950" }[tone];
   return (
-    <div className="border-b border-slate-200 px-4 py-4 last:border-b-0 sm:border-r xl:border-b-0">
+    <div className="border-b border-slate-200 px-4 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
       <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</div>
       <div className={cx("mt-2 text-3xl font-bold leading-none", valueClass)}>{value}</div>
       <div className="mt-2 text-xs font-medium text-slate-500">{detail}</div>
@@ -294,78 +243,100 @@ function SummaryCard({
   );
 }
 
+function QueueSection({
+  title,
+  tone,
+  items,
+  selectedId,
+  busy,
+  onSelect,
+  onApprove,
+  collapsible,
+}: {
+  title: string;
+  tone: "green" | "amber" | "red";
+  items: QueueArticle[];
+  selectedId?: string;
+  busy: string | null;
+  onSelect: (id: string) => void;
+  onApprove: (article: Article) => void;
+  collapsible?: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  if (items.length === 0) return null;
+  const dot = { green: "bg-green-500", amber: "bg-amber-500", red: "bg-red-500" }[tone];
+  return (
+    <div className="border-b border-slate-200 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => collapsible && setOpen((v) => !v)}
+        className={cx("flex w-full items-center gap-2 px-4 py-2.5 text-left", collapsible ? "cursor-pointer hover:bg-slate-50" : "cursor-default")}
+      >
+        <span className={cx("h-2 w-2 shrink-0 rounded-full", dot)} />
+        <span className="text-xs font-bold uppercase tracking-[0.1em] text-slate-600">{title}</span>
+        <Badge tone="neutral">{items.length}</Badge>
+      </button>
+      {open && (
+        <div className="divide-y divide-slate-100">
+          {items.map((item) => (
+            <ReviewQueueRow
+              key={item.article.id}
+              item={item}
+              selected={selectedId === item.article.id}
+              busy={busy === `approve-${item.article.id}` || busy === "bulk-approve"}
+              onSelect={() => onSelect(item.article.id)}
+              onApprove={() => onApprove(item.article)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReviewQueueRow({
   item,
-  projectId,
   selected,
   busy,
-  repairFailure,
   onSelect,
   onApprove,
 }: {
   item: QueueArticle;
-  projectId: string;
   selected: boolean;
   busy: boolean;
-  repairFailure?: string;
   onSelect: () => void;
   onApprove: () => void;
 }) {
   const { article, topicId } = item;
   const state = reviewArticleState(article);
   const title = articleReviewTitle(article);
-  const claimRows = qaClaimRows(article);
-  const mappedClaims = claimRows.filter((row) => row.mapped).length;
-  const unmappedClaims = claimRows.filter((row) => !row.mapped).length;
-  const keyword = searchAppearanceRows(article)[0]?.value ?? "Not specified";
-  const detailHref = `/projects/${projectId}/articles/${article.id}`;
-  const previewHref = articlePreviewHref(projectId, article);
 
   return (
     <article
-      className={cx(
-        "grid cursor-pointer gap-2.5 px-3.5 py-4 transition-colors hover:bg-slate-50 lg:grid-cols-[76px_minmax(160px,1.35fr)_minmax(105px,0.7fr)_minmax(105px,0.7fr)_94px]",
-        selected && "bg-orange-50/80 shadow-[inset_3px_0_0_#d93820]",
-      )}
+      className={cx("flex cursor-pointer items-start gap-3 px-4 py-3.5 transition-colors hover:bg-slate-50", selected && "bg-orange-50/80 shadow-[inset_3px_0_0_#d93820]")}
       onClick={onSelect}
     >
-      <div>
-        <StateBadge state={state} />
-        {repairFailure && <div className="mt-2 text-xs font-semibold text-red-700">Repair failed</div>}
-      </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
           <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
         </div>
-        <button type="button" className="mt-2 block max-w-full text-left text-sm font-bold leading-5 text-slate-950" onClick={onSelect}>
-          {title}
-        </button>
-        <div className="mt-2 flex flex-wrap gap-3 text-xs font-semibold text-slate-500">
-          <span>geo {formatScore(article.geo_score)}</span>
-          <span>seo {formatScore(article.seo_score)}</span>
-          {article.repair_attempts > 0 && <span>repair {article.repair_attempts}/2</span>}
+        <div className="mt-1.5 text-sm font-bold leading-5 text-slate-950">{title}</div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          {state.kind === "recovering" ? (
+            <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
+              <Loader2 size={12} className="animate-spin" />
+              {article.repair_status === "repairing" ? "Repairing draft" : "Re-checking with QA"}
+            </span>
+          ) : (
+            <>
+              <span>geo {formatScore(article.geo_score)}</span>
+              <span>seo {formatScore(article.seo_score)}</span>
+            </>
+          )}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {claimRows.length > 0 ? (
-          <>
-            <Badge tone="green">{mappedClaims} mapped</Badge>
-            {unmappedClaims > 0 && <Badge tone="red">{unmappedClaims} unmapped</Badge>}
-          </>
-        ) : article.qa_blocking ? (
-          <Badge tone="amber">QA issue</Badge>
-        ) : (
-          <Badge tone="green">claims cleared</Badge>
-        )}
-      </div>
-      <div className="min-w-0 text-xs leading-5 text-slate-600">
-        <div className="font-bold uppercase tracking-[0.08em] text-slate-400">Keyword</div>
-        <div className="truncate" title={keyword}>
-          {keyword}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-start gap-1.5 lg:grid">
+      <div className="shrink-0">
         {state.approvable ? (
           <Button
             disabled={busy}
@@ -380,41 +351,26 @@ function ReviewQueueRow({
               Approve
             </ButtonProgress>
           </Button>
-        ) : (
+        ) : state.kind === "needs_human" ? (
           <Button
-            disabled={busy}
             size="sm"
             onClick={(event) => {
               event.stopPropagation();
               onSelect();
             }}
           >
-            {state.kind === "auto_repair" ? "Review" : "Resolve"}
+            Decide
           </Button>
+        ) : (
+          <span className="text-xs font-semibold text-amber-700">Working…</span>
         )}
-        <a
-          href={previewHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex h-8 items-center gap-1 rounded-lg px-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-          onClick={(event) => event.stopPropagation()}
-        >
-          Preview <ExternalLink size={12} />
-        </a>
-        <a
-          href={detailHref}
-          className="inline-flex h-8 items-center gap-1 rounded-lg px-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-          onClick={(event) => event.stopPropagation()}
-        >
-          Detail
-        </a>
       </div>
     </article>
   );
 }
 
 function StateBadge({ state }: { state: ReviewArticleState }) {
-  const tone = state.kind === "ready" ? "green" : state.kind === "auto_repair" ? "amber" : "red";
+  const tone = state.kind === "ready" ? "green" : state.kind === "recovering" ? "amber" : "red";
   return <Badge tone={tone}>{state.label}</Badge>;
 }
 
@@ -426,7 +382,6 @@ function ReviewInspector({
   approveBusy,
   rejectBusy,
   saveBusy,
-  repairFailure,
   editorOpen,
   content,
   onContentChange,
@@ -442,7 +397,6 @@ function ReviewInspector({
   approveBusy: boolean;
   rejectBusy: boolean;
   saveBusy: boolean;
-  repairFailure?: string;
   editorOpen: boolean;
   content: string;
   onContentChange: (value: string) => void;
@@ -454,12 +408,6 @@ function ReviewInspector({
   const title = articleReviewTitle(article);
   const state = reviewArticleState(article);
   const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
-  const repairExhausted = article.requires_human_decision || (article.repair_attempts ?? 0) >= 2;
-  const blockingSummary = article.qa_blocking
-    ? article.qa_issues.length > 0
-      ? explainQAIssue(article.qa_issues[0]).title
-      : "QA has not cleared this draft"
-    : null;
   const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
 
@@ -472,62 +420,164 @@ function ReviewInspector({
         </div>
         <h3 className="mt-3 content-font text-lg font-bold leading-6 text-slate-950">{title}</h3>
         <p className="mt-2 text-sm leading-6 text-slate-600">{state.detail}</p>
-        {blockingSummary && (
-          <div className="mt-3 flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold leading-5 text-red-800">
-            <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-            <span>Cannot approve: {blockingSummary}. Use the claims and "Recommended next step" below to resolve it.</span>
-          </div>
-        )}
       </div>
 
       <div className="grid gap-4 p-4">
-        {(state.kind === "auto_repair" || repairFailure) && <AutoRepairStatus state={state} error={repairFailure} />}
+        {state.kind === "recovering" && <RecoveringPanel article={article} />}
+        {state.kind === "needs_human" && (
+          <DecisionPanel article={article} projectId={projectId} busy={busy} rejectBusy={rejectBusy} onReject={onReject} onToggleEditor={onToggleEditor} />
+        )}
+        {state.kind === "ready" && (
+          <ReadyPanel busy={busy} approveBusy={approveBusy} previewHref={previewHref} detailHref={detailHref} onApprove={onApprove} onToggleEditor={onToggleEditor} />
+        )}
+
         <ClaimEvidencePanel article={article} />
         <SearchAppearancePanel article={article} />
-        <NextStepPanel
-          article={article}
-          projectId={projectId}
-          state={state}
-          busy={busy}
-          approveBusy={approveBusy}
-          rejectBusy={rejectBusy}
-          previewHref={previewHref}
-          detailHref={detailHref}
-          repairExhausted={repairExhausted}
-          onApprove={onApprove}
-          onReject={onReject}
-          onToggleEditor={onToggleEditor}
-        />
-
-        {article.qa_issues.length > 0 && (
-          <QAIssuePanel issues={article.qa_issues} contextHref={`/projects/${projectId}/context`} exhausted={repairExhausted} />
-        )}
-
         <SEOContributionPanel rows={seoContributions} />
 
-        {editorOpen ? (
-          <OriginalArticlePanel content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />
-        ) : (
-          <section className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-bold text-slate-900">Draft content</div>
-                <div className="mt-1 text-xs leading-5 text-slate-500">Open the editor only when a claim or source needs manual correction.</div>
-              </div>
-              <Button disabled={busy} size="sm" onClick={onToggleEditor}>
-                <FileText size={14} />
-                Edit draft
-              </Button>
-            </div>
-          </section>
-        )}
+        {editorOpen && <DraftEditor content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />}
       </div>
     </aside>
   );
 }
 
+function RecoveringPanel({ article }: { article: Article }) {
+  const repairing = article.repair_status === "repairing";
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+      <div className="inline-flex items-center gap-2 font-semibold">
+        <Loader2 size={15} className="animate-spin" />
+        CiteLoop is handling this draft
+      </div>
+      <p className="mt-2 text-xs leading-5 text-amber-900">
+        {repairing
+          ? "An automatic edit is in progress; QA will re-run when it finishes."
+          : "QA is being re-run on this draft. If it can't be cleared automatically, CiteLoop repairs or regenerates it — and only asks you if a real evidence decision remains."}
+      </p>
+      <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">No action needed</p>
+    </section>
+  );
+}
+
+function ReadyPanel({
+  busy,
+  approveBusy,
+  previewHref,
+  detailHref,
+  onApprove,
+  onToggleEditor,
+}: {
+  busy: boolean;
+  approveBusy: boolean;
+  previewHref: string;
+  detailHref: string;
+  onApprove: () => void;
+  onToggleEditor: () => void;
+}) {
+  return (
+    <section className="rounded-lg border border-green-200 bg-green-50 p-3">
+      <div className="inline-flex items-center gap-2 text-sm font-bold text-green-900">
+        <Sparkles size={15} />
+        QA cleared this draft
+      </div>
+      <p className="mt-1 text-xs leading-5 text-green-800">Approve to publish on schedule, or open the preview for a final scan.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button disabled={busy} size="sm" variant="primary" onClick={onApprove}>
+          <ButtonProgress busy={approveBusy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+            Approve
+          </ButtonProgress>
+        </Button>
+        <a href={previewHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+          Preview <ExternalLink size={14} />
+        </a>
+        <a href={detailHref} className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+          Detail
+        </a>
+        <Button disabled={busy} size="sm" onClick={onToggleEditor}>
+          <FileText size={14} />
+          Edit draft
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function DecisionPanel({
+  article,
+  projectId,
+  busy,
+  rejectBusy,
+  onReject,
+  onToggleEditor,
+}: {
+  article: Article;
+  projectId: string;
+  busy: boolean;
+  rejectBusy: boolean;
+  onReject: () => void;
+  onToggleEditor: () => void;
+}) {
+  const options = (article.human_decision_options ?? []).filter((option) => option?.label || option?.description);
+  const unmapped = qaClaimRows(article).filter((row) => !row.mapped);
+
+  return (
+    <section className="rounded-lg border border-red-200 bg-red-50 p-3">
+      <div className="inline-flex items-center gap-2 text-sm font-bold text-red-900">
+        <ShieldAlert size={15} />
+        Your decision is needed
+      </div>
+      <p className="mt-1 text-xs leading-5 text-red-800">
+        {unmapped.length > 0
+          ? `CiteLoop could not back ${unmapped.length === 1 ? "a product claim" : `${unmapped.length} product claims`} with your Context evidence, and could not safely rewrite ${unmapped.length === 1 ? "it" : "them"}. Choose how to resolve it.`
+          : "CiteLoop tried re-checking, repairing, and regenerating this draft but still could not clear QA. Choose how to resolve it."}
+      </p>
+
+      {unmapped.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {unmapped.slice(0, 4).map((row, index) => (
+            <div key={`${row.claim}-${index}`} className="rounded-md border border-red-100 bg-white/70 px-3 py-2">
+              <div className="text-sm font-semibold text-slate-900">{row.claim}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-600">{row.evidence || "No supporting evidence found in Context."}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {options.length > 0 && (
+        <div className="mt-3 grid gap-1.5">
+          {options.slice(0, 3).map((option, index) => (
+            <div key={`${option.label ?? "option"}-${index}`} className="text-xs leading-5 text-red-900">
+              <span className="font-bold">{option.label || `Option ${index + 1}`}</span>
+              {option.description ? ` — ${option.description}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <a href={`/projects/${projectId}/context`} className="inline-flex h-8 items-center gap-2 rounded-lg bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-xs font-semibold text-white hover:brightness-[1.02]">
+          Fix evidence in Context
+        </a>
+        <Button disabled={busy} size="sm" onClick={onToggleEditor}>
+          <FileText size={14} />
+          Edit draft
+        </Button>
+        <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
+          <ButtonProgress busy={rejectBusy} busyLabel="Rejecting" idleIcon={<XCircle size={14} />}>
+            Reject
+          </ButtonProgress>
+        </Button>
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-red-700/80">
+        Fixing evidence or saving an edit re-runs QA automatically — you don't have to approve through the block.
+      </p>
+    </section>
+  );
+}
+
 function ClaimEvidencePanel({ article }: { article: Article }) {
   const rows = qaClaimRows(article);
+  if (rows.length === 0) return null;
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -535,19 +585,13 @@ function ClaimEvidencePanel({ article }: { article: Article }) {
           <ShieldAlert size={15} />
           Claim evidence map
         </div>
-        {rows.length > 0 && <Badge tone={rows.some((row) => !row.mapped) ? "red" : "green"}>{rows.length} claims</Badge>}
+        <Badge tone={rows.some((row) => !row.mapped) ? "red" : "green"}>{rows.length} claims</Badge>
       </div>
-      {rows.length === 0 ? (
-        <div className="mt-3 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
-          QA did not return a claim map for this draft. CiteLoop will rerun QA after an automatic repair or a saved edit.
-        </div>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {rows.map((row, index) => (
-            <ClaimRow key={`${row.claim}-${index}`} row={row} />
-          ))}
-        </div>
-      )}
+      <div className="mt-3 grid gap-2">
+        {rows.map((row, index) => (
+          <ClaimRow key={`${row.claim}-${index}`} row={row} />
+        ))}
+      </div>
     </section>
   );
 }
@@ -559,9 +603,7 @@ function ClaimRow({ row }: { row: QAClaimRow }) {
         <Badge tone={row.mapped ? "green" : "red"}>{row.mapped ? "Mapped" : "Unmapped"}</Badge>
         <div className="min-w-0 text-sm font-semibold leading-5 text-slate-950">{row.claim}</div>
       </div>
-      <div className="mt-2 text-xs leading-5 text-slate-600">
-        {row.evidence || "No supporting evidence was returned for this claim."}
-      </div>
+      <div className="mt-2 text-xs leading-5 text-slate-600">{row.evidence || "No supporting evidence was returned for this claim."}</div>
     </div>
   );
 }
@@ -584,160 +626,6 @@ function SearchAppearancePanel({ article }: { article: Article }) {
             <div className="mt-1 text-xs leading-5 text-slate-500">{row.detail}</div>
           </div>
         ))}
-      </div>
-    </section>
-  );
-}
-
-function NextStepPanel({
-  article,
-  projectId,
-  state,
-  busy,
-  approveBusy,
-  rejectBusy,
-  previewHref,
-  detailHref,
-  repairExhausted,
-  onApprove,
-  onReject,
-  onToggleEditor,
-}: {
-  article: Article;
-  projectId: string;
-  state: ReviewArticleState;
-  busy: boolean;
-  approveBusy: boolean;
-  rejectBusy: boolean;
-  previewHref: string;
-  detailHref: string;
-  repairExhausted: boolean;
-  onApprove: () => void;
-  onReject: () => void;
-  onToggleEditor: () => void;
-}) {
-  const options = article.human_decision_options.filter((option) => option?.label || option?.description);
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="text-sm font-bold text-slate-900">Recommended next step</div>
-      {state.kind === "ready" && (
-        <p className="mt-1 text-xs leading-5 text-slate-500">This draft can be approved, or opened in preview/detail first for a final scan.</p>
-      )}
-      {state.kind === "auto_repair" && (
-        <p className="mt-1 text-xs leading-5 text-slate-500">No manual action is needed while CiteLoop repairs and reruns QA.</p>
-      )}
-      {state.kind === "needs_human" && (
-        <p className="mt-1 text-xs leading-5 text-slate-500">
-          {repairExhausted
-            ? "Automatic repair is exhausted. Add or fix the evidence in Context, edit the draft, or reject it."
-            : "Choose whether to fix evidence, edit the draft, or reject the draft."}
-        </p>
-      )}
-
-      {options.length > 0 && (
-        <div className="mt-3 grid gap-2">
-          {options.map((option, index) => (
-            <div key={`${option.label ?? "option"}-${index}`} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-              <div className="text-xs font-bold text-amber-950">{option.label || `Option ${index + 1}`}</div>
-              {option.description && <div className="mt-1 text-xs leading-5 text-amber-900">{option.description}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {state.approvable && (
-          <Button disabled={busy} size="sm" variant="primary" onClick={onApprove}>
-            <ButtonProgress busy={approveBusy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-              Approve
-            </ButtonProgress>
-          </Button>
-        )}
-        <a
-          href={previewHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Preview <ExternalLink size={14} />
-        </a>
-        <a
-          href={detailHref}
-          className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Detail
-        </a>
-        {state.kind === "needs_human" && (
-          <>
-            <a
-              href={`/projects/${projectId}/context`}
-              className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Fix evidence in Context
-            </a>
-            <Button disabled={busy} size="sm" onClick={onToggleEditor}>
-              <FileText size={14} />
-              Edit draft
-            </Button>
-            <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
-              <ButtonProgress busy={rejectBusy} busyLabel="Rejecting" idleIcon={<XCircle size={14} />}>
-                Reject
-              </ButtonProgress>
-            </Button>
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function AutoRepairStatus({ state, error }: { state: ReviewArticleState; error?: string }) {
-  if (error) {
-    return (
-      <section className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
-        <div className="font-semibold">Automatic repair could not complete</div>
-        <div className="mt-1 text-xs leading-5 text-red-800">{error}</div>
-      </section>
-    );
-  }
-  return (
-    <section className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-      <div className="font-semibold">{state.label}</div>
-      <div className="mt-1 text-xs leading-5 text-amber-900">{state.detail}</div>
-    </section>
-  );
-}
-
-function OriginalArticlePanel({
-  content,
-  busy,
-  saveBusy,
-  onChange,
-  onSave,
-}: {
-  content: string;
-  busy: boolean;
-  saveBusy: boolean;
-  onChange: (value: string) => void;
-  onSave: (content: string) => void;
-}) {
-  return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-        <FileText size={14} />
-        <span className="font-semibold text-slate-700">Draft editor</span>
-      </div>
-      <div className="grid gap-2 p-3">
-        <TextArea value={content} onChange={(event) => onChange(event.target.value)} className="min-h-[420px] font-mono text-xs leading-5" />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
-            <ButtonProgress busy={saveBusy} busyLabel="Saving content" idleIcon={<Save size={14} />}>
-              Save content
-            </ButtonProgress>
-          </Button>
-          <span className="text-xs text-slate-500">Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.</span>
-        </div>
       </div>
     </section>
   );
@@ -771,12 +659,7 @@ function SEOContributionPanel({ rows }: { rows: SEOContribution[] }) {
 }
 
 function ContributionRow({ row }: { row: SEOContribution }) {
-  const dotClass = {
-    ready: "bg-green-500",
-    missing: "bg-red-500",
-    needs_review: "bg-amber-500",
-  }[row.status];
-
+  const dotClass = { ready: "bg-green-500", missing: "bg-red-500", needs_review: "bg-amber-500" }[row.status];
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
       <div className="flex items-center gap-2">
@@ -791,33 +674,35 @@ function ContributionRow({ row }: { row: SEOContribution }) {
   );
 }
 
-function QAIssuePanel({ issues, contextHref, exhausted }: { issues: string[]; contextHref: string; exhausted: boolean }) {
+function DraftEditor({
+  content,
+  busy,
+  saveBusy,
+  onChange,
+  onSave,
+}: {
+  content: string;
+  busy: boolean;
+  saveBusy: boolean;
+  onChange: (value: string) => void;
+  onSave: (content: string) => void;
+}) {
   return (
-    <section className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-900">
-      <div className="mb-2 inline-flex items-center gap-2 text-sm font-bold">
-        <ShieldAlert size={15} />
-        Why QA blocked this draft
+    <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+        <FileText size={14} />
+        <span className="font-semibold text-slate-700">Draft editor</span>
       </div>
-      <div className="grid gap-2">
-        {issues.map((issue, index) => {
-          const explained = explainQAIssue(issue);
-          return (
-            <div key={`${issue}-${index}`} className="rounded-md border border-red-100 bg-white/65 p-3">
-              <div className="text-sm font-semibold">{explained.title}</div>
-              <div className="mt-1 text-xs leading-5 text-red-800">{explained.detail}</div>
-              <div className="mt-2 text-xs font-semibold text-red-900">
-                {exhausted
-                  ? "Automatic repair is exhausted. Add or fix the evidence in Context, or edit the draft below, then re-save to rerun QA."
-                  : explained.action}
-              </div>
-              <a href={contextHref} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#d93820] hover:underline">
-                <ExternalLink size={12} />
-                Fix evidence in Context
-              </a>
-              <div className="mt-2 break-words font-mono text-[11px] leading-4 text-red-700/70">{explained.raw}</div>
-            </div>
-          );
-        })}
+      <div className="grid gap-2 p-3">
+        <TextArea value={content} onChange={(event) => onChange(event.target.value)} className="min-h-[420px] font-mono text-xs leading-5" />
+        <div className="flex flex-wrap items-center gap-3">
+          <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
+            <ButtonProgress busy={saveBusy} busyLabel="Saving content" idleIcon={<Save size={14} />}>
+              Save content
+            </ButtonProgress>
+          </Button>
+          <span className="text-xs text-slate-500">Saving re-runs QA automatically.</span>
+        </div>
       </div>
     </section>
   );

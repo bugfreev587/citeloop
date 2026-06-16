@@ -231,3 +231,44 @@ returning *;
 update articles set status = 'distributed'
 where id = $1 and project_id = $2
 returning *;
+
+-- Review auto-recovery (§5.5): drafts CiteLoop can still resolve on its own —
+-- blocked, not yet a genuine human decision. The recovery tick re-runs QA,
+-- repairs, or regenerates these without involving a human.
+-- name: ListRecoverableArticlesForProject :many
+select * from articles
+where project_id = $1
+  and status = 'pending_review'
+  and qa_blocking = true
+  and requires_human_decision = false
+order by created_at asc
+limit $2;
+
+-- ListApprovableForProject lists pending_review drafts QA has cleared, for
+-- hands-off auto-approval when the project runs in auto-advance mode.
+-- name: ListApprovableForProject :many
+select * from articles
+where project_id = $1
+  and status = 'pending_review'
+  and qa_blocking = false
+order by created_at asc
+limit $2;
+
+-- name: IncrementArticleRecoveryAttempt :one
+update articles set
+  recovery_attempts = recovery_attempts + 1,
+  last_repair_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- EscalateArticleToHumanForProject flips a draft into the genuine human-decision
+-- state after automated recovery is exhausted or QA returned a real unmapped
+-- claim a human must resolve.
+-- name: EscalateArticleToHumanForProject :one
+update articles set
+  requires_human_decision = true,
+  repair_status = 'human_decision',
+  repair_failure_reason = $3,
+  human_decision_options = $4
+where id = $1 and project_id = $2
+returning *;

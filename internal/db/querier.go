@@ -42,6 +42,10 @@ type Querier interface {
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
 	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
+	// EscalateArticleToHumanForProject flips a draft into the genuine human-decision
+	// state after automated recovery is exhausted or QA returned a real unmapped
+	// claim a human must resolve.
+	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
 	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
@@ -72,12 +76,17 @@ type Querier interface {
 	GetSEOPropertyForProject(ctx context.Context, projectID uuid.UUID) (SeoProperty, error)
 	GetTopic(ctx context.Context, id uuid.UUID) (Topic, error)
 	GetTopicForProject(ctx context.Context, arg GetTopicForProjectParams) (Topic, error)
+	IncrementArticleRecoveryAttempt(ctx context.Context, arg IncrementArticleRecoveryAttemptParams) (Article, error)
+	IncrementTopicRecoveryAttempt(ctx context.Context, arg IncrementTopicRecoveryAttemptParams) (Topic, error)
 	InsertAutopilotAuditEvent(ctx context.Context, arg InsertAutopilotAuditEventParams) (AutopilotAuditEvent, error)
 	InsertAutopilotRun(ctx context.Context, arg InsertAutopilotRunParams) (AutopilotRun, error)
 	InsertGenerationRun(ctx context.Context, arg InsertGenerationRunParams) (GenerationRun, error)
 	InsertProfile(ctx context.Context, arg InsertProfileParams) (ProductProfile, error)
 	InsertSEORun(ctx context.Context, arg InsertSEORunParams) (SeoRun, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
+	// ListApprovableForProject lists pending_review drafts QA has cleared, for
+	// hands-off auto-approval when the project runs in auto-advance mode.
+	ListApprovableForProject(ctx context.Context, arg ListApprovableForProjectParams) ([]Article, error)
 	ListArticlesByStatus(ctx context.Context, arg ListArticlesByStatusParams) ([]Article, error)
 	ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error)
 	ListArticlesByTopicForProject(ctx context.Context, arg ListArticlesByTopicForProjectParams) ([]Article, error)
@@ -109,6 +118,10 @@ type Querier interface {
 	ListProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error)
 	ListPublishedCanonicalArticlesForSEO(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	ListPublisherConnections(ctx context.Context, projectID uuid.UUID) ([]PublisherConnection, error)
+	// Review auto-recovery (§5.5): drafts CiteLoop can still resolve on its own —
+	// blocked, not yet a genuine human decision. The recovery tick re-runs QA,
+	// repairs, or regenerates these without involving a human.
+	ListRecoverableArticlesForProject(ctx context.Context, arg ListRecoverableArticlesForProjectParams) ([]Article, error)
 	ListSEOActionPlans(ctx context.Context, arg ListSEOActionPlansParams) ([]SeoActionPlan, error)
 	ListSEOIntegrations(ctx context.Context, projectID uuid.UUID) ([]SeoIntegration, error)
 	ListSEOObjectives(ctx context.Context, arg ListSEOObjectivesParams) ([]SeoObjective, error)

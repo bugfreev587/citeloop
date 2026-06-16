@@ -83,3 +83,8 @@ where topic_id = $1 and status <> 'rejected';
 select * from articles
 where topic_id = $1 and project_id = $2
 order by kind, platform;
+
+-- name: IncrementTopicRecoveryAttempt :one
+update topics set recovery_attempts = recovery_attempts + 1
+where id = $1 and project_id = $2
+returning *;
