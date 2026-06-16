@@ -137,6 +137,20 @@ function isMetadataLineBlock(block: string) {
   return /^(title|meta description|slug|h1):/i.test(block.trim());
 }
 
+function isGenerationInstructionBlock(block: string) {
+  const normalized = block.trim().toLowerCase();
+  if (!normalized || normalized.length > 320) return false;
+  return /^(explain|write|create|draft|generate|produce|cover|compare|discuss)\b/.test(normalized);
+}
+
+function stripLeadingGenerationInstructions(blocks: string[]) {
+  let startIndex = 0;
+  while (startIndex < blocks.length && isGenerationInstructionBlock(blocks[startIndex])) {
+    startIndex += 1;
+  }
+  return blocks.slice(startIndex);
+}
+
 export function publishedPreviewParts(content: string, h1: string): PublishedPreviewParts {
   const blocks = articlePreviewBlocks(content, h1);
   const h1Index = blocks.findIndex((block) => block.trim().startsWith("# "));
@@ -154,7 +168,7 @@ export function publishedPreviewParts(content: string, h1: string): PublishedPre
 
   return {
     title: title || "Untitled draft",
-    blocks: bodyBlocks.filter((block) => !isThematicBreak(block)),
+    blocks: stripLeadingGenerationInstructions(bodyBlocks.filter((block) => !isThematicBreak(block))),
   };
 }
 

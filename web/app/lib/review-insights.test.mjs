@@ -80,6 +80,23 @@ test("publishedPreviewParts removes generation metadata from the visible article
   assert.equal(preview.blocks.some((block) => /Meta Information|Slug:|Explain the architectural advantages/.test(block)), false);
 });
 
+test("publishedPreviewParts removes leading prompt instructions after metadata cleanup", async () => {
+  const { publishedPreviewParts } = await loadReviewInsightsModule();
+  const content = [
+    "## Meta Information\nTitle: Unified Social API vs. Multiple Integrations",
+    "Slug: unified-social-api-saas-integration",
+    "---",
+    "Explain the architectural advantages of using a unified social publishing API vs. maintaining separate integrations.",
+    "Introduction",
+    "When your product needs to post to social media, the architectural decision feels straightforward.",
+  ].join("\n\n");
+
+  const preview = publishedPreviewParts(content, "Building Social Features into SaaS");
+
+  assert.equal(preview.blocks[0], "Introduction");
+  assert.equal(preview.blocks.some((block) => /^Explain\b/.test(block)), false);
+});
+
 test("articlePreviewHref points drafts to a real standalone preview route", async () => {
   const { articlePreviewHref } = await loadReviewInsightsModule();
   const article = {
