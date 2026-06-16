@@ -1361,6 +1361,10 @@ export function createApi(auth?: AuthOptions) {
     return normalizeArticle(raw);
   },
   reconcilePublishing: (id: string) => req(`/projects/${id}/publishing/reconcile`, { method: "POST" }, auth),
+  publishNow: async (id: string, articleID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/publish-now`, { method: "POST" }, auth);
+    return normalizeArticle(raw);
+  },
   };
 }
 

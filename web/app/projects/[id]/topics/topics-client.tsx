@@ -102,8 +102,19 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
-    if (!hasGenerating) return;
-    const interval = window.setInterval(refresh, 10_000);
+    // A scheduled topic whose slot has arrived is drafted by the server's 5-minute
+    // pass, transitioning scheduled → generating → drafted between client polls. Poll
+    // so the plan reflects that without a manual reload (the topic then moves to the
+    // review queue). Bound to ~30 min past the slot so a budget/disabled pause that
+    // leaves a topic scheduled doesn't poll forever.
+    const now = Date.now();
+    const hasDueScheduled = topics.some((topic) => {
+      if (topic.status !== "scheduled" || !topic.scheduled_at) return false;
+      const due = Date.parse(topic.scheduled_at);
+      return Number.isFinite(due) && due <= now && now - due <= 30 * 60_000;
+    });
+    if (!hasGenerating && !hasDueScheduled) return;
+    const interval = window.setInterval(refresh, hasGenerating ? 10_000 : 30_000);
     return () => window.clearInterval(interval);
   }, [generatingIds, refresh, topics]);
 
