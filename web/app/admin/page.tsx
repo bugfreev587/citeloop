@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { LLMCredentialsStatus, LLMProvider } from "../lib/api";
 import { useApi } from "../lib/use-api";
 import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../components/ui";
@@ -36,7 +36,7 @@ export default function AdminPage() {
   const [provider, setProvider] = useState<LLMProvider>("tokengate");
   const [apiKey, setAPIKey] = useState("");
   const [baseURL, setBaseURL] = useState(defaultBaseURLs.tokengate);
-  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [testResult, setTestResult] = useState<TestResult>(null);
 
@@ -97,6 +97,25 @@ export default function AdminPage() {
       setTestResult(await api.testLLMCredentials());
     } catch (e: any) {
       setTestResult({ ok: false, error: e.message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm("Remove the saved provider key? CiteLoop falls back to the server-environment provider until you save a new one.")) return;
+    setBusy("delete");
+    setMessage(null);
+    setTestResult(null);
+    try {
+      const next = await api.deleteLLMCredentials();
+      setStatus(next);
+      setProvider(next.provider);
+      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+      setAPIKey("");
+      setMessage({ title: "Provider key removed", detail: "CiteLoop now uses the server-environment provider until a key is saved.", tone: "amber" });
+    } catch (e: any) {
+      setMessage({ title: "Could not remove key", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -193,11 +212,17 @@ export default function AdminPage() {
                       active ? "border-[#d93820] bg-red-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
                     )}
                   >
-                    <span>
+                    <span className="min-w-0">
                       <span className="block text-sm font-bold">{item.label}</span>
                       <span className="mt-1 block text-xs font-semibold text-slate-500">{item.helper}</span>
+                      {status?.configured && status.provider === item.value && (
+                        <span className="mt-1.5 inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-bold text-green-700">
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                          Active{status.key_tail ? ` · …${status.key_tail}` : ""}
+                        </span>
+                      )}
                     </span>
-                    <span className={cx("grid h-5 w-5 place-items-center rounded-full border", active ? "border-[#d93820] bg-[#d93820]" : "border-slate-300 bg-white")}>
+                    <span className={cx("ml-2 grid h-5 w-5 shrink-0 place-items-center rounded-full border", active ? "border-[#d93820] bg-[#d93820]" : "border-slate-300 bg-white")}>
                       {active && <span className="h-2 w-2 rounded-full bg-white" />}
                     </span>
                   </button>
@@ -245,6 +270,13 @@ export default function AdminPage() {
               <Button disabled={busy !== null} onClick={refresh}>
                 Refresh
               </Button>
+              {status?.configured && (
+                <Button disabled={busy !== null} variant="danger" onClick={remove}>
+                  <ButtonProgress busy={busy === "delete"} busyLabel="Removing" idleIcon={<Trash2 size={16} />}>
+                    Delete key
+                  </ButtonProgress>
+                </Button>
+              )}
             </div>
 
             {testResult && (

@@ -41,6 +41,16 @@ func (s *Server) updateLLMCredentials(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, admin.StatusFromCredentials(credentials))
 }
 
+// deleteLLMCredentials removes the saved provider key; the runtime falls back to
+// the server-environment provider afterwards.
+func (s *Server) deleteLLMCredentials(w http.ResponseWriter, r *http.Request) {
+	if err := admin.DeleteCredentials(r.Context(), s.Pool); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, admin.StatusFromCredentials(nil))
+}
+
 // testLLMCredentials runs a tiny live completion against the saved provider so an
 // admin can confirm the key/base URL actually work before relying on them.
 func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
