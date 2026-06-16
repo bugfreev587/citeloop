@@ -565,16 +565,14 @@ export function Workspace({ projectId }: { projectId: string }) {
                 key={stage.label}
                 href={stage.href}
                 className={cx(
-                  "flex min-w-[140px] flex-1 flex-col rounded-xl border bg-white px-3 py-3 transition-colors hover:border-slate-300",
+                  "relative flex min-w-[140px] flex-1 flex-col rounded-xl border bg-white px-3 py-3 transition-colors hover:border-slate-300",
                   isNext ? "border-[#d93820] ring-1 ring-[#d93820]" : "border-slate-200",
                 )}
               >
-                <div className="flex items-center justify-center gap-2">
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1 text-[11px] font-bold text-slate-500">
-                    {index + 1}
-                  </span>
-                  <span className="truncate text-sm font-bold text-slate-900">{stage.label}</span>
-                </div>
+                <span className="absolute left-2.5 top-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1 text-[11px] font-bold text-slate-500">
+                  {index + 1}
+                </span>
+                <div className="truncate px-6 text-center text-sm font-bold text-slate-900">{stage.label}</div>
                 <div className="mt-2 text-center text-xl font-bold leading-none text-slate-950">{stage.metricValue}</div>
                 <div className="mt-2 flex items-center justify-center gap-1.5">
                   <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", stageDotClass(stage.tone))} />
