@@ -281,7 +281,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
         ...profilePayloadFromDraft(profileDraft, profile?.profile ?? {}),
         context_confirmed_at: new Date().toISOString(),
       },
-      "Context confirmed. Opportunity discovery started",
+      "Context confirmed. CiteLoop is finding opportunities and will plan and draft automatically — track it on Home.",
       "confirm-profile",
     );
   }

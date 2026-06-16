@@ -16,7 +16,7 @@ const defaultBaseURLs: Record<Exclude<LLMProvider, "claude">, string> = {
 const providers: Array<{ value: LLMProvider; label: string; helper: string }> = [
   { value: "tokengate", label: "TokenGate", helper: "OpenAI-compatible gateway" },
   { value: "openai", label: "OpenAI", helper: "Chat Completions" },
-  { value: "claude", label: "Claude Code", helper: "Anthropic API" },
+  { value: "claude", label: "Anthropic Claude API", helper: "Anthropic API" },
 ];
 
 function providerLabel(value: LLMProvider) {
@@ -136,7 +136,7 @@ export function AdminClient() {
         </div>
 
         <Field
-          label={provider === "claude" ? "Claude Code / Anthropic API key" : `${providerLabel(provider)} API key`}
+          label={provider === "claude" ? "Anthropic Claude API key" : `${providerLabel(provider)} API key`}
           helper={needsKey ? "Required for this provider." : "Leave blank to keep the existing key."}
         >
           <TextInput

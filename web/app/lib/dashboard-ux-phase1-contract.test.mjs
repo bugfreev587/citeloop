@@ -182,9 +182,9 @@ test("destructive content-plan and distribution actions confirm before running",
   assert.match(topics, /Remove .* from the content plan\?/);
   assert.match(topics, /Clear the scheduled date/);
 
-  const workspace = read("projects/[id]/workspace.tsx");
-  assert.match(workspace, /Mark this variant as distributed\?/);
-  assert.match(workspace, /Copied to clipboard/);
+  // Distribution lives on the Publish page now, not on Home; the confirm stays there.
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  assert.match(publishing, /Mark this variant as distributed\?/);
 });
 
 test("renamed dashboard routes exist and legacy routes redirect", () => {
@@ -213,12 +213,13 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
   }
 });
 
-test("home leads with growth outcomes and does not show run internals by default", () => {
+test("home leads with a single next step and does not show run internals by default", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Growth Overview",
-    "Growth impact",
+    "Your next step",
+    "primaryAction",
+    "nextWorkspaceAction",
     "AI citations",
     "Organic traffic",
     "Published pages",
@@ -254,43 +255,41 @@ test("home removes manual planning controls and secondary growth panels", () => 
   assert.doesNotMatch(dashboardLogic, /Refresh context when product facts change/);
 });
 
-test("home growth metrics use unwrapped SuperX-style cards", () => {
+test("home growth metrics use a slim honest strip without a fake trend chart", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
     "growthMetricCards",
-    "growthTrendPath",
     "MetricIcon",
-    "Growth metric trend",
     "AI citations",
     "Organic traffic",
     "Published pages",
-    "Opportunities in motion",
+    "In motion",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
-  assert.match(workspace, /xl:grid-cols-\[minmax\(0,1\.6fr\)_minmax\(360px,1fr\)\]/);
-  assert.match(workspace, /rounded-\[18px\] border border-slate-200 bg-white/);
-  assert.doesNotMatch(workspace, /<section className="rounded-2xl border border-slate-200 bg-white p-5/);
+  // The decorative hardcoded SVG growth curve is removed — no fake data on Home.
+  assert.doesNotMatch(workspace, /growthTrendPath/);
+  assert.doesNotMatch(workspace, /Growth metric trend/);
+  assert.doesNotMatch(workspace, /growthMetricFill/);
 });
 
-test("home explains growth limits and loop status from existing product data", () => {
+test("home explains growth status and loop stages from existing product data", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Growth measurement is limited",
-    "Search Console is not connected yet",
-    "Find opportunities",
-    "Plan content",
-    "Create drafts",
+    "Connect Search Console for traffic",
+    "Connect for proof",
+    "Context",
+    "Opportunities",
+    "Plan",
+    "Drafts",
     "Review",
     "Publish",
-    "Measure results",
-    "Recent growth signals",
-    "CiteLoop knowledge",
-    "More waiting",
-    "Cannot approve:",
+    "Measure",
+    "Needs you",
+    "Activity",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
@@ -306,12 +305,8 @@ test("home explains growth limits and loop status from existing product data", (
   }
 
   assert.doesNotMatch(workspace, /Results \/ Momentum/);
-  assert.doesNotMatch(workspace, /Loop progress/);
   assert.doesNotMatch(workspace, /Actionable momentum/);
-  assert.doesNotMatch(workspace, /Active loop items/);
-  assert.doesNotMatch(workspace, /No failed or degraded activity needs attention right now/);
-  assert.doesNotMatch(workspace, /label: "Needs evidence"/);
-  assert.doesNotMatch(workspace, /Automation healthy/);
+  assert.doesNotMatch(workspace, /Recent growth signals/);
 });
 
 test("home keeps every loop card fresh from page-level state", () => {
@@ -322,65 +317,44 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /window\.addEventListener\("focus", refresh\)/);
   assert.match(workspace, /window\.addEventListener\("pageshow", refreshOnPageShow\)/);
   assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
-	  assert.match(workspace, /seoActions/);
-	  assert.match(workspace, /planItemCount/);
-	  assert.match(workspace, /opportunitiesInPlanCount/);
-	  assert.match(workspace, /all reviewed opportunities have moved into plan/i);
-	  assert.match(workspace, /Generating content plan from reviewed opportunities/);
-	  assert.match(workspace, /Draft generation running/);
-	  assert.match(workspace, /No action needed/);
-	  assert.doesNotMatch(workspace, /Select a planned topic to create the next draft/);
-	});
+  assert.match(workspace, /seoActions/);
+  assert.match(workspace, /planItemCount/);
+  assert.match(workspace, /opportunitiesInPlanCount/);
+  // Stage statuses are derived live from page state, not hardcoded.
+  assert.match(workspace, /Generating \(auto\)/);
+  assert.match(workspace, /Drafting \(auto\)/);
+  assert.match(workspace, /Needs approval/);
+  assert.doesNotMatch(workspace, /Select a planned topic to create the next draft/);
+});
 
-test("home growth loop renders linked status cards with arrows between cards", () => {
+test("home renders the loop as a single connected pipeline stepper", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
+  // One ordered pipeline with all seven stages, each linking to its page.
   for (const copy of [
+    "Pipeline",
+    "stages",
+    "stageDotClass",
     "Context",
-    "Context feeds Find opportunities",
-    "Find opportunities connects to Plan content",
-    "Plan content connects to Create drafts",
-    "Create drafts connects to Review",
-    "Review connects to Publish",
-    "Publish connects to Measure results",
-    "Measure results connects back to Find opportunities",
-    "Blocked by Context confirmation",
-    "Review and confirm Context",
-    "Scanning public-source opportunities",
-    "Status",
-    "source pages",
-    "evidence snippets",
-    "items in the content plan",
-    "drafts created or approved",
+    "Opportunities",
+    "Plan",
+    "Drafts",
+    "Review",
+    "Publish",
+    "Measure",
+    "statusLabel",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
+  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/context`/);
+  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/visibility`/);
 
-  assert.match(workspace, /metrics/);
-  assert.match(workspace, /action: \{/);
-  assert.match(workspace, /grid-cols-\[2rem_1fr_2rem\]/);
-  assert.match(workspace, /className="text-center text-base font-bold leading-5 text-slate-950"/);
-  assert.match(workspace, /href=\{card\.action\.href\}/);
-  assert.match(workspace, /data-loop-position=\{card\.position\}/);
-  assert.match(workspace, /card\.action\.label/);
-  assert.doesNotMatch(workspace, /waiting for analytics signal/);
-  assert.doesNotMatch(workspace, /<ArrowRight size=\{15\} \/>/);
-  for (const position of ["0", "1", "2", "3", "4", "5", "6"]) {
-    assert.match(workspace, new RegExp(`position: ${position}`));
-  }
-
-  assert.match(workspace, /lg:gap-x-14 lg:gap-y-14/);
-  assert.match(workspace, /h-10 w-10/);
-  assert.match(workspace, /ConnectorIcon size=\{20\}/);
-  assert.match(workspace, /text-xl/);
-  assert.match(workspace, /grid-cols-\[1fr_1fr_1fr\]/);
-  assert.match(workspace, /loopConnectorLabels/);
-  assert.doesNotMatch(workspace, />Overview</);
-  assert.doesNotMatch(workspace, /min-h-\[172px\]/);
-  assert.doesNotMatch(workspace, /metricValue/);
-  assert.doesNotMatch(workspace, /-right-6/);
-  assert.doesNotMatch(workspace, /-bottom-6/);
-  assert.doesNotMatch(workspace, /xl:grid-cols-6/);
+  // The decorative circular loop, arrow connectors, and 3x3 grid are gone.
+  assert.doesNotMatch(workspace, /loopConnectorLabels/);
+  assert.doesNotMatch(workspace, /loopGridClass/);
+  assert.doesNotMatch(workspace, /ConnectorIcon/);
+  assert.doesNotMatch(workspace, /data-loop-position/);
+  assert.doesNotMatch(workspace, /grid-cols-\[2rem_1fr_2rem\]/);
 });
 
 test("settings exposes activity log as the secondary home for automation audit details", () => {
@@ -575,7 +549,6 @@ test("blocking mutations expose button-level progress and keep opportunity revie
     [settings, ["Saving publisher", "Saving token", "Testing", "Retrying", "Saving settings"]],
     [context, ["Refreshing context", "Confirming context", "Saving source page", "Saving advanced context"]],
     [admin, ["Saving credentials"]],
-    [workspace, ["Marking distributed"]],
   ]) {
     assert.match(source, /ButtonProgress/);
     for (const marker of markers) {

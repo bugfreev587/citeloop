@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import { Article } from "../../../../lib/api";
 import { useApi } from "../../../../lib/use-api";
 import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, formatDate, formatScore } from "../../../../components/ui";
@@ -36,9 +36,17 @@ export function ArticleDetailClient({ projectId, articleId }: { projectId: strin
   if (error) return <Notice title="Article unavailable" detail={error} tone="red" />;
   if (!article) return <EmptyState title="Article not found" detail="The article is missing or belongs to another project." />;
   const blockingReason = article.qa_issues[0] || "QA has not cleared this draft";
+  const backHref = ["publish_failed", "published", "approved"].includes(article.status)
+    ? `/projects/${projectId}/publish`
+    : `/projects/${projectId}/review`;
+  const backLabel = backHref.endsWith("/publish") ? "Back to Publish" : "Back to Review";
 
   return (
     <div className="space-y-7">
+      <a href={backHref} className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 transition-colors hover:text-[#d93820]">
+        <ArrowLeft size={15} />
+        {backLabel}
+      </a>
       <SectionHeader
         title={articleTitle(article)}
         eyebrow="Article detail"
