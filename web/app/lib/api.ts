@@ -940,6 +940,16 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
+  testLLMCredentials: async () => {
+    return req<{ ok: boolean; provider?: string; model?: string; latency_ms?: number; sample?: string; error?: string }>(
+      "/admin/llm-credentials/test",
+      { method: "POST" },
+      auth,
+    );
+  },
+  getMe: async () => {
+    return req<{ user_id: string; email: string; is_admin: boolean }>("/me", undefined, auth);
+  },
   listProjects: async () => {
     const raw = await req<any[]>("/projects", undefined, auth);
     return arrayFrom(raw).map(normalizeProject);

@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/clerk/clerk-sdk-go/v2"
+	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -23,6 +25,9 @@ func (s *Server) ownerID(r *http.Request) string {
 	return ""
 }
 
+// isAdmin grants platform-admin access by the signed-in user's email matching the
+// ADMINS allowlist (UniPost-style), or a Clerk org:admin role. Local dev (no Clerk
+// key) is open. The email is resolved from the Clerk Backend API by subject.
 func (s *Server) isAdmin(r *http.Request) bool {
 	if s.Env.ClerkSecretKey == "" {
 		return true
@@ -31,13 +36,72 @@ func (s *Server) isAdmin(r *http.Request) bool {
 	if !ok || claims == nil {
 		return false
 	}
-	subject := strings.TrimSpace(claims.Subject)
-	for _, id := range strings.Split(s.Env.AdminUserIDs, ",") {
-		if strings.TrimSpace(id) == subject && subject != "" {
+	if claims.HasRole("org:admin") || claims.HasRole("admin") || claims.HasPermission("org:admin") {
+		return true
+	}
+	email := s.userEmail(r.Context(), strings.TrimSpace(claims.Subject))
+	return emailIsAdmin(email, s.Env.AdminEmails)
+}
+
+// userEmail resolves the signed-in user's primary email. emailResolver is an
+// injection seam for tests; in production it falls back to the Clerk Backend API.
+func (s *Server) userEmail(ctx context.Context, subject string) string {
+	if subject == "" {
+		return ""
+	}
+	if s.emailResolver != nil {
+		return s.emailResolver(ctx, subject)
+	}
+	u, err := clerkuser.Get(ctx, subject)
+	if err != nil || u == nil {
+		return ""
+	}
+	return primaryEmail(u)
+}
+
+func primaryEmail(u *clerk.User) string {
+	if u.PrimaryEmailAddressID != nil {
+		for _, e := range u.EmailAddresses {
+			if e != nil && e.ID == *u.PrimaryEmailAddressID {
+				return e.EmailAddress
+			}
+		}
+	}
+	for _, e := range u.EmailAddresses {
+		if e != nil && e.EmailAddress != "" {
+			return e.EmailAddress
+		}
+	}
+	return ""
+}
+
+// emailIsAdmin matches an email (case-insensitive) against the comma-separated
+// ADMINS allowlist.
+func emailIsAdmin(email, adminEmails string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false
+	}
+	for _, a := range strings.Split(adminEmails, ",") {
+		if a = strings.ToLower(strings.TrimSpace(a)); a != "" && a == email {
 			return true
 		}
 	}
-	return claims.HasRole("org:admin") || claims.HasRole("admin") || claims.HasPermission("org:admin")
+	return false
+}
+
+// me reports the current user's identity and admin status, for gating UI like the
+// Admin entry in docs. Authenticated but not admin-gated.
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	email := ""
+	if claims, ok := clerk.SessionClaimsFromContext(r.Context()); ok && claims != nil {
+		email = s.userEmail(r.Context(), strings.TrimSpace(claims.Subject))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":  s.ownerID(r),
+		"email":    email,
+		"is_admin": s.isAdmin(r),
+	})
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {

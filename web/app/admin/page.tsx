@@ -1,0 +1,285 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, XCircle } from "lucide-react";
+import { LLMCredentialsStatus, LLMProvider } from "../lib/api";
+import { useApi } from "../lib/use-api";
+import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../components/ui";
+
+type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+type TestResult = { ok: boolean; provider?: string; model?: string; latency_ms?: number; sample?: string; error?: string } | null;
+
+const defaultBaseURLs: Record<Exclude<LLMProvider, "claude">, string> = {
+  tokengate: "https://tokengate-production.up.railway.app/v1",
+  openai: "https://api.openai.com/v1",
+};
+
+const providers: Array<{ value: LLMProvider; label: string; helper: string }> = [
+  { value: "tokengate", label: "TokenGate", helper: "OpenAI-compatible gateway" },
+  { value: "openai", label: "OpenAI", helper: "Chat Completions" },
+  { value: "claude", label: "Anthropic Claude API", helper: "Anthropic API" },
+];
+
+function providerLabel(value: LLMProvider) {
+  return providers.find((item) => item.value === value)?.label ?? "TokenGate";
+}
+
+function defaultBaseURL(provider: LLMProvider) {
+  return provider === "claude" ? "" : defaultBaseURLs[provider];
+}
+
+export default function AdminPage() {
+  const api = useApi();
+  const [access, setAccess] = useState<"loading" | "granted" | "denied">("loading");
+  const [status, setStatus] = useState<LLMCredentialsStatus | null>(null);
+  const [provider, setProvider] = useState<LLMProvider>("tokengate");
+  const [apiKey, setAPIKey] = useState("");
+  const [baseURL, setBaseURL] = useState(defaultBaseURLs.tokengate);
+  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [message, setMessage] = useState<Message>(null);
+  const [testResult, setTestResult] = useState<TestResult>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const me = await api.getMe();
+      if (!me.is_admin) {
+        setAccess("denied");
+        return;
+      }
+      setAccess("granted");
+      const next = await api.getLLMCredentials();
+      setStatus(next);
+      setProvider(next.provider);
+      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+    } catch (e: any) {
+      // A 403 from an admin endpoint means not an admin; anything else is a real error.
+      if (String(e.message).includes("403")) {
+        setAccess("denied");
+      } else {
+        setAccess("granted");
+        setMessage({ title: "Admin settings unavailable", detail: e.message, tone: "amber" });
+      }
+    }
+  }, [api]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function save() {
+    setBusy("save");
+    setMessage(null);
+    setTestResult(null);
+    try {
+      const next = await api.updateLLMCredentials({
+        provider,
+        api_key: apiKey,
+        base_url: provider === "claude" ? undefined : baseURL,
+      });
+      setStatus(next);
+      setProvider(next.provider);
+      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+      setAPIKey("");
+      setMessage({ title: "Provider saved", detail: "The key is stored server-side; only the tail is shown. Run Test to confirm connectivity.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Save failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function test() {
+    setBusy("test");
+    setMessage(null);
+    setTestResult(null);
+    try {
+      setTestResult(await api.testLLMCredentials());
+    } catch (e: any) {
+      setTestResult({ ok: false, error: e.message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (access === "loading") {
+    return (
+      <main className="grid min-h-[60vh] place-items-center text-sm text-slate-500">
+        <span className="inline-flex items-center gap-2">
+          <Loader2 size={16} className="animate-spin" />
+          Checking admin access…
+        </span>
+      </main>
+    );
+  }
+
+  if (access === "denied") {
+    return (
+      <main className="mx-auto max-w-md px-4 py-16 text-center">
+        <ShieldCheck className="mx-auto text-slate-300" size={40} />
+        <h1 className="mt-4 text-xl font-bold text-slate-900">Admin access required</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
+          This area is limited to platform administrators (set by the <code className="rounded bg-slate-100 px-1">ADMINS</code> environment variable).
+        </p>
+        <Link href="/docs" className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820] hover:underline">
+          <ArrowLeft size={14} />
+          Back to docs
+        </Link>
+      </main>
+    );
+  }
+
+  const providerChanged = Boolean(status?.configured && status.provider !== provider);
+  const needsKey = !status?.configured || providerChanged;
+  const needsBaseURL = provider !== "claude";
+  const selectedStatusLabel = status?.configured
+    ? `${providerLabel(status.provider)} configured${status.key_tail ? ` ...${status.key_tail}` : ""}`
+    : "Not configured";
+
+  function selectProvider(value: LLMProvider) {
+    setProvider(value);
+    setTestResult(null);
+    setBaseURL(status?.provider === value && status.base_url ? status.base_url : defaultBaseURL(value));
+  }
+
+  return (
+    <main className="mx-auto max-w-[860px] px-4 py-6 md:px-6 md:py-8">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <Link href="/docs" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
+          <ArrowLeft size={15} />
+          Docs
+        </Link>
+        <Badge tone="neutral">Admin</Badge>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
+        <aside className="hidden lg:block">
+          <nav className="sticky top-6 grid gap-1 text-sm">
+            <div className="mb-2 px-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Admin</div>
+            <span className="rounded-lg bg-white px-2 py-1.5 font-semibold text-slate-950 ring-1 ring-slate-200">AI Provider</span>
+          </nav>
+        </aside>
+
+        <div className="space-y-6">
+          <SectionHeader title="AI Provider" eyebrow="Platform LLM used for writing, QA, and analysis" />
+          {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+
+          <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <KeyRound size={16} />
+                API key
+              </div>
+              {status?.configured ? (
+                <Badge tone="green">
+                  <CheckCircle2 size={13} className="mr-1" />
+                  {selectedStatusLabel}
+                </Badge>
+              ) : (
+                <Badge tone="amber">Not configured</Badge>
+              )}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              {providers.map((item) => {
+                const active = provider === item.value;
+                return (
+                  <button
+                    type="button"
+                    key={item.value}
+                    onClick={() => selectProvider(item.value)}
+                    className={cx(
+                      "flex min-h-[68px] items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors",
+                      active ? "border-[#d93820] bg-red-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                    )}
+                  >
+                    <span>
+                      <span className="block text-sm font-bold">{item.label}</span>
+                      <span className="mt-1 block text-xs font-semibold text-slate-500">{item.helper}</span>
+                    </span>
+                    <span className={cx("grid h-5 w-5 place-items-center rounded-full border", active ? "border-[#d93820] bg-[#d93820]" : "border-slate-300 bg-white")}>
+                      {active && <span className="h-2 w-2 rounded-full bg-white" />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <Field
+              label={provider === "claude" ? "Anthropic Claude API key" : `${providerLabel(provider)} API key`}
+              helper={needsKey ? "Required for this provider." : "Leave blank to keep the existing key."}
+            >
+              <TextInput
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                placeholder={provider === "claude" ? "sk-ant-..." : "sk-..."}
+                onChange={(event) => setAPIKey(event.target.value)}
+              />
+            </Field>
+
+            {needsBaseURL && (
+              <Field label="Base URL" helper="Use the API backend URL with /v1, not the dashboard URL.">
+                <div className="relative">
+                  <Globe2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <TextInput value={baseURL} className="w-full pl-9" placeholder={defaultBaseURL(provider)} onChange={(event) => setBaseURL(event.target.value)} />
+                </div>
+              </Field>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={busy !== null || (needsKey && apiKey.trim() === "") || (needsBaseURL && baseURL.trim() === "")}
+                variant="primary"
+                onClick={save}
+              >
+                <ButtonProgress busy={busy === "save"} busyLabel="Saving" idleIcon={<Save size={16} />}>
+                  Save credentials
+                </ButtonProgress>
+              </Button>
+              <Button disabled={busy !== null || !status?.configured} onClick={test} title={status?.configured ? "Run a live connectivity check" : "Save a key first"}>
+                <ButtonProgress busy={busy === "test"} busyLabel="Testing" idleIcon={<PlugZap size={16} />}>
+                  Test connection
+                </ButtonProgress>
+              </Button>
+              <Button disabled={busy !== null} onClick={refresh}>
+                Refresh
+              </Button>
+            </div>
+
+            {testResult && (
+              <div
+                className={cx(
+                  "rounded-lg border p-3 text-sm",
+                  testResult.ok ? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900",
+                )}
+              >
+                <div className="inline-flex items-center gap-2 font-bold">
+                  {testResult.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                  {testResult.ok ? "Connection OK" : "Connection failed"}
+                </div>
+                <div className="mt-1 text-xs leading-5">
+                  {testResult.ok ? (
+                    <>
+                      {testResult.provider} · {testResult.model || "model n/a"}
+                      {typeof testResult.latency_ms === "number" ? ` · ${testResult.latency_ms} ms` : ""}
+                      {testResult.sample ? ` · replied "${testResult.sample}"` : ""}
+                    </>
+                  ) : (
+                    testResult.error || "Unknown error"
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <Notice
+            title="Secrets stay server-side"
+            detail="Only the provider, base URL, and key tail are returned to the browser. Saving takes effect immediately — no redeploy needed."
+            tone="neutral"
+          />
+        </div>
+      </div>
+    </main>
+  );
+}

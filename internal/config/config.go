@@ -19,7 +19,7 @@ type Env struct {
 	AnthropicAPIKey          string
 	AnthropicModel           string
 	ClerkSecretKey           string
-	AdminUserIDs             string // comma-separated Clerk user IDs allowed to manage global admin settings
+	AdminEmails              string // comma-separated admin email addresses (ADMINS env) allowed to manage global admin settings
 	SearchAPIKey             string // Brave Search API key (or swapped provider)
 	GitHubToken              string // for BlogPublisher auto-commit (§5.6, option A)
 	BlogRepo                 string // "owner/name" of the blog repo
@@ -45,7 +45,7 @@ func FromEnv() Env {
 		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:           getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
 		ClerkSecretKey:           os.Getenv("CLERK_SECRET_KEY"),
-		AdminUserIDs:             os.Getenv("CITELOOP_ADMIN_USER_IDS"),
+		AdminEmails:              os.Getenv("ADMINS"),
 		SearchAPIKey:             os.Getenv("SEARCH_API_KEY"),
 		GitHubToken:              os.Getenv("GITHUB_TOKEN"),
 		BlogRepo:                 os.Getenv("BLOG_REPO"),
