@@ -163,6 +163,11 @@ type Querier interface {
 	SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) (SEOTechnicalSummaryRow, error)
 	// Publisher: canonical articles due for auto-publish (§5.6).
 	SelectDueCanonical(ctx context.Context, projectID uuid.UUID) ([]Article, error)
+	// Scheduler: topics whose operator-set scheduled_at slot has arrived. Unlike
+	// SelectGenerationCandidates this is time-driven and ignores buffer/priority,
+	// since the operator explicitly scheduled the slot (§5.4). Locked to avoid
+	// concurrent double-generation.
+	SelectDueScheduledTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error)
 	// Scheduler candidate selection: backlog/scheduled topics with a slot inside the
 	// buffer window, locked to avoid concurrent double-generation (§5.4).
 	SelectGenerationCandidates(ctx context.Context, arg SelectGenerationCandidatesParams) ([]Topic, error)

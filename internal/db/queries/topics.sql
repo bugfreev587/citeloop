@@ -75,6 +75,19 @@ order by
 limit $2
 for update skip locked;
 
+-- Scheduler: topics whose operator-set scheduled_at slot has arrived. Unlike
+-- SelectGenerationCandidates this is time-driven and ignores buffer/priority,
+-- since the operator explicitly scheduled the slot (§5.4). Locked to avoid
+-- concurrent double-generation.
+-- name: SelectDueScheduledTopics :many
+select * from topics
+where project_id = $1
+  and status = 'scheduled'
+  and scheduled_at is not null
+  and scheduled_at <= now()
+order by scheduled_at asc
+for update skip locked;
+
 -- name: CountNonRejectedArticlesForTopic :one
 select count(*) from articles
 where topic_id = $1 and status <> 'rejected';
