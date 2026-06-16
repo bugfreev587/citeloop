@@ -20,6 +20,21 @@ func TestStrategistTopicSpecAcceptsPriorityScoreAlias(t *testing.T) {
 	}
 }
 
+func TestStrategistTopicSpecPrefersPriorityScoreWhenPriorityNonPositive(t *testing.T) {
+	var wrap struct {
+		Topics []TopicSpec `json:"topics"`
+	}
+
+	err := extractJSON(`{"topics":[{"channel":"blog","title":"Demo","priority":0,"priority_score":80}]}`, &wrap)
+	if err != nil {
+		t.Fatalf("extractJSON: %v", err)
+	}
+
+	if got, want := wrap.Topics[0].Priority, 8; got != want {
+		t.Fatalf("priority = %d, want %d (priority_score alias should win over non-positive priority)", got, want)
+	}
+}
+
 func TestNormalizeTopicSpecsBackfillsMissingPriority(t *testing.T) {
 	specs := normalizeTopicSpecs([]TopicSpec{
 		{Title: "First", Priority: 0},

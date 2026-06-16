@@ -90,7 +90,13 @@ func parseTopicPriority(raw json.RawMessage) (int, bool) {
 	}
 	var number float64
 	if err := json.Unmarshal(raw, &number); err == nil {
-		return normalizeTopicPriorityNumber(number), true
+		// A non-positive value (0, negative, NaN) is not a usable priority — report
+		// it as unparsed so a positive alias (e.g. priority_score) or the index
+		// fallback can take over instead of pinning the topic to 0.
+		if p := normalizeTopicPriorityNumber(number); p > 0 {
+			return p, true
+		}
+		return 0, false
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err != nil {
@@ -101,7 +107,10 @@ func parseTopicPriority(raw json.RawMessage) (int, bool) {
 		return 0, false
 	}
 	if number, err := strconv.ParseFloat(text, 64); err == nil {
-		return normalizeTopicPriorityNumber(number), true
+		if p := normalizeTopicPriorityNumber(number); p > 0 {
+			return p, true
+		}
+		return 0, false
 	}
 	switch text {
 	case "urgent", "critical", "highest", "p0":

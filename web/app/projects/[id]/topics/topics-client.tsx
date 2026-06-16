@@ -120,16 +120,20 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     });
   }, [channel, query, topics]);
 
+  // The card list reflects the active search/channel filters...
   const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
+  // ...but the banner, pacing copy, and recommendation describe the whole automation
+  // queue and sit above the filters, so they derive from every backlog topic.
+  const allBacklogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
   const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
   const recommendedIds = useMemo(() => {
-    return new Set(recommendedTopicIds(backlogTopics));
-  }, [backlogTopics]);
+    return new Set(recommendedTopicIds(allBacklogTopics));
+  }, [allBacklogTopics]);
   // Topics that are still waiting (not already drafting) define the queue the
   // pacing copy describes, and the highest-value one is the "jump the queue" pick.
   const queuedTopics = useMemo(
-    () => backlogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
-    [backlogTopics, generatingIds],
+    () => allBacklogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
+    [allBacklogTopics, generatingIds],
   );
   const nextTopic = useMemo(() => {
     const recommendedFirst = queuedTopics.filter((topic) => recommendedIds.has(topic.id));
