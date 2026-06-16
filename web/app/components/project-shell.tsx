@@ -89,6 +89,19 @@ export function ProjectShell({
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getMe()
+      .then((me) => {
+        if (!cancelled) setIsPlatformAdmin(Boolean(me?.is_admin));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
   // Internal routes are admin-gated server-side; hide entries that would only hit a 404.
   const visibleNavSections = navSections
     .map((section) => ({
@@ -221,6 +234,18 @@ export function ProjectShell({
             <FolderKanban size={16} />
             Projects
           </Link>
+          {isPlatformAdmin && (
+            <Link
+              href="/admin"
+              className={cx(
+                "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+                pathname.startsWith("/admin") && "bg-slate-50 font-semibold text-[#d93820]",
+              )}
+            >
+              <KeyRound size={16} />
+              Admin
+            </Link>
+          )}
           <Link
             href="/docs"
             className={cx(
@@ -279,6 +304,17 @@ export function ProjectShell({
           >
             Projects
           </Link>
+          {isPlatformAdmin && (
+            <Link
+              href="/admin"
+              className={cx(
+                "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
+                pathname.startsWith("/admin") && "border-[#d93820] text-[#d93820]",
+              )}
+            >
+              Admin
+            </Link>
+          )}
           <Link
             href="/docs"
             className={cx(
