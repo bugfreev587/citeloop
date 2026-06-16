@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -228,7 +230,8 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 			writeErr(w, 500, err.Error())
 			return
 		}
-		schedAt = canonicalApprovalScheduleAt(topic.ScheduledAt, cfg, time.Now())
+		latest, _ := s.Q.LatestCanonicalPublishSlotForProject(r.Context(), a.ProjectID)
+		schedAt = canonicalApprovalScheduleAt(topic.ScheduledAt, latest, cfg, time.Now())
 	}
 
 	var updated db.Article
@@ -263,18 +266,22 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 	writeJSON(w, 200, updated)
 }
 
-func canonicalApprovalScheduleAt(topicSchedule pgtype.Timestamptz, cfg config.ProjectConfig, now time.Time) pgtype.Timestamptz {
+// canonicalApprovalScheduleAt decides a freshly approved canonical's publish
+// slot. An operator-set topic date always wins; otherwise the project's publish
+// cadence staggers it after the latest slot already taken (manual mode leaves it
+// unscheduled to wait on the Publish page).
+func canonicalApprovalScheduleAt(topicSchedule, latest pgtype.Timestamptz, cfg config.ProjectConfig, now time.Time) pgtype.Timestamptz {
 	if topicSchedule.Valid {
 		return topicSchedule
 	}
-	if cfg.AutoAdvanceEnabled {
-		return pgutil.TS(now)
+	latestTime := time.Time{}
+	if latest.Valid {
+		latestTime = latest.Time
 	}
-	bufferDays := cfg.BufferDays
-	if bufferDays < 0 {
-		bufferDays = 0
+	if when, ok := cfg.NextPublishSlot(latestTime, now); ok {
+		return pgutil.TS(when)
 	}
-	return pgutil.TS(now.Add(time.Duration(bufferDays) * 24 * time.Hour))
+	return pgtype.Timestamptz{}
 }
 
 func (s *Server) rejectProjectArticle(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +327,32 @@ func (s *Server) rejectArticleScoped(w http.ResponseWriter, r *http.Request, pro
 		if nextStatus, err := topicstate.Transition(topicstate.Status(topic.Status), topicstate.EventRejectDraft); err == nil {
 			_, _ = s.Q.UpdateTopicStatus(r.Context(), db.UpdateTopicStatusParams{ID: a.TopicID, Status: string(nextStatus)})
 		}
+	}
+	writeJSON(w, 200, a)
+}
+
+// publishProjectArticleNow is the operator's "Publish now" override on the
+// Publish page: it brings an approved canonical's slot to now so the next
+// publish tick sends it out (also how manual-mode drafts get published).
+func (s *Server) publishProjectArticleNow(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	a, err := s.Q.PublishArticleNowForProject(r.Context(), db.PublishArticleNowForProjectParams{ID: aid, ProjectID: projectID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, 409, "only an approved canonical draft can be published now")
+			return
+		}
+		writeErr(w, 500, err.Error())
+		return
 	}
 	writeJSON(w, 200, a)
 }

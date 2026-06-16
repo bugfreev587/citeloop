@@ -3,7 +3,32 @@ package config
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
+
+func TestNextPublishSlotStaggersAndModes(t *testing.T) {
+	now := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
+
+	scheduled := Default() // scheduled, interval 2
+	if got, ok := scheduled.NextPublishSlot(time.Time{}, now); !ok || !got.Equal(now) {
+		t.Fatalf("scheduled first = %v ok=%v, want %v", got, ok, now)
+	}
+	if got, ok := scheduled.NextPublishSlot(now, now); !ok || !got.Equal(now.AddDate(0, 0, 2)) {
+		t.Fatalf("scheduled next = %v ok=%v, want %v", got, ok, now.AddDate(0, 0, 2))
+	}
+
+	auto := Default()
+	auto.PublishMode = PublishModeAuto
+	if got, ok := auto.NextPublishSlot(now.AddDate(0, 0, 5), now); !ok || !got.Equal(now) {
+		t.Fatalf("auto = %v ok=%v, want now", got, ok)
+	}
+
+	manual := Default()
+	manual.PublishMode = PublishModeManual
+	if _, ok := manual.NextPublishSlot(time.Time{}, now); ok {
+		t.Fatal("manual should not auto-schedule")
+	}
+}
 
 func TestParseDefaults(t *testing.T) {
 	c, err := Parse(json.RawMessage("{}"))
