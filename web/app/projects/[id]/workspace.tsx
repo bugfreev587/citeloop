@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BarChart3, CheckCircle2, Circle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -18,13 +18,11 @@ import {
 import {
   buildHomeEventStream,
   contextBuildTracks,
-  visibilityLifecycleLabel,
-  visibilityLifecycleTone,
-  visibleHomeSectionIds,
+  nextWorkspaceAction,
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
-import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
+import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -34,29 +32,6 @@ const HOME_REFRESH_MS = 5000;
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} draft`;
-}
-
-function topicLabel(topic: Topic) {
-  return topic.title || "Untitled topic";
-}
-
-function activityLabel(agent: string) {
-  const labels: Record<string, string> = {
-    insight: "Context refresh",
-    strategist: "Content plan update",
-    writer: "Draft creation",
-    qa: "Review quality check",
-    publisher: "Publishing",
-    notification: "Notification",
-  };
-  return labels[agent] ?? "Automation activity";
-}
-
-function activityTone(status: string, degraded: boolean): "green" | "red" | "amber" | "neutral" {
-  if (status === "error" || status === "failed") return "red";
-  if (degraded || status === "running") return "amber";
-  if (status === "ok") return "green";
-  return "neutral";
 }
 
 function isThisMonth(value: string | null) {
@@ -94,50 +69,10 @@ function hasConnectedSearchData(overview: SEOOverview | null) {
   return overview.integrations.some((integration) => integration.provider === "google_search_console" && integration.status === "connected");
 }
 
-const loopConnectorLabels = {
-  contextToFind: "Context feeds Find opportunities",
-  findToPlan: "Find opportunities connects to Plan content",
-  planToCreate: "Plan content connects to Create drafts",
-  createToReview: "Create drafts connects to Review",
-  reviewToPublish: "Review connects to Publish",
-  publishToMeasure: "Publish connects to Measure results",
-  measureToFind: "Measure results connects back to Find opportunities",
-} as const;
+type StageTone = "green" | "amber" | "blue" | "red" | "neutral";
 
-function loopGridClass(position: number) {
-  const classes: Record<number, string> = {
-    0: "lg:col-start-2 lg:row-start-1",
-    1: "lg:col-start-2 lg:row-start-2",
-    2: "lg:col-start-3 lg:row-start-2",
-    3: "lg:col-start-3 lg:row-start-3",
-    4: "lg:col-start-2 lg:row-start-3",
-    5: "lg:col-start-1 lg:row-start-3",
-    6: "lg:col-start-1 lg:row-start-2",
-  };
-  return classes[position] ?? "";
-}
-
-function loopConnectorClass(direction: "right" | "down" | "left" | "up") {
-  const classes = {
-    right: "-right-12 top-1/2 -translate-y-1/2",
-    down: "left-1/2 -bottom-12 -translate-x-1/2",
-    left: "-left-12 top-1/2 -translate-y-1/2",
-    up: "left-1/2 -top-12 -translate-x-1/2",
-  };
-  return classes[direction];
-}
-
-function loopConnectorIcon(direction: "right" | "down" | "left" | "up") {
-  if (direction === "down") return ArrowDown;
-  if (direction === "left") return ArrowLeft;
-  if (direction === "up") return ArrowUp;
-  return ArrowRight;
-}
-
-type LoopStatusTone = "green" | "amber" | "blue" | "red" | "neutral";
-
-function loopStatusDotClass(tone: LoopStatusTone) {
-  const classes: Record<LoopStatusTone, string> = {
+function stageDotClass(tone: StageTone) {
+  const classes: Record<StageTone, string> = {
     green: "bg-emerald-500",
     amber: "bg-amber-500",
     blue: "bg-blue-500",
@@ -163,7 +98,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
   const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [onboardingPollCount, setOnboardingPollCount] = useState(0);
@@ -283,7 +218,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           setMessage({
             tone: "green",
             title: "Your domain context is ready",
-            detail: "CiteLoop finished reading your site. Review the context, then generate a content plan.",
+            detail: "CiteLoop finished reading your site. Confirm the context, then planning and drafting advance automatically.",
           });
           window.clearInterval(interval);
           return;
@@ -301,44 +236,13 @@ export function Workspace({ projectId }: { projectId: string }) {
     };
   }, [projectLoaded, contextBuild.active, refresh]);
 
-  const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`, busyKey = label) => {
-    setBusy(busyKey);
-    setMessage(null);
-    try {
-      await fn();
-      await refresh();
-      setMessage({ tone: "green", title: success });
-    } catch (e: any) {
-      setMessage({ tone: "red", title: `${label} failed`, detail: e.message });
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const reviewArticles = review.flatMap((group) => group.articles);
   const scheduledRows = useMemo(() => {
     const articleRows = approved
       .filter((article) => article.kind === "canonical")
-      .map((article) => ({
-        id: article.id,
-        time: article.scheduled_at,
-        title: articleTitle(article),
-        status: article.status,
-        type: "canonical",
-      }));
-    const topicRows = topics
-      .filter((topic) => topic.scheduled_at)
-      .slice(0, 3)
-      .map((topic) => ({
-        id: topic.id,
-        time: topic.scheduled_at,
-        title: topicLabel(topic),
-        status: topic.status,
-        type: topic.channel,
-      }));
-    const rows = [...articleRows, ...topicRows].sort((a, b) => String(a.time).localeCompare(String(b.time)));
-    return rows.slice(0, 5);
-  }, [approved, topics]);
+      .map((article) => ({ id: article.id, time: article.scheduled_at, title: articleTitle(article) }));
+    return [...articleRows].sort((a, b) => String(a.time).localeCompare(String(b.time))).slice(0, 5);
+  }, [approved]);
 
   const waitingVariants = approved.filter(
     (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
@@ -346,41 +250,9 @@ export function Workspace({ projectId }: { projectId: string }) {
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
   const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
 
-  const contextHealth = !profile
-    ? {
-        label: "Needs context",
-        tone: "amber" as const,
-        detail: "CiteLoop is still gathering product facts and evidence from this domain.",
-      }
-    : sourcePageCount === 0
-      ? {
-          label: "Incomplete",
-          tone: "amber" as const,
-          detail: "Context exists, but CiteLoop has not captured source pages yet.",
-        }
-      : contextEvidenceCount === 0
-        ? {
-            label: "Evidence missing",
-            tone: "amber" as const,
-            detail: "Source pages are present, but supported claims still need evidence snippets.",
-          }
-        : !contextConfirmed
-          ? {
-              label: "Needs confirmation",
-              tone: "amber" as const,
-              detail: "Context has source pages and evidence. Review the facts, edit anything wrong, then confirm it before opportunities run.",
-            }
-        : {
-            label: "Ready",
-            tone: "green" as const,
-            detail: "Context is confirmed and can support opportunity finding, content planning, and review.",
-          };
-
-	  const opportunitiesInPlanCount = seoActions.length;
-	  const opportunitiesConverted = opportunitiesInPlanCount;
-	  const planItemCount = topics.length + opportunitiesInPlanCount;
-	  const planGenerationPending = opportunitiesInPlanCount > 0 && topics.length === 0;
-	  const draftGenerationRunning = topics.length > 0 && reviewArticles.length + approved.length === 0;
+  const opportunitiesInPlanCount = seoActions.length;
+  const planItemCount = topics.length + opportunitiesInPlanCount;
+  const planGenerationPending = opportunitiesInPlanCount > 0 && topics.length === 0;
   const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
   const searchDataConnected = hasConnectedSearchData(seoOverview);
   const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
@@ -389,25 +261,41 @@ export function Workspace({ projectId }: { projectId: string }) {
   const aiCitationSignals = seoOpportunities.filter((opportunity) =>
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
+
   const growthHeadline = searchDataConnected || publishedThisMonth > 0 || measuringActions > 0
     ? "CiteLoop is measuring growth from published work"
-    : "Growth measurement is limited";
+    : !profile
+      ? "Connect your product to start the growth loop"
+      : "The growth loop is warming up";
   const growthDetail = searchDataConnected
     ? "Verified Search Console data is connected, so CiteLoop can report clicks, impressions, and which content is moving."
-    : "Search Console is not connected yet. CiteLoop can show content progress and public crawl signals now; connect first-party data to prove traffic growth.";
-  const growthTrendPath = "M4 92 C 32 58, 56 46, 88 48 S 148 54, 180 34 S 238 12, 292 18 S 342 32, 392 16";
+    : "CiteLoop runs the loop automatically and only stops at the gates that need a human. The next thing that needs you is below.";
+
+  // Single primary action for the whole project, computed from real state.
+  const primaryAction = nextWorkspaceAction({
+    projectId,
+    hasProfile: Boolean(profile),
+    contextConfirmed,
+    failedPublishCount: failedPublish.length,
+    hasBlockedDrafts,
+    reviewCount: reviewArticles.length,
+    readyCount: ready.length,
+    topicsCount: topics.length,
+    openOpportunityCount: seoOpportunities.length,
+  });
+
   const growthMetricCards = [
     {
       label: "AI citations",
       value: aiCitationSignals > 0 ? aiCitationSignals : "-",
-      detail: aiCitationSignals > 0 ? "citation-related opportunities detected" : "AI-answer tracking is not connected yet",
+      detail: aiCitationSignals > 0 ? "citation opportunities detected" : "AI-answer tracking not connected yet",
       icon: Sparkles,
       muted: aiCitationSignals === 0,
     },
     {
       label: "Organic traffic",
       value: searchDataConnected ? metric(clicks28d) : "Limited",
-      detail: searchDataConnected ? `${metric(impressions28d)} impressions in the last 28 days` : "Connect Search Console for clicks and impressions",
+      detail: searchDataConnected ? `${metric(impressions28d)} impressions (28d)` : "Connect Search Console for traffic",
       icon: BarChart3,
       muted: !searchDataConnected,
     },
@@ -419,324 +307,85 @@ export function Workspace({ projectId }: { projectId: string }) {
       muted: publishedThisMonth === 0,
     },
     {
-      label: "Opportunities in motion",
+      label: "In motion",
       value: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions,
-      detail: "planned, under review, publishing, or measuring",
+      detail: "planned, in review, publishing, or measuring",
       icon: Search,
       muted: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions === 0,
     },
   ];
-  const loopCards = [
+
+  // Pipeline stages — same honest per-stage status logic, rendered as a compact stepper.
+  const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string }> = [
     {
-      position: 0,
       label: "Context",
-      metrics: [
-        { value: sourcePageCount, label: sourcePageCount === 1 ? "source page" : "source pages" },
-        { value: contextEvidenceCount, label: contextEvidenceCount === 1 ? "evidence snippet" : "evidence snippets" },
-      ],
-      status: {
-        label: contextHealth.label,
-        detail: contextHealth.detail,
-        tone: contextHealth.tone,
-      },
-      action: {
-        label: contextBuild.active ? "Track context build" : contextNeedsConfirmation ? "Review and confirm Context" : "Open Context",
-        href: `/projects/${projectId}/context`,
-      },
-      tone: contextHealth.tone,
-      accentClass: "text-emerald-700",
-      connectorLabel: loopConnectorLabels.contextToFind,
-      connectorDirection: "down" as const,
-    },
-    {
-      position: 1,
-      label: "Find opportunities",
-      metrics: [
-        { value: seoOpportunities.length, label: seoOpportunities.length === 1 ? "opportunity" : "opportunities" },
-        {
-          text: seoOpportunities.length > 0
-            ? "opportunities ready to review"
-            : opportunitiesInPlanCount > 0
-              ? `${opportunitiesInPlanCount} in content plan`
-            : contextBuild.active
-              ? "waiting for Context tracks"
-              : !contextConfirmed
-              ? "blocked until Context is confirmed"
-              : "checking public and source-backed signals",
-        },
-      ],
-      status: contextBuild.active
-        ? {
-            label: "Waiting for Context build",
-            detail: "Profile, crawl, and evidence tracks are still running.",
-            tone: "blue" as const,
-          }
+      metricValue: sourcePageCount,
+      statusLabel: !profile
+        ? "Reading your site"
         : contextNeedsConfirmation
-          ? {
-              label: "Blocked by Context confirmation",
-              detail: "Confirm the generated Context so CiteLoop can start finding opportunities from trusted evidence.",
-              tone: "amber" as const,
-            }
-          : seoOpportunities.length > 0
-            ? {
-                label: "Ready to review",
-                detail: "Opportunity candidates are available for planning or dismissal.",
-                tone: "green" as const,
-              }
-            : opportunitiesInPlanCount > 0
-              ? {
-                  label: "Review complete",
-                  detail: "All reviewed opportunities have moved into plan or were dismissed.",
-                  tone: "green" as const,
-                }
-            : {
-                label: "Scanning public-source opportunities",
-                detail: "Context is confirmed; CiteLoop can use public pages before analytics is connected.",
-                tone: "blue" as const,
-              },
-      action: {
-        label: contextBuild.active
-          ? "Track Context"
-          : !contextConfirmed
-            ? "Confirm Context"
-            : seoOpportunities.length > 0
-              ? "Review opportunities"
-              : opportunitiesInPlanCount > 0
-                ? "Review plan queue"
-                : "Open Visibility",
-        href: contextBuild.active || !contextConfirmed ? `/projects/${projectId}/context` : `/projects/${projectId}/visibility`,
-      },
-      tone: seoOpportunities.length > 0 || opportunitiesInPlanCount > 0 ? ("green" as const) : contextBuild.active ? ("blue" as const) : contextNeedsConfirmation ? ("amber" as const) : ("neutral" as const),
-      accentClass: seoOpportunities.length > 0 || opportunitiesInPlanCount > 0 ? "text-emerald-700" : "text-slate-500",
-      connectorLabel: loopConnectorLabels.findToPlan,
-      connectorDirection: "right" as const,
+          ? "Needs confirmation"
+          : contextConfirmed
+            ? "Confirmed"
+            : "Incomplete",
+      tone: !profile ? "blue" : contextNeedsConfirmation ? "amber" : contextConfirmed ? "green" : "amber",
+      href: `/projects/${projectId}/context`,
     },
     {
-      position: 2,
-      label: "Plan content",
-      metrics: [
-        { value: planItemCount, label: planItemCount === 1 ? "item in the content plan" : "items in the content plan" },
-        {
-	          text: topics.length > 0
-	            ? "drafting starts automatically"
-	            : opportunitiesInPlanCount > 0
-	              ? "reviewed opportunities are being planned"
-	              : "content backlog is not started",
-	        },
-	      ],
-	      status: !contextConfirmed
-        ? {
-            label: "Locked until Context is confirmed",
-            detail: "A confirmed Context keeps the first plan grounded in reviewed facts and evidence.",
-            tone: "amber" as const,
-          }
-	        : planGenerationPending
-	          ? {
-	              label: "Generating content plan from reviewed opportunities",
-	              detail: "Reviewed opportunities are being turned into topics by the workflow worker. No action needed.",
-	              tone: "blue" as const,
-	            }
-	        : planItemCount > 0
-	          ? {
-	              label: topics.length > 0 ? "Content plan ready" : "Opportunities in plan",
-	              detail:
-	                topics.length > 0
-	                  ? "Topics are available; draft generation starts automatically until review, budget, or safety gates stop it."
-	                  : "Visibility opportunities are queued as content actions for the next planning pass.",
-	              tone: "green" as const,
-	            }
-          : seoOpportunities.length > 0
-            ? {
-                label: "Ready to plan",
-                detail: "Use reviewed opportunities to create the first content backlog.",
-                tone: "blue" as const,
-              }
-            : {
-                label: "Waiting for opportunities",
-                detail: "Opportunity discovery runs after Context confirmation.",
-                tone: "neutral" as const,
-              },
-	      action: {
-	        label: !contextConfirmed
-	          ? "Confirm Context"
-	          : planGenerationPending
-	            ? "No action needed"
-	            : planItemCount > 0
-	              ? "Open content plan"
-	              : seoOpportunities.length > 0
-	                ? "Review opportunities"
-	                : "Open Visibility",
-	        href: !contextConfirmed ? `/projects/${projectId}/context` : planItemCount > 0 ? `/projects/${projectId}/plan` : seoOpportunities.length > 0 ? `/projects/${projectId}/visibility` : `/projects/${projectId}/visibility`,
-	      },
-      tone: planItemCount > 0 ? ("green" as const) : !contextConfirmed ? ("amber" as const) : seoOpportunities.length > 0 ? ("blue" as const) : ("neutral" as const),
-      accentClass: planItemCount > 0 ? "text-emerald-700" : "text-amber-700",
-      connectorLabel: loopConnectorLabels.planToCreate,
-      connectorDirection: "down" as const,
+      label: "Opportunities",
+      metricValue: seoOpportunities.length,
+      statusLabel: !contextConfirmed
+        ? "Locked until Context"
+        : seoOpportunities.length > 0
+          ? "Ready to review"
+          : opportunitiesInPlanCount > 0
+            ? "Reviewed"
+            : "Scanning",
+      tone: !contextConfirmed ? "neutral" : seoOpportunities.length > 0 ? "amber" : "green",
+      href: `/projects/${projectId}/visibility`,
     },
     {
-      position: 3,
-      label: "Create drafts",
-      metrics: [
-        { value: reviewArticles.length + approved.length, label: reviewArticles.length + approved.length === 1 ? "draft created or approved" : "drafts created or approved" },
-        { text: reviewArticles.length + approved.length > 0 ? "ready to review or publish" : "no drafts yet" },
-      ],
-	      status: reviewArticles.length + approved.length > 0
-	        ? {
-	            label: "Drafts in motion",
-	            detail: "Drafts are ready for review or already approved for publishing.",
-	            tone: "green" as const,
-	          }
-	        : topics.length > 0
-	          ? {
-	              label: "Draft generation running",
-	              detail: "Writer and QA run from planned topics automatically. No action needed unless a draft reaches Review.",
-	              tone: "blue" as const,
-	            }
-          : {
-              label: "Waiting for content plan",
-              detail: "Drafting starts after the backlog has confirmed topics.",
-              tone: "neutral" as const,
-            },
-	      action: {
-	        label: reviewArticles.length > 0 ? "Review drafts" : draftGenerationRunning ? "No action needed" : "Open plan",
-	        href: reviewArticles.length > 0 ? `/projects/${projectId}/review` : `/projects/${projectId}/plan`,
-	      },
-      tone: reviewArticles.length + approved.length > 0 ? ("green" as const) : topics.length > 0 ? ("blue" as const) : ("neutral" as const),
-      accentClass: reviewArticles.length + approved.length > 0 ? "text-emerald-700" : "text-slate-500",
-      connectorLabel: loopConnectorLabels.createToReview,
-      connectorDirection: "left" as const,
+      label: "Plan",
+      metricValue: planItemCount,
+      statusLabel: !contextConfirmed
+        ? "Locked until Context"
+        : planGenerationPending
+          ? "Generating (auto)"
+          : planItemCount > 0
+            ? "Plan ready"
+            : "Waiting",
+      tone: !contextConfirmed ? "neutral" : planGenerationPending ? "blue" : planItemCount > 0 ? "green" : "neutral",
+      href: `/projects/${projectId}/plan`,
     },
     {
-      position: 4,
+      label: "Drafts",
+      metricValue: reviewArticles.length + approved.length,
+      statusLabel: reviewArticles.length + approved.length > 0 ? "In motion" : topics.length > 0 ? "Drafting (auto)" : "Waiting",
+      tone: reviewArticles.length + approved.length > 0 ? "green" : topics.length > 0 ? "blue" : "neutral",
+      href: `/projects/${projectId}/plan`,
+    },
+    {
       label: "Review",
-      metrics: [
-        { value: reviewArticles.length, label: reviewArticles.length === 1 ? "draft waiting for approval" : "drafts waiting for approval" },
-        { text: reviewArticles.length > 0 ? "claims and evidence need your decision" : "nothing waiting" },
-      ],
-      status: reviewArticles.length > 0
-        ? {
-            label: "Needs approval",
-            detail: "Review claims, evidence, and voice before anything is published.",
-            tone: "amber" as const,
-          }
-        : {
-            label: "Clear",
-            detail: "No drafts are waiting for approval right now.",
-            tone: "green" as const,
-          },
-      action: {
-        label: reviewArticles.length > 0 ? "Review drafts" : "Open Review",
-        href: `/projects/${projectId}/review`,
-      },
-      tone: reviewArticles.length > 0 ? ("amber" as const) : ("green" as const),
-      accentClass: reviewArticles.length > 0 ? "text-amber-700" : "text-emerald-700",
-      connectorLabel: loopConnectorLabels.reviewToPublish,
-      connectorDirection: "left" as const,
+      metricValue: reviewArticles.length,
+      statusLabel: reviewArticles.length > 0 ? "Needs approval" : "Clear",
+      tone: reviewArticles.length > 0 ? "amber" : "green",
+      href: `/projects/${projectId}/review`,
     },
     {
-      position: 5,
       label: "Publish",
-      metrics: [
-        { value: publishedThisMonth, label: publishedThisMonth === 1 ? "page live this month" : "pages live this month" },
-        { text: failedPublish.length > 0 ? "publishing needs attention" : "published this month" },
-      ],
-      status: failedPublish.length > 0
-        ? {
-            label: "Publishing needs attention",
-            detail: "A publish attempt failed and needs a fix before measurement can continue.",
-            tone: "red" as const,
-          }
-        : ready.length > 0
-          ? {
-              label: "Ready to publish",
-              detail: "Approved variants are waiting to be distributed.",
-              tone: "amber" as const,
-            }
-          : publishedThisMonth > 0
-            ? {
-                label: "Live this month",
-                detail: "Published pages are available for measurement.",
-                tone: "green" as const,
-              }
-            : {
-                label: "Waiting for approved drafts",
-                detail: "Publishing starts after review approval.",
-                tone: "neutral" as const,
-              },
-      action: {
-        label: failedPublish.length > 0 ? "Fix publishing" : ready.length > 0 ? "Publish approved" : "Open Publish",
-        href: `/projects/${projectId}/publish`,
-      },
-      tone: failedPublish.length > 0 ? ("red" as const) : publishedThisMonth > 0 ? ("green" as const) : ready.length > 0 ? ("amber" as const) : ("neutral" as const),
-      accentClass: failedPublish.length > 0 ? "text-red-700" : publishedThisMonth > 0 ? "text-emerald-700" : "text-slate-500",
-      connectorLabel: loopConnectorLabels.publishToMeasure,
-      connectorDirection: "up" as const,
+      metricValue: publishedThisMonth,
+      statusLabel: failedPublish.length > 0 ? "Needs attention" : ready.length > 0 ? "Ready to distribute" : publishedThisMonth > 0 ? "Live this month" : "Waiting",
+      tone: failedPublish.length > 0 ? "red" : ready.length > 0 ? "amber" : publishedThisMonth > 0 ? "green" : "neutral",
+      href: `/projects/${projectId}/publish`,
     },
     {
-      position: 6,
-      label: "Measure results",
-      metrics: [
-        { value: searchDataConnected ? metric(clicks28d) : "-", label: searchDataConnected ? "clicks in the last 28 days" : "results" },
-        { text: searchDataConnected ? `${metric(impressions28d)} impressions measured` : "limited until connected" },
-      ],
-      status: searchDataConnected
-        ? {
-            label: "Measurement connected",
-            detail: "Search Console data can show clicks, impressions, and growth impact.",
-            tone: "green" as const,
-          }
-        : {
-            label: "Limited until connected",
-            detail: "CiteLoop can track workflow progress now; connect Search Console for traffic proof.",
-            tone: "amber" as const,
-          },
-      action: {
-        label: searchDataConnected ? "View results" : "Connect measurement",
-        href: `/projects/${projectId}/visibility`,
-      },
-      tone: searchDataConnected ? ("green" as const) : ("amber" as const),
-      accentClass: searchDataConnected ? "text-emerald-700" : "text-amber-700",
-      connectorLabel: loopConnectorLabels.measureToFind,
-      connectorDirection: "right" as const,
+      label: "Measure",
+      metricValue: searchDataConnected ? metric(clicks28d) : "-",
+      statusLabel: searchDataConnected ? "Connected" : "Connect for proof",
+      tone: searchDataConnected ? "green" : "amber",
+      href: `/projects/${projectId}/visibility`,
     },
   ];
-  const loopItems = [
-    ...seoOpportunities.slice(0, 3).map((opportunity) => ({
-      id: `opportunity-${opportunity.id}`,
-      title: opportunityTitle(opportunity),
-      stage: visibilityLifecycleLabel(opportunity.status),
-      tone: visibilityLifecycleTone(opportunity.status),
-      href: `/projects/${projectId}/visibility`,
-    })),
-    ...topics.slice(0, 2).map((topic) => ({
-      id: `topic-${topic.id}`,
-      title: topicLabel(topic),
-      stage: "Added to Content Plan",
-      tone: "blue" as const,
-      href: `/projects/${projectId}/plan`,
-    })),
-    ...seoActions.slice(0, 2).map((action) => ({
-      id: `seo-action-${action.id}`,
-      title: action.action_type || "Visibility opportunity action",
-      stage: "Added to Content Plan",
-      tone: "blue" as const,
-      href: `/projects/${projectId}/visibility`,
-    })),
-    ...reviewArticles.slice(0, 2).map((article) => ({
-      id: `review-${article.id}`,
-      title: articleTitle(article),
-      stage: article.qa_blocking ? "Draft needs evidence" : "Draft waiting for review",
-      tone: article.qa_blocking ? ("red" as const) : ("amber" as const),
-      href: `/projects/${projectId}/review`,
-    })),
-    ...published.slice(0, 2).map((article) => ({
-      id: `published-${article.id}`,
-      title: articleTitle(article),
-      stage: "Published and measuring",
-      tone: "green" as const,
-      href: `/projects/${projectId}/publish`,
-    })),
-  ].slice(0, 5);
+
   const nextScheduledRow = scheduledRows.find((row) => row.time);
   const eventStream = buildHomeEventStream({
     projectId,
@@ -745,8 +394,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       .slice(0, 2)
       .map((run) => ({
         id: `run-${run.id}`,
-        title: activityLabel(run.agent),
-        detail: "CiteLoop is working on this project right now.",
+        title: "CiteLoop is working on this project",
+        detail: "Automation is running right now.",
         href: `/projects/${projectId}/settings/activity`,
       })),
     recentEvents: [
@@ -768,12 +417,6 @@ export function Workspace({ projectId }: { projectId: string }) {
         detail: "Visibility opportunity detected",
         href: `/projects/${projectId}/visibility`,
       })),
-      ...seoActions.slice(0, 1).map((action) => ({
-        id: `seo-action-${action.id}`,
-        title: action.action_type || "Visibility opportunity action",
-        detail: "Added to Content Plan",
-        href: `/projects/${projectId}/visibility`,
-      })),
     ],
     nextEvent: nextScheduledRow
       ? {
@@ -783,287 +426,193 @@ export function Workspace({ projectId }: { projectId: string }) {
         }
       : null,
   });
-  const homeSections = [
-    { id: "needs-attention", label: "Needs attention", count: failedPublish.length, priority: 100, href: `/projects/${projectId}/publish` },
-    { id: "activity-warnings", label: "Activity warning summary", count: automationWarnings.length, priority: 90, href: `/projects/${projectId}/settings/activity` },
-    { id: "needs-review", label: "Needs review", count: reviewArticles.length, priority: hasBlockedDrafts ? 85 : 80, href: `/projects/${projectId}/review` },
-    { id: "ready-to-distribute", label: "Ready to distribute", count: ready.length, priority: 70, href: `/projects/${projectId}/publish` },
-    { id: "this-week", label: "This week", count: scheduledRows.length, priority: 40, href: `/projects/${projectId}/publish` },
-    { id: "waiting-canonical", label: "Waiting on canonical", count: waitingVariants.length, priority: 30, href: `/projects/${projectId}/publish` },
-  ];
-  const sectionBudget = visibleHomeSectionIds(homeSections, { limit: 2 });
-  const visibleSectionIds = new Set(sectionBudget.visibleIds);
-  const overflowSections = homeSections.filter((section) => sectionBudget.overflowIds.includes(section.id));
+
+  // Compact "Needs you" list — one place for everything blocked, replacing six separate sections.
+  const needsYou = [
+    { id: "failed", label: "Publishing failed", count: failedPublish.length, href: `/projects/${projectId}/publish`, tone: "red" as const },
+    { id: "blocked", label: "Drafts blocked by QA", count: reviewArticles.filter((a) => a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "red" as const },
+    { id: "review", label: "Drafts waiting for review", count: reviewArticles.filter((a) => !a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "amber" as const },
+    { id: "opportunities", label: "Opportunities to review", count: seoOpportunities.length, href: `/projects/${projectId}/visibility`, tone: "amber" as const },
+    { id: "distribute", label: "Variants ready to distribute", count: ready.length, href: `/projects/${projectId}/publish`, tone: "green" as const },
+    { id: "warnings", label: "Automation warnings", count: automationWarnings.length, href: `/projects/${projectId}/settings/activity`, tone: "amber" as const },
+    { id: "waiting-canonical", label: "Variants waiting on canonical", count: waitingVariants.length, href: `/projects/${projectId}/publish`, tone: "neutral" as const },
+  ].filter((row) => row.count > 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {apiError && (
         <Notice
           title="API server unavailable"
-          detail={`Dashboard data could not be loaded (${apiError}). The frontend shell still renders for Vercel verification.`}
+          detail={`Dashboard data could not be loaded (${apiError}).`}
           tone="amber"
         />
       )}
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+      {/* Hero + the single thing that needs you */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 md:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Badge tone="green">Growth Overview</Badge>
+              <Badge tone="green">Growth loop</Badge>
               <span className="text-xs font-semibold text-slate-400">{project?.name ?? "Project"}</span>
             </div>
-            <h1 className="mt-4 max-w-[760px] text-3xl font-bold leading-9 tracking-tight text-slate-950 md:text-4xl md:leading-[2.7rem]">
+            <h1 className="mt-3 max-w-[680px] text-2xl font-bold leading-8 tracking-tight text-slate-950 md:text-3xl">
               {growthHeadline}
             </h1>
-            <p className="mt-3 max-w-[70ch] text-sm leading-6 text-slate-600">{growthDetail}</p>
+            <p className="mt-2 max-w-[68ch] text-sm leading-6 text-slate-600">{growthDetail}</p>
           </div>
-          <Button disabled={!!busy} size="sm" onClick={() => refresh()}>
+          <Button disabled={!!busy} size="sm" variant="outline" onClick={() => refresh()}>
             <RefreshCw size={14} />
             Refresh
           </Button>
         </div>
 
-        {contextBuild.active && (
-          <div
-            role="status"
-            aria-live="polite"
-            aria-label="Building domain context progress"
-            className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"
+        <div className="mt-5 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Your next step</div>
+            <div className="mt-1 text-base font-bold text-slate-900">{primaryAction.title}</div>
+            <div className="mt-0.5 max-w-[64ch] text-sm leading-5 text-slate-500">{primaryAction.detail}</div>
+          </div>
+          <a
+            href={primaryAction.href}
+            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-4 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
           >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <Badge tone={contextBuild.exhausted ? "amber" : "blue"}>Parallel context build</Badge>
-                <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">{contextBuild.title}</h2>
-                <p className="mt-1 max-w-[70ch] text-sm leading-5 text-amber-900">{contextBuild.detail}</p>
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-amber-100">
-                <Loader2 size={14} className="animate-spin text-[#d93820]" />
-                Checking automatically
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
-              {contextBuild.tracks.map((track) => (
-                <div key={track.id} className="min-h-[118px] rounded-lg bg-white px-3 py-3 ring-1 ring-amber-100">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {track.state === "done" ? (
-                        <CheckCircle2 size={16} className="shrink-0 text-green-600" />
-                      ) : track.state === "attention" ? (
-                        <AlertTriangle size={16} className="shrink-0 text-amber-600" />
-                      ) : track.state === "running" ? (
-                        <Loader2 size={16} className="shrink-0 animate-spin text-[#d93820]" />
-                      ) : (
-                        <Circle size={16} className="shrink-0 text-slate-300" />
-                      )}
-                      <div className="truncate text-sm font-bold text-slate-900">{track.label}</div>
-                    </div>
-                    <div className="shrink-0 text-xs font-bold text-slate-500">{track.progress}%</div>
-                  </div>
-                  <div
-                    className="mt-3 h-2 overflow-hidden rounded-full bg-amber-50 ring-1 ring-inset ring-amber-100"
-                    role="progressbar"
-                    aria-label={`${track.label} progress`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={track.progress}
-                  >
-                    <div
-                      className={cx(
-                        "h-full rounded-full transition-all duration-500",
-                        track.state === "done" ? "bg-green-600" : track.state === "attention" ? "bg-amber-500" : "bg-[#d93820]",
-                      )}
-                      style={{ width: `${track.progress}%` }}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs font-bold text-slate-400">
-                    <span>{track.current}/{track.target}</span>
-                    <span className="capitalize">{track.state}</span>
-                  </div>
-                  <p className="mt-2 text-[13px] font-semibold leading-5 text-slate-500">{track.detail}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)]">
-          <div className="relative min-h-[240px] overflow-hidden rounded-[18px] border border-slate-200 bg-white p-5">
-            <div className="relative z-10 text-xs font-bold uppercase tracking-wide text-slate-400">Growth impact</div>
-            <div className="relative z-10 mt-2 flex flex-wrap items-baseline gap-3">
-              <div className={cx("text-4xl font-bold leading-none", searchDataConnected ? "text-slate-950" : "text-slate-500")}>
-                {searchDataConnected ? metric(clicks28d) : "Limited"}
-              </div>
-              {searchDataConnected && <span className="text-sm font-bold text-emerald-600">measuring</span>}
-            </div>
-            <p className="relative z-10 mt-2 max-w-[54ch] text-sm leading-6 text-slate-500">{growthDetail}</p>
-            <svg
-              aria-label="Growth metric trend"
-              viewBox="0 0 400 120"
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-[96px] w-full text-sky-500 sm:h-[135px]"
-              preserveAspectRatio="none"
-            >
-              <defs>
-                <linearGradient id="growthMetricFill" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="currentColor" stopOpacity="0.38" />
-                  <stop offset="100%" stopColor="currentColor" stopOpacity="0.04" />
-                </linearGradient>
-              </defs>
-              <path d={`${growthTrendPath} L 396 120 L 4 120 Z`} fill="url(#growthMetricFill)" />
-              <path d={growthTrendPath} fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="4" />
-            </svg>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            {growthMetricCards.map((item) => {
-              const MetricIcon = item.icon;
-              return (
-                <div key={item.label} className={cx("rounded-[18px] border border-slate-200 bg-white p-4", item.muted && "text-slate-500")}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
-                      <MetricIcon size={17} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
-                      {item.label}
-                    </div>
-                    {!item.muted && <span className="text-xs font-bold text-emerald-600">active</span>}
-                  </div>
-                  <div className={cx("mt-4 text-2xl font-bold leading-none", item.muted ? "text-slate-500" : "text-slate-950")}>{item.value}</div>
-                  <div className="mt-2 text-sm font-semibold leading-5 text-slate-400">{item.detail}</div>
-                </div>
-              );
-            })}
-          </div>
+            {primaryAction.title}
+            <ArrowRight size={16} />
+          </a>
         </div>
-
       </section>
 
+      {/* Context build progress — only while onboarding is running */}
+      {contextBuild.active && (
+        <section
+          role="status"
+          aria-live="polite"
+          aria-label="Building domain context progress"
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <Badge tone={contextBuild.exhausted ? "amber" : "blue"}>Parallel context build</Badge>
+              <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">{contextBuild.title}</h2>
+              <p className="mt-1 max-w-[70ch] text-sm leading-5 text-amber-900">{contextBuild.detail}</p>
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-amber-100">
+              <Loader2 size={14} className="animate-spin text-[#d93820]" />
+              Checking automatically
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {contextBuild.tracks.map((track) => (
+              <div key={track.id} className="rounded-lg bg-white px-3 py-3 ring-1 ring-amber-100">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {track.state === "done" ? (
+                      <CheckCircle2 size={16} className="shrink-0 text-green-600" />
+                    ) : track.state === "attention" ? (
+                      <AlertTriangle size={16} className="shrink-0 text-amber-600" />
+                    ) : track.state === "running" ? (
+                      <Loader2 size={16} className="shrink-0 animate-spin text-[#d93820]" />
+                    ) : (
+                      <Circle size={16} className="shrink-0 text-slate-300" />
+                    )}
+                    <div className="truncate text-sm font-bold text-slate-900">{track.label}</div>
+                  </div>
+                  <div className="shrink-0 text-xs font-bold text-slate-500">{track.progress}%</div>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-50 ring-1 ring-inset ring-amber-100">
+                  <div
+                    className={cx(
+                      "h-full rounded-full transition-all duration-500",
+                      track.state === "done" ? "bg-green-600" : track.state === "attention" ? "bg-amber-500" : "bg-[#d93820]",
+                    )}
+                    style={{ width: `${track.progress}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-[13px] font-semibold leading-5 text-slate-500">{track.detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Slim, honest metric strip */}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {growthMetricCards.map((item) => {
+          const MetricIcon = item.icon;
+          return (
+            <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                <MetricIcon size={16} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
+                {item.label}
+              </div>
+              <div className={cx("mt-3 text-2xl font-bold leading-none", item.muted ? "text-slate-400" : "text-slate-950")}>{item.value}</div>
+              <div className="mt-2 text-[13px] font-semibold leading-5 text-slate-400">{item.detail}</div>
+            </div>
+          );
+        })}
+      </section>
+
+      {/* Pipeline — the flywheel as a connected progress spine */}
       <section>
-        <SectionHeader title="Growth loop" eyebrow="How CiteLoop turns work into measurable growth" />
-        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr] lg:grid-rows-[auto_auto_auto] lg:gap-x-14 lg:gap-y-14">
-          {loopCards.map((card) => {
-            const ConnectorIcon = loopConnectorIcon(card.connectorDirection);
+        <SectionHeader title="Pipeline" eyebrow="Where this project is in the loop" />
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {stages.map((stage, index) => {
+            const isNext = stage.href === primaryAction.href && (stage.tone === "amber" || stage.tone === "red");
             return (
-              <div
-                key={card.position}
-                data-loop-position={card.position}
+              <a
+                key={stage.label}
+                href={stage.href}
                 className={cx(
-                  "group relative flex min-h-[196px] flex-col rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm transition-colors hover:border-slate-300",
-                  loopGridClass(card.position),
+                  "flex min-w-[140px] flex-1 flex-col rounded-xl border bg-white px-3 py-3 transition-colors hover:border-slate-300",
+                  isNext ? "border-[#d93820] ring-1 ring-[#d93820]" : "border-slate-200",
                 )}
               >
-                <span className="sr-only">{card.connectorLabel}</span>
-                <span
-                  aria-hidden="true"
-                  className={cx(
-                    "pointer-events-none absolute z-10 hidden h-10 w-10 items-center justify-center rounded-full border border-red-100 bg-red-50 text-[#d93820] shadow-[0_10px_22px_-16px_rgba(217,56,32,0.85)] transition-colors group-hover:border-[#d93820] group-hover:bg-[#d93820] group-hover:text-white lg:flex",
-                    loopConnectorClass(card.connectorDirection),
-                  )}
-                >
-                  <ConnectorIcon size={20} />
-                </span>
-                <div className="grid grid-cols-[2rem_1fr_2rem] items-center gap-2">
-                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-500">
-                    {card.position}
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1 text-[11px] font-bold text-slate-500">
+                    {index + 1}
                   </span>
-                  <div className="text-center text-base font-bold leading-5 text-slate-950">{card.label}</div>
-                  <span aria-hidden="true" className="h-7 w-7" />
+                  <span className="truncate text-sm font-bold text-slate-900">{stage.label}</span>
                 </div>
-                <div className="mt-3 space-y-1.5 text-center">
-                  {card.metrics.map((line, index) =>
-                    "value" in line ? (
-                      <div key={`${card.position}-${index}`} className="flex items-baseline justify-center gap-2">
-                        <span className={cx("text-xl font-bold leading-none tracking-normal", card.accentClass)}>{line.value}</span>
-                        <span className="text-sm font-semibold leading-5 text-slate-500">{line.label}</span>
-                      </div>
-                    ) : (
-                      <div key={`${card.position}-${index}`} className="text-sm font-semibold leading-5 text-slate-500">
-                        {line.text}
-                      </div>
-                    ),
-                  )}
+                <div className="mt-2 text-xl font-bold leading-none text-slate-950">{stage.metricValue}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", stageDotClass(stage.tone))} />
+                  <span className="truncate text-xs font-semibold text-slate-500">{stage.statusLabel}</span>
                 </div>
-                <div className="mt-auto pt-3">
-                  <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-left">
-                    <div className="flex items-start gap-2">
-                      <span className={cx("mt-1.5 h-2 w-2 shrink-0 rounded-full", loopStatusDotClass(card.status.tone))} />
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-bold uppercase leading-4 tracking-normal text-slate-400">Status</div>
-                        <div className="text-sm font-bold leading-5 text-slate-900">{card.status.label}</div>
-                        <div className="mt-1 text-xs font-semibold leading-4 text-slate-500">{card.status.detail}</div>
-                      </div>
-                    </div>
-	                    <div className="mt-3 text-[11px] font-bold uppercase leading-4 tracking-normal text-slate-400">Action item</div>
-	                    <a
-	                      href={card.action.href}
-	                      className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#d93820] transition-colors hover:border-[#d93820] hover:bg-red-50"
-	                    >
-	                      <span className="min-w-0 truncate">{card.action.label}</span>
-	                      <ExternalLink size={13} className="shrink-0" />
-	                    </a>
-                  </div>
-                </div>
-              </div>
+              </a>
             );
           })}
         </div>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div>
-          <SectionHeader title="Recent growth signals" eyebrow="What changed recently" />
-          {loopItems.length === 0 ? (
-            <EmptyState
-              title="No growth signals yet"
-              detail="Opportunities, drafts, published pages, and measured outcomes will appear here as the loop starts moving."
-            />
-          ) : (
-            <div className="grid gap-2">
-              {loopItems.map((item) => (
-                <a
-                  key={item.id}
-                  href={item.href}
-                  className="flex min-h-[46px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold text-slate-900">{item.title}</div>
-                    <div className="mt-0.5 text-[13px] font-semibold text-slate-400">{item.stage}</div>
-                  </div>
-                  <Badge tone={item.tone}>growth loop</Badge>
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <SectionHeader title="CiteLoop knowledge" />
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="font-semibold text-slate-900">{contextHealth.label}</div>
-              <Badge tone={contextHealth.tone}>Evidence coverage</Badge>
-            </div>
-            <p className="mt-2 text-sm leading-5 text-slate-600">{contextHealth.detail}</p>
-            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-              <div className="rounded-lg bg-slate-50 px-3 py-2">
-                <div className="text-xs font-bold uppercase text-slate-400">Source pages</div>
-                <div className="mt-1 text-lg font-bold text-slate-900">{sourcePageCount}</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 px-3 py-2">
-                <div className="text-xs font-bold uppercase text-slate-400">Evidence</div>
-                <div className="mt-1 text-lg font-bold text-slate-900">{contextEvidenceCount}</div>
-              </div>
-            </div>
-            <a href={`/projects/${projectId}/context`} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820]">
-              Open context
-              <ArrowRight size={14} />
-            </a>
+      {/* Everything that needs a human, in one place */}
+      {needsYou.length > 0 && (
+        <section>
+          <SectionHeader title="Needs you" eyebrow="Open gates and blockers" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {needsYou.map((row) => (
+              <a
+                key={row.id}
+                href={row.href}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 hover:text-[#d93820]"
+              >
+                <span className="min-w-0 truncate">{row.label}</span>
+                <Badge tone={row.tone}>{row.count}</Badge>
+              </a>
+            ))}
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
+      {/* One merged activity timeline */}
       <section>
-        <SectionHeader title="Event stream" eyebrow="Now, recent, next" />
-        {eventStream.items.length === 0 && eventStream.emptyAction ? (
-          <EmptyState title={eventStream.emptyAction.title} detail={eventStream.emptyAction.detail} />
+        <SectionHeader title="Activity" eyebrow="Now, recent, and next" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Full log</a>} />
+        {eventStream.items.length === 0 ? (
+          <EmptyState
+            title="No activity yet"
+            detail="Opportunities, drafts, published pages, and measured results will appear here as the loop moves."
+          />
         ) : (
           <div className="grid gap-2">
             {eventStream.items.map((item) => (
@@ -1083,198 +632,23 @@ export function Workspace({ projectId }: { projectId: string }) {
         )}
       </section>
 
-      {visibleSectionIds.has("needs-attention") && (
+      {/* Needs-review preview only when there are drafts, kept compact */}
+      {reviewArticles.length > 0 && (
         <section>
-          <SectionHeader title="Needs attention" action={<Badge tone="red">{failedPublish.length}</Badge>} />
-          <div className="grid gap-2">
-            {failedPublish.slice(0, 3).map((article) => (
-              <div key={article.id} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm">
-                <div className="font-bold text-red-950">{articleTitle(article)}</div>
-                <div className="mt-1 line-clamp-2 text-red-800">{article.last_publish_error || "No publish error captured."}</div>
-                <a href={`/projects/${projectId}/publish`} className="mt-2 inline-block text-xs font-semibold text-red-700">
-                  Open publish
-                </a>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {visibleSectionIds.has("activity-warnings") && (
-        <section>
-          <SectionHeader title="Activity warning summary" action={<a href={`/projects/${projectId}/settings/activity`} className="text-xs font-semibold text-slate-500">Activity log</a>} />
-          <div className="grid gap-2">
-            {automationWarnings.map((run) => (
-              <div
-                key={run.id}
-                className="flex min-h-[44px] flex-col gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-900">{activityLabel(run.agent)}</span>
-                    <Badge tone={activityTone(run.status, Boolean(run.output?.degraded))}>{run.status}</Badge>
-                    {run.output?.degraded && <Badge tone="amber">degraded</Badge>}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-slate-500">{run.error ?? "Limited quality. Open activity log for details."}</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-3 text-xs font-semibold text-slate-400">
-                  <span>{formatDate(run.created_at)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {visibleSectionIds.has("needs-review") && (
-        <section>
-          <SectionHeader title="Needs review" action={<Badge tone="amber">{reviewArticles.length}</Badge>} />
-          <div className="columns-1 gap-3 sm:columns-2">
-            {reviewArticles.slice(0, 4).map((article) => (
-              <div
-                key={article.id}
-                className="mb-3 break-inside-avoid rounded-xl border border-slate-200 bg-white px-4 py-3"
-              >
-                <div className="mb-3 flex items-center gap-2">
-                  <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>
-                    {article.platform || article.kind}
-                  </Badge>
-                </div>
-                <div className="content-font text-[15px] font-semibold leading-5 text-slate-900">
-                  {articleTitle(article)}
-                </div>
-                {article.qa_blocking && (
-                  <div className="mt-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
-                    Cannot approve: {article.qa_issues[0] || "QA has not cleared this draft"}
-                  </div>
-                )}
-                <p className="mt-2 line-clamp-3 content-font text-[15px] leading-5 text-slate-700">
-                  {article.content_md}
-                </p>
-                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                  <span>
-                    geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}
-                  </span>
-                  <a href={`/projects/${projectId}/review`} className="font-semibold text-[#d93820]">
-                    Open review
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {visibleSectionIds.has("ready-to-distribute") && (
-        <section>
-          <SectionHeader title="Ready to distribute" action={<Badge tone="green">{ready.length}</Badge>} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            {ready.map(({ article, compose_url, supports_canonical }) => (
-              <div key={article.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <Badge tone="amber">{article.platform ?? "platform"}</Badge>
-                  <span className="text-xs font-semibold text-slate-400">
-                    {supports_canonical ? "canonical tag" : "source link"}
-                  </span>
-                </div>
-                <div className="mt-3 content-font text-[15px] font-semibold leading-5 text-slate-900">
-                  {articleTitle(article)}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard?.writeText(article.content_md);
-                        setMessage({ tone: "green", title: "Copied to clipboard" });
-                      } catch {
-                        setMessage({ tone: "red", title: "Copy failed", detail: "Clipboard is unavailable in this browser." });
-                      }
-                    }}
-                  >
-                    <Copy size={14} />
-                    Copy
-                  </Button>
-                  {compose_url && (
-                    <a
-                      href={compose_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      <ExternalLink size={14} />
-                      Compose
-                    </a>
-                  )}
-                  <Button
-                    size="sm"
-                    disabled={busy === `distributed-${article.id}`}
-                    onClick={() => {
-                      const ok = window.confirm("Mark this variant as distributed? This records it as posted and removes it from the ready list.");
-                      if (!ok) return;
-                      run("Distributed", () => api.distributed(projectId, article.id), "Marked as distributed", `distributed-${article.id}`);
-                    }}
-                  >
-                    <ButtonProgress busy={busy === `distributed-${article.id}`} busyLabel="Marking distributed" idleIcon={<CheckCircle2 size={14} />}>
-                      Mark distributed
-                    </ButtonProgress>
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {visibleSectionIds.has("this-week") && (
-        <section>
-          <SectionHeader title="This week" eyebrow="Content rhythm" />
-          <div className="grid gap-2">
-            {scheduledRows.map((row) => (
-              <div
-                key={row.id}
-                className="flex min-h-[38px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm transition-colors hover:bg-slate-50"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-800">{row.title}</div>
-                  <div className="text-[13px] font-semibold text-slate-400">{formatDate(row.time)}</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge tone="blue">{row.type}</Badge>
-                  <Badge tone="green">{row.status}</Badge>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {visibleSectionIds.has("waiting-canonical") && (
-        <section>
-          <SectionHeader title="Waiting on canonical" />
-          <div className="grid gap-2">
-            {waitingVariants.map((article) => (
-              <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm">
-                <span className="font-semibold text-slate-800">{articleTitle(article)}</span>
-                <span className="ml-2 text-slate-400">waiting for canonical URL</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {overflowSections.length > 0 && (
-        <section>
-          <SectionHeader title="More waiting" eyebrow="Collapsed to keep Home focused" />
+          <SectionHeader title="Drafts waiting for review" action={<Badge tone="amber">{reviewArticles.length}</Badge>} />
           <div className="grid gap-2 sm:grid-cols-2">
-            {overflowSections.map((section) => (
+            {reviewArticles.slice(0, 4).map((article) => (
               <a
-                key={section.id}
-                href={section.href}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#d93820]"
+                key={article.id}
+                href={`/projects/${projectId}/review`}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:bg-slate-50"
               >
-                <span>{section.label}</span>
-                <Badge tone="neutral">{section.count}</Badge>
+                <div className="flex items-center justify-between gap-2">
+                  <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+                  {article.qa_blocking && <Badge tone="red">Blocked</Badge>}
+                </div>
+                <div className="mt-2 text-[15px] font-semibold leading-5 text-slate-900">{articleTitle(article)}</div>
+                <div className="mt-2 text-xs text-slate-500">geo {formatScore(article.geo_score)} / seo {formatScore(article.seo_score)}</div>
               </a>
             ))}
           </div>

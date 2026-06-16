@@ -54,6 +54,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   );
 
   async function markDistributed(article: Article) {
+    const ok = window.confirm("Mark this variant as distributed? This records it as posted and removes it from the ready list.");
+    if (!ok) return;
     setBusy(`distributed-${article.id}`);
     setMessage(null);
     try {
