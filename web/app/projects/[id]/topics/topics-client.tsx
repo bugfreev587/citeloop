@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
+import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
 import { Topic } from "../../../lib/api";
 import type { PlanView } from "../../../lib/content-plan-logic";
 import {
@@ -63,12 +63,20 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState<Message>(null);
+  const [openOpportunities, setOpenOpportunities] = useState(0);
+  const [contentActions, setContentActions] = useState(0);
   const strategistRunning = busy === "strategist";
 
   const refresh = useCallback(async () => {
     try {
-      const next = await api.listTopics(projectId);
+      const [next, opps, actions] = await Promise.all([
+        api.listTopics(projectId),
+        api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
+        api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
+      ]);
       setTopics(next);
+      setOpenOpportunities(opps.length);
+      setContentActions(actions.length);
       setScheduleDrafts(Object.fromEntries(next.map((topic) => [topic.id, toDateTimeLocal(topic.scheduled_at)])));
       setGeneratingIds((current) => {
         const stillGenerating = new Set(next.filter((topic) => topic.status === "generating").map((topic) => topic.id));
@@ -113,6 +121,43 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     view === "grid" && "lg:grid-cols-2",
     view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
   );
+
+  // The plan is built automatically from reviewed opportunities; this banner explains
+  // that flow so the manual generate button is a fallback, not the main path.
+  const autoPlan: { tone: "green" | "blue" | "amber" | "neutral"; title: string; detail: string; cta: { label: string; href: string } | null } =
+    topics.length > 0
+      ? {
+          tone: "green",
+          title: "Your content plan is running automatically",
+          detail: "CiteLoop turns reviewed opportunities into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
+          cta: null,
+        }
+      : contentActions > 0
+        ? {
+            tone: "blue",
+            title: "Generating your content plan from reviewed opportunities",
+            detail: "Reviewed opportunities are being turned into topics automatically. Topics will appear here shortly — no action needed.",
+            cta: null,
+          }
+        : openOpportunities > 0
+          ? {
+              tone: "amber",
+              title: `${openOpportunities} ${openOpportunities === 1 ? "opportunity is" : "opportunities are"} waiting for review`,
+              detail: "Review opportunities to add them to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/visibility` },
+            }
+          : {
+              tone: "neutral",
+              title: "No opportunities are waiting",
+              detail: "CiteLoop plans automatically once you review opportunities in Visibility. You can also seed a starter backlog from your domain (advanced).",
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/visibility` },
+            };
+  const autoPlanToneClass = {
+    green: "border-emerald-200 bg-emerald-50",
+    blue: "border-blue-200 bg-blue-50",
+    amber: "border-amber-200 bg-amber-50",
+    neutral: "border-slate-200 bg-white",
+  }[autoPlan.tone];
 
   async function runStrategist() {
     setBusy("strategist");
@@ -257,18 +302,37 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-7">
-      <section>
-        <SectionHeader
-          title="Content Plan"
-          eyebrow="Backlog, schedule intent, and draft choices"
-          action={
-            <Button aria-busy={strategistRunning} disabled={strategistRunning} variant="primary" onClick={runStrategist}>
-              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-              {strategistRunning ? "Generating content plan" : "Generate content plan"}
-            </Button>
-          }
-        />
+      <section className="space-y-3">
+        <SectionHeader title="Content Plan" eyebrow="Planned automatically from reviewed opportunities" />
         {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
+        <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
+          <div className="min-w-0">
+            <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>
+            <div className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{autoPlan.detail}</div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {autoPlan.cta && (
+              <a
+                href={autoPlan.cta.href}
+                className="inline-flex h-9 items-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
+              >
+                {autoPlan.cta.label}
+                <ArrowRight size={15} />
+              </a>
+            )}
+            <Button
+              aria-busy={strategistRunning}
+              disabled={strategistRunning}
+              variant="ghost"
+              size="sm"
+              onClick={runStrategist}
+              title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed opportunities."
+            >
+              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+              {strategistRunning ? "Generating content plan" : "Generate from domain"}
+            </Button>
+          </div>
+        </div>
       </section>
 
       <section>
