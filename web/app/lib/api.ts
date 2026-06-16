@@ -193,6 +193,23 @@ export type PublisherCredentialInput = {
   value: string;
 };
 
+export type GithubRepo = {
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+};
+
+export type GithubIntegrationStatus = {
+  configured: boolean;
+  connected: boolean;
+  installation_id?: string;
+  repo?: string;
+  branch?: string;
+  content_dir?: string;
+  base_url?: string;
+  install_url?: string;
+};
+
 export type SEOIntegration = {
   id: string;
   project_id: string;
@@ -905,6 +922,29 @@ function normalizePublisherConnection(raw: any): PublisherConnection {
   };
 }
 
+function normalizeGithubRepo(raw: any): GithubRepo {
+  const data = raw ?? {};
+  return {
+    full_name: data.full_name ?? "",
+    default_branch: data.default_branch ?? "main",
+    private: Boolean(data.private),
+  };
+}
+
+function normalizeGithubIntegration(raw: any): GithubIntegrationStatus {
+  const data = raw ?? {};
+  return {
+    configured: Boolean(data.configured),
+    connected: Boolean(data.connected),
+    installation_id: data.installation_id ?? undefined,
+    repo: data.repo ?? undefined,
+    branch: data.branch ?? undefined,
+    content_dir: data.content_dir ?? undefined,
+    base_url: data.base_url ?? undefined,
+    install_url: data.install_url ?? undefined,
+  };
+}
+
 async function bearerHeader(auth?: AuthOptions): Promise<Record<string, string>> {
   const token = auth?.token ?? (auth?.getToken ? await auth.getToken() : null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -1086,6 +1126,33 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(
       `/projects/${id}/publisher-connections/${connectionID}/credential`,
       { method: "DELETE" },
+      auth,
+    );
+    return normalizePublisherConnection(raw);
+  },
+  getGithubIntegration: async (id: string): Promise<GithubIntegrationStatus> => {
+    const raw = await req<any>(`/projects/${id}/integrations/github`, undefined, auth);
+    return normalizeGithubIntegration(raw);
+  },
+  storeGithubInstallation: async (id: string, installationID: string): Promise<{ repositories: GithubRepo[] }> => {
+    const raw = await req<any>(
+      `/projects/${id}/integrations/github/installation`,
+      { method: "POST", body: JSON.stringify({ installation_id: installationID }) },
+      auth,
+    );
+    return { repositories: arrayFrom(raw?.repositories).map(normalizeGithubRepo) };
+  },
+  listGithubRepos: async (id: string): Promise<{ repositories: GithubRepo[] }> => {
+    const raw = await req<any>(`/projects/${id}/integrations/github/repos`, undefined, auth);
+    return { repositories: arrayFrom(raw?.repositories).map(normalizeGithubRepo) };
+  },
+  selectGithubRepo: async (
+    id: string,
+    body: { repo: string; branch: string; content_dir: string; base_url: string },
+  ): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/integrations/github/select-repo`,
+      { method: "POST", body: JSON.stringify(body) },
       auth,
     );
     return normalizePublisherConnection(raw);

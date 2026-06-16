@@ -8,6 +8,7 @@ package scheduler
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
+	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -61,6 +63,7 @@ type Scheduler struct {
 	seoRunnerFactory     func(q *db.Queries) seoRunner
 	NotificationSecret   string
 	UniPostDeployHookURL string
+	GitHubApp            *githubapp.Service
 }
 
 type publisherConnectionQuerier interface {
@@ -1047,12 +1050,38 @@ func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConn
 		}
 		return nil, err
 	}
-	token, err := s.publisherCredentialToken(ctx, q, conn)
+	// Prefer a GitHub App installation token (no stored PAT) when the connection
+	// was set up via Connect GitHub; fall back to the pasted-credential token.
+	token, err := s.githubInstallationToken(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
+	if token == "" {
+		token, err = s.publisherCredentialToken(ctx, q, conn)
+		if err != nil {
+			return nil, err
+		}
+	}
 	blog, _, err := blogPublisherFromConnection(s.Blog, token, conn, s.Log)
 	return blog, err
+}
+
+// githubInstallationToken mints a short-lived installation token when the
+// connection stores an installation_id and the GitHub App is configured.
+func (s *Scheduler) githubInstallationToken(ctx context.Context, conn db.PublisherConnection) (string, error) {
+	if s.GitHubApp == nil || !s.GitHubApp.Configured() {
+		return "", nil
+	}
+	var cfg struct {
+		InstallationID string `json:"installation_id"`
+	}
+	if len(conn.Config) > 0 {
+		_ = json.Unmarshal(conn.Config, &cfg)
+	}
+	if strings.TrimSpace(cfg.InstallationID) == "" {
+		return "", nil
+	}
+	return s.GitHubApp.InstallationToken(ctx, cfg.InstallationID)
 }
 
 func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string, conn db.PublisherConnection, log *slog.Logger) (*publisher.BlogPublisher, bool, error) {

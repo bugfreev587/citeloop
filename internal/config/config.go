@@ -34,11 +34,11 @@ type Env struct {
 	PerplexityModel          string // Perplexity Sonar model
 	GEOProviderRunBudgetUSD  float64
 	// GitHub App (Railway-style publish connect). Inert until all are set.
-	GitHubAppID            string
-	GitHubAppSlug          string
-	GitHubAppClientID      string
-	GitHubAppClientSecret  string
-	GitHubAppPrivateKey    string
+	GitHubAppID           string
+	GitHubAppSlug         string
+	GitHubAppClientID     string
+	GitHubAppClientSecret string
+	GitHubAppPrivateKey   string
 }
 
 func FromEnv() Env {
@@ -109,13 +109,13 @@ type ChannelMix struct {
 
 // ProjectConfig mirrors projects.config (PRD §3).
 type ProjectConfig struct {
-	SiteURL            string      `json:"site_url,omitempty"`
-	CadencePerWeek     int         `json:"cadence_per_week"`
-	BufferDays         int         `json:"buffer_days"`
-	ChannelMix         ChannelMix  `json:"channel_mix"`
-	BrandVoice         string      `json:"brand_voice"`
-	MonthlyBudgetUSD   float64     `json:"monthly_budget_usd"`
-	AutoAdvanceEnabled bool        `json:"auto_advance_enabled"`
+	SiteURL            string     `json:"site_url,omitempty"`
+	CadencePerWeek     int        `json:"cadence_per_week"`
+	BufferDays         int        `json:"buffer_days"`
+	ChannelMix         ChannelMix `json:"channel_mix"`
+	BrandVoice         string     `json:"brand_voice"`
+	MonthlyBudgetUSD   float64    `json:"monthly_budget_usd"`
+	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "scheduled" (default) — staggered one every PublishIntervalDays so a batch
 	//     of approvals does not publish all at once;
@@ -136,9 +136,9 @@ const (
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
-		CadencePerWeek:     3,
-		BufferDays:         5,
-		ChannelMix:         ChannelMix{Blog: 0.6, Syndication: 0.4},
+		CadencePerWeek:      3,
+		BufferDays:          5,
+		ChannelMix:          ChannelMix{Blog: 0.6, Syndication: 0.4},
 		MonthlyBudgetUSD:    50,
 		AutoAdvanceEnabled:  true,
 		PublishMode:         PublishModeScheduled,

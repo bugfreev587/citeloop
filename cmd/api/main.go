@@ -17,6 +17,7 @@ import (
 	"github.com/citeloop/citeloop/internal/api"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/publisher"
@@ -79,6 +80,13 @@ func main() {
 	sched.SEOData = seoData
 	sched.NotificationSecret = env.NotificationSecretKey
 	sched.UniPostDeployHookURL = env.UniPostDeployHookURL
+	sched.GitHubApp = githubapp.New(githubapp.Config{
+		AppID:         env.GitHubAppID,
+		Slug:          env.GitHubAppSlug,
+		ClientID:      env.GitHubAppClientID,
+		ClientSecret:  env.GitHubAppClientSecret,
+		PrivateKeyPEM: env.GitHubAppPrivateKey,
+	})
 	cron := sched.Start(ctx)
 	defer cron.Stop()
 
