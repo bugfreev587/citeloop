@@ -321,6 +321,56 @@ func (q *Queries) ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic,
 	return items, nil
 }
 
+const selectDueScheduledTopics = `-- name: SelectDueScheduledTopics :many
+select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
+where project_id = $1
+  and status = 'scheduled'
+  and scheduled_at is not null
+  and scheduled_at <= now()
+order by scheduled_at asc
+for update skip locked
+`
+
+// Scheduler: topics whose operator-set scheduled_at slot has arrived. Unlike
+// SelectGenerationCandidates this is time-driven and ignores buffer/priority,
+// since the operator explicitly scheduled the slot (§5.4). Locked to avoid
+// concurrent double-generation.
+func (q *Queries) SelectDueScheduledTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error) {
+	rows, err := q.db.Query(ctx, selectDueScheduledTopics, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Topic
+	for rows.Next() {
+		var i Topic
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Channel,
+			&i.Title,
+			&i.TargetKeyword,
+			&i.TargetPrompt,
+			&i.Angle,
+			&i.Format,
+			&i.Priority,
+			&i.InternalLinks,
+			&i.Status,
+			&i.ScheduledAt,
+			&i.CreatedAt,
+			&i.SourceContentActionID,
+			&i.RecoveryAttempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectGenerationCandidates = `-- name: SelectGenerationCandidates :many
 select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
 where project_id = $1

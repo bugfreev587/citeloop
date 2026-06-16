@@ -544,61 +544,130 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 
 	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
 	for _, t := range candidates {
-		// Idempotency: skip if a non-rejected article already exists (§5.4).
-		n, err := q.CountNonRejectedArticlesForTopic(ctx, t.ID)
-		if err != nil {
-			continue
-		}
-		if n > 0 {
-			if reconciled, changed, err := topicstate.ReconcileExistingDrafts(topicstate.Status(t.Status)); err != nil {
-				s.Log.Warn("generation candidate topic draft reconciliation rejected", "topic", t.ID, "status", t.Status, "err", err)
-			} else if changed {
-				if _, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(reconciled)}); err != nil {
-					s.Log.Warn("generation candidate topic draft reconciliation failed", "topic", t.ID, "err", err)
-				}
+		s.generateCandidate(ctx, q, p, writer, t)
+	}
+	return tx.Commit(ctx)
+}
+
+// generateCandidate runs one topic through generation into the review queue,
+// handling idempotency, state transition, content-action linkage, and failure
+// dispatch. Errors are logged and swallowed so one bad topic does not block the
+// rest of the batch (§5.4).
+func (s *Scheduler) generateCandidate(ctx context.Context, q *db.Queries, p db.Project, writer *agents.Writer, t db.Topic) {
+	// Idempotency: skip if a non-rejected article already exists (§5.4).
+	n, err := q.CountNonRejectedArticlesForTopic(ctx, t.ID)
+	if err != nil {
+		return
+	}
+	if n > 0 {
+		if reconciled, changed, err := topicstate.ReconcileExistingDrafts(topicstate.Status(t.Status)); err != nil {
+			s.Log.Warn("generation candidate topic draft reconciliation rejected", "topic", t.ID, "status", t.Status, "err", err)
+		} else if changed {
+			if _, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(reconciled)}); err != nil {
+				s.Log.Warn("generation candidate topic draft reconciliation failed", "topic", t.ID, "err", err)
 			}
-			continue
 		}
-		nextStatus, err := topicstate.Transition(topicstate.Status(t.Status), topicstate.EventStartGeneration)
-		if err != nil {
-			s.Log.Warn("topic generation transition rejected", "topic", t.ID, "status", t.Status, "err", err)
-			continue
+		return
+	}
+	nextStatus, err := topicstate.Transition(topicstate.Status(t.Status), topicstate.EventStartGeneration)
+	if err != nil {
+		s.Log.Warn("topic generation transition rejected", "topic", t.ID, "status", t.Status, "err", err)
+		return
+	}
+	generatingTopic, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(nextStatus)})
+	if err != nil {
+		s.Log.Warn("mark generating failed", "topic", t.ID, "err", err)
+		return
+	}
+	sourceActionID := uuid.UUID{}
+	if generatingTopic.SourceContentActionID.Valid {
+		sourceActionID = uuid.UUID(generatingTopic.SourceContentActionID.Bytes)
+		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+			ID:        sourceActionID,
+			ProjectID: p.ID,
+			Status:    "drafting",
+		}); err != nil {
+			s.Log.Warn("mark content action drafting failed", "topic", t.ID, "action", sourceActionID, "err", err)
 		}
-		generatingTopic, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(nextStatus)})
-		if err != nil {
-			s.Log.Warn("mark generating failed", "topic", t.ID, "err", err)
-			continue
-		}
-		sourceActionID := uuid.UUID{}
-		if generatingTopic.SourceContentActionID.Valid {
-			sourceActionID = uuid.UUID(generatingTopic.SourceContentActionID.Bytes)
-			if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
-				ID:        sourceActionID,
-				ProjectID: p.ID,
-				Status:    "drafting",
+	}
+	articles, err := writer.Generate(ctx, p.ID, generatingTopic)
+	if err != nil {
+		s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
+		s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
+		// leave topic in generating; next tick may retry. Do not block others.
+		return
+	}
+	if sourceActionID != uuid.Nil {
+		if canonicalID := canonicalArticleID(articles); canonicalID != uuid.Nil {
+			if _, err := q.MarkContentActionDraftReady(ctx, db.MarkContentActionDraftReadyParams{
+				ID:             sourceActionID,
+				ProjectID:      p.ID,
+				DraftArticleID: pgtype.UUID{Bytes: canonicalID, Valid: true},
 			}); err != nil {
-				s.Log.Warn("mark content action drafting failed", "topic", t.ID, "action", sourceActionID, "err", err)
+				s.Log.Warn("mark content action draft ready failed", "topic", t.ID, "action", sourceActionID, "article", canonicalID, "err", err)
 			}
 		}
-		articles, err := writer.Generate(ctx, p.ID, generatingTopic)
-		if err != nil {
-			s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
-			s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
-			// leave topic in generating; next tick may retry. Do not block others.
-			continue
+	}
+	s.Log.Info("generated into review queue", "project", p.ID, "topic", t.Title)
+}
+
+// TickScheduledTopics generates topics whose operator-set scheduled_at slot has
+// arrived. Unlike the daily buffer-stocking pass it is time-driven and runs
+// frequently, so a scheduled plan item drafts near its slot. It deliberately
+// ignores AutoAdvance and buffer stocking — the operator explicitly scheduled
+// the slot — but still honors the monthly cost breaker (§5.4).
+func (s *Scheduler) TickScheduledTopics(ctx context.Context) {
+	q := db.New(s.Pool)
+	projects, err := q.ListProjects(ctx)
+	if err != nil {
+		s.Log.Error("list projects", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.generateDueScheduledForProject(ctx, p); err != nil {
+			s.Log.Error("scheduled topic tick failed", "project", p.ID, "err", err)
 		}
-		if sourceActionID != uuid.Nil {
-			if canonicalID := canonicalArticleID(articles); canonicalID != uuid.Nil {
-				if _, err := q.MarkContentActionDraftReady(ctx, db.MarkContentActionDraftReadyParams{
-					ID:             sourceActionID,
-					ProjectID:      p.ID,
-					DraftArticleID: pgtype.UUID{Bytes: canonicalID, Valid: true},
-				}); err != nil {
-					s.Log.Warn("mark content action draft ready failed", "topic", t.ID, "action", sourceActionID, "article", canonicalID, "err", err)
-				}
-			}
-		}
-		s.Log.Info("generated into review queue", "project", p.ID, "topic", t.Title)
+	}
+}
+
+func (s *Scheduler) generateDueScheduledForProject(ctx context.Context, p db.Project) error {
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return err
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Per-project advisory lock prevents concurrent ticks double-generating.
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(p.ID)); err != nil {
+		return err
+	}
+	q := db.New(tx)
+
+	// Cost breaker (§5.4): stop before any LLM call if month's spend >= budget.
+	spent, err := q.MonthlySpend(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if pgutil.Float(spent) >= cfg.MonthlyBudgetUSD {
+		s.alert(p.ID, "monthly budget reached; scheduled generation paused")
+		s.dispatchBudgetStopped(ctx, q, p.ID, pgutil.Float(spent), cfg.MonthlyBudgetUSD)
+		return tx.Commit(ctx)
+	}
+
+	due, err := q.SelectDueScheduledTopics(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if len(due) == 0 {
+		return tx.Commit(ctx)
+	}
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	for _, t := range due {
+		s.generateCandidate(ctx, q, p, writer, t)
 	}
 	return tx.Commit(ctx)
 }

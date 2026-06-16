@@ -44,6 +44,9 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	c := cron.New()
 	// Daily generation pass (02:00).
 	_, _ = c.AddFunc("0 2 * * *", func() { s.TickGenerate(ctx) })
+	// Scheduled-topic pass every 5 minutes so an operator-scheduled plan item
+	// drafts near its slot instead of waiting for the daily buffer pass.
+	_, _ = c.AddFunc("*/5 * * * *", func() { s.TickScheduledTopics(ctx) })
 	// Daily SEO data sync and opportunity analysis after content generation.
 	_, _ = c.AddFunc("0 3 * * *", func() { s.TickSEO(ctx) })
 	// Publish pass every 5 minutes so approved canonicals go out near their slot.
@@ -60,6 +63,6 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	// Workflow worker pass every 10 seconds for durable growth-loop advancement.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickWorkflow(ctx) })
 	c.Start()
-	slog.Default().Info("scheduler started", "generate", "daily@02:00", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "notifications", "every 10s", "workflow", "every 10s")
+	slog.Default().Info("scheduler started", "generate", "daily@02:00", "scheduled_topics", "every 5m", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "notifications", "every 10s", "workflow", "every 10s")
 	return c
 }
