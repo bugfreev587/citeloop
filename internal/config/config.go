@@ -33,6 +33,12 @@ type Env struct {
 	PerplexityBaseURL        string // Perplexity API base URL
 	PerplexityModel          string // Perplexity Sonar model
 	GEOProviderRunBudgetUSD  float64
+	// GitHub App (Railway-style publish connect). Inert until all are set.
+	GitHubAppID            string
+	GitHubAppSlug          string
+	GitHubAppClientID      string
+	GitHubAppClientSecret  string
+	GitHubAppPrivateKey    string
 }
 
 func FromEnv() Env {
@@ -59,6 +65,11 @@ func FromEnv() Env {
 		PerplexityBaseURL:        getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
 		PerplexityModel:          getenv("PERPLEXITY_MODEL", "sonar-pro"),
 		GEOProviderRunBudgetUSD:  getenvFloat("GEO_PROVIDER_RUN_BUDGET_USD", 1),
+		GitHubAppID:              os.Getenv("GITHUB_APP_ID"),
+		GitHubAppSlug:            os.Getenv("GITHUB_APP_SLUG"),
+		GitHubAppClientID:        os.Getenv("GITHUB_APP_CLIENT_ID"),
+		GitHubAppClientSecret:    os.Getenv("GITHUB_APP_CLIENT_SECRET"),
+		GitHubAppPrivateKey:      os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 	}
 }
 
