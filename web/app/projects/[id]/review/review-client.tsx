@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, FileText, RefreshCw, Save, Search, ShieldAlert, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
+  articlePreviewHref,
   articleReviewTitle,
   buildSEOContributions,
   explainQAIssue,
-  previewPath,
   qaClaimRows,
   reviewArticleState,
   reviewQueueSummary,
@@ -312,7 +312,7 @@ function ReviewQueueRow({
   const unmappedClaims = claimRows.filter((row) => !row.mapped).length;
   const keyword = searchAppearanceRows(article)[0]?.value ?? "Not specified";
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
-  const previewHref = article.canonical_url || previewPath(article);
+  const previewHref = articlePreviewHref(projectId, article);
 
   return (
     <article
@@ -446,7 +446,7 @@ function ReviewInspector({
       ? explainQAIssue(article.qa_issues[0]).title
       : "QA has not cleared this draft"
     : null;
-  const previewHref = article.canonical_url || previewPath(article);
+  const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
 
   return (

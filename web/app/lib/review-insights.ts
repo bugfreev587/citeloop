@@ -5,6 +5,10 @@ type ReviewArticleLike = {
   resolved_slug: string | null;
 };
 
+type PreviewHrefArticleLike = ReviewArticleLike & {
+  id: string;
+};
+
 type RepairableArticleLike = ReviewArticleLike & {
   qa_blocking: boolean;
   repair_attempts?: number;
@@ -98,6 +102,12 @@ export function previewPath(article: ReviewArticleLike) {
   const slug = articleReviewSlug(article);
   if (!slug) return "/blog/draft-preview";
   return `/blog/${slug}`;
+}
+
+export function articlePreviewHref(projectId: string, article: PreviewHrefArticleLike) {
+  const canonical = textValue(article.canonical_url);
+  if (canonical) return canonical;
+  return `/preview/projects/${projectId}/articles/${article.id}`;
 }
 
 export function markdownBlocks(content: string) {

@@ -59,6 +59,23 @@ test("articlePreviewBlocks keeps the full article body", async () => {
   assert.equal(blocks.at(-1), "Body 14");
 });
 
+test("articlePreviewHref points drafts to a real standalone preview route", async () => {
+  const { articlePreviewHref } = await loadReviewInsightsModule();
+  const article = {
+    id: "article-1",
+    content_md: "# Draft\n\nBody",
+    seo_meta: { slug: "draft" },
+    canonical_url: null,
+    resolved_slug: "draft",
+  };
+
+  assert.equal(articlePreviewHref("project-1", article), "/preview/projects/project-1/articles/article-1");
+  assert.equal(
+    articlePreviewHref("project-1", { ...article, canonical_url: "https://example.com/live-draft" }),
+    "https://example.com/live-draft",
+  );
+});
+
 test("qa issue guidance does not ask the reviewer to trigger AI repair manually", async () => {
   const { explainQAIssue } = await loadReviewInsightsModule();
 
