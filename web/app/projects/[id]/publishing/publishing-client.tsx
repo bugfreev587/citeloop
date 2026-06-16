@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
   Check,
+  ChevronDown,
   Copy,
   ExternalLink,
+  GitBranch,
   Loader2,
   Plug,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   Article,
   DistributeItem,
   GitHubNextJSPublisherInput,
+  GithubIntegrationStatus,
   ProjectConfig,
   PublisherConnection,
   defaultProjectConfig,
@@ -187,6 +190,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [credentialDraft, setCredentialDraft] = useState("");
+  const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
+  const [showManualConnect, setShowManualConnect] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -230,12 +235,29 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     } catch {
       // Surface connection errors only inside the drawer; the lanes still work.
     }
+    try {
+      setGithubIntegration(await api.getGithubIntegration(projectId));
+    } catch {
+      // GitHub App may not be configured on the server; the manual token path stays available.
+    }
   }, [api, projectId]);
 
   useEffect(() => {
     refresh();
     loadConnections();
   }, [refresh, loadConnections]);
+
+  // Returning from the GitHub App connect flow lands here with ?github=connected.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("github") === "connected") {
+      setMessage({ title: "GitHub connected", detail: "Approved articles will publish to your selected repository.", tone: "green" });
+      setDrawer("platforms");
+      url.searchParams.delete("github");
+      window.history.replaceState({}, "", url.pathname + url.search);
+    }
+  }, []);
 
   // Poll while anything is mid-publish so the page reflects each post going live
   // on its staggered slot without a manual reload.
@@ -390,6 +412,14 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Could not save platform", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setBusy(null);
+    }
+  }
+
+  function connectGithub() {
+    // Hand off to GitHub's App install screen; it redirects back to our callback
+    // (carrying installation_id + the project id as state) to finish the link.
+    if (githubIntegration?.install_url) {
+      window.location.href = githubIntegration.install_url;
     }
   }
 
@@ -799,7 +829,67 @@ export function PublishingClient({ projectId }: { projectId: string }) {
 
         <div className="mt-5 border-t border-slate-100 pt-4">
           <div className="text-xs font-bold uppercase tracking-wide text-slate-400">GitHub / Next.js blog</div>
-          <div className="mt-3 grid gap-3">
+
+          {githubIntegration?.configured ? (
+            githubIntegration.connected ? (
+              <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-sm font-bold text-emerald-900">
+                  <GitBranch size={16} />
+                  Connected via GitHub App
+                </div>
+                <div className="mt-1 text-xs text-emerald-800">
+                  {githubIntegration.repo ? (
+                    <>Publishing to <span className="font-semibold">{githubIntegration.repo}</span>{githubIntegration.branch ? ` · ${githubIntegration.branch}` : ""}. No token to manage — CiteLoop mints short-lived access automatically.</>
+                  ) : (
+                    "Installed. Choose a repository to finish."
+                  )}
+                </div>
+                <div className="mt-3">
+                  <Button size="sm" onClick={connectGithub}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Settings2 size={14} />
+                      Change repository or access
+                    </span>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                  <GitBranch size={16} />
+                  Connect with GitHub
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Install the CiteLoop GitHub App, pick a repository, and publishing works with no personal access token to create or rotate.
+                </div>
+                <div className="mt-3">
+                  <Button size="sm" variant="primary" onClick={connectGithub} disabled={!githubIntegration.install_url}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <GitBranch size={14} />
+                      Connect GitHub
+                    </span>
+                  </Button>
+                </div>
+              </div>
+            )
+          ) : (
+            <Notice
+              title="GitHub App not available on this server"
+              detail="Connect manually with a personal access token below, or ask an admin to configure the GitHub App for one-click connect."
+              tone="neutral"
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowManualConnect((v) => !v)}
+            className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900"
+          >
+            <ChevronDown size={14} className={cx("transition-transform", showManualConnect ? "rotate-180" : "")} />
+            {githubIntegration?.configured ? "Advanced: connect with a personal access token" : "Connect with a personal access token"}
+          </button>
+
+          <div className={cx("mt-3 grid gap-3", !showManualConnect && "hidden")}>
             <Field label="Repository (owner/repo)">
               <TextInput
                 value={publisherDraft.repo}
