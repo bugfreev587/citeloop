@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -48,6 +50,88 @@ type TopicSpec struct {
 	Format        string   `json:"format"`
 	Priority      int      `json:"priority"`
 	InternalLinks []string `json:"internal_links"`
+}
+
+func (t *TopicSpec) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Channel       string          `json:"channel"`
+		Title         string          `json:"title"`
+		TargetKeyword string          `json:"target_keyword"`
+		TargetPrompt  string          `json:"target_prompt"`
+		Angle         string          `json:"angle"`
+		Format        string          `json:"format"`
+		Priority      json.RawMessage `json:"priority"`
+		PriorityScore json.RawMessage `json:"priority_score"`
+		InternalLinks []string        `json:"internal_links"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = TopicSpec{
+		Channel:       raw.Channel,
+		Title:         raw.Title,
+		TargetKeyword: raw.TargetKeyword,
+		TargetPrompt:  raw.TargetPrompt,
+		Angle:         raw.Angle,
+		Format:        raw.Format,
+		InternalLinks: raw.InternalLinks,
+	}
+	if priority, ok := parseTopicPriority(raw.Priority); ok {
+		t.Priority = priority
+	} else if priority, ok := parseTopicPriority(raw.PriorityScore); ok {
+		t.Priority = priority
+	}
+	return nil
+}
+
+func parseTopicPriority(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false
+	}
+	var number float64
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return normalizeTopicPriorityNumber(number), true
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return 0, false
+	}
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return 0, false
+	}
+	if number, err := strconv.ParseFloat(text, 64); err == nil {
+		return normalizeTopicPriorityNumber(number), true
+	}
+	switch text {
+	case "urgent", "critical", "highest", "p0":
+		return 10, true
+	case "high", "p1":
+		return 8, true
+	case "medium", "moderate", "normal", "p2":
+		return 5, true
+	case "low", "p3":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+func normalizeTopicPriorityNumber(value float64) int {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0
+	}
+	if value > 10 {
+		value = value / 10
+	}
+	priority := int(math.Round(value))
+	if priority < 1 {
+		return 1
+	}
+	if priority > 10 {
+		return 10
+	}
+	return priority
 }
 
 // SEOMeta is the on-page SEO block (PRD §5.3).

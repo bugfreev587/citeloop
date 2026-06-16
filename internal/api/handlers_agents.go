@@ -15,6 +15,7 @@ import (
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/topicstate"
+	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -81,6 +82,19 @@ func (s *Server) runStrategist(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	// Auto-advance the new backlog into drafting instead of waiting for the cron.
+	// The dedupe key is anchored to the first created topic so re-running the
+	// strategist (which produces fresh topics) enqueues a fresh event, while an
+	// idempotent retry of the same run collapses onto the same key.
+	if len(topics) > 0 {
+		if err := s.enqueueWorkflowEvent(
+			r.Context(), id, workflow.EventContentPlanCreated, "topic", topics[0].ID,
+			workflowDedupeKey(workflow.EventContentPlanCreated, id, topics[0].ID),
+			map[string]any{"source": "strategist", "topic_count": len(topics)},
+		); err != nil {
+			s.Log.Warn("enqueue content_plan.created failed", "project", id, "err", err)
+		}
 	}
 	writeJSON(w, 200, emptySlice(topics))
 }

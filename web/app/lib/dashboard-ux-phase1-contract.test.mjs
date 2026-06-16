@@ -137,9 +137,26 @@ test("visibility defaults to opportunity review and keeps measurement details se
   assert.doesNotMatch(visibility, /Showing \{loopRows\.length\} of \{loopTotal\}/);
 
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
-  // Evidence library no longer silently hides items behind a fixed slice of 8.
+  // Evidence and source lists stay compact on the page and move full lists into drawers.
   assert.match(context, /Show all \$\{evidenceRows\.length\}/);
-  assert.match(context, /showAllEvidence/);
+  assert.match(context, /Show all \$\{filtered\.length\}/);
+  assert.match(context, /evidencePreviewRows/);
+  assert.match(context, /sourcePreviewRows/);
+  assert.match(context, /activeDrawer/);
+  assert.match(context, /DrawerPanel/);
+  assert.doesNotMatch(context, /showAllEvidence/);
+  assert.doesNotMatch(context, /Show fewer/);
+});
+
+test("context profile editors collapse after saving", () => {
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+
+  assert.match(context, /profileEditorOpen/);
+  assert.match(context, /voiceEditorOpen/);
+  assert.match(context, /setProfileEditorOpen\(false\)/);
+  assert.match(context, /setVoiceEditorOpen\(false\)/);
+  assert.match(context, /Edit Domain profile/);
+  assert.match(context, /Edit Voice & rules/);
 });
 
 test("settings maps raw errors to user copy, confirms a budget pause, and drops dev jargon", () => {

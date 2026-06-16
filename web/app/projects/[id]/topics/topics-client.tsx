@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
-import { Topic } from "../../../lib/api";
+import { ProjectConfig, Topic } from "../../../lib/api";
 import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
@@ -65,18 +65,27 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [message, setMessage] = useState<Message>(null);
   const [openOpportunities, setOpenOpportunities] = useState(0);
   const [contentActions, setContentActions] = useState(0);
+  const [config, setConfig] = useState<ProjectConfig | null>(null);
+  const [inReview, setInReview] = useState(0);
+  const [approvedCount, setApprovedCount] = useState(0);
   const strategistRunning = busy === "strategist";
 
   const refresh = useCallback(async () => {
     try {
-      const [next, opps, actions] = await Promise.all([
+      const [next, opps, actions, project, review, approvedArticles] = await Promise.all([
         api.listTopics(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
         api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
+        api.getProject(projectId).catch(() => null),
+        api.listReview(projectId).catch(() => []),
+        api.listArticles(projectId, "approved").catch(() => []),
       ]);
       setTopics(next);
       setOpenOpportunities(opps.length);
       setContentActions(actions.length);
+      if (project) setConfig(project.config);
+      setInReview(review.reduce((sum, group) => sum + group.articles.length, 0));
+      setApprovedCount(approvedArticles.length);
       setScheduleDrafts(Object.fromEntries(next.map((topic) => [topic.id, toDateTimeLocal(topic.scheduled_at)])));
       setGeneratingIds((current) => {
         const stillGenerating = new Set(next.filter((topic) => topic.status === "generating").map((topic) => topic.id));
@@ -116,6 +125,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const recommendedIds = useMemo(() => {
     return new Set(recommendedTopicIds(backlogTopics));
   }, [backlogTopics]);
+  // Topics that are still waiting (not already drafting) define the queue the
+  // pacing copy describes, and the highest-value one is the "jump the queue" pick.
+  const queuedTopics = useMemo(
+    () => backlogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
+    [backlogTopics, generatingIds],
+  );
+  const nextTopic = useMemo(() => {
+    const recommendedFirst = queuedTopics.filter((topic) => recommendedIds.has(topic.id));
+    const pool = recommendedFirst.length ? recommendedFirst : queuedTopics;
+    return [...pool].sort((a, b) => b.priority - a.priority)[0] ?? null;
+  }, [queuedTopics, recommendedIds]);
+  const nextTopicBusy = nextTopic ? Boolean(generatingIds[nextTopic.id]) : false;
+  const pacingNote = useMemo(() => {
+    const cadence = config && config.cadence_per_week > 0
+      ? `about ${config.cadence_per_week}/week`
+      : "on your configured cadence";
+    const buffer = config && config.buffer_days > 0
+      ? `, then holds a ${config.buffer_days}-day buffer before publishing`
+      : "";
+    const inFlight = inReview + approvedCount > 0 ? ` ${inReview} in review · ${approvedCount} approved already in flight.` : "";
+    const queued = queuedTopics.length === 1 ? "1 topic is queued" : `${queuedTopics.length} topics are queued`;
+    return `${queued}. CiteLoop drafts ${cadence} to stay within budget${buffer}.${inFlight} Drafting runs automatically — draft one now to jump the queue.`;
+  }, [config, inReview, approvedCount, queuedTopics.length]);
   const topicGridClass = cx(
     "grid gap-3",
     view === "grid" && "lg:grid-cols-2",
@@ -129,7 +161,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       ? {
           tone: "green",
           title: "Your content plan is running automatically",
-          detail: "CiteLoop turns reviewed opportunities into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
+          detail: queuedTopics.length > 0
+            ? pacingNote
+            : "CiteLoop turns reviewed opportunities into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
           cta: null,
         }
       : contentActions > 0
@@ -311,6 +345,20 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <div className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{autoPlan.detail}</div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {nextTopic && (
+              <Button
+                aria-busy={nextTopicBusy}
+                disabled={nextTopicBusy}
+                variant="primary"
+                size="sm"
+                onClick={() => generate(nextTopic)}
+                title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
+              >
+                <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
+                  Draft next topic
+                </ButtonProgress>
+              </Button>
+            )}
             {autoPlan.cta && (
               <a
                 href={autoPlan.cta.href}
@@ -605,9 +653,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <Pencil size={14} />
                       Edit
                     </Button>
-                    <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="primary" onClick={() => generate(topic)}>
-                      {isGenerating ? <Loader2 className="animate-spin" size={14} /> : <Wand2 size={14} />}
-                      {isGenerating ? "Generating" : "Generate"}
+                    <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="outline" onClick={() => generate(topic)}>
+                      <ButtonProgress busy={isGenerating} busyLabel="Drafting" idleIcon={<Wand2 size={14} />}>
+                        Draft now
+                      </ButtonProgress>
                     </Button>
                     <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
                       <ButtonProgress busy={archiveBusy} busyLabel="Archiving" idleIcon={<Archive size={14} />}>

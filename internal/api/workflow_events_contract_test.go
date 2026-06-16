@@ -24,6 +24,23 @@ func TestSEOReviewHandlersEnqueueWorkflowEvents(t *testing.T) {
 	}
 }
 
+func TestRunStrategistEnqueuesContentPlanCreated(t *testing.T) {
+	source, err := os.ReadFile("handlers_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"workflow.EventContentPlanCreated",
+		"s.enqueueWorkflowEvent",
+		"len(topics) > 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("runStrategist must enqueue content_plan.created so domain topics auto-draft; missing %q", want)
+		}
+	}
+}
+
 func TestArticleApproveEnqueuesDraftApprovedWithProjectSchedulePolicy(t *testing.T) {
 	source, err := os.ReadFile("handlers_review.go")
 	if err != nil {

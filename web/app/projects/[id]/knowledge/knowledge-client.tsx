@@ -1,13 +1,17 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, Pencil, RefreshCw, Save, ShieldCheck, Wand2, X } from "lucide-react";
 import { CrawlSummary, GenerationRun, InventoryItem, ProductProfile } from "../../../lib/api";
 import { ProfileDraft, lines, profilePayloadFromAdvancedJSON, profilePayloadFromDraft } from "../../../lib/dashboard-ux-logic";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+type DrawerMode = "evidence" | "sources";
+type ProfileEditorMode = "profile" | "voice";
+
+const PREVIEW_ROW_LIMIT = 8;
 
 type InventoryDraft = {
   title: string;
@@ -15,6 +19,13 @@ type InventoryDraft = {
   summary: string;
   topics: string;
   evidence_snippets: string;
+};
+
+type EvidenceRow = {
+  id: string;
+  item: InventoryItem;
+  claim: string;
+  snippet: string;
 };
 
 function readPath(source: Record<string, any>, path: string) {
@@ -72,6 +83,166 @@ function latestCrawlSummary(runs: GenerationRun[]): CrawlSummary | null {
   return null;
 }
 
+function SummaryField({ label, value, className }: { label: string; value: string; className?: string }) {
+  const displayValue = value.trim();
+
+  return (
+    <div className={cx("rounded-lg border border-slate-200 bg-slate-50 px-3 py-2", className)}>
+      <div className="text-xs font-bold uppercase text-slate-400">{label}</div>
+      <p className={cx("mt-1 max-h-20 overflow-hidden whitespace-pre-line text-sm leading-5", displayValue ? "text-slate-700" : "text-slate-400")}>
+        {displayValue || "Not set"}
+      </p>
+    </div>
+  );
+}
+
+function DrawerPanel({
+  title,
+  count,
+  detail,
+  children,
+  onClose,
+}: {
+  title: string;
+  count: number;
+  detail?: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-30">
+      <button
+        type="button"
+        aria-label="Close drawer"
+        className="absolute inset-0 animate-[context-drawer-scrim-in_160ms_ease-out] bg-slate-950/30"
+        onClick={onClose}
+      />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="absolute right-0 top-0 flex h-full w-full max-w-3xl animate-[context-drawer-panel-in_180ms_cubic-bezier(0.16,1,0.3,1)] flex-col border-l border-slate-200 bg-white shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-slate-950">{title}</h3>
+              <Badge tone="neutral">{count}</Badge>
+            </div>
+            {detail && <p className="mt-1 text-sm leading-5 text-slate-500">{detail}</p>}
+          </div>
+          <Button aria-label="Close drawer" size="sm" variant="ghost" onClick={onClose}>
+            <X size={16} />
+          </Button>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-slate-50/70 px-4 py-4 sm:px-5">{children}</div>
+      </aside>
+    </div>
+  );
+}
+
+function EvidenceCard({ row, onEditEvidence }: { row: EvidenceRow; onEditEvidence: (item: InventoryItem) => void }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 font-semibold text-slate-900">{row.claim}</div>
+        <Badge tone="green">Safe to use</Badge>
+      </div>
+      <p className="mt-2 text-sm leading-5 text-slate-600">{row.snippet}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+        <a href={row.item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#d93820]">
+          Source page <ExternalLink size={12} />
+        </a>
+        <button type="button" onClick={() => onEditEvidence(row.item)} className="text-slate-600 hover:text-slate-950">
+          Edit evidence
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SourcePageCard({
+  item,
+  busy,
+  editing,
+  draft,
+  onEdit,
+  onDraftChange,
+  onCancel,
+  onSave,
+}: {
+  item: InventoryItem;
+  busy: string | null;
+  editing: boolean;
+  draft: InventoryDraft | null;
+  onEdit: (item: InventoryItem) => void;
+  onDraftChange: (draft: InventoryDraft) => void;
+  onCancel: () => void;
+  onSave: (item: InventoryItem) => void;
+}) {
+  const saving = busy === `inventory-${item.id}`;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-bold text-slate-900">{item.title || item.url}</div>
+          <div className="mt-1 truncate text-xs text-slate-500">{item.url}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge tone={item.source === "generated" ? "green" : "blue"}>{item.source}</Badge>
+          <Button disabled={!!busy} size="sm" variant="ghost" onClick={() => onEdit(item)}>
+            <Pencil size={14} />
+            Edit
+          </Button>
+        </div>
+      </div>
+      <p className="mt-2 text-sm leading-5 text-slate-600">{item.summary || "No summary captured."}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>{item.target_keyword || "No keyword"}</span>
+        <span>{item.evidence_snippets.length} evidence snippets</span>
+        <a href={item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-[#d93820]">
+          Open source <ExternalLink size={12} />
+        </a>
+      </div>
+      {editing && draft && (
+        <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Title">
+              <TextInput value={draft.title} onChange={(event) => onDraftChange({ ...draft, title: event.target.value })} />
+            </Field>
+            <Field label="Target keyword">
+              <TextInput value={draft.target_keyword} onChange={(event) => onDraftChange({ ...draft, target_keyword: event.target.value })} />
+            </Field>
+          </div>
+          <Field label="Summary">
+            <TextArea rows={3} value={draft.summary} onChange={(event) => onDraftChange({ ...draft, summary: event.target.value })} />
+          </Field>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Topics">
+              <TextArea rows={4} value={draft.topics} onChange={(event) => onDraftChange({ ...draft, topics: event.target.value })} />
+            </Field>
+            <Field label="Evidence snippets">
+              <TextArea rows={4} value={draft.evidence_snippets} onChange={(event) => onDraftChange({ ...draft, evidence_snippets: event.target.value })} />
+            </Field>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button disabled={!!busy} size="sm" variant="ghost" onClick={onCancel}>
+              <X size={14} />
+              Cancel
+            </Button>
+            <Button disabled={!!busy} size="sm" variant="primary" onClick={() => onSave(item)}>
+              <ButtonProgress busy={saving} busyLabel="Saving source page" idleIcon={<Check size={14} />}>
+                Save source page
+              </ButtonProgress>
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ContextClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [landing, setLanding] = useState("");
@@ -84,7 +255,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
-  const [showAllEvidence, setShowAllEvidence] = useState(false);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [voiceEditorOpen, setVoiceEditorOpen] = useState(false);
+  const [activeDrawer, setActiveDrawer] = useState<DrawerMode | null>(null);
   const [backgroundCrawl, setBackgroundCrawl] = useState(false);
   const bgBaselineRef = useRef(0);
   const bgAttemptsRef = useRef(0);
@@ -109,6 +282,15 @@ export function ContextClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!activeDrawer) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setActiveDrawer(null);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [activeDrawer]);
 
   // The full public crawl + evidence inventory runs in a detached background job after a
   // landing-only "quick profile". Poll until new source pages land, then refresh and notify,
@@ -160,6 +342,8 @@ export function ContextClient({ projectId }: { projectId: string }) {
     [inventory],
   );
 
+  const evidencePreviewRows = useMemo(() => evidenceRows.slice(0, PREVIEW_ROW_LIMIT), [evidenceRows]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return inventory;
@@ -167,6 +351,8 @@ export function ContextClient({ projectId }: { projectId: string }) {
       [item.title, item.url, item.target_keyword, item.summary].some((value) => value?.toLowerCase().includes(q)),
     );
   }, [inventory, query]);
+
+  const sourcePreviewRows = useMemo(() => filtered.slice(0, PREVIEW_ROW_LIMIT), [filtered]);
 
   const contextConfirmed = Boolean(profile?.profile?.context_confirmed_at || profile?.profile?.confirmed_at);
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
@@ -204,6 +390,31 @@ export function ContextClient({ projectId }: { projectId: string }) {
     }
   }
 
+  function openProfileEditor() {
+    setProfileDraft(profileDraftFrom(profile));
+    setProfileEditorOpen(true);
+    setVoiceEditorOpen(false);
+  }
+
+  function openVoiceEditor() {
+    setProfileDraft(profileDraftFrom(profile));
+    setVoiceEditorOpen(true);
+    setProfileEditorOpen(false);
+  }
+
+  function openProfileEditorFromConfirmation() {
+    openProfileEditor();
+    window.requestAnimationFrame(() => {
+      document.getElementById("domain-profile")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function cancelProfileEditor(mode: ProfileEditorMode) {
+    setProfileDraft(profileDraftFrom(profile));
+    if (mode === "profile") setProfileEditorOpen(false);
+    if (mode === "voice") setVoiceEditorOpen(false);
+  }
+
   async function saveProfile(nextProfile?: Record<string, any>, success = "Context saved", busyKey = "profile") {
     setBusy(busyKey);
     setMessage(null);
@@ -215,6 +426,8 @@ export function ContextClient({ projectId }: { projectId: string }) {
       });
       setProfile(updated);
       setProfileDraft(profileDraftFrom(updated));
+      if (busyKey === "profile-domain") setProfileEditorOpen(false);
+      if (busyKey === "profile-voice") setVoiceEditorOpen(false);
       setMessage({ title: success, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Context save failed", detail: e.message, tone: "red" });
@@ -246,6 +459,12 @@ export function ContextClient({ projectId }: { projectId: string }) {
     setEditingItemId(item.id);
     setItemDraft(inventoryDraft(item));
     setMessage(null);
+  }
+
+  function startEvidenceEdit(item: InventoryItem) {
+    setQuery("");
+    startInventoryEdit(item);
+    setActiveDrawer("sources");
   }
 
   function cancelInventoryEdit() {
@@ -372,9 +591,13 @@ export function ContextClient({ projectId }: { projectId: string }) {
                   Confirm context
                 </ButtonProgress>
               </Button>
-              <a href="#domain-profile" className="inline-flex h-10 items-center rounded-xl border border-amber-200 bg-white px-3 text-sm font-medium text-amber-900 hover:bg-amber-100">
+              <button
+                type="button"
+                onClick={openProfileEditorFromConfirmation}
+                className="inline-flex h-10 items-center rounded-xl border border-amber-200 bg-white px-3 text-sm font-medium text-amber-900 hover:bg-amber-100"
+              >
                 Edit fields below
-              </a>
+              </button>
             </div>
           </div>
         </section>
@@ -386,30 +609,18 @@ export function ContextClient({ projectId }: { projectId: string }) {
           <EmptyState title="No evidence snippets yet" detail="Refresh context or add evidence to source pages so claims can be safely reused in drafts." />
         ) : (
           <div className="grid gap-3">
-            {evidenceRows.slice(0, showAllEvidence ? evidenceRows.length : 8).map((row) => (
-              <div key={row.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-semibold text-slate-900">{row.claim}</div>
-                  <Badge tone="green">Safe to use</Badge>
-                </div>
-                <p className="mt-2 text-sm leading-5 text-slate-600">{row.snippet}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
-                  <a href={row.item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#d93820]">
-                    Source page <ExternalLink size={12} />
-                  </a>
-                  <button type="button" onClick={() => startInventoryEdit(row.item)} className="text-slate-600 hover:text-slate-950">
-                    Edit evidence
-                  </button>
-                </div>
-              </div>
-            ))}
-            {evidenceRows.length > 8 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {evidencePreviewRows.map((row) => (
+                <EvidenceCard key={row.id} row={row} onEditEvidence={startEvidenceEdit} />
+              ))}
+            </div>
+            {evidenceRows.length > PREVIEW_ROW_LIMIT && (
               <button
                 type="button"
-                onClick={() => setShowAllEvidence((value) => !value)}
+                onClick={() => setActiveDrawer("evidence")}
                 className="justify-self-start text-sm font-semibold text-[#d93820] hover:underline"
               >
-                {showAllEvidence ? "Show fewer" : `Show all ${evidenceRows.length}`}
+                {`Show all ${evidenceRows.length}`}
               </button>
             )}
           </div>
@@ -420,6 +631,22 @@ export function ContextClient({ projectId }: { projectId: string }) {
         <SectionHeader title="Domain profile" />
         {!profile ? (
           <EmptyState title="Start by connecting your domain" detail="CiteLoop will read public pages, extract product facts, and build the context used for planning and review." />
+        ) : !profileEditorOpen ? (
+          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <SummaryField className="md:col-span-2" label="Positioning" value={profileDraft.positioning} />
+              <SummaryField label="ICP" value={profileDraft.icp} />
+              <SummaryField label="Value props" value={profileDraft.value_props} />
+              <SummaryField label="Features" value={profileDraft.features} />
+              <SummaryField label="Differentiators" value={profileDraft.differentiators} />
+              <SummaryField label="Competitors" value={profileDraft.competitors} />
+              <SummaryField label="Key terms" value={profileDraft.key_terms} />
+            </div>
+            <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openProfileEditor}>
+              <Pencil size={16} />
+              Edit Domain profile
+            </Button>
+          </div>
         ) : (
           <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
             <Field label="Positioning">
@@ -445,11 +672,17 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 <TextArea rows={4} value={profileDraft.key_terms} onChange={(event) => setProfileDraft({ ...profileDraft, key_terms: event.target.value })} />
               </Field>
             </div>
-            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Context saved", "profile-domain")}>
-              <ButtonProgress busy={busy === "profile-domain"} busyLabel="Saving Domain profile" idleIcon={<Save size={16} />}>
-                Save Domain profile
-              </ButtonProgress>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Domain profile saved", "profile-domain")}>
+                <ButtonProgress busy={busy === "profile-domain"} busyLabel="Saving Domain profile" idleIcon={<Save size={16} />}>
+                  Save Domain profile
+                </ButtonProgress>
+              </Button>
+              <Button disabled={!!busy} variant="ghost" className="w-fit" onClick={() => cancelProfileEditor("profile")}>
+                <X size={16} />
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
       </section>
@@ -458,6 +691,18 @@ export function ContextClient({ projectId }: { projectId: string }) {
         <SectionHeader title="Voice & rules" />
         {!profile ? (
           <EmptyState title="No voice rules yet" detail="Refresh context first, then set tone and banned claims before generating content." />
+        ) : !voiceEditorOpen ? (
+          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <SummaryField className="md:col-span-2" label="Tone" value={profileDraft.tone} />
+              <SummaryField label="Banned claims" value={profileDraft.banned_claims} />
+              <SummaryField label="Content rules" value={profileDraft.content_rules} />
+            </div>
+            <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openVoiceEditor}>
+              <Pencil size={16} />
+              Edit Voice & rules
+            </Button>
+          </div>
         ) : (
           <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
             <Field label="Tone">
@@ -471,11 +716,17 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 <TextArea rows={6} value={profileDraft.content_rules} onChange={(event) => setProfileDraft({ ...profileDraft, content_rules: event.target.value })} />
               </Field>
             </div>
-            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Context saved", "profile-voice")}>
-              <ButtonProgress busy={busy === "profile-voice"} busyLabel="Saving Voice & rules" idleIcon={<Save size={16} />}>
-                Save Voice & rules
-              </ButtonProgress>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Voice & rules saved", "profile-voice")}>
+                <ButtonProgress busy={busy === "profile-voice"} busyLabel="Saving Voice & rules" idleIcon={<Save size={16} />}>
+                  Save Voice & rules
+                </ButtonProgress>
+              </Button>
+              <Button disabled={!!busy} variant="ghost" className="w-fit" onClick={() => cancelProfileEditor("voice")}>
+                <X size={16} />
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
       </section>
@@ -488,66 +739,31 @@ export function ContextClient({ projectId }: { projectId: string }) {
         {filtered.length === 0 ? (
           <EmptyState title="No source pages yet" detail="Source pages appear after CiteLoop refreshes context from your domain." />
         ) : (
-          <div className="grid gap-2">
-            {filtered.map((item) => (
-              <div key={item.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-900">{item.title || item.url}</div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{item.url}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge tone={item.source === "generated" ? "green" : "blue"}>{item.source}</Badge>
-                    <Button disabled={!!busy} size="sm" variant="ghost" onClick={() => startInventoryEdit(item)}>
-                      <Pencil size={14} />
-                      Edit
-                    </Button>
-                  </div>
-                </div>
-                <p className="mt-2 text-sm leading-5 text-slate-600">{item.summary || "No summary captured."}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span>{item.target_keyword || "No keyword"}</span>
-                  <span>{item.evidence_snippets.length} evidence snippets</span>
-                  <a href={item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-[#d93820]">
-                    Open source <ExternalLink size={12} />
-                  </a>
-                </div>
-                {editingItemId === item.id && itemDraft && (
-                  <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <Field label="Title">
-                        <TextInput value={itemDraft.title} onChange={(event) => setItemDraft({ ...itemDraft, title: event.target.value })} />
-                      </Field>
-                      <Field label="Target keyword">
-                        <TextInput value={itemDraft.target_keyword} onChange={(event) => setItemDraft({ ...itemDraft, target_keyword: event.target.value })} />
-                      </Field>
-                    </div>
-                    <Field label="Summary">
-                      <TextArea rows={3} value={itemDraft.summary} onChange={(event) => setItemDraft({ ...itemDraft, summary: event.target.value })} />
-                    </Field>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <Field label="Topics">
-                        <TextArea rows={4} value={itemDraft.topics} onChange={(event) => setItemDraft({ ...itemDraft, topics: event.target.value })} />
-                      </Field>
-                      <Field label="Evidence snippets">
-                        <TextArea rows={4} value={itemDraft.evidence_snippets} onChange={(event) => setItemDraft({ ...itemDraft, evidence_snippets: event.target.value })} />
-                      </Field>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button disabled={!!busy} size="sm" variant="ghost" onClick={cancelInventoryEdit}>
-                        <X size={14} />
-                        Cancel
-                      </Button>
-                      <Button disabled={!!busy} size="sm" variant="primary" onClick={() => saveInventory(item)}>
-                        <ButtonProgress busy={busy === `inventory-${item.id}`} busyLabel="Saving source page" idleIcon={<Check size={14} />}>
-                          Save source page
-                        </ButtonProgress>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+          <div className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              {sourcePreviewRows.map((item) => (
+                <SourcePageCard
+                  key={item.id}
+                  item={item}
+                  busy={busy}
+                  editing={editingItemId === item.id}
+                  draft={itemDraft}
+                  onEdit={startInventoryEdit}
+                  onDraftChange={setItemDraft}
+                  onCancel={cancelInventoryEdit}
+                  onSave={saveInventory}
+                />
+              ))}
+            </div>
+            {filtered.length > PREVIEW_ROW_LIMIT && (
+              <button
+                type="button"
+                onClick={() => setActiveDrawer("sources")}
+                className="justify-self-start text-sm font-semibold text-[#d93820] hover:underline"
+              >
+                {`Show all ${filtered.length}`}
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -570,6 +786,47 @@ export function ContextClient({ projectId }: { projectId: string }) {
             </div>
           </details>
         </section>
+      )}
+
+      {activeDrawer && (
+        <DrawerPanel
+          title={activeDrawer === "evidence" ? "All evidence" : "All source pages"}
+          count={activeDrawer === "evidence" ? evidenceRows.length : filtered.length}
+          detail={
+            activeDrawer === "evidence"
+              ? "All source-backed snippets available for drafts and review."
+              : query.trim()
+                ? `Showing source pages matching "${query.trim()}".`
+                : "All pages CiteLoop has read for this domain."
+          }
+          onClose={() => setActiveDrawer(null)}
+        >
+          {activeDrawer === "evidence" ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {evidenceRows.map((row) => (
+                <EvidenceCard key={row.id} row={row} onEditEvidence={startEvidenceEdit} />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState title="No matching source pages" detail="Clear the search query to see all source pages." />
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {filtered.map((item) => (
+                <SourcePageCard
+                  key={item.id}
+                  item={item}
+                  busy={busy}
+                  editing={editingItemId === item.id}
+                  draft={itemDraft}
+                  onEdit={startInventoryEdit}
+                  onDraftChange={setItemDraft}
+                  onCancel={cancelInventoryEdit}
+                  onSave={saveInventory}
+                />
+              ))}
+            </div>
+          )}
+        </DrawerPanel>
       )}
     </div>
   );
