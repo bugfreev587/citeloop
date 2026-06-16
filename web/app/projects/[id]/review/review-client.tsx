@@ -75,7 +75,11 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? null;
   const selectedArticle = selectedQueueArticle?.article ?? null;
   const selectedBusy = selectedArticle
-    ? busy === "bulk-approve" || busy === `approve-${selectedArticle.id}` || busy === `reject-${selectedArticle.id}` || busy === `save-${selectedArticle.id}`
+    ? busy === "bulk-approve" ||
+      busy === `approve-${selectedArticle.id}` ||
+      busy === `reject-${selectedArticle.id}` ||
+      busy === `save-${selectedArticle.id}` ||
+      (busy?.startsWith(`apply-${selectedArticle.id}`) ?? false)
     : false;
 
   useEffect(() => {
@@ -139,6 +143,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   }
   function onSave(article: Article, nextContent: string) {
     return mutate("Content saved and QA re-checked", `save-${article.id}`, () => api.edit(projectId, article.id, { content_md: nextContent }));
+  }
+  function onApplyFix(article: Article, optionIndex: number, instruction: string) {
+    return mutate("CiteLoop applied the fix and re-ran QA", `apply-${article.id}-${optionIndex}`, () => api.applyFix(projectId, article.id, instruction));
   }
 
   return (
@@ -209,6 +216,8 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                 onApprove={() => onApprove(selectedArticle)}
                 onReject={() => onReject(selectedArticle)}
                 onSave={(next) => onSave(selectedArticle, next)}
+                onApplyFix={(optionIndex, instruction) => onApplyFix(selectedArticle, optionIndex, instruction)}
+                applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
               />
             ) : (
               <aside className="hidden items-center justify-center bg-slate-50 p-8 text-center text-sm text-slate-500 xl:flex">
@@ -389,6 +398,8 @@ function ReviewInspector({
   onApprove,
   onReject,
   onSave,
+  onApplyFix,
+  applyingIndex,
 }: {
   article: Article;
   topicId: string;
@@ -404,6 +415,8 @@ function ReviewInspector({
   onApprove: () => void;
   onReject: () => void;
   onSave: (content: string) => void;
+  onApplyFix: (optionIndex: number, instruction: string) => void;
+  applyingIndex: number | null;
 }) {
   const title = articleReviewTitle(article);
   const state = reviewArticleState(article);
@@ -425,7 +438,16 @@ function ReviewInspector({
       <div className="grid gap-4 p-4">
         {state.kind === "recovering" && <RecoveringPanel article={article} />}
         {state.kind === "needs_human" && (
-          <DecisionPanel article={article} projectId={projectId} busy={busy} rejectBusy={rejectBusy} onReject={onReject} onToggleEditor={onToggleEditor} />
+          <DecisionPanel
+            article={article}
+            projectId={projectId}
+            busy={busy}
+            rejectBusy={rejectBusy}
+            onReject={onReject}
+            onToggleEditor={onToggleEditor}
+            onApplyFix={onApplyFix}
+            applyingIndex={applyingIndex}
+          />
         )}
         {state.kind === "ready" && (
           <ReadyPanel busy={busy} approveBusy={approveBusy} previewHref={previewHref} detailHref={detailHref} onApprove={onApprove} onToggleEditor={onToggleEditor} />
@@ -502,6 +524,12 @@ function ReadyPanel({
   );
 }
 
+const genericOptionPattern = /^(reject|edit the draft|add or fix evidence)/i;
+
+function decisionText(value: any): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function DecisionPanel({
   article,
   projectId,
@@ -509,6 +537,8 @@ function DecisionPanel({
   rejectBusy,
   onReject,
   onToggleEditor,
+  onApplyFix,
+  applyingIndex,
 }: {
   article: Article;
   projectId: string;
@@ -516,9 +546,20 @@ function DecisionPanel({
   rejectBusy: boolean;
   onReject: () => void;
   onToggleEditor: () => void;
+  onApplyFix: (optionIndex: number, instruction: string) => void;
+  applyingIndex: number | null;
 }) {
-  const options = (article.human_decision_options ?? []).filter((option) => option?.label || option?.description);
+  const allOptions = (article.human_decision_options ?? []).filter((option) => option?.label || option?.description);
+  // QA-proposed content fixes (one-click) vs the standard manual actions, which
+  // have their own buttons below.
+  const fixOptions = allOptions
+    .map((option, index) => ({ option, index }))
+    .filter(({ option }) => !genericOptionPattern.test((option.label ?? "").trim()));
   const unmapped = qaClaimRows(article).filter((row) => !row.mapped);
+  const blockingReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
+  const fixInstructions = Array.isArray(article.qa_feedback?.fix_instructions)
+    ? (article.qa_feedback!.fix_instructions as any[]).map((v) => String(v).trim()).filter(Boolean)
+    : [];
 
   return (
     <section className="rounded-lg border border-red-200 bg-red-50 p-3">
@@ -526,32 +567,67 @@ function DecisionPanel({
         <ShieldAlert size={15} />
         Your decision is needed
       </div>
-      <p className="mt-1 text-xs leading-5 text-red-800">
-        {unmapped.length > 0
-          ? `CiteLoop could not back ${unmapped.length === 1 ? "a product claim" : `${unmapped.length} product claims`} with your Context evidence, and could not safely rewrite ${unmapped.length === 1 ? "it" : "them"}. Choose how to resolve it.`
-          : "CiteLoop tried re-checking, repairing, and regenerating this draft but still could not clear QA. Choose how to resolve it."}
-      </p>
 
-      {unmapped.length > 0 && (
-        <div className="mt-3 grid gap-2">
-          {unmapped.slice(0, 4).map((row, index) => (
-            <div key={`${row.claim}-${index}`} className="rounded-md border border-red-100 bg-white/70 px-3 py-2">
-              <div className="text-sm font-semibold text-slate-900">{row.claim}</div>
-              <div className="mt-1 text-xs leading-5 text-slate-600">{row.evidence || "No supporting evidence found in Context."}</div>
-            </div>
-          ))}
+      {/* Why QA blocked this — the concrete reason, not a generic message. */}
+      <div className="mt-2 rounded-md border border-red-100 bg-white/70 px-3 py-2">
+        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-red-700">Why QA blocked this</div>
+        <p className="mt-1 text-sm leading-5 text-slate-900">
+          {blockingReason ||
+            (unmapped.length > 0
+              ? `${unmapped.length === 1 ? "A product claim" : `${unmapped.length} product claims`} could not be backed by your Context evidence.`
+              : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it.")}
+        </p>
+        {unmapped.length > 0 && (
+          <div className="mt-2 grid gap-1.5">
+            {unmapped.slice(0, 4).map((row, index) => (
+              <div key={`${row.claim}-${index}`} className="rounded border border-red-100 bg-red-50/60 px-2 py-1.5">
+                <div className="text-xs font-semibold text-slate-900">{row.claim}</div>
+                {row.evidence && <div className="mt-0.5 text-[11px] leading-4 text-slate-600">{row.evidence}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* One-click fixes proposed by QA — applied by the AI editor, then re-checked. */}
+      {fixOptions.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-red-700">Apply a fix</div>
+          <div className="mt-1.5 grid gap-2">
+            {fixOptions.map(({ option, index }) => {
+              const instruction = [option.label, option.description].filter(Boolean).join(". ");
+              const applying = applyingIndex === index;
+              return (
+                <button
+                  key={`${option.label ?? "fix"}-${index}`}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onApplyFix(index, instruction)}
+                  className="flex items-start gap-2 rounded-md border border-red-200 bg-white px-3 py-2 text-left transition-colors hover:border-[#d93820] hover:bg-red-50 disabled:opacity-60"
+                >
+                  {applying ? (
+                    <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin text-[#d93820]" />
+                  ) : (
+                    <Sparkles size={14} className="mt-0.5 shrink-0 text-[#d93820]" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-slate-900">{option.label || `Fix ${index + 1}`}</span>
+                    {option.description && <span className="mt-0.5 block text-xs leading-5 text-slate-600">{option.description}</span>}
+                    <span className="mt-1 block text-[11px] font-semibold text-[#d93820]">{applying ? "Applying & re-checking…" : "Apply this fix"}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {options.length > 0 && (
-        <div className="mt-3 grid gap-1.5">
-          {options.slice(0, 3).map((option, index) => (
-            <div key={`${option.label ?? "option"}-${index}`} className="text-xs leading-5 text-red-900">
-              <span className="font-bold">{option.label || `Option ${index + 1}`}</span>
-              {option.description ? ` — ${option.description}` : ""}
-            </div>
+      {fixInstructions.length > 0 && fixOptions.length === 0 && (
+        <ul className="mt-3 grid list-disc gap-1 pl-5 text-xs leading-5 text-red-900">
+          {fixInstructions.slice(0, 4).map((fix, index) => (
+            <li key={`${fix}-${index}`}>{fix}</li>
           ))}
-        </div>
+        </ul>
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -569,7 +645,7 @@ function DecisionPanel({
         </Button>
       </div>
       <p className="mt-2 text-[11px] leading-4 text-red-700/80">
-        Fixing evidence or saving an edit re-runs QA automatically — you don't have to approve through the block.
+        QA only blocks unsupported product claims, banned claims, or missing required SEO — never writing style. Applying a fix or saving an edit re-runs QA automatically.
       </p>
     </section>
   );

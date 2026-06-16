@@ -230,6 +230,80 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
 }
 
+// RepairArticleWithInstruction applies a specific human-chosen resolution to a
+// draft and re-runs QA. Unlike RepairArticle it deliberately bypasses the
+// repair-attempt/human-decision gate: the operator is explicitly choosing this
+// fix from the Review decision panel, so a cleared QA result un-blocks the draft.
+func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, articleID uuid.UUID, instruction string) (db.Article, error) {
+	art, err := w.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: articleID, ProjectID: projectID})
+	if err != nil {
+		return db.Article{}, err
+	}
+	topic, err := w.Q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: art.TopicID, ProjectID: projectID})
+	if err != nil {
+		return db.Article{}, err
+	}
+	profile, err := w.Q.GetActiveProfile(ctx, projectID)
+	if err != nil {
+		return db.Article{}, fmt.Errorf("no active profile: %w", err)
+	}
+	canonical := art.Kind == "canonical"
+	plat := ""
+	if art.Platform != nil {
+		plat = *art.Platform
+	}
+	var meta SEOMeta
+	_ = json.Unmarshal(art.SeoMeta, &meta)
+	out := &WriterOutput{ContentMD: art.ContentMd, SEOMeta: completeSEOMeta(topic, meta, plat, canonical)}
+
+	qa := qaFromArticle(art)
+	if strings.TrimSpace(instruction) != "" {
+		qa.FixInstructions = append([]string{instruction}, qa.FixInstructions...)
+		qa.BlockingReason = instruction
+	}
+
+	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, nil)
+	recordRun(ctx, w.Q, projectID, agentWriter,
+		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "apply_fix": instruction}, repaired, repairResp, repairErr)
+	if repairErr != nil {
+		failed := &QAOutput{QABlocking: true, Issues: []string{"ai fix failed: " + repairErr.Error()}, BlockingReason: repairErr.Error(), CanAutoFix: true}
+		return w.finishRepair(ctx, art, failed, "failed", repairErr.Error(), true)
+	}
+	out = repaired
+	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
+
+	qaAgent := NewQA(w.Deps, w.Log)
+	checked, finalQAResp, finalQAErr := qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
+	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "post_apply_fix_check": true}, checked, finalQAResp, finalQAErr)
+	if finalQAErr != nil {
+		checked = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after fix: " + finalQAErr.Error()}, BlockingReason: finalQAErr.Error(), CanAutoFix: true}
+	}
+
+	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
+		ID:        articleID,
+		ProjectID: projectID,
+		ContentMd: out.ContentMD,
+		SeoMeta:   toJSON(out.SEOMeta),
+	})
+	if err != nil {
+		return db.Article{}, err
+	}
+	updated, err = w.Q.SetArticleQA(ctx, db.SetArticleQAParams{
+		ID:         updated.ID,
+		GeoScore:   pgutil.Numeric(checked.GeoScore),
+		SeoScore:   pgutil.Numeric(checked.SeoScore),
+		QaIssues:   toJSON(qaIssues(checked)),
+		QaBlocking: checked.QABlocking,
+		Status:     updated.Status,
+		QaFeedback: toJSON(checked),
+	})
+	if err != nil {
+		return db.Article{}, err
+	}
+	repairStatus, requiresHuman := repairOutcome(checked, updated.RepairAttempts, maxDraftRepairAttempts)
+	return w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+}
+
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
 	canonicalInstr := writerCanonicalInstruction(plat, canonical)
 

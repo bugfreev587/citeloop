@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/agents"
@@ -179,11 +180,9 @@ func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, pro
 }
 
 func (s *Scheduler) escalateArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, reason string) error {
-	options := []map[string]string{
-		{"label": "Add or fix evidence in Context", "description": "Supply the source/evidence the claim needs, then CiteLoop re-checks automatically."},
-		{"label": "Edit the draft", "description": "Adjust the wording yourself; saving re-runs QA."},
-		{"label": "Reject", "description": "Discard the draft and return the topic to the backlog."},
-	}
+	// Prefer QA's own resolution options (each becomes a one-click fix in the
+	// decision panel); fall back to the generic choices only when QA produced none.
+	options := escalationOptions(art.QaFeedback)
 	_, err := q.EscalateArticleToHumanForProject(ctx, db.EscalateArticleToHumanForProjectParams{
 		ID:                   art.ID,
 		ProjectID:            projectID,
@@ -191,6 +190,34 @@ func (s *Scheduler) escalateArticle(ctx context.Context, q *db.Queries, projectI
 		HumanDecisionOptions: mustJSON(options),
 	})
 	return err
+}
+
+type decisionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+func escalationOptions(qaFeedback json.RawMessage) []decisionOption {
+	var parsed struct {
+		HumanDecisionOptions []decisionOption `json:"human_decision_options"`
+	}
+	if len(qaFeedback) > 0 {
+		_ = json.Unmarshal(qaFeedback, &parsed)
+	}
+	var out []decisionOption
+	for _, o := range parsed.HumanDecisionOptions {
+		if strings.TrimSpace(o.Label) != "" || strings.TrimSpace(o.Description) != "" {
+			out = append(out, o)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	return []decisionOption{
+		{Label: "Add or fix evidence in Context", Description: "Supply the source/evidence the claim needs, then CiteLoop re-checks automatically."},
+		{Label: "Edit the draft", Description: "Adjust the wording yourself; saving re-runs QA."},
+		{Label: "Reject", Description: "Discard the draft and return the topic to the backlog."},
+	}
 }
 
 // autoApproveReadyForProject approves drafts QA has cleared and schedules
