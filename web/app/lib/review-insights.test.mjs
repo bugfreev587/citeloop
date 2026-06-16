@@ -97,6 +97,19 @@ test("publishedPreviewParts removes leading prompt instructions after metadata c
   assert.equal(preview.blocks.some((block) => /^Explain\b/.test(block)), false);
 });
 
+test("publishedPreviewDescription hides prompt text but keeps real descriptions", async () => {
+  const { publishedPreviewDescription } = await loadReviewInsightsModule();
+
+  assert.equal(
+    publishedPreviewDescription("Explain the architectural advantages of using a unified social publishing API."),
+    "",
+  );
+  assert.equal(
+    publishedPreviewDescription("Learn why a unified social publishing API outperforms separate platform integrations."),
+    "Learn why a unified social publishing API outperforms separate platform integrations.",
+  );
+});
+
 test("articlePreviewHref points drafts to a real standalone preview route", async () => {
   const { articlePreviewHref } = await loadReviewInsightsModule();
   const article = {

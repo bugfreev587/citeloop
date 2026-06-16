@@ -172,6 +172,12 @@ export function publishedPreviewParts(content: string, h1: string): PublishedPre
   };
 }
 
+export function publishedPreviewDescription(description: string) {
+  const value = textValue(description);
+  if (isGenerationInstructionBlock(value)) return "";
+  return value;
+}
+
 export function buildSEOContributions(article: ReviewArticleLike): SEOContribution[] {
   const title = textValue(article.seo_meta?.title);
   const description = textValue(article.seo_meta?.meta_description);
