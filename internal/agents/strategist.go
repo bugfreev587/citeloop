@@ -70,6 +70,7 @@ func (a *Strategist) Run(ctx context.Context, projectID uuid.UUID, cfg config.Pr
 		existing = append(existing, title+" — "+it.Url)
 	}
 	specs, resp, gerr := a.generate(ctx, profile.Profile, existing, snapshots, cfg)
+	specs = normalizeTopicSpecs(specs)
 
 	out := map[string]any{"degraded": degraded, "search": snapshots, "topics": specs}
 	recordRun(ctx, a.Q, projectID, agentStrategist,
@@ -165,4 +166,24 @@ func normalizeChannel(c string) string {
 	default:
 		return "blog"
 	}
+}
+
+func normalizeTopicSpecs(specs []TopicSpec) []TopicSpec {
+	for i := range specs {
+		if specs[i].Priority <= 0 {
+			specs[i].Priority = fallbackTopicPriority(i)
+		}
+		if specs[i].Priority > 10 {
+			specs[i].Priority = normalizeTopicPriorityNumber(float64(specs[i].Priority))
+		}
+	}
+	return specs
+}
+
+func fallbackTopicPriority(index int) int {
+	priority := 10 - index
+	if priority < 1 {
+		return 1
+	}
+	return priority
 }
