@@ -272,3 +272,11 @@ update articles set
   human_decision_options = $4
 where id = $1 and project_id = $2
 returning *;
+
+-- DeleteRecoverableArticlesForTopic clears a topic's non-terminal drafts so the
+-- recovery loop can regenerate a fresh canonical/variant without colliding with
+-- the (topic, kind, platform) unique index. Published/approved rows are kept.
+-- name: DeleteRecoverableArticlesForTopic :exec
+delete from articles
+where topic_id = $1 and project_id = $2
+  and status in ('pending_review','rejected','generating');

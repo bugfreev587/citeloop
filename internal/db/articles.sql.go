@@ -257,6 +257,25 @@ func (q *Queries) CreateArticle(ctx context.Context, arg CreateArticleParams) (A
 	return i, err
 }
 
+const deleteRecoverableArticlesForTopic = `-- name: DeleteRecoverableArticlesForTopic :exec
+delete from articles
+where topic_id = $1 and project_id = $2
+  and status in ('pending_review','rejected','generating')
+`
+
+type DeleteRecoverableArticlesForTopicParams struct {
+	TopicID   uuid.UUID `json:"topic_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+// DeleteRecoverableArticlesForTopic clears a topic's non-terminal drafts so the
+// recovery loop can regenerate a fresh canonical/variant without colliding with
+// the (topic, kind, platform) unique index. Published/approved rows are kept.
+func (q *Queries) DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error {
+	_, err := q.db.Exec(ctx, deleteRecoverableArticlesForTopic, arg.TopicID, arg.ProjectID)
+	return err
+}
+
 const escalateArticleToHumanForProject = `-- name: EscalateArticleToHumanForProject :one
 update articles set
   requires_human_decision = true,

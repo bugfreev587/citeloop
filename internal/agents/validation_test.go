@@ -126,7 +126,7 @@ func TestQACompactCheckParsesValidFallback(t *testing.T) {
 	}
 }
 
-func TestQAOutputLowScoresForceBlocking(t *testing.T) {
+func TestQAOutputLowScoresAreAdvisoryNotBlocking(t *testing.T) {
 	out := &QAOutput{
 		Claims:     []Claim{{Claim: "UniPost supports every social platform.", Mapped: true, Evidence: "feature"}},
 		QABlocking: false,
@@ -137,10 +137,11 @@ func TestQAOutputLowScoresForceBlocking(t *testing.T) {
 
 	enforceQAGate(out)
 
-	if !out.QABlocking {
-		t.Fatal("low QA scores must force qa_blocking")
+	// Quality scores no longer hard-block publishing — only genuine safety issues do.
+	if out.QABlocking {
+		t.Fatal("low QA scores must not block; score is advisory")
 	}
 	if len(out.Issues) == 0 {
-		t.Fatal("low-score gate should add a reviewer-visible issue")
+		t.Fatal("low-score gate should still add a reviewer-visible advisory note")
 	}
 }
