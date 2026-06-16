@@ -51,13 +51,28 @@ func New(cfg Config) *Service {
 
 func (s *Service) Configured() bool { return s.cfg.Configured() }
 
+// normalizeSlug tolerates GITHUB_APP_SLUG being set to the full App page URL
+// (e.g. "https://github.com/apps/citeloop") instead of just the slug, which
+// would otherwise produce a doubled, 404-ing install URL.
+func normalizeSlug(raw string) string {
+	slug := strings.TrimSpace(raw)
+	for _, prefix := range []string{"https://github.com/apps/", "http://github.com/apps/", "github.com/apps/"} {
+		if idx := strings.LastIndex(slug, prefix); idx >= 0 {
+			slug = slug[idx+len(prefix):]
+			break
+		}
+	}
+	return strings.Trim(strings.TrimSpace(slug), "/")
+}
+
 // InstallURL is where the operator authorizes the App on their repo(s); GitHub
 // redirects back to the App's configured callback with installation_id + state.
 func (s *Service) InstallURL(state string) string {
-	if strings.TrimSpace(s.cfg.Slug) == "" {
+	slug := normalizeSlug(s.cfg.Slug)
+	if slug == "" {
 		return ""
 	}
-	return fmt.Sprintf("https://github.com/apps/%s/installations/new?state=%s", s.cfg.Slug, url.QueryEscape(state))
+	return fmt.Sprintf("https://github.com/apps/%s/installations/new?state=%s", slug, url.QueryEscape(state))
 }
 
 // Repo is the subset of a GitHub repository the picker needs.
