@@ -169,13 +169,16 @@ test("settings maps raw errors to user copy, confirms a budget pause, and drops 
   assert.doesNotMatch(settings, /replaces the entire config/);
 });
 
-test("review surfaces honest repair state and a deep link to fix evidence in context", () => {
+test("review page is built around automatic recovery, not manual triage", () => {
   const review = read("projects/[id]/review/review-client.tsx");
   const articleDetail = read("projects/[id]/articles/[articleId]/article-detail-client.tsx");
   const previewRouteExists = exists("preview/projects/[id]/articles/[articleId]/page.tsx");
+  // Three honest states: only genuine decisions reach the human; everything else
+  // is ready or being handled automatically.
   assert.match(review, /Ready to approve/);
-  assert.match(review, /Auto repair active/);
-  assert.match(review, /Needs human/);
+  assert.match(review, /Needs your decision/);
+  assert.match(review, /CiteLoop is handling/);
+  assert.match(review, /No action needed/);
   assert.match(review, /Claim evidence map/);
   assert.match(review, /How this article appears in search/);
   assert.match(review, /Preview/);
@@ -184,9 +187,10 @@ test("review surfaces honest repair state and a deep link to fix evidence in con
   assert.match(review, /articlePreviewHref/);
   assert.equal(previewRouteExists, true);
   assert.match(review, /Fix evidence in Context/);
-  assert.match(review, /Automatic repair is exhausted/);
-  assert.match(review, /repairExhausted/);
-  assert.match(review, /Cannot approve:/);
+  // The dead "Resolve" button and the raw QA jargon it exposed are gone.
+  assert.doesNotMatch(review, /Auto repair active/);
+  assert.doesNotMatch(review, />\s*Resolve\s*</);
+  assert.doesNotMatch(review, /QA evidence map was not returned/);
   assert.doesNotMatch(review, /Web preview/);
   assert.doesNotMatch(review, /qa blocking/);
   assert.match(articleDetail, /Cannot approve:/);

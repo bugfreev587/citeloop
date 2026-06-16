@@ -216,15 +216,17 @@ test("reviewQueueSummary separates ready, auto-repair, and human-decision work",
     { topic_id: "topic-b", articles: [exhausted, humanDecision] },
   ]);
 
+  // Only requires_human_decision routes to the human; every other blocked draft
+  // (including repair-exhausted ones the recovery tick will retry) is recovering.
   assert.equal(summary.total, 5);
   assert.equal(summary.bundleCount, 2);
   assert.equal(summary.ready, 1);
-  assert.equal(summary.autoRepair, 2);
-  assert.equal(summary.needsHuman, 2);
+  assert.equal(summary.recovering, 3);
+  assert.equal(summary.needsHuman, 1);
   assert.equal(summary.blocked, 4);
 });
 
-test("reviewArticleState keeps repair-exhausted drafts in the human bucket", async () => {
+test("reviewArticleState auto-recovers blocked drafts unless a human decision is required", async () => {
   const { reviewArticleState } = await loadReviewInsightsModule();
   const baseArticle = {
     content_md: "# Draft\n\n## Body\n\nText",
@@ -244,11 +246,20 @@ test("reviewArticleState keeps repair-exhausted drafts in the human bucket", asy
     qa_feedback: {},
   };
 
-  const state = reviewArticleState(baseArticle);
+  // Blocked but not flagged for a human → CiteLoop keeps handling it.
+  const recovering = reviewArticleState(baseArticle);
+  assert.equal(recovering.kind, "recovering");
+  assert.equal(recovering.approvable, false);
 
-  assert.equal(state.kind, "needs_human");
-  assert.equal(state.approvable, false);
-  assert.match(state.detail, /repair budget/i);
+  // Only the explicit backend flag sends a draft to the human queue.
+  const human = reviewArticleState({ ...baseArticle, requires_human_decision: true });
+  assert.equal(human.kind, "needs_human");
+  assert.equal(human.approvable, false);
+
+  // Cleared QA is always approvable.
+  const ready = reviewArticleState({ ...baseArticle, qa_blocking: false });
+  assert.equal(ready.kind, "ready");
+  assert.equal(ready.approvable, true);
 });
 
 test("qaClaimRows reads the QA evidence map without inventing evidence labels", async () => {

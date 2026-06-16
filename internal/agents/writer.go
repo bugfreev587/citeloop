@@ -438,7 +438,9 @@ func shouldAttemptArticleRepair(art db.Article, maxAttempts int) bool {
 
 func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool) {
 	if qa == nil {
-		return "failed", true
+		// QA produced nothing — treat as an infrastructure failure the recovery
+		// tick can retry, never a human decision.
+		return "exhausted", false
 	}
 	if !qa.QABlocking {
 		if attempts == 0 {
@@ -447,9 +449,27 @@ func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool)
 		return "repaired", false
 	}
 	if attempts >= int32(maxAttempts) || !qa.CanAutoFix {
-		return "exhausted", true
+		return "exhausted", isGenuineHumanDecision(qa)
 	}
 	return "repaired", false
+}
+
+// isGenuineHumanDecision is true only when QA actually evaluated the draft and
+// surfaced a real evidence/positioning decision a human must make — an unmapped
+// product claim the editor cannot safely auto-fix, or model-provided decision
+// options. QA infrastructure failures (no claim map returned, parse errors) are
+// NOT human decisions: they are auto-recoverable and stay off the human queue so
+// CiteLoop can re-run QA, repair, or regenerate them itself (§5.5).
+func isGenuineHumanDecision(qa *QAOutput) bool {
+	if qa == nil || !qa.QABlocking || qa.CanAutoFix {
+		return false
+	}
+	for _, c := range qa.Claims {
+		if !c.Mapped {
+			return true
+		}
+	}
+	return len(qa.HumanDecisionOptions) > 0
 }
 
 func repairFailureReason(qa *QAOutput, status string) string {

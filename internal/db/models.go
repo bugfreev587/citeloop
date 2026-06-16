@@ -76,6 +76,7 @@ type Article struct {
 	RequiresHumanDecision  bool               `json:"requires_human_decision"`
 	HumanDecisionOptions   json.RawMessage    `json:"human_decision_options"`
 	QaFeedback             json.RawMessage    `json:"qa_feedback"`
+	RecoveryAttempts       int32              `json:"recovery_attempts"`
 }
 
 type AutopilotAuditEvent struct {
@@ -662,6 +663,7 @@ type Topic struct {
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	SourceContentActionID pgtype.UUID        `json:"source_content_action_id"`
+	RecoveryAttempts      int32              `json:"recovery_attempts"`
 }
 
 type UrlIndexSnapshot struct {

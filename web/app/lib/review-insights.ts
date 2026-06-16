@@ -38,7 +38,7 @@ export type ExplainedQAIssue = {
 };
 
 export type ReviewArticleState = {
-  kind: "ready" | "auto_repair" | "needs_human";
+  kind: "ready" | "recovering" | "needs_human";
   label: string;
   detail: string;
   approvable: boolean;
@@ -48,7 +48,7 @@ export type ReviewQueueSummary = {
   total: number;
   bundleCount: number;
   ready: number;
-  autoRepair: number;
+  recovering: number;
   needsHuman: number;
   blocked: number;
 };
@@ -238,6 +238,10 @@ export function shouldAutoRepairArticle(article: RepairableArticleLike) {
   return buildSEOContributions(article).some((row) => row.status === "missing" || (row.label === "Search intent" && row.status !== "ready"));
 }
 
+// reviewArticleState trusts the backend's requires_human_decision flag as the
+// single source of truth for "a human is genuinely needed". Everything else is
+// either ready to approve or being drained automatically by the recovery loop —
+// the page never asks the operator to resolve a QA infrastructure failure.
 export function reviewArticleState(article: RepairableArticleLike): ReviewArticleState {
   if (!article.qa_blocking) {
     return {
@@ -248,38 +252,19 @@ export function reviewArticleState(article: RepairableArticleLike): ReviewArticl
     };
   }
 
-  const repairAttempts = article.repair_attempts ?? 0;
-  if (article.requires_human_decision || repairAttempts >= 2 || article.repair_status === "exhausted" || article.repair_status === "human_decision") {
+  if (article.requires_human_decision) {
     return {
       kind: "needs_human",
-      label: "Needs human decision",
-      detail: "Automatic repair budget is spent or CiteLoop needs a source decision.",
-      approvable: false,
-    };
-  }
-
-  if (article.repair_status === "repairing") {
-    return {
-      kind: "auto_repair",
-      label: "Auto repair active",
-      detail: "CiteLoop is repairing the draft and will rerun QA.",
-      approvable: false,
-    };
-  }
-
-  if (shouldAutoRepairArticle(article)) {
-    return {
-      kind: "auto_repair",
-      label: "Auto repair queued",
-      detail: "CiteLoop can attempt a safe repair before asking you.",
+      label: "Needs your decision",
+      detail: "A product claim needs an evidence or positioning decision only you can make.",
       approvable: false,
     };
   }
 
   return {
-    kind: "needs_human",
-    label: "Needs human decision",
-    detail: "QA is blocking approval and no automatic repair path is available.",
+    kind: "recovering",
+    label: "CiteLoop is handling this",
+    detail: "Re-running QA, repairing, or regenerating the draft automatically — no action needed.",
     approvable: false,
   };
 }
@@ -289,7 +274,7 @@ export function reviewQueueSummary(groups: ReviewQueueGroupLike[]): ReviewQueueS
     total: 0,
     bundleCount: groups.length,
     ready: 0,
-    autoRepair: 0,
+    recovering: 0,
     needsHuman: 0,
     blocked: 0,
   };
@@ -299,7 +284,7 @@ export function reviewQueueSummary(groups: ReviewQueueGroupLike[]): ReviewQueueS
     if (article.qa_blocking) summary.blocked += 1;
     const state = reviewArticleState(article);
     if (state.kind === "ready") summary.ready += 1;
-    if (state.kind === "auto_repair") summary.autoRepair += 1;
+    if (state.kind === "recovering") summary.recovering += 1;
     if (state.kind === "needs_human") summary.needsHuman += 1;
   }
 
