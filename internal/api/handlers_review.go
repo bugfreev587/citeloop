@@ -167,6 +167,29 @@ func (s *Server) fixProjectArticle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, updated)
 }
 
+// recheckProjectArticle re-runs QA on the draft's current content. It's the
+// operator's recovery for a draft that was blocked by a QA infrastructure
+// failure (e.g. a truncated model response) rather than a real content problem.
+func (s *Server) recheckProjectArticle(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	aid, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, 400, "bad article id")
+		return
+	}
+	qa := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	updated, err := qa.Requalify(r.Context(), projectID, aid)
+	if err != nil {
+		writeErr(w, 500, "qa re-check failed: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
 // applyFixProjectArticle applies a specific human-chosen resolution from the
 // Review decision panel — the AI rewrites the draft per that instruction and QA
 // re-runs, so the operator resolves a block with one click instead of editing.

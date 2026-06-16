@@ -1374,6 +1374,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/apply-fix`, { method: "POST", body: JSON.stringify({ instruction }) }, auth);
     return normalizeArticle(raw);
   },
+  recheckArticle: async (id: string, articleID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/recheck`, { method: "POST" }, auth);
+    return normalizeArticle(raw);
+  },
   distributed: async (id: string, articleID: string) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/distributed`, { method: "POST" }, auth);
     return normalizeArticle(raw);

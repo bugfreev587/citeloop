@@ -290,6 +290,10 @@ func validateWriterOutput(out WriterOutput) error {
 }
 
 func validateQAOutput(out QAOutput) error {
+	// A missing claims key means QA did not actually evaluate (a truncated or
+	// empty response) — reject it so it retries/regenerates rather than passing
+	// unchecked content. The real fix for truncation is the larger token budget
+	// in qa.go, not loosening this gate. "claims": [] (ran, found none) is valid.
 	if out.Claims == nil {
 		return fmt.Errorf("missing claims")
 	}

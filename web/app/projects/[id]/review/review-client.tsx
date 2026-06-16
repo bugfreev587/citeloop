@@ -147,6 +147,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   function onApplyFix(article: Article, optionIndex: number, instruction: string) {
     return mutate("CiteLoop applied the fix and re-ran QA", `apply-${article.id}-${optionIndex}`, () => api.applyFix(projectId, article.id, instruction));
   }
+  function onRecheck(article: Article) {
+    return mutate("CiteLoop re-ran the QA check", `recheck-${article.id}`, () => api.recheckArticle(projectId, article.id));
+  }
 
   return (
     <div className="space-y-6">
@@ -218,6 +221,8 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                 onSave={(next) => onSave(selectedArticle, next)}
                 onApplyFix={(optionIndex, instruction) => onApplyFix(selectedArticle, optionIndex, instruction)}
                 applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
+                onRecheck={() => onRecheck(selectedArticle)}
+                recheckBusy={busy === `recheck-${selectedArticle.id}`}
               />
             ) : (
               <aside className="hidden items-center justify-center bg-slate-50 p-8 text-center text-sm text-slate-500 xl:flex">
@@ -400,6 +405,8 @@ function ReviewInspector({
   onSave,
   onApplyFix,
   applyingIndex,
+  onRecheck,
+  recheckBusy,
 }: {
   article: Article;
   topicId: string;
@@ -417,6 +424,8 @@ function ReviewInspector({
   onSave: (content: string) => void;
   onApplyFix: (optionIndex: number, instruction: string) => void;
   applyingIndex: number | null;
+  onRecheck: () => void;
+  recheckBusy: boolean;
 }) {
   const title = articleReviewTitle(article);
   const state = reviewArticleState(article);
@@ -447,6 +456,8 @@ function ReviewInspector({
             onToggleEditor={onToggleEditor}
             onApplyFix={onApplyFix}
             applyingIndex={applyingIndex}
+            onRecheck={onRecheck}
+            recheckBusy={recheckBusy}
           />
         )}
         {state.kind === "ready" && (
@@ -539,6 +550,8 @@ function DecisionPanel({
   onToggleEditor,
   onApplyFix,
   applyingIndex,
+  onRecheck,
+  recheckBusy,
 }: {
   article: Article;
   projectId: string;
@@ -548,6 +561,8 @@ function DecisionPanel({
   onToggleEditor: () => void;
   onApplyFix: (optionIndex: number, instruction: string) => void;
   applyingIndex: number | null;
+  onRecheck: () => void;
+  recheckBusy: boolean;
 }) {
   const allOptions = (article.human_decision_options ?? []).filter((option) => option?.label || option?.description);
   // QA-proposed content fixes (one-click) vs the standard manual actions, which
@@ -556,7 +571,11 @@ function DecisionPanel({
     .map((option, index) => ({ option, index }))
     .filter(({ option }) => !genericOptionPattern.test((option.label ?? "").trim()));
   const unmapped = qaClaimRows(article).filter((row) => !row.mapped);
-  const blockingReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
+  const rawReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
+  // A QA *infrastructure* failure (truncated/unparseable model response) is not a
+  // content decision — never show the raw error; offer a one-click re-check.
+  const isInfraFailure = /parse qa|unexpected eof|qa re-check failed|qa step failed|missing claims|compact fallback/i.test(rawReason);
+  const blockingReason = isInfraFailure ? "" : rawReason;
   const fixInstructions = Array.isArray(article.qa_feedback?.fix_instructions)
     ? (article.qa_feedback!.fix_instructions as any[]).map((v) => String(v).trim()).filter(Boolean)
     : [];
@@ -570,13 +589,24 @@ function DecisionPanel({
 
       {/* Why QA blocked this — the concrete reason, not a generic message. */}
       <div className="mt-2 rounded-md border border-red-100 bg-white/70 px-3 py-2">
-        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-red-700">Why QA blocked this</div>
+        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-red-700">
+          {isInfraFailure ? "Automated check didn't complete" : "Why QA blocked this"}
+        </div>
         <p className="mt-1 text-sm leading-5 text-slate-900">
-          {blockingReason ||
-            (unmapped.length > 0
-              ? `${unmapped.length === 1 ? "A product claim" : `${unmapped.length} product claims`} could not be backed by your Context evidence.`
-              : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it.")}
+          {isInfraFailure
+            ? "CiteLoop couldn't finish its automated quality check on this draft — a temporary model/formatting issue, not a problem with your content. Re-run the check (it usually clears on its own)."
+            : blockingReason ||
+              (unmapped.length > 0
+                ? `${unmapped.length === 1 ? "A product claim" : `${unmapped.length} product claims`} could not be backed by your Context evidence.`
+                : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it.")}
         </p>
+        {isInfraFailure && (
+          <Button disabled={busy} size="sm" variant="primary" className="mt-2" onClick={onRecheck}>
+            <ButtonProgress busy={recheckBusy} busyLabel="Re-running QA" idleIcon={<RefreshCw size={14} />}>
+              Re-run QA check
+            </ButtonProgress>
+          </Button>
+        )}
         {unmapped.length > 0 && (
           <div className="mt-2 grid gap-1.5">
             {unmapped.slice(0, 4).map((row, index) => (

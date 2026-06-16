@@ -64,7 +64,9 @@ ARTICLE:
 
 	resp, err := qa.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are a strict fact-checking QA auditor. Unmapped product claims are blocking.",
-		Prompt: prompt, JSON: true, MaxTokens: 2000,
+		// Roomy budget: a long article's claims array must fit in one response, or
+		// the JSON truncates and parses as "unexpected EOF" (§5.3 reliability).
+		Prompt: prompt, JSON: true, MaxTokens: 10000,
 	})
 	if err != nil {
 		return nil, resp, err
@@ -163,7 +165,7 @@ ARTICLE EXCERPT:
 
 	resp, err := qa.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are a strict fact-checking QA auditor. Return only compact JSON.",
-		Prompt: prompt, JSON: true, MaxTokens: 1200,
+		Prompt: prompt, JSON: true, MaxTokens: 4096,
 	})
 	if err != nil {
 		return nil, resp, err
