@@ -117,7 +117,7 @@ func selectLLMProvider(env config.Env, log *slog.Logger) llm.Provider {
 		log.Info("using Claude LLM provider", "model", env.AnthropicModel)
 		return llm.NewClaude(env.AnthropicAPIKey, env.AnthropicModel)
 	}
-	log.Warn("TOKENGATE_API_KEY and ANTHROPIC_API_KEY not set — using mock LLM provider")
+	log.Warn("no LLM key in env — using mock as the runtime fallback; an admin-saved provider (Admin → AI Provider) overrides this at request time")
 	return llm.NewMock()
 }
 

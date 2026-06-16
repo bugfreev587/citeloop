@@ -947,6 +947,10 @@ export function createApi(auth?: AuthOptions) {
       auth,
     );
   },
+  deleteLLMCredentials: async () => {
+    const raw = await req<any>("/admin/llm-credentials", { method: "DELETE" }, auth);
+    return normalizeLLMCredentialsStatus(raw);
+  },
   getMe: async () => {
     return req<{ user_id: string; email: string; is_admin: boolean }>("/me", undefined, auth);
   },

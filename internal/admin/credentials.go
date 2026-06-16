@@ -131,6 +131,13 @@ func SaveCredentials(ctx context.Context, pool *pgxpool.Pool, in UpdateInput) (*
 	return &saved, nil
 }
 
+// DeleteCredentials removes the saved admin LLM credential so the runtime falls
+// back to the server-environment provider (or mock). Idempotent.
+func DeleteCredentials(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `delete from admin_llm_credentials where singleton = true`)
+	return err
+}
+
 type RuntimeProvider struct {
 	Pool     *pgxpool.Pool
 	Env      config.Env
