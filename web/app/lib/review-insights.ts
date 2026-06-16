@@ -66,6 +66,11 @@ export type SearchAppearanceRow = {
   detail: string;
 };
 
+export type PublishedPreviewParts = {
+  title: string;
+  blocks: string[];
+};
+
 function textValue(value: any): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -122,6 +127,35 @@ export function articlePreviewBlocks(content: string, h1: string) {
   const blocks = markdownBlocks(content);
   if (!h1 || blocks.some((block) => block.startsWith("# "))) return blocks;
   return [`# ${h1}`, ...blocks];
+}
+
+function isThematicBreak(block: string) {
+  return /^(---|\*\*\*|___)$/.test(block.trim());
+}
+
+function isMetadataLineBlock(block: string) {
+  return /^(title|meta description|slug|h1):/i.test(block.trim());
+}
+
+export function publishedPreviewParts(content: string, h1: string): PublishedPreviewParts {
+  const blocks = articlePreviewBlocks(content, h1);
+  const h1Index = blocks.findIndex((block) => block.trim().startsWith("# "));
+  const title = h1Index >= 0 ? blocks[h1Index].trim().replace(/^#\s+/, "") : h1;
+  let bodyBlocks = blocks.filter((_, index) => index !== h1Index);
+  const metaIndex = bodyBlocks.findIndex((block) => /^##\s+Meta Information\b/i.test(block.trim()));
+
+  if (metaIndex >= 0) {
+    const separatorIndex = bodyBlocks.findIndex((block, index) => index > metaIndex && isThematicBreak(block));
+    bodyBlocks =
+      separatorIndex >= 0
+        ? bodyBlocks.slice(separatorIndex + 1)
+        : bodyBlocks.slice(metaIndex + 1).filter((block) => !isMetadataLineBlock(block));
+  }
+
+  return {
+    title: title || "Untitled draft",
+    blocks: bodyBlocks.filter((block) => !isThematicBreak(block)),
+  };
 }
 
 export function buildSEOContributions(article: ReviewArticleLike): SEOContribution[] {

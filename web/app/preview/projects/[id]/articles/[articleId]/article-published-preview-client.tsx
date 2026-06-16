@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { Article, Project } from "../../../../../lib/api";
 import { useApi } from "../../../../../lib/use-api";
-import { articlePreviewBlocks, articleReviewTitle, previewPath } from "../../../../../lib/review-insights";
+import { articleReviewTitle, previewPath, publishedPreviewParts } from "../../../../../lib/review-insights";
 import { Badge, Button, EmptyState, Notice } from "../../../../../components/ui";
 
 function textValue(value: any) {
@@ -166,15 +166,13 @@ export function ArticlePublishedPreviewClient({ projectId, articleId }: { projec
   const preview = useMemo(() => {
     if (!article) return null;
     const h1 = textValue(article.seo_meta?.h1) || articleReviewTitle(article);
-    const blocks = articlePreviewBlocks(article.content_md, h1);
-    const h1Index = blocks.findIndex((block) => block.trim().startsWith("# "));
-    const title = h1Index >= 0 ? blocks[h1Index].trim().replace(/^#\s+/, "") : h1;
+    const published = publishedPreviewParts(article.content_md, h1);
     return {
-      title,
+      title: published.title,
       description: textValue(article.seo_meta?.meta_description),
       hostname: displayHostname(project, article),
       path: articleDisplayPath(article),
-      blocks: blocks.filter((_, index) => index !== h1Index),
+      blocks: published.blocks,
     };
   }, [article, project]);
 

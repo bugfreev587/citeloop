@@ -59,6 +59,27 @@ test("articlePreviewBlocks keeps the full article body", async () => {
   assert.equal(blocks.at(-1), "Body 14");
 });
 
+test("publishedPreviewParts removes generation metadata from the visible article", async () => {
+  const { publishedPreviewParts } = await loadReviewInsightsModule();
+  const content = [
+    "Explain the architectural advantages of a unified API.",
+    "## Meta Information\nTitle: Unified Social API vs. Multiple Integrations",
+    "Meta Description: Compare OAuth complexity and delivery tracking.",
+    "Slug: unified-social-api-saas-integration",
+    "H1: Why SaaS Teams Choose Unified Social APIs",
+    "---",
+    "Introduction",
+    "When your product needs to post to social media, the architectural decision feels straightforward.",
+  ].join("\n\n");
+
+  const preview = publishedPreviewParts(content, "Why SaaS Teams Choose Unified Social APIs");
+
+  assert.equal(preview.title, "Why SaaS Teams Choose Unified Social APIs");
+  assert.equal(preview.blocks[0], "Introduction");
+  assert.equal(preview.blocks[1], "When your product needs to post to social media, the architectural decision feels straightforward.");
+  assert.equal(preview.blocks.some((block) => /Meta Information|Slug:|Explain the architectural advantages/.test(block)), false);
+});
+
 test("articlePreviewHref points drafts to a real standalone preview route", async () => {
   const { articlePreviewHref } = await loadReviewInsightsModule();
   const article = {
