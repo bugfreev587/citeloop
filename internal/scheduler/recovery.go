@@ -138,8 +138,15 @@ func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, pro
 	if topic.RecoveryAttempts >= maxTopicRegenerations {
 		return s.escalateArticle(ctx, q, projectID, art, "CiteLoop regenerated this topic several times but QA still could not evaluate the draft.")
 	}
+	// Regeneration needs an active profile; without one CiteLoop cannot write a
+	// fresh draft, so hand it to a human instead of deleting content it can't replace.
+	if _, err := q.GetActiveProfile(ctx, projectID); err != nil {
+		return s.escalateArticle(ctx, q, projectID, art, "CiteLoop needs a confirmed Context profile before it can regenerate this draft.")
+	}
 
-	if _, err := q.RejectArticleForProject(ctx, db.RejectArticleForProjectParams{ID: art.ID, ReviewedBy: ptr(autoReviewer), ProjectID: projectID}); err != nil {
+	// Clear the topic's non-terminal drafts first: the (topic, kind, platform)
+	// unique index counts rejected rows, so a reject-then-create would collide.
+	if err := q.DeleteRecoverableArticlesForTopic(ctx, db.DeleteRecoverableArticlesForTopicParams{TopicID: topic.ID, ProjectID: projectID}); err != nil {
 		return err
 	}
 	if _, err := q.IncrementTopicRecoveryAttempt(ctx, db.IncrementTopicRecoveryAttemptParams{ID: topic.ID, ProjectID: projectID}); err != nil {

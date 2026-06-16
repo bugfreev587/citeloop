@@ -57,6 +57,10 @@ func TestReviewRecoveryOnlyEscalatesGenuineDecisions(t *testing.T) {
 		"func articleHasClaimMap",
 		"maxTopicRegenerations",
 		"maxReviewRecoveryAttempts",
+		// Regeneration must clear the topic's drafts (not reject+recreate) to avoid
+		// colliding with the (topic, kind, platform) unique index, and needs a profile.
+		"DeleteRecoverableArticlesForTopic",
+		"GetActiveProfile",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("review recovery classifier missing %q", want)

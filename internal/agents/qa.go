@@ -90,13 +90,19 @@ ARTICLE:
 	return &out, resp, nil
 }
 
+const qaScoreAdvisoryThreshold = 0.75
+
+// enforceQAGate keeps quality scores advisory rather than a hard publish gate.
+// QA blocks only on genuine safety problems — unmapped product claims, banned
+// claims, malformed or missing required content (handled elsewhere). A merely
+// low geo/seo score is surfaced as a note for the writer/repair loop to improve,
+// never a reason to park a fact-safe draft in front of a human (§5.3).
 func enforceQAGate(out *QAOutput) {
 	if out == nil {
 		return
 	}
-	if out.GeoScore < 0.75 || out.SeoScore < 0.75 {
-		out.QABlocking = true
-		out.Issues = append(out.Issues, "qa score below publish threshold")
+	if out.GeoScore < qaScoreAdvisoryThreshold || out.SeoScore < qaScoreAdvisoryThreshold {
+		out.Issues = append(out.Issues, "qa score below target; flagged for improvement, not blocking")
 	}
 }
 
