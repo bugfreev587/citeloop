@@ -575,7 +575,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                   </span>
                   <span className="truncate text-sm font-bold text-slate-900">{stage.label}</span>
                 </div>
-                <div className="mt-2 text-xl font-bold leading-none text-slate-950">{stage.metricValue}</div>
+                <div className="mt-2 text-center text-xl font-bold leading-none text-slate-950">{stage.metricValue}</div>
                 <div className="mt-2 flex items-center gap-1.5">
                   <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", stageDotClass(stage.tone))} />
                   <span className="truncate text-xs font-semibold text-slate-500">{stage.statusLabel}</span>
