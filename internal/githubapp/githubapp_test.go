@@ -43,6 +43,19 @@ func TestInstallURL(t *testing.T) {
 	if New(Config{}).InstallURL("x") != "" {
 		t.Fatal("no slug should yield empty install url")
 	}
+
+	// A slug mistakenly set to the full App page URL must still produce a valid,
+	// non-doubled install URL (regression: GITHUB_APP_SLUG=https://github.com/apps/citeloop).
+	for _, slug := range []string{
+		"https://github.com/apps/citeloop",
+		"github.com/apps/citeloop/",
+		"  citeloop  ",
+	} {
+		got := New(Config{Slug: slug}).InstallURL("proj-1")
+		if got != "https://github.com/apps/citeloop/installations/new?state=proj-1" {
+			t.Fatalf("slug %q: install url = %q", slug, got)
+		}
+	}
 }
 
 func TestAppJWTSignsValidRS256(t *testing.T) {
