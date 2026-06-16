@@ -475,7 +475,7 @@ function ReviewInspector({
         {blockingSummary && (
           <div className="mt-3 flex items-start gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold leading-5 text-red-800">
             <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-            <span>Cannot approve: {blockingSummary}. See the details below to resolve it.</span>
+            <span>Cannot approve: {blockingSummary}. Use the claims and "Recommended next step" below to resolve it.</span>
           </div>
         )}
       </div>
