@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Env is process-level configuration sourced from the environment.
@@ -104,8 +105,22 @@ type ProjectConfig struct {
 	BrandVoice         string      `json:"brand_voice"`
 	MonthlyBudgetUSD   float64     `json:"monthly_budget_usd"`
 	AutoAdvanceEnabled bool        `json:"auto_advance_enabled"`
-	Crawl              CrawlConfig `json:"crawl"`
+	// PublishMode controls how approved canonicals reach the live blog:
+	//   "scheduled" (default) — staggered one every PublishIntervalDays so a batch
+	//     of approvals does not publish all at once;
+	//   "auto" — publish as soon as due;
+	//   "manual" — wait on the Publish page until the operator publishes/schedules.
+	PublishMode         string      `json:"publish_mode"`
+	PublishIntervalDays int         `json:"publish_interval_days"`
+	Crawl               CrawlConfig `json:"crawl"`
 }
+
+// Publish mode values.
+const (
+	PublishModeScheduled = "scheduled"
+	PublishModeAuto      = "auto"
+	PublishModeManual    = "manual"
+)
 
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
@@ -113,8 +128,10 @@ func Default() ProjectConfig {
 		CadencePerWeek:     3,
 		BufferDays:         5,
 		ChannelMix:         ChannelMix{Blog: 0.6, Syndication: 0.4},
-		MonthlyBudgetUSD:   50,
-		AutoAdvanceEnabled: true,
+		MonthlyBudgetUSD:    50,
+		AutoAdvanceEnabled:  true,
+		PublishMode:         PublishModeScheduled,
+		PublishIntervalDays: 2,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,
@@ -140,10 +157,45 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return c, err
 	}
+	switch c.PublishMode {
+	case PublishModeScheduled, PublishModeAuto, PublishModeManual:
+	default:
+		c.PublishMode = PublishModeScheduled
+	}
+	if c.PublishIntervalDays <= 0 {
+		c.PublishIntervalDays = 2
+	}
 	return c, nil
 }
 
 func (c ProjectConfig) JSON() json.RawMessage {
 	b, _ := json.Marshal(c)
 	return b
+}
+
+// NextPublishSlot decides when a freshly approved canonical should publish, given
+// the latest slot already taken by the project's other canonicals. It is the one
+// place the publish cadence lives, used by both the auto-approve loop and the
+// manual approve handler so a batch of approvals never publishes all at once.
+//   - manual: no automatic schedule (ok=false) — the operator publishes/schedules;
+//   - auto:   publish now;
+//   - scheduled (default): one every PublishIntervalDays after the last slot,
+//     never in the past.
+func (c ProjectConfig) NextPublishSlot(latest, now time.Time) (time.Time, bool) {
+	switch c.PublishMode {
+	case PublishModeManual:
+		return time.Time{}, false
+	case PublishModeAuto:
+		return now, true
+	default:
+		interval := c.PublishIntervalDays
+		if interval <= 0 {
+			interval = 2
+		}
+		candidate := latest.AddDate(0, 0, interval)
+		if candidate.Before(now) {
+			candidate = now
+		}
+		return candidate, true
+	}
 }

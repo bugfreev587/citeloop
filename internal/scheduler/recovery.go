@@ -201,6 +201,12 @@ func (s *Scheduler) autoApproveReadyForProject(ctx context.Context, q *db.Querie
 		s.Log.Warn("review recovery: list approvable failed", "project", projectID, "err", err)
 		return
 	}
+	// Seed the cadence from the latest slot already taken so a batch of approvals
+	// publishes one every publish_interval_days instead of all at once.
+	slot := time.Time{}
+	if latest, err := q.LatestCanonicalPublishSlotForProject(ctx, projectID); err == nil && latest.Valid {
+		slot = latest.Time
+	}
 	for _, art := range ready {
 		schedAt := pgtype.Timestamptz{}
 		if art.Kind == "canonical" {
@@ -209,7 +215,16 @@ func (s *Scheduler) autoApproveReadyForProject(ctx context.Context, q *db.Querie
 				s.Log.Warn("review recovery: topic lookup for auto-approve failed", "project", projectID, "article", art.ID, "err", err)
 				continue
 			}
-			schedAt = autoApprovalScheduleAt(topic.ScheduledAt, s.now())
+			if topic.ScheduledAt.Valid {
+				schedAt = topic.ScheduledAt // operator-set date always wins
+			} else if when, ok := cfg.NextPublishSlot(slot, s.now()); ok {
+				schedAt = pgutil.TS(when)
+			}
+			// In manual mode schedAt stays null: the draft is approved but waits on
+			// the Publish page until the operator publishes it.
+			if schedAt.Valid && schedAt.Time.After(slot) {
+				slot = schedAt.Time
+			}
 		}
 		approved, err := q.ApproveArticleForProject(ctx, db.ApproveArticleForProjectParams{
 			ID:          art.ID,
@@ -235,16 +250,6 @@ func (s *Scheduler) autoApproveReadyForProject(ctx context.Context, q *db.Querie
 		}
 		s.Log.Info("review recovery auto-approved draft", "project", projectID, "article", approved.ID, "kind", approved.Kind)
 	}
-}
-
-// autoApprovalScheduleAt publishes immediately when the topic has no explicit
-// date (auto-advance is already confirmed by the caller), otherwise honors the
-// topic's scheduled date.
-func autoApprovalScheduleAt(topicSchedule pgtype.Timestamptz, now time.Time) pgtype.Timestamptz {
-	if topicSchedule.Valid {
-		return topicSchedule
-	}
-	return pgutil.TS(now)
 }
 
 func maxDraftRepairAttempts() int32 { return 2 }

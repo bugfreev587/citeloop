@@ -578,6 +578,27 @@ func (q *Queries) IncrementArticleRecoveryAttempt(ctx context.Context, arg Incre
 	return i, err
 }
 
+const latestCanonicalPublishSlotForProject = `-- name: LatestCanonicalPublishSlotForProject :one
+select coalesce(
+  max(greatest(coalesce(scheduled_at, to_timestamp(0)), coalesce(published_at, to_timestamp(0)))),
+  to_timestamp(0)
+)::timestamptz as slot
+from articles
+where project_id = $1
+  and kind = 'canonical'
+  and status in ('approved','scheduled','pending_url_verification','published')
+`
+
+// LatestCanonicalPublishSlotForProject returns the latest publish slot already
+// taken by a project's canonical articles (scheduled or published), so a new
+// approval can be staggered after it instead of publishing immediately.
+func (q *Queries) LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, latestCanonicalPublishSlotForProject, projectID)
+	var slot pgtype.Timestamptz
+	err := row.Scan(&slot)
+	return slot, err
+}
+
 const listApprovableForProject = `-- name: ListApprovableForProject :many
 select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts from articles
 where project_id = $1
@@ -1259,6 +1280,64 @@ func (q *Queries) PreparePublishAttempt(ctx context.Context, arg PreparePublishA
 		arg.PublishPath,
 		arg.PublishPhase,
 	)
+	var i Article
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TopicID,
+		&i.Kind,
+		&i.Platform,
+		&i.ContentMd,
+		&i.SeoMeta,
+		&i.GeoScore,
+		&i.SeoScore,
+		&i.QaIssues,
+		&i.QaBlocking,
+		&i.CanonicalUrl,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+		&i.PublishedAt,
+		&i.PublishResult,
+		&i.LastPublishError,
+		&i.PublishAttempts,
+		&i.NextPublishRetryAt,
+		&i.PublishPhase,
+		&i.ResolvedSlug,
+		&i.PublishPath,
+		&i.CanonicalUrlVerifiedAt,
+		&i.LastPublishRunID,
+		&i.CreatedAt,
+		&i.ContentHash,
+		&i.RepairAttempts,
+		&i.LastRepairAt,
+		&i.RepairStatus,
+		&i.RepairFailureReason,
+		&i.RequiresHumanDecision,
+		&i.HumanDecisionOptions,
+		&i.QaFeedback,
+		&i.RecoveryAttempts,
+	)
+	return i, err
+}
+
+const publishArticleNowForProject = `-- name: PublishArticleNowForProject :one
+update articles set scheduled_at = now()
+where id = $1 and project_id = $2 and kind = 'canonical' and status = 'approved'
+returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts
+`
+
+type PublishArticleNowForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+// PublishArticleNowForProject brings an approved canonical's publish slot to now
+// so the next publish tick sends it out — the operator's "Publish now" override
+// (and the way manual-mode drafts get published).
+func (q *Queries) PublishArticleNowForProject(ctx context.Context, arg PublishArticleNowForProjectParams) (Article, error) {
+	row := q.db.QueryRow(ctx, publishArticleNowForProject, arg.ID, arg.ProjectID)
 	var i Article
 	err := row.Scan(
 		&i.ID,

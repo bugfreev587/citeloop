@@ -87,6 +87,10 @@ type Querier interface {
 	InsertGenerationRun(ctx context.Context, arg InsertGenerationRunParams) (GenerationRun, error)
 	InsertProfile(ctx context.Context, arg InsertProfileParams) (ProductProfile, error)
 	InsertSEORun(ctx context.Context, arg InsertSEORunParams) (SeoRun, error)
+	// LatestCanonicalPublishSlotForProject returns the latest publish slot already
+	// taken by a project's canonical articles (scheduled or published), so a new
+	// approval can be staggered after it instead of publishing immediately.
+	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
 	// hands-off auto-approval when the project runs in auto-advance mode.
@@ -151,6 +155,10 @@ type Querier interface {
 	MonthlySpend(ctx context.Context, projectID uuid.UUID) (pgtype.Numeric, error)
 	NextProfileVersion(ctx context.Context, projectID uuid.UUID) (int32, error)
 	PreparePublishAttempt(ctx context.Context, arg PreparePublishAttemptParams) (Article, error)
+	// PublishArticleNowForProject brings an approved canonical's publish slot to now
+	// so the next publish tick sends it out — the operator's "Publish now" override
+	// (and the way manual-mode drafts get published).
+	PublishArticleNowForProject(ctx context.Context, arg PublishArticleNowForProjectParams) (Article, error)
 	// Consecutive failures heuristic for alerting (§5.2/§5.4).
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)

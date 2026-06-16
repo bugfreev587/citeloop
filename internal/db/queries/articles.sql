@@ -280,3 +280,24 @@ returning *;
 delete from articles
 where topic_id = $1 and project_id = $2
   and status in ('pending_review','rejected','generating');
+
+-- LatestCanonicalPublishSlotForProject returns the latest publish slot already
+-- taken by a project's canonical articles (scheduled or published), so a new
+-- approval can be staggered after it instead of publishing immediately.
+-- name: LatestCanonicalPublishSlotForProject :one
+select coalesce(
+  max(greatest(coalesce(scheduled_at, to_timestamp(0)), coalesce(published_at, to_timestamp(0)))),
+  to_timestamp(0)
+)::timestamptz as slot
+from articles
+where project_id = $1
+  and kind = 'canonical'
+  and status in ('approved','scheduled','pending_url_verification','published');
+
+-- PublishArticleNowForProject brings an approved canonical's publish slot to now
+-- so the next publish tick sends it out — the operator's "Publish now" override
+-- (and the way manual-mode drafts get published).
+-- name: PublishArticleNowForProject :one
+update articles set scheduled_at = now()
+where id = $1 and project_id = $2 and kind = 'canonical' and status = 'approved'
+returning *;

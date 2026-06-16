@@ -28,6 +28,8 @@ export type ProjectConfig = {
   channel_mix: { blog: number; syndication: number };
   brand_voice?: string;
   monthly_budget_usd: number;
+  publish_mode?: "scheduled" | "auto" | "manual";
+  publish_interval_days?: number;
   crawl: {
     same_origin_only: boolean;
     max_pages: number;
@@ -579,6 +581,8 @@ export function defaultProjectConfig(): ProjectConfig {
     channel_mix: { blog: 0.6, syndication: 0.4 },
     brand_voice: "",
     monthly_budget_usd: 50,
+    publish_mode: "scheduled",
+    publish_interval_days: 2,
     crawl: {
       same_origin_only: true,
       max_pages: 200,

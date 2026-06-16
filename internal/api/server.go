@@ -89,6 +89,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/articles/{articleID}/reject", s.rejectProjectArticle)
 			r.Post("/articles/{articleID}/distributed", s.markProjectDistributed)
 			r.Post("/articles/{articleID}/retry-publish", s.retryProjectPublish)
+			r.Post("/articles/{articleID}/publish-now", s.publishProjectArticleNow)
 			r.Get("/distribute", s.listDistribute)
 			r.Get("/runs", s.listRuns)
 			r.Get("/runs/{runID}", s.getRun)
