@@ -236,7 +236,7 @@ export function ProjectShell({
           </Link>
           {isPlatformAdmin && (
             <Link
-              href="/admin"
+              href={`/admin?from=${projectId}`}
               className={cx(
                 "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
                 pathname.startsWith("/admin") && "bg-slate-50 font-semibold text-[#d93820]",
@@ -306,7 +306,7 @@ export function ProjectShell({
           </Link>
           {isPlatformAdmin && (
             <Link
-              href="/admin"
+              href={`/admin?from=${projectId}`}
               className={cx(
                 "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
                 pathname.startsWith("/admin") && "border-[#d93820] text-[#d93820]",

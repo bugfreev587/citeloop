@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { LLMCredentialsStatus, LLMProvider } from "../lib/api";
 import { useApi } from "../lib/use-api";
@@ -29,8 +30,15 @@ function defaultBaseURL(provider: LLMProvider) {
   return provider === "claude" ? "" : defaultBaseURLs[provider];
 }
 
-export default function AdminPage() {
+function AdminPageInner() {
   const api = useApi();
+  const searchParams = useSearchParams();
+  // The Admin area is a platform-level route, so it has no project of its own.
+  // When opened from a project sidebar the originating project id rides along in
+  // `?from=`, letting the back link return to that project's dashboard instead of docs.
+  const fromProject = searchParams.get("from");
+  const backHref = fromProject ? `/projects/${fromProject}` : "/docs";
+  const backLabel = fromProject ? "Dashboard" : "Docs";
   const [access, setAccess] = useState<"loading" | "granted" | "denied">("loading");
   const [status, setStatus] = useState<LLMCredentialsStatus | null>(null);
   const [provider, setProvider] = useState<LLMProvider>("tokengate");
@@ -140,9 +148,9 @@ export default function AdminPage() {
         <p className="mt-2 text-sm leading-6 text-slate-500">
           This area is limited to platform administrators (set by the <code className="rounded bg-slate-100 px-1">ADMINS</code> environment variable).
         </p>
-        <Link href="/docs" className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820] hover:underline">
+        <Link href={backHref} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820] hover:underline">
           <ArrowLeft size={14} />
-          Back to docs
+          {fromProject ? "Back to dashboard" : "Back to docs"}
         </Link>
       </main>
     );
@@ -164,9 +172,9 @@ export default function AdminPage() {
   return (
     <main className="mx-auto max-w-[860px] px-4 py-6 md:px-6 md:py-8">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <Link href="/docs" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
+        <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
           <ArrowLeft size={15} />
-          Docs
+          {backLabel}
         </Link>
         <Badge tone="neutral">Admin</Badge>
       </div>
@@ -313,5 +321,22 @@ export default function AdminPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="grid min-h-[60vh] place-items-center text-sm text-slate-500">
+          <span className="inline-flex items-center gap-2">
+            <Loader2 size={16} className="animate-spin" />
+            Checking admin access…
+          </span>
+        </main>
+      }
+    >
+      <AdminPageInner />
+    </Suspense>
   );
 }
