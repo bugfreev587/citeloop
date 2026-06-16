@@ -1,16 +1,176 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, Copy, ExternalLink, Loader2, RefreshCw, RotateCcw, Send, Zap } from "lucide-react";
-import { Article, DistributeItem, ProjectConfig, defaultProjectConfig } from "../../../lib/api";
+import {
+  CalendarClock,
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  Plug,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Settings2,
+  X,
+  Zap,
+} from "lucide-react";
+import {
+  Article,
+  DistributeItem,
+  GitHubNextJSPublisherInput,
+  ProjectConfig,
+  PublisherConnection,
+  defaultProjectConfig,
+} from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type PublishMode = "scheduled" | "auto" | "manual";
+type DrawerKind = "schedule" | "platforms" | null;
+type LaneTone = "neutral" | "blue" | "amber" | "green" | "red";
+
+const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; detail: string }> = {
+  scheduled: { label: "Scheduled", icon: <CalendarClock size={15} />, detail: "One every few days" },
+  auto: { label: "Auto", icon: <Zap size={15} />, detail: "Publish as soon as ready" },
+  manual: { label: "Manual", icon: <Send size={15} />, detail: "You publish each one" },
+};
+
+const defaultPublisherDraft: GitHubNextJSPublisherInput = {
+  label: "GitHub / Next.js blog",
+  repo: "",
+  branch: "citeloop-content",
+  content_dir: "content/citeloop/blog",
+  base_url: "",
+  publish_mode: "publish",
+  credential_ref: "",
+};
+
+function friendlyError(raw: unknown) {
+  const message = typeof raw === "string" ? raw : "Something went wrong.";
+  const lower = message.toLowerCase();
+  if (lower.includes("repo") && lower.includes("base_url")) {
+    return "Add both the GitHub repository (owner/repo) and your site's base URL before saving.";
+  }
+  if (lower.includes("repo")) return "Enter the GitHub repository as owner/repo.";
+  if (lower.includes("base_url")) return "Enter your site's base URL (e.g. https://example.com).";
+  if (lower.includes("token") || lower.includes("401")) {
+    return "The token was rejected. Check that it is valid and has write access to the repository.";
+  }
+  if (lower.includes("403")) return "Permission denied. Re-check the connected credentials and their access scope.";
+  if (lower.includes("404")) return "Not found. Check the repository, branch, and content path.";
+  return message;
+}
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} article`;
+}
+
+function connectionTone(status: string): LaneTone {
+  if (status === "connected") return "green";
+  if (status === "error") return "red";
+  if (status === "revoked") return "amber";
+  return "neutral";
+}
+
+// Slide-out panel from the right. Used for the publish-schedule and platform-binding
+// editors so they stay out of the primary content lanes (which are the real work).
+function Drawer({
+  open,
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  return (
+    <div className={cx("fixed inset-0 z-50", open ? "" : "pointer-events-none")} aria-hidden={!open}>
+      <div
+        className={cx("absolute inset-0 bg-slate-900/30 transition-opacity", open ? "opacity-100" : "opacity-0")}
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={cx(
+          "absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-xl transition-transform duration-200",
+          open ? "translate-x-0" : "translate-x-full",
+        )}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-slate-900">{title}</div>
+            {subtitle && <div className="mt-0.5 text-xs leading-5 text-slate-500">{subtitle}</div>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// One content lane: a titled column block with a count and a vertical stack of cards.
+function Lane({ title, count, tone, empty, children }: {
+  title: string;
+  count: number;
+  tone: LaneTone;
+  empty: { title: string; detail: string };
+  children?: React.ReactNode;
+}) {
+  return (
+    <section>
+      <SectionHeader title={title} action={<Badge tone={count ? tone : "neutral"}>{count}</Badge>} />
+      {count === 0 ? <EmptyState title={empty.title} detail={empty.detail} /> : <div className="grid gap-3">{children}</div>}
+    </section>
+  );
+}
+
+// A post card mirroring the content-plan backlog card: badges row, title/meta body,
+// and a bottom action row. accent tints the whole card for failure/in-flight signal.
+function PostCard({ accent, badges, title, meta, children, actions }: {
+  accent?: "amber" | "red";
+  badges?: React.ReactNode;
+  title: string;
+  meta?: React.ReactNode;
+  children?: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  const accentClass =
+    accent === "red" ? "border-red-200 bg-red-50" : accent === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white";
+  const titleClass = accent === "red" ? "text-red-950" : accent === "amber" ? "text-amber-950" : "text-slate-900";
+  return (
+    <div className={cx("flex flex-col rounded-xl border px-4 py-3", accentClass)}>
+      {badges && <div className="flex flex-wrap items-center gap-2">{badges}</div>}
+      <div className={cx("min-w-0", badges ? "mt-3" : "")}>
+        <div className={cx("break-words text-[15px] font-bold leading-5", titleClass)}>{title}</div>
+        {meta && <div className="mt-1.5 text-xs font-semibold text-slate-500">{meta}</div>}
+        {children}
+      </div>
+      {actions && <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">{actions}</div>}
+    </div>
+  );
 }
 
 export function PublishingClient({ projectId }: { projectId: string }) {
@@ -21,8 +181,12 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [inflight, setInflight] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
+  const [connections, setConnections] = useState<PublisherConnection[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const [drawer, setDrawer] = useState<DrawerKind>(null);
+  const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
+  const [credentialDraft, setCredentialDraft] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -47,9 +211,31 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
   }, [api, projectId]);
 
+  const loadConnections = useCallback(async () => {
+    try {
+      const next = await api.listPublisherConnections(projectId);
+      setConnections(next);
+      const github = next.find((connection) => connection.kind === "github_nextjs");
+      if (github) {
+        setPublisherDraft((current) => ({
+          ...current,
+          label: github.label || current.label,
+          repo: github.config?.repo ?? "",
+          branch: github.config?.branch ?? "citeloop-content",
+          content_dir: github.config?.content_dir ?? "content/citeloop/blog",
+          base_url: github.config?.base_url ?? "",
+          credential_ref: "",
+        }));
+      }
+    } catch {
+      // Surface connection errors only inside the drawer; the lanes still work.
+    }
+  }, [api, projectId]);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    loadConnections();
+  }, [refresh, loadConnections]);
 
   // Poll while anything is mid-publish so the page reflects each post going live
   // on its staggered slot without a manual reload.
@@ -68,6 +254,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   );
   const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "scheduled";
   const publishIntervalDays = config?.publish_interval_days ?? 2;
+  const connectedCount = useMemo(() => connections.filter((c) => c.status === "connected").length, [connections]);
+  const githubPublisher = useMemo(() => connections.find((c) => c.kind === "github_nextjs") ?? null, [connections]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -162,13 +350,85 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function savePublisherConnection() {
+    setBusy("save-publisher");
+    setMessage(null);
+    try {
+      const saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
+        ...publisherDraft,
+        repo: publisherDraft.repo.trim(),
+        branch: publisherDraft.branch?.trim() || "citeloop-content",
+        content_dir: publisherDraft.content_dir?.trim() || "content/citeloop/blog",
+        base_url: publisherDraft.base_url.trim(),
+        publish_mode: publisherDraft.publish_mode?.trim() || "publish",
+        credential_ref: undefined,
+      });
+      setConnections((current) => {
+        const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
+        return [...rest, saved];
+      });
+      if (credentialDraft.trim()) {
+        const withCredential = await api.upsertPublisherCredential(projectId, saved.id, {
+          kind: "github_token",
+          value: credentialDraft.trim(),
+        });
+        setCredentialDraft("");
+        setConnections((current) => current.map((connection) => (connection.id === withCredential.id ? withCredential : connection)));
+      }
+      setMessage({ title: "Platform connection saved", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not save platform", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testConnection(connectionID: string) {
+    setBusy(`test-${connectionID}`);
+    setMessage(null);
+    try {
+      const tested = await api.testPublisherConnection(projectId, connectionID);
+      setConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
+      setMessage({ title: "Platform connection verified", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Platform test failed", detail: friendlyError(e.message), tone: "red" });
+      await loadConnections();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
-    <div className="space-y-7">
+    <div className="space-y-6">
       <SectionHeader
         title="Publishing"
         eyebrow="Canonical and syndication lanes"
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDrawer("schedule")}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Settings2 size={14} className="text-slate-400" />
+              Mode
+              <span className="inline-flex items-center gap-1 text-slate-900">
+                {MODE_META[publishMode].icon}
+                {MODE_META[publishMode].label}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDrawer("platforms");
+                loadConnections();
+              }}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Plug size={14} className="text-slate-400" />
+              Platforms
+              <Badge tone={connectedCount ? "green" : "amber"}>{connectedCount ? `${connectedCount} connected` : "none"}</Badge>
+            </button>
             <Button disabled={!!busy} size="sm" onClick={reconcile}>
               <ButtonProgress busy={busy === "reconcile"} busyLabel="Reconciling" idleIcon={<RotateCcw size={14} />}>
                 Reconcile
@@ -183,88 +443,37 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-col gap-1">
-          <div className="text-sm font-bold text-slate-900">Publish schedule</div>
-          <div className="text-xs leading-5 text-slate-500">
-            How approved drafts go live. Scheduled spreads them out so a batch of approvals doesn't publish all at once.
-          </div>
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {(
-            [
-              { value: "scheduled", label: "Scheduled", icon: <CalendarClock size={15} />, detail: "One every few days" },
-              { value: "auto", label: "Auto", icon: <Zap size={15} />, detail: "Publish as soon as ready" },
-              { value: "manual", label: "Manual", icon: <Send size={15} />, detail: "You publish each one" },
-            ] as { value: PublishMode; label: string; icon: React.ReactNode; detail: string }[]
-          ).map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              disabled={busy === "mode"}
-              onClick={() => publishMode !== opt.value && saveMode({ publish_mode: opt.value })}
-              className={cx(
-                "flex flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-60",
-                publishMode === opt.value ? "border-[#d93820] bg-orange-50 ring-1 ring-[#d93820]" : "border-slate-200 bg-white hover:bg-slate-50",
-              )}
-            >
-              <span className="inline-flex items-center gap-2 text-sm font-bold text-slate-900">
-                {opt.icon}
-                {opt.label}
-              </span>
-              <span className="text-xs text-slate-500">{opt.detail}</span>
-            </button>
-          ))}
-        </div>
-        {publishMode === "scheduled" && (
-          <div className="mt-3 max-w-xs">
-            <Field label="Publish one every (days)">
-              <select
-                value={publishIntervalDays}
-                disabled={busy === "mode"}
-                onChange={(event) => saveMode({ publish_interval_days: Number(event.target.value) })}
-                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
-              >
-                {[1, 2, 3, 5, 7].map((d) => (
-                  <option key={d} value={d}>
-                    {d === 1 ? "1 day (one per day)" : `${d} days`}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <SectionHeader
-          title="Scheduled to publish"
-          action={<Badge tone={scheduledCanonicals.length ? "blue" : "neutral"}>{scheduledCanonicals.length}</Badge>}
-        />
-        {scheduledCanonicals.length === 0 ? (
-          <EmptyState title="Nothing scheduled" detail="Approved canonical drafts queue here and publish on the cadence above." />
-        ) : (
-          <div className="grid gap-2">
+      <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+        {/* Left column — upcoming and in-progress lanes. */}
+        <div className="space-y-6">
+          <Lane
+            title="Scheduled to publish"
+            count={scheduledCanonicals.length}
+            tone="blue"
+            empty={{ title: "Nothing scheduled", detail: "Approved canonical drafts queue here and publish on the cadence in Mode." }}
+          >
             {scheduledCanonicals.map((article) => {
               const due = article.scheduled_at ? new Date(article.scheduled_at) : null;
               const isDue = due ? due.getTime() <= Date.now() : false;
               return (
-                <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-bold text-slate-900">{articleTitle(article)}</div>
-                      <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                        {due ? (
-                          <>
-                            <CalendarClock size={12} />
-                            {isDue ? "Publishing shortly" : `Publishes ${formatDate(article.scheduled_at)}`}
-                          </>
-                        ) : (
-                          "Awaiting manual publish"
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
+                <PostCard
+                  key={article.id}
+                  badges={<Badge tone="blue">scheduled</Badge>}
+                  title={articleTitle(article)}
+                  meta={
+                    <span className="inline-flex items-center gap-1.5">
+                      {due ? (
+                        <>
+                          <CalendarClock size={12} />
+                          {isDue ? "Publishing shortly" : `Publishes ${formatDate(article.scheduled_at)}`}
+                        </>
+                      ) : (
+                        "Awaiting manual publish"
+                      )}
+                    </span>
+                  }
+                  actions={
+                    <>
                       <a
                         href={`/projects/${projectId}/articles/${article.id}`}
                         className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
@@ -276,105 +485,133 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                           Publish now
                         </ButtonProgress>
                       </Button>
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  }
+                />
               );
             })}
-          </div>
-        )}
-      </section>
+          </Lane>
 
-      <section>
-        <SectionHeader title="Publishing now" action={<Badge tone={inflight.length ? "amber" : "neutral"}>{inflight.length}</Badge>} />
-        {inflight.length === 0 ? (
-          <EmptyState title="Nothing in flight" detail="Posts being published and verifying their live URL appear here." />
-        ) : (
-          <div className="grid gap-2">
+          <Lane
+            title="Publishing now"
+            count={inflight.length}
+            tone="amber"
+            empty={{ title: "Nothing in flight", detail: "Posts being published and verifying their live URL appear here." }}
+          >
             {inflight.map((article) => (
-              <div key={article.id} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-amber-950">{articleTitle(article)}</div>
-                    <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700">
-                      <Loader2 size={12} className="animate-spin" />
-                      Published to the blog — verifying the live URL
-                    </div>
-                    {(article.canonical_url || article.publish_path) && (
-                      <div className="mt-1 truncate text-xs text-amber-700">{article.canonical_url || article.publish_path}</div>
-                    )}
-                  </div>
-                  {article.canonical_url && (
+              <PostCard
+                key={article.id}
+                accent="amber"
+                badges={
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                    <Loader2 size={12} className="animate-spin" />
+                    verifying live URL
+                  </span>
+                }
+                title={articleTitle(article)}
+                meta={
+                  (article.canonical_url || article.publish_path) && (
+                    <span className="truncate text-amber-700">{article.canonical_url || article.publish_path}</span>
+                  )
+                }
+                actions={
+                  article.canonical_url && (
                     <a
                       href={article.canonical_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-amber-100"
+                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-amber-100"
                     >
                       <ExternalLink size={14} />
                       Open URL
                     </a>
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             ))}
-          </div>
-        )}
-      </section>
+          </Lane>
 
-      <section>
-        <SectionHeader title="Publish failures" action={<Badge tone={failed.length ? "red" : "neutral"}>{failed.length}</Badge>} />
-        {failed.length === 0 ? (
-          <EmptyState title="No publish failures" detail="Failed canonical publish attempts will appear here with retry controls." />
-        ) : (
-          <div className="grid gap-2">
-            {failed.map((article) => (
-              <div key={article.id} className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-red-950">{articleTitle(article)}</div>
-                    <div className="mt-1 text-xs font-semibold text-red-700">
-                      attempt {article.publish_attempts} · next retry {formatDate(article.next_publish_retry_at)}
-                    </div>
-                    <div className="mt-2 line-clamp-3 text-sm leading-5 text-red-800">
-                      {article.last_publish_error || "No publish error captured."}
-                    </div>
-                    {article.publish_path && <div className="mt-1 truncate text-xs text-red-700">{article.publish_path}</div>}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <a
-                      href={`/projects/${projectId}/articles/${article.id}`}
-                      className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
-                    >
-                      Detail
-                    </a>
-                    <Button disabled={busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
-                      <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
-                        Retry
+          <Lane
+            title="Ready to distribute"
+            count={ready.length}
+            tone="green"
+            empty={{ title: "No variants ready", detail: "Approved variants unlock after canonical publish and canonical_url backfill." }}
+          >
+            {ready.map(({ article, compose_url, supports_canonical }) => (
+              <PostCard
+                key={article.id}
+                badges={
+                  <>
+                    <Badge tone="amber">{article.platform ?? "platform"}</Badge>
+                    <span className="text-xs font-semibold text-slate-400">
+                      {supports_canonical ? "canonical tag supported" : "source link in body"}
+                    </span>
+                  </>
+                }
+                title={articleTitle(article)}
+                actions={
+                  <>
+                    <Button size="sm" onClick={() => navigator.clipboard?.writeText(article.content_md)}>
+                      <Copy size={14} />
+                      Copy variant
+                    </Button>
+                    {compose_url && (
+                      <a
+                        href={compose_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        <ExternalLink size={14} />
+                        Compose
+                      </a>
+                    )}
+                    <Button disabled={busy === `distributed-${article.id}`} size="sm" variant="primary" onClick={() => markDistributed(article)}>
+                      <ButtonProgress busy={busy === `distributed-${article.id}`} busyLabel="Marking distributed" idleIcon={<Send size={14} />}>
+                        Mark distributed
                       </ButtonProgress>
                     </Button>
-                  </div>
-                </div>
-              </div>
+                  </>
+                }
+              >
+                <p className="mt-2 line-clamp-3 content-font text-sm leading-5 text-slate-700">{article.content_md}</p>
+              </PostCard>
             ))}
-          </div>
-        )}
-      </section>
+          </Lane>
 
-      <section>
-        <SectionHeader title="Published canonical" action={<Badge tone="green">{published.length}</Badge>} />
-        {published.length === 0 ? (
-          <EmptyState title="No canonical articles published" detail="Approved canonical articles publish automatically when due." />
-        ) : (
-          <div className="grid gap-2">
+          <Lane
+            title="Waiting on canonical"
+            count={waiting.length}
+            tone="neutral"
+            empty={{ title: "No variants waiting", detail: "Approved variants waiting for canonical publication will be shown here." }}
+          >
+            {waiting.map((article) => (
+              <PostCard
+                key={article.id}
+                badges={<Badge tone="neutral">{article.platform ?? "platform"}</Badge>}
+                title={articleTitle(article)}
+                meta="Unlocks automatically once its canonical article is published and its live URL is confirmed."
+              />
+            ))}
+          </Lane>
+        </div>
+
+        {/* Right column — outcomes. */}
+        <div className="space-y-6">
+          <Lane
+            title="Published"
+            count={published.length}
+            tone="green"
+            empty={{ title: "No canonical articles published", detail: "Approved canonical articles publish automatically when due." }}
+          >
             {published.map((article) => (
-              <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-900">{articleTitle(article)}</div>
-                    <div className="mt-1 text-xs text-slate-500">Published {formatDate(article.published_at)}</div>
-                  </div>
-                  {article.canonical_url ? (
+              <PostCard
+                key={article.id}
+                badges={<Badge tone="green">published</Badge>}
+                title={articleTitle(article)}
+                meta={`Published ${formatDate(article.published_at)}`}
+                actions={
+                  article.canonical_url ? (
                     <a
                       href={article.canonical_url}
                       target="_blank"
@@ -386,80 +623,203 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     </a>
                   ) : (
                     <Badge tone="amber">missing canonical_url</Badge>
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             ))}
-          </div>
-        )}
-      </section>
+          </Lane>
 
-      <section>
-        <SectionHeader title="Ready to distribute" action={<Badge tone={ready.length ? "green" : "neutral"}>{ready.length}</Badge>} />
-        {ready.length === 0 ? (
-          <EmptyState title="No variants ready" detail="Approved variants unlock after canonical publish and canonical_url backfill." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {ready.map(({ article, compose_url, supports_canonical }) => (
-              <article key={article.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <Badge tone="amber">{article.platform ?? "platform"}</Badge>
-                  <span className="text-xs font-semibold text-slate-400">
-                    {supports_canonical ? "canonical tag supported" : "source link in body"}
-                  </span>
-                </div>
-                <h3 className="mt-3 content-font text-[15px] font-semibold leading-5 text-slate-900">{articleTitle(article)}</h3>
-                <p className="mt-2 line-clamp-4 content-font text-[15px] leading-5 text-slate-700">{article.content_md}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => navigator.clipboard?.writeText(article.content_md)}>
-                    <Copy size={14} />
-                    Copy variant
-                  </Button>
-                  {compose_url && (
+          <Lane
+            title="Publishing failed"
+            count={failed.length}
+            tone="red"
+            empty={{ title: "No publish failures", detail: "Failed canonical publish attempts will appear here with retry controls." }}
+          >
+            {failed.map((article) => (
+              <PostCard
+                key={article.id}
+                accent="red"
+                badges={<Badge tone="red">failed</Badge>}
+                title={articleTitle(article)}
+                meta={`attempt ${article.publish_attempts} · next retry ${formatDate(article.next_publish_retry_at)}`}
+                actions={
+                  <>
                     <a
-                      href={compose_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      href={`/projects/${projectId}/articles/${article.id}`}
+                      className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
                     >
-                      <ExternalLink size={14} />
-                      Compose
+                      Detail
                     </a>
-                  )}
-                  <Button disabled={busy === `distributed-${article.id}`} size="sm" variant="primary" onClick={() => markDistributed(article)}>
-                    <ButtonProgress busy={busy === `distributed-${article.id}`} busyLabel="Marking distributed" idleIcon={<Send size={14} />}>
-                      Mark distributed
-                    </ButtonProgress>
-                  </Button>
+                    <Button disabled={busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                      <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
+                        Retry
+                      </ButtonProgress>
+                    </Button>
+                  </>
+                }
+              >
+                <div className="mt-2 line-clamp-3 text-sm leading-5 text-red-800">
+                  {article.last_publish_error || "No publish error captured."}
                 </div>
-              </article>
+                {article.publish_path && <div className="mt-1 truncate text-xs text-red-700">{article.publish_path}</div>}
+              </PostCard>
             ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <SectionHeader title="Waiting on canonical" action={<Badge tone="neutral">{waiting.length}</Badge>} />
-        {waiting.length === 0 ? (
-          <EmptyState title="No variants waiting" detail="Approved variants waiting for canonical publication will be shown here." />
-        ) : (
-          <div className="grid gap-2">
-            {waiting.map((article) => (
-              <div key={article.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-                <div className="font-bold text-slate-900">{articleTitle(article)}</div>
-                <div className="mt-1 text-slate-500">
-                  {article.platform ?? "platform"} is approved. It unlocks automatically once its canonical article is published and its live URL is confirmed.
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+          </Lane>
+        </div>
+      </div>
 
       <Notice
         title="Manual distribution only"
         detail="Mark distributed records user completion. It does not publish to the third-party platform automatically."
       />
+
+      <Drawer
+        open={drawer === "schedule"}
+        title="Publish schedule"
+        subtitle="How approved drafts go live. Scheduled spreads them out so a batch of approvals doesn't publish all at once."
+        onClose={() => setDrawer(null)}
+      >
+        <div className="grid gap-2">
+          {(Object.keys(MODE_META) as PublishMode[]).map((value) => {
+            const opt = MODE_META[value];
+            return (
+              <button
+                key={value}
+                type="button"
+                disabled={busy === "mode"}
+                onClick={() => publishMode !== value && saveMode({ publish_mode: value })}
+                className={cx(
+                  "flex flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-60",
+                  publishMode === value ? "border-[#d93820] bg-orange-50 ring-1 ring-[#d93820]" : "border-slate-200 bg-white hover:bg-slate-50",
+                )}
+              >
+                <span className="inline-flex items-center gap-2 text-sm font-bold text-slate-900">
+                  {opt.icon}
+                  {opt.label}
+                  {publishMode === value && <Check size={14} className="ml-auto text-[#d93820]" />}
+                </span>
+                <span className="text-xs text-slate-500">{opt.detail}</span>
+              </button>
+            );
+          })}
+        </div>
+        {publishMode === "scheduled" && (
+          <div className="mt-4">
+            <Field label="Publish one every (days)">
+              <select
+                value={publishIntervalDays}
+                disabled={busy === "mode"}
+                onChange={(event) => saveMode({ publish_interval_days: Number(event.target.value) })}
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
+              >
+                {[1, 2, 3, 5, 7].map((d) => (
+                  <option key={d} value={d}>
+                    {d === 1 ? "1 day (one per day)" : `${d} days`}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={drawer === "platforms"}
+        title="Platforms"
+        subtitle="Where canonical articles get published. Connect your blog repository and credentials here."
+        onClose={() => setDrawer(null)}
+      >
+        <div className="grid gap-3">
+          {connections.length === 0 ? (
+            <EmptyState title="No platforms connected" detail="Add your GitHub / Next.js blog below to start publishing." />
+          ) : (
+            connections.map((connection) => (
+              <div key={connection.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-slate-900">{connection.label || connection.kind}</div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500">
+                      {connection.config?.repo || connection.kind}
+                      {connection.is_default ? " · default" : ""}
+                    </div>
+                  </div>
+                  <Badge tone={connectionTone(connection.status)}>{connection.status}</Badge>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button disabled={busy === `test-${connection.id}`} size="sm" onClick={() => testConnection(connection.id)}>
+                    <ButtonProgress busy={busy === `test-${connection.id}`} busyLabel="Testing" idleIcon={<Plug size={14} />}>
+                      Test
+                    </ButtonProgress>
+                  </Button>
+                  {connection.credential_configured ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                      <Check size={12} />
+                      credential set
+                    </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-amber-600">no credential</span>
+                  )}
+                </div>
+                {connection.last_error && <div className="mt-1.5 line-clamp-2 text-xs text-red-700">{connection.last_error}</div>}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-400">GitHub / Next.js blog</div>
+          <div className="mt-3 grid gap-3">
+            <Field label="Repository (owner/repo)">
+              <TextInput
+                value={publisherDraft.repo}
+                placeholder="acme/blog"
+                onChange={(event) => setPublisherDraft({ ...publisherDraft, repo: event.target.value })}
+              />
+            </Field>
+            <Field label="Site base URL">
+              <TextInput
+                value={publisherDraft.base_url}
+                placeholder="https://example.com"
+                onChange={(event) => setPublisherDraft({ ...publisherDraft, base_url: event.target.value })}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Branch">
+                <TextInput
+                  value={publisherDraft.branch ?? ""}
+                  onChange={(event) => setPublisherDraft({ ...publisherDraft, branch: event.target.value })}
+                />
+              </Field>
+              <Field label="Content directory">
+                <TextInput
+                  value={publisherDraft.content_dir ?? ""}
+                  onChange={(event) => setPublisherDraft({ ...publisherDraft, content_dir: event.target.value })}
+                />
+              </Field>
+            </div>
+            <Field label={githubPublisher?.credential_configured ? "Replace GitHub token (optional)" : "GitHub token (write access)"}>
+              <TextInput
+                type="password"
+                value={credentialDraft}
+                placeholder="ghp_…"
+                onChange={(event) => setCredentialDraft(event.target.value)}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <Button
+                disabled={busy === "save-publisher" || !publisherDraft.repo.trim() || !publisherDraft.base_url.trim()}
+                size="sm"
+                variant="primary"
+                onClick={savePublisherConnection}
+              >
+                <ButtonProgress busy={busy === "save-publisher"} busyLabel="Saving platform" idleIcon={<Check size={14} />}>
+                  Save platform
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Drawer>
     </div>
   );
 }
