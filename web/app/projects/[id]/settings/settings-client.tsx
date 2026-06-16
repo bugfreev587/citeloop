@@ -15,7 +15,7 @@ import {
   ProjectConfig,
 } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -541,32 +541,44 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>
-              <Save size={16} />
-              Save publisher
+              <ButtonProgress busy={notificationBusy === "save-publisher"} busyLabel="Saving publisher" idleIcon={<Save size={16} />}>
+                Save publisher
+              </ButtonProgress>
             </Button>
             <Button
               variant="outline"
               onClick={savePublisherCredential}
               disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
             >
-              <Save size={16} />
-              Save token
+              <ButtonProgress
+                busy={notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
+                busyLabel="Saving token"
+                idleIcon={<Save size={16} />}
+              >
+                Save token
+              </ButtonProgress>
             </Button>
             <Button
               variant="outline"
               onClick={() => githubPublisher && testPublisherConnection(githubPublisher.id)}
               disabled={!githubPublisher || notificationBusy === `test-publisher-${githubPublisher?.id}`}
             >
-              <Send size={16} />
-              Test
+              <ButtonProgress busy={notificationBusy === `test-publisher-${githubPublisher?.id}`} busyLabel="Testing" idleIcon={<Send size={16} />}>
+                Test
+              </ButtonProgress>
             </Button>
             <Button
               variant="outline"
               onClick={revokePublisherCredential}
               disabled={!githubPublisher?.credential_configured || notificationBusy === `revoke-publisher-credential-${githubPublisher?.id}`}
             >
-              <Trash2 size={16} />
-              Revoke token
+              <ButtonProgress
+                busy={notificationBusy === `revoke-publisher-credential-${githubPublisher?.id}`}
+                busyLabel="Revoking token"
+                idleIcon={<Trash2 size={16} />}
+              >
+                Revoke token
+              </ButtonProgress>
             </Button>
           </div>
         </div>
@@ -696,8 +708,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               autoComplete="off"
             />
             <Button variant="primary" onClick={createChannel} disabled={notificationBusy === "create-channel"}>
-              <Plus size={16} />
-              Add
+              <ButtonProgress busy={notificationBusy === "create-channel"} busyLabel="Adding channel" idleIcon={<Plus size={16} />}>
+                Add
+              </ButtonProgress>
             </Button>
           </div>
 
@@ -741,7 +754,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                             disabled={notificationBusy === `test-${channel.id}`}
                             title={channel.verified_at ? `Verified ${formatDate(channel.verified_at)}` : "Send test notification"}
                           >
-                            <Send size={14} />
+                            <ButtonProgress busy={notificationBusy === `test-${channel.id}`} busyLabel="Testing" idleIcon={<Send size={14} />} />
                           </Button>
                           <Button
                             size="sm"
@@ -750,7 +763,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                             disabled={notificationBusy === `delete-${channel.id}`}
                             title="Delete channel"
                           >
-                            <Trash2 size={14} />
+                            <ButtonProgress busy={notificationBusy === `delete-${channel.id}`} busyLabel="Deleting" idleIcon={<Trash2 size={14} />} />
                           </Button>
                         </div>
                       </td>
@@ -863,7 +876,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                         disabled={delivery.status === "sent" || notificationBusy === `retry-${delivery.id}`}
                         title="Retry delivery"
                       >
-                        <RotateCcw size={14} />
+                        <ButtonProgress busy={notificationBusy === `retry-${delivery.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />} />
                       </Button>
                     </td>
                   </tr>
@@ -875,8 +888,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       </section>
 
       <Button disabled={busy} variant="primary" onClick={save}>
-        <Save size={16} />
-        Save settings
+        <ButtonProgress busy={busy} busyLabel="Saving settings" idleIcon={<Save size={16} />}>
+          Save settings
+        </ButtonProgress>
       </Button>
     </div>
   );

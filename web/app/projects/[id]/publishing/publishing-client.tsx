@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, RefreshCw, RotateCcw, Send } from "lucide-react";
 import { Article, DistributeItem } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -54,7 +54,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   );
 
   async function markDistributed(article: Article) {
-    setBusy(article.id);
+    setBusy(`distributed-${article.id}`);
     setMessage(null);
     try {
       await api.distributed(projectId, article.id);
@@ -68,7 +68,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function retryPublish(article: Article) {
-    setBusy(article.id);
+    setBusy(`retry-${article.id}`);
     setMessage(null);
     try {
       await api.retryPublish(projectId, article.id);
@@ -114,8 +114,9 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         action={
           <div className="flex flex-wrap gap-2">
             <Button disabled={!!busy} size="sm" onClick={reconcile}>
-              <RotateCcw size={14} />
-              Reconcile
+              <ButtonProgress busy={busy === "reconcile"} busyLabel="Reconciling" idleIcon={<RotateCcw size={14} />}>
+                Reconcile
+              </ButtonProgress>
             </Button>
             <Button disabled={!!busy} size="sm" onClick={refresh}>
               <RefreshCw size={14} />
@@ -152,9 +153,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={busy === article.id} size="sm" variant="danger" onClick={() => retryPublish(article)}>
-                      <RotateCcw size={14} />
-                      Retry
+                    <Button disabled={busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                      <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
+                        Retry
+                      </ButtonProgress>
                     </Button>
                   </div>
                 </div>
@@ -229,9 +231,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                       Compose
                     </a>
                   )}
-                  <Button disabled={busy === article.id} size="sm" variant="primary" onClick={() => markDistributed(article)}>
-                    <Send size={14} />
-                    Mark distributed
+                  <Button disabled={busy === `distributed-${article.id}`} size="sm" variant="primary" onClick={() => markDistributed(article)}>
+                    <ButtonProgress busy={busy === `distributed-${article.id}`} busyLabel="Marking distributed" idleIcon={<Send size={14} />}>
+                      Mark distributed
+                    </ButtonProgress>
                   </Button>
                 </div>
               </article>

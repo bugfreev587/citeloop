@@ -24,7 +24,7 @@ import {
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -301,8 +301,8 @@ export function Workspace({ projectId }: { projectId: string }) {
     };
   }, [projectLoaded, contextBuild.active, refresh]);
 
-  const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`) => {
-    setBusy(label);
+  const run = async (label: string, fn: () => Promise<any>, success = `${label} finished`, busyKey = label) => {
+    setBusy(busyKey);
     setMessage(null);
     try {
       await fn();
@@ -1208,13 +1208,16 @@ export function Workspace({ projectId }: { projectId: string }) {
                   )}
                   <Button
                     size="sm"
+                    disabled={busy === `distributed-${article.id}`}
                     onClick={() => {
                       const ok = window.confirm("Mark this variant as distributed? This records it as posted and removes it from the ready list.");
                       if (!ok) return;
-                      run("Distributed", () => api.distributed(projectId, article.id), "Marked as distributed");
+                      run("Distributed", () => api.distributed(projectId, article.id), "Marked as distributed", `distributed-${article.id}`);
                     }}
                   >
-                    Mark distributed
+                    <ButtonProgress busy={busy === `distributed-${article.id}`} busyLabel="Marking distributed" idleIcon={<CheckCircle2 size={14} />}>
+                      Mark distributed
+                    </ButtonProgress>
                   </Button>
                 </div>
               </div>

@@ -5,7 +5,7 @@ import { Check, ExternalLink, Loader2, Pencil, RefreshCw, Save, ShieldCheck, Wan
 import { CrawlSummary, GenerationRun, InventoryItem, ProductProfile } from "../../../lib/api";
 import { ProfileDraft, lines, profilePayloadFromAdvancedJSON, profilePayloadFromDraft } from "../../../lib/dashboard-ux-logic";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -204,8 +204,8 @@ export function ContextClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function saveProfile(nextProfile?: Record<string, any>, success = "Context saved") {
-    setBusy("profile");
+  async function saveProfile(nextProfile?: Record<string, any>, success = "Context saved", busyKey = "profile") {
+    setBusy(busyKey);
     setMessage(null);
     try {
       const payload = nextProfile ?? profilePayloadFromDraft(profileDraft, profile?.profile ?? {});
@@ -224,7 +224,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
   }
 
   async function saveAdvancedProfile() {
-    setBusy("profile");
+    setBusy("advanced-profile");
     setMessage(null);
     try {
       const payload = profilePayloadFromAdvancedJSON(profileDraft.advancedJSON);
@@ -282,6 +282,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
         context_confirmed_at: new Date().toISOString(),
       },
       "Context confirmed. Opportunity discovery started",
+      "confirm-profile",
     );
   }
 
@@ -312,8 +313,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
             <form onSubmit={refreshContext} className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_auto]">
               <TextInput value={landing} onChange={(event) => setLanding(event.target.value)} placeholder="https://product-domain.com" />
               <Button disabled={busy === "context" || !landing.trim()} variant="primary" type="submit">
-                <Wand2 size={16} />
-                Refresh context
+                <ButtonProgress busy={busy === "context"} busyLabel="Refreshing context" idleIcon={<Wand2 size={16} />}>
+                  Refresh context
+                </ButtonProgress>
               </Button>
             </form>
           </div>
@@ -366,8 +368,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
             </div>
             <div className="flex flex-wrap gap-2">
               <Button disabled={!!busy} variant="primary" onClick={confirmContext}>
-                <Check size={16} />
-                Confirm context
+                <ButtonProgress busy={busy === "confirm-profile"} busyLabel="Confirming context" idleIcon={<Check size={16} />}>
+                  Confirm context
+                </ButtonProgress>
               </Button>
               <a href="#domain-profile" className="inline-flex h-10 items-center rounded-xl border border-amber-200 bg-white px-3 text-sm font-medium text-amber-900 hover:bg-amber-100">
                 Edit fields below
@@ -442,9 +445,10 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 <TextArea rows={4} value={profileDraft.key_terms} onChange={(event) => setProfileDraft({ ...profileDraft, key_terms: event.target.value })} />
               </Field>
             </div>
-            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile()}>
-              <Save size={16} />
-              Save Domain profile
+            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Context saved", "profile-domain")}>
+              <ButtonProgress busy={busy === "profile-domain"} busyLabel="Saving Domain profile" idleIcon={<Save size={16} />}>
+                Save Domain profile
+              </ButtonProgress>
             </Button>
           </div>
         )}
@@ -467,9 +471,10 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 <TextArea rows={6} value={profileDraft.content_rules} onChange={(event) => setProfileDraft({ ...profileDraft, content_rules: event.target.value })} />
               </Field>
             </div>
-            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile()}>
-              <Save size={16} />
-              Save Voice & rules
+            <Button disabled={!!busy} variant="primary" className="w-fit" onClick={() => saveProfile(undefined, "Context saved", "profile-voice")}>
+              <ButtonProgress busy={busy === "profile-voice"} busyLabel="Saving Voice & rules" idleIcon={<Save size={16} />}>
+                Save Voice & rules
+              </ButtonProgress>
             </Button>
           </div>
         )}
@@ -534,8 +539,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
                         Cancel
                       </Button>
                       <Button disabled={!!busy} size="sm" variant="primary" onClick={() => saveInventory(item)}>
-                        <Check size={14} />
-                        Save source page
+                        <ButtonProgress busy={busy === `inventory-${item.id}`} busyLabel="Saving source page" idleIcon={<Check size={14} />}>
+                          Save source page
+                        </ButtonProgress>
                       </Button>
                     </div>
                   </div>
@@ -557,8 +563,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
                 className="min-h-[240px] font-mono text-xs"
               />
               <Button disabled={!!busy} variant="outline" className="w-fit" onClick={saveAdvancedProfile}>
-                <Save size={16} />
-                Save advanced context
+                <ButtonProgress busy={busy === "advanced-profile"} busyLabel="Saving advanced context" idleIcon={<Save size={16} />}>
+                  Save advanced context
+                </ButtonProgress>
               </Button>
             </div>
           </details>

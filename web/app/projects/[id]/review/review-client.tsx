@@ -18,7 +18,7 @@ import {
   type SEOContribution,
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -121,6 +121,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? queueArticles[0] ?? null;
   const selectedArticle = selectedQueueArticle?.article ?? null;
   const readyArticles = queueArticles.filter((item) => reviewArticleState(item.article).approvable).map((item) => item.article);
+  const selectedBusy = selectedArticle
+    ? busy === "bulk-approve" || busy === `approve-${selectedArticle.id}` || busy === `reject-${selectedArticle.id}` || busy === `save-${selectedArticle.id}`
+    : false;
 
   useEffect(() => {
     if (queueArticles.length === 0) {
@@ -142,8 +145,8 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     setEditorOpen(false);
   }, [selectedArticle?.id, selectedArticle]);
 
-  async function mutate(label: string, id: string, fn: () => Promise<any>) {
-    setBusy(id);
+  async function mutate(label: string, busyKey: string, fn: () => Promise<any>) {
+    setBusy(busyKey);
     setMessage(null);
     try {
       await fn();
@@ -187,8 +190,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
         action={
           <div className="flex flex-wrap justify-end gap-2">
             <Button disabled={!!busy || readyArticles.length === 0} size="sm" onClick={approveReadyArticles}>
-              <CheckCircle2 size={14} />
-              Approve {readyArticles.length} ready...
+              <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving ready drafts" idleIcon={<CheckCircle2 size={14} />}>
+                Approve {readyArticles.length} ready...
+              </ButtonProgress>
             </Button>
             <Button disabled={!!busy} size="sm" onClick={refresh}>
               <RefreshCw size={14} />
@@ -226,10 +230,10 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                     item={item}
                     projectId={projectId}
                     selected={selectedArticle?.id === item.article.id}
-                    busy={busy === item.article.id || busy === "bulk-approve"}
+                    busy={busy === `approve-${item.article.id}` || busy === "bulk-approve"}
                     repairFailure={repairFailures[item.article.id]}
                     onSelect={() => setSelectedArticleId(item.article.id)}
-                    onApprove={() => mutate("Article approved", item.article.id, () => api.approve(projectId, item.article.id))}
+                    onApprove={() => mutate("Article approved", `approve-${item.article.id}`, () => api.approve(projectId, item.article.id))}
                   />
                 ))}
               </div>
@@ -240,16 +244,19 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                 article={selectedArticle}
                 topicId={selectedQueueArticle?.topicId ?? selectedArticle.topic_id}
                 projectId={projectId}
-                busy={busy === selectedArticle.id || busy === "bulk-approve"}
+                busy={selectedBusy}
+                approveBusy={busy === `approve-${selectedArticle.id}` || busy === "bulk-approve"}
+                rejectBusy={busy === `reject-${selectedArticle.id}`}
+                saveBusy={busy === `save-${selectedArticle.id}`}
                 repairFailure={repairFailures[selectedArticle.id]}
                 editorOpen={editorOpen}
                 content={content}
                 onContentChange={setContent}
                 onToggleEditor={() => setEditorOpen((value) => !value)}
-                onApprove={() => mutate("Article approved", selectedArticle.id, () => api.approve(projectId, selectedArticle.id))}
-                onReject={() => mutate("Article rejected", selectedArticle.id, () => api.reject(projectId, selectedArticle.id))}
+                onApprove={() => mutate("Article approved", `approve-${selectedArticle.id}`, () => api.approve(projectId, selectedArticle.id))}
+                onReject={() => mutate("Article rejected", `reject-${selectedArticle.id}`, () => api.reject(projectId, selectedArticle.id))}
                 onSave={(nextContent) =>
-                  mutate("Content saved and QA refreshed", selectedArticle.id, () => api.edit(projectId, selectedArticle.id, { content_md: nextContent }))
+                  mutate("Content saved and QA refreshed", `save-${selectedArticle.id}`, () => api.edit(projectId, selectedArticle.id, { content_md: nextContent }))
                 }
               />
             )}
@@ -369,8 +376,9 @@ function ReviewQueueRow({
               onApprove();
             }}
           >
-            <CheckCircle2 size={14} />
-            Approve
+            <ButtonProgress busy={busy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+              Approve
+            </ButtonProgress>
           </Button>
         ) : (
           <Button
@@ -415,6 +423,9 @@ function ReviewInspector({
   topicId,
   projectId,
   busy,
+  approveBusy,
+  rejectBusy,
+  saveBusy,
   repairFailure,
   editorOpen,
   content,
@@ -428,6 +439,9 @@ function ReviewInspector({
   topicId: string;
   projectId: string;
   busy: boolean;
+  approveBusy: boolean;
+  rejectBusy: boolean;
+  saveBusy: boolean;
   repairFailure?: string;
   editorOpen: boolean;
   content: string;
@@ -475,6 +489,8 @@ function ReviewInspector({
           projectId={projectId}
           state={state}
           busy={busy}
+          approveBusy={approveBusy}
+          rejectBusy={rejectBusy}
           previewHref={previewHref}
           detailHref={detailHref}
           repairExhausted={repairExhausted}
@@ -490,7 +506,7 @@ function ReviewInspector({
         <SEOContributionPanel rows={seoContributions} />
 
         {editorOpen ? (
-          <OriginalArticlePanel content={content} busy={busy} onChange={onContentChange} onSave={onSave} />
+          <OriginalArticlePanel content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />
         ) : (
           <section className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -578,6 +594,8 @@ function NextStepPanel({
   projectId,
   state,
   busy,
+  approveBusy,
+  rejectBusy,
   previewHref,
   detailHref,
   repairExhausted,
@@ -589,6 +607,8 @@ function NextStepPanel({
   projectId: string;
   state: ReviewArticleState;
   busy: boolean;
+  approveBusy: boolean;
+  rejectBusy: boolean;
   previewHref: string;
   detailHref: string;
   repairExhausted: boolean;
@@ -629,8 +649,9 @@ function NextStepPanel({
       <div className="mt-3 flex flex-wrap gap-2">
         {state.approvable && (
           <Button disabled={busy} size="sm" variant="primary" onClick={onApprove}>
-            <CheckCircle2 size={14} />
-            Approve
+            <ButtonProgress busy={approveBusy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+              Approve
+            </ButtonProgress>
           </Button>
         )}
         <a
@@ -660,8 +681,9 @@ function NextStepPanel({
               Edit draft
             </Button>
             <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
-              <XCircle size={14} />
-              Reject
+              <ButtonProgress busy={rejectBusy} busyLabel="Rejecting" idleIcon={<XCircle size={14} />}>
+                Reject
+              </ButtonProgress>
             </Button>
           </>
         )}
@@ -690,11 +712,13 @@ function AutoRepairStatus({ state, error }: { state: ReviewArticleState; error?:
 function OriginalArticlePanel({
   content,
   busy,
+  saveBusy,
   onChange,
   onSave,
 }: {
   content: string;
   busy: boolean;
+  saveBusy: boolean;
   onChange: (value: string) => void;
   onSave: (content: string) => void;
 }) {
@@ -708,8 +732,9 @@ function OriginalArticlePanel({
         <TextArea value={content} onChange={(event) => onChange(event.target.value)} className="min-h-[420px] font-mono text-xs leading-5" />
         <div className="flex flex-wrap items-center gap-3">
           <Button disabled={busy} size="sm" variant="primary" onClick={() => onSave(content)}>
-            <Save size={14} />
-            Save content
+            <ButtonProgress busy={saveBusy} busyLabel="Saving content" idleIcon={<Save size={14} />}>
+              Save content
+            </ButtonProgress>
           </Button>
           <span className="text-xs text-slate-500">Content edits trigger backend re-QA. Metadata-only edits do not unlock blocking.</span>
         </div>

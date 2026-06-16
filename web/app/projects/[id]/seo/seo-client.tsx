@@ -20,7 +20,7 @@ import {
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -105,6 +105,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
   const [surfaceURL, setSurfaceURL] = useState("");
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
   const [message, setMessage] = useState<Message>(null);
 
   const refresh = useCallback(async () => {
@@ -167,6 +168,37 @@ export function SEOClient({ projectId }: { projectId: string }) {
     ...(brief?.geo_blockers ?? []),
   ].slice(0, 4);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
+
+  function createActionBusy(opp: SEOOpportunity) {
+    return opportunityBusy[opp.id] === "create";
+  }
+
+  function dismissBusy(opp: SEOOpportunity) {
+    return opportunityBusy[opp.id] === "dismiss";
+  }
+
+  function setOpportunityPending(id: string, value: "create" | "dismiss" | null) {
+    setOpportunityBusy((current) => {
+      const next = { ...current };
+      if (value) {
+        next[id] = value;
+      } else {
+        delete next[id];
+      }
+      return next;
+    });
+  }
+
+  async function manualRefresh() {
+    setBusy("refresh");
+    setMessage(null);
+    try {
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveSettings() {
     setBusy("settings");
     setMessage(null);
@@ -343,28 +375,30 @@ export function SEOClient({ projectId }: { projectId: string }) {
   }
 
   async function createAction(opp: SEOOpportunity) {
-    setBusy(opp.id);
+    setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
-      await api.createSEOContentAction(projectId, opp.id, { action_type: opp.recommended_action ?? undefined });
-      await refresh();
+      const action = await api.createSEOContentAction(projectId, opp.id, { action_type: opp.recommended_action ?? undefined });
+      setOpportunities((current) => current.filter((item) => item.id !== opp.id));
+      setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setMessage({ title: "Content action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
     } finally {
-      setBusy(null);
+      setOpportunityPending(opp.id, null);
     }
   }
 
   async function dismiss(opp: SEOOpportunity) {
-    setBusy(opp.id);
+    setOpportunityPending(opp.id, "dismiss");
+    setMessage(null);
     try {
       await api.dismissSEOOpportunity(projectId, opp.id);
-      await refresh();
+      setOpportunities((current) => current.filter((item) => item.id !== opp.id));
     } catch (e: any) {
       setMessage({ title: "Could not dismiss opportunity", detail: e.message, tone: "red" });
     } finally {
-      setBusy(null);
+      setOpportunityPending(opp.id, null);
     }
   }
 
@@ -435,13 +469,15 @@ export function SEOClient({ projectId }: { projectId: string }) {
         eyebrow="Find opportunities"
         action={
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={refresh} disabled={!!busy}>
-              <RefreshCw size={14} />
-              Refresh
+            <Button size="sm" onClick={manualRefresh} disabled={!!busy}>
+              <ButtonProgress busy={busy === "refresh"} busyLabel="Refreshing" idleIcon={<RefreshCw size={14} />}>
+                Refresh
+              </ButtonProgress>
             </Button>
             <Button size="sm" onClick={runSync} disabled={!!busy}>
-              <Search size={14} />
-              Sync
+              <ButtonProgress busy={busy === "sync"} busyLabel="Syncing" idleIcon={<Search size={14} />}>
+                Sync
+              </ButtonProgress>
             </Button>
           </div>
         }
@@ -475,7 +511,11 @@ export function SEOClient({ projectId }: { projectId: string }) {
             />
           ) : (
             <div className="grid gap-3">
-              {opportunities.map((opp, index) => (
+              {opportunities.map((opp, index) => {
+                const addingToPlan = createActionBusy(opp);
+                const dismissingOpportunity = dismissBusy(opp);
+                const reviewingOpportunity = addingToPlan || dismissingOpportunity;
+                return (
                 <article key={opp.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
@@ -490,12 +530,15 @@ export function SEOClient({ projectId }: { projectId: string }) {
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
-                      <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={busy === opp.id}>
-                        <FileText size={14} />
-                        Add to Content Plan
+                      <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={reviewingOpportunity}>
+                        <ButtonProgress busy={addingToPlan} busyLabel="Adding to plan" idleIcon={<FileText size={14} />}>
+                          Add to Content Plan
+                        </ButtonProgress>
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={busy === opp.id}>
-                        Dismiss
+                      <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={reviewingOpportunity}>
+                        <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
+                          Dismiss
+                        </ButtonProgress>
                       </Button>
                     </div>
                   </div>
@@ -510,7 +553,8 @@ export function SEOClient({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -621,8 +665,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
             />
           )}
           <Button size="sm" onClick={saveSettings} disabled={busy === "settings" || !siteURL}>
-            <Settings size={14} />
-            Save settings
+            <ButtonProgress busy={busy === "settings"} busyLabel="Saving settings" idleIcon={<Settings size={14} />}>
+              Save settings
+            </ButtonProgress>
           </Button>
         </div>
       </section>
@@ -636,8 +681,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
                 {crawlerSnapshots.length}
               </Badge>
               <Button size="sm" onClick={runCrawlerAudit} disabled={!!busy || !siteURL}>
-                <RefreshCw size={14} />
-                Audit
+                <ButtonProgress busy={busy === "geo-crawler"} busyLabel="Auditing" idleIcon={<RefreshCw size={14} />}>
+                  Audit
+                </ButtonProgress>
               </Button>
             </div>
           }
@@ -691,16 +737,19 @@ export function SEOClient({ projectId }: { projectId: string }) {
                 {geoOverview?.score?.confidence ?? "insufficient_data"}
               </Badge>
               <Button size="sm" onClick={generatePromptSet} disabled={!!busy}>
-                <FileText size={14} />
-                Prompts
+                <ButtonProgress busy={busy === "geo-prompts"} busyLabel="Generating prompts" idleIcon={<FileText size={14} />}>
+                  Prompts
+                </ButtonProgress>
               </Button>
               <Button size="sm" onClick={observeGEOProvider} disabled={!!busy || (geoOverview?.prompts.length ?? 0) === 0}>
-                <Search size={14} />
-                Provider
+                <ButtonProgress busy={busy === "geo-provider"} busyLabel="Observing provider" idleIcon={<Search size={14} />}>
+                  Provider
+                </ButtonProgress>
               </Button>
               <Button size="sm" onClick={analyzeGEOOpportunities} disabled={!!busy}>
-                <BarChart3 size={14} />
-                Analyze
+                <ButtonProgress busy={busy === "geo-analyze"} busyLabel="Analyzing" idleIcon={<BarChart3 size={14} />}>
+                  Analyze
+                </ButtonProgress>
               </Button>
             </div>
           }
@@ -769,7 +818,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
                         onClick={() => updatePromptStatus(prompt, prompt.status === "active" ? "paused" : "active")}
                         disabled={busy === prompt.id}
                       >
-                        {prompt.status === "active" ? "Pause" : "Activate"}
+                        <ButtonProgress busy={busy === prompt.id} busyLabel="Updating" idleIcon={null}>
+                          {prompt.status === "active" ? "Pause" : "Activate"}
+                        </ButtonProgress>
                       </Button>
                     </td>
                   </tr>
@@ -823,7 +874,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
                         onClick={() => updateCompetitorStatus(competitor, competitor.status === "active" ? "paused" : "active")}
                         disabled={busy === competitor.id}
                       >
-                        {competitor.status === "active" ? "Pause" : "Activate"}
+                        <ButtonProgress busy={busy === competitor.id} busyLabel="Updating" idleIcon={null}>
+                          {competitor.status === "active" ? "Pause" : "Activate"}
+                        </ButtonProgress>
                       </Button>
                     </td>
                   </tr>
@@ -837,12 +890,14 @@ export function SEOClient({ projectId }: { projectId: string }) {
           <div className="flex flex-col gap-2 md:flex-row">
             <TextInput value={surfaceURL} onChange={(event) => setSurfaceURL(event.target.value)} placeholder="https://dev.to/team/source" />
             <Button size="sm" onClick={addExternalSurface} disabled={busy === "geo-surface" || !surfaceURL.trim()}>
-              <FileText size={14} />
-              Surface
+              <ButtonProgress busy={busy === "geo-surface"} busyLabel="Saving surface" idleIcon={<FileText size={14} />}>
+                Surface
+              </ButtonProgress>
             </Button>
             <Button size="sm" onClick={monitorExternalSurfaces} disabled={!!busy || (geoOverview?.external_surfaces.length ?? 0) === 0}>
-              <RefreshCw size={14} />
-              Monitor
+              <ButtonProgress busy={busy === "geo-surface-monitor"} busyLabel="Monitoring" idleIcon={<RefreshCw size={14} />}>
+                Monitor
+              </ButtonProgress>
             </Button>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -876,8 +931,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
                   <td className="px-4 py-3 text-slate-600">{brief.publication_surface}</td>
                   <td className="px-4 py-3">
                     <Button size="sm" onClick={() => acceptAssetBrief(brief)} disabled={busy === brief.id || !["draft", "ready_for_review", "accepted"].includes(brief.status)}>
-                      <FileText size={14} />
-                      Accept
+                      <ButtonProgress busy={busy === brief.id} busyLabel="Accepting" idleIcon={<FileText size={14} />}>
+                        Accept
+                      </ButtonProgress>
                     </Button>
                   </td>
                 </tr>
@@ -897,12 +953,14 @@ export function SEOClient({ projectId }: { projectId: string }) {
                 L{policy?.autopilot_level ?? 0}
               </Badge>
               <Button size="sm" onClick={generatePlan} disabled={!!busy}>
-                <BarChart3 size={14} />
-                Plan
+                <ButtonProgress busy={busy === "plan"} busyLabel="Generating plan" idleIcon={<BarChart3 size={14} />}>
+                  Plan
+                </ButtonProgress>
               </Button>
               <Button size="sm" variant="danger" onClick={enterSafeMode} disabled={!!busy}>
-                <ShieldAlert size={14} />
-                Safe mode
+                <ButtonProgress busy={busy === "safe-mode"} busyLabel="Enabling safe mode" idleIcon={<ShieldAlert size={14} />}>
+                  Safe mode
+                </ButtonProgress>
               </Button>
             </div>
           }
@@ -952,8 +1010,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
           <div className="md:col-span-3 flex gap-2">
             <TextInput value={objectiveName} onChange={(event) => setObjectiveName(event.target.value)} placeholder="Grow qualified blog clicks" />
             <Button size="sm" onClick={createObjective} disabled={busy === "objective" || !objectiveName.trim()}>
-              <FileText size={14} />
-              Objective
+              <ButtonProgress busy={busy === "objective"} busyLabel="Creating objective" idleIcon={<FileText size={14} />}>
+                Objective
+              </ButtonProgress>
             </Button>
           </div>
         </div>

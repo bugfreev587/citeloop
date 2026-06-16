@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import { Loader2 } from "lucide-react";
 
 export function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -32,6 +33,31 @@ export function Button({ className, variant = "outline", size = "md", ...props }
         className,
       )}
     />
+  );
+}
+
+export function ButtonProgress({
+  busy,
+  busyLabel,
+  idleIcon,
+  children,
+  size = 14,
+}: {
+  busy: boolean;
+  busyLabel: string;
+  idleIcon: ReactNode;
+  children?: ReactNode;
+  size?: number;
+}) {
+  return (
+    <>
+      {busy ? <Loader2 aria-hidden="true" className="animate-spin" size={size} /> : idleIcon}
+      {(busy || children) && (
+        <span role={busy ? "status" : undefined} aria-live={busy ? "polite" : undefined}>
+          {busy ? busyLabel : children}
+        </span>
+      )}
+    </>
   );
 }
 

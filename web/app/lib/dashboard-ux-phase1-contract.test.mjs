@@ -536,3 +536,50 @@ test("content plan topic cards separate top chips, body copy, and footer actions
   assert.ok(footerIndex < actionsIndex, "edit, generate, and archive controls should live inside the card footer");
   assert.ok(actionsIndex > scheduleIndex, "actions should sit after the schedule control in the footer row");
 });
+
+test("blocking mutations expose button-level progress and keep opportunity review local", () => {
+  const ui = read("components/ui.tsx");
+  const visibility = read("projects/[id]/seo/seo-client.tsx");
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const review = read("projects/[id]/review/review-client.tsx");
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+  const admin = read("projects/[id]/admin/admin-client.tsx");
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(ui, /export function ButtonProgress/);
+  assert.match(ui, /Loader2/);
+  assert.match(ui, /aria-live=\{busy \? "polite" : undefined\}/);
+
+  assert.match(visibility, /opportunityBusy/);
+  assert.match(visibility, /createActionBusy/);
+  assert.match(visibility, /dismissBusy/);
+  assert.match(visibility, /Adding to plan/);
+  assert.match(visibility, /Dismissing/);
+
+  const createActionBlock = visibility.slice(visibility.indexOf("async function createAction"), visibility.indexOf("async function dismiss"));
+  assert.match(createActionBlock, /api\.createSEOContentAction/);
+  assert.match(createActionBlock, /setOpportunities\(\(current\) => current\.filter/);
+  assert.match(createActionBlock, /setActions\(\(current\) => \[action, \.\.\.current\.filter/);
+  assert.doesNotMatch(createActionBlock, /await refresh\(\)/);
+
+  const dismissBlock = visibility.slice(visibility.indexOf("async function dismiss"), visibility.indexOf("async function savePolicy"));
+  assert.match(dismissBlock, /setOpportunities\(\(current\) => current\.filter/);
+  assert.doesNotMatch(dismissBlock, /await refresh\(\)/);
+
+  for (const [source, markers] of [
+    [topics, ["Saving topic", "Scheduling", "Archiving"]],
+    [review, ["Approving", "Rejecting", "Saving content"]],
+    [publishing, ["Reconciling", "Retrying", "Marking distributed"]],
+    [settings, ["Saving publisher", "Saving token", "Testing", "Retrying", "Saving settings"]],
+    [context, ["Refreshing context", "Confirming context", "Saving source page", "Saving advanced context"]],
+    [admin, ["Saving credentials"]],
+    [workspace, ["Marking distributed"]],
+  ]) {
+    assert.match(source, /ButtonProgress/);
+    for (const marker of markers) {
+      assert.match(source, new RegExp(marker));
+    }
+  }
+});

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Globe2, KeyRound, Save } from "lucide-react";
 import { LLMCredentialsStatus, LLMProvider } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, cx, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -171,8 +171,9 @@ export function AdminClient() {
             variant="primary"
             onClick={save}
           >
-            <Save size={16} />
-            Save credentials
+            <ButtonProgress busy={busy} busyLabel="Saving credentials" idleIcon={<Save size={16} />}>
+              Save credentials
+            </ButtonProgress>
           </Button>
           <Button disabled={busy} onClick={refresh}>
             Refresh

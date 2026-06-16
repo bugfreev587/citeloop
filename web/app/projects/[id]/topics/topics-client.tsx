@@ -13,7 +13,7 @@ import {
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TopicDraft = {
@@ -493,8 +493,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         Cancel
                       </Button>
                       <Button disabled={editBusy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
-                        <Check size={14} />
-                        Save
+                        <ButtonProgress busy={editBusy} busyLabel="Saving topic" idleIcon={<Check size={14} />}>
+                          Save
+                        </ButtonProgress>
                       </Button>
                     </div>
                   </div>
@@ -525,8 +526,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       </Field>
                     </div>
                     <Button disabled={topicLocked || scheduleBusy} size="sm" onClick={() => schedule(topic)}>
-                      <CalendarDays size={14} />
-                      Schedule
+                      <ButtonProgress busy={scheduleBusy} busyLabel="Scheduling" idleIcon={<CalendarDays size={14} />}>
+                        Schedule
+                      </ButtonProgress>
                     </Button>
                   </div>
                   <div data-content-plan-card-actions className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -544,8 +546,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       {isGenerating ? "Generating" : "Generate"}
                     </Button>
                     <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
-                      <Archive size={14} />
-                      Archive
+                      <ButtonProgress busy={archiveBusy} busyLabel="Archiving" idleIcon={<Archive size={14} />}>
+                        Archive
+                      </ButtonProgress>
                     </Button>
                   </div>
                 </div>
