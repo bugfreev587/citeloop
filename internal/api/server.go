@@ -95,6 +95,7 @@ func (s *Server) Router() http.Handler {
 			r.Put("/articles/{articleID}", s.editProjectArticle)
 			r.Post("/articles/{articleID}/ai-fix", s.fixProjectArticle)
 			r.Post("/articles/{articleID}/apply-fix", s.applyFixProjectArticle)
+			r.Post("/articles/{articleID}/recheck", s.recheckProjectArticle)
 			r.Post("/articles/{articleID}/approve", s.approveProjectArticle)
 			r.Post("/articles/{articleID}/reject", s.rejectProjectArticle)
 			r.Post("/articles/{articleID}/distributed", s.markProjectDistributed)
