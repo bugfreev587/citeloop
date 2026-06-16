@@ -109,6 +109,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/publisher-connections/{connectionID}/test", s.testPublisherConnection)
 			r.Put("/publisher-connections/{connectionID}/credential", s.upsertPublisherCredential)
 			r.Delete("/publisher-connections/{connectionID}/credential", s.revokePublisherCredential)
+			r.Get("/integrations/github", s.getGithubIntegration)
+			r.Post("/integrations/github/installation", s.storeGithubInstallation)
+			r.Get("/integrations/github/repos", s.listGithubRepos)
+			r.Post("/integrations/github/select-repo", s.selectGithubRepo)
 			r.Route("/seo", func(r chi.Router) {
 				r.Get("/overview", s.getSEOOverview)
 				r.Post("/sync", s.syncSEO)
