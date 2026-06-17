@@ -70,7 +70,7 @@ function isDocsActive(pathname: string, projectId: string) {
 }
 
 function isProjectsActive(pathname: string) {
-  return pathname === "/projects";
+  return pathname === "/";
 }
 
 export function ProjectShell({
@@ -225,7 +225,7 @@ export function ProjectShell({
             </div>
           </div>
           <Link
-            href="/projects"
+            href="/"
             className={cx(
               "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
               isProjectsActive(pathname) && "bg-slate-50 font-semibold text-[#d93820]",
@@ -296,7 +296,7 @@ export function ProjectShell({
             </Link>
           ))}
           <Link
-            href="/projects"
+            href="/"
             className={cx(
               "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
               isProjectsActive(pathname) && "border-[#d93820] text-[#d93820]",

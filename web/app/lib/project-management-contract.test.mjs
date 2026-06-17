@@ -11,20 +11,20 @@ test("project shell exposes a bottom projects management entry", () => {
   const shell = read("components/project-shell.tsx");
   const footer = shell.slice(shell.indexOf('className="mt-auto grid gap-2"'));
 
-  assert.match(footer, /href="\/projects"/);
+  assert.match(footer, /href="\/"/);
   assert.match(footer, />\s*Projects\s*</);
   assert.match(footer, /FolderKanban/);
 });
 
-test("projects management page lists, creates, opens, and hard-deletes projects", () => {
-  assert.equal(exists("projects/page.tsx"), true, "global /projects management page should exist");
+test("home page lists, creates, opens, and hard-deletes projects", () => {
+  assert.equal(exists("page.tsx"), true, "home page should host project management");
   assert.equal(
     exists("projects/project-management-client.tsx"),
     true,
     "project management client should own delete confirmation state",
   );
 
-  const page = read("projects/page.tsx");
+  const page = read("page.tsx");
   assert.match(page, /api\.listProjects\(\)/);
   assert.match(page, /ProjectCreateForm/);
   assert.match(page, /ProjectManagementClient/);
