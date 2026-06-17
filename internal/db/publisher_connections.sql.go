@@ -53,6 +53,30 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 	return i, err
 }
 
+const findReusableGitHubInstallation = `-- name: FindReusableGitHubInstallation :one
+select coalesce(pc.config ->> 'installation_id', '')::text as installation_id
+from publisher_connections pc
+join projects p on p.id = pc.project_id
+where p.owner_id = (select owner.owner_id from projects owner where owner.id = $1)
+  and pc.project_id <> $1
+  and pc.kind = 'github_nextjs'
+  and coalesce(pc.config ->> 'installation_id', '') <> ''
+order by pc.updated_at desc
+limit 1
+`
+
+// FindReusableGitHubInstallation returns a GitHub App installation_id already
+// linked by ANOTHER project of the SAME owner. A GitHub App installs once per
+// account, so a second project can reuse the existing installation instead of
+// re-running the install flow (which dead-ends on GitHub's "already installed"
+// page). Scoped to the current project's owner so it never crosses tenants.
+func (q *Queries) FindReusableGitHubInstallation(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, findReusableGitHubInstallation, id)
+	var installation_id string
+	err := row.Scan(&installation_id)
+	return installation_id, err
+}
+
 const getActivePublisherCredential = `-- name: GetActivePublisherCredential :one
 select id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at from publisher_credentials
 where id = $1

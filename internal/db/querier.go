@@ -51,6 +51,12 @@ type Querier interface {
 	// claim a human must resolve.
 	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
+	// FindReusableGitHubInstallation returns a GitHub App installation_id already
+	// linked by ANOTHER project of the SAME owner. A GitHub App installs once per
+	// account, so a second project can reuse the existing installation instead of
+	// re-running the install flow (which dead-ends on GitHub's "already installed"
+	// page). Scoped to the current project's owner so it never crosses tenants.
+	FindReusableGitHubInstallation(ctx context.Context, id uuid.UUID) (string, error)
 	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
