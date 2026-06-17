@@ -62,17 +62,16 @@ EVIDENCE SNIPPETS:
 ARTICLE:
 %s`, clip(string(profileJSON), 2000), clip(evidence, 3000), clip(contentMD, 6000))
 
-	resp, err := qa.LLM.Complete(ctx, llm.CompletionReq{
+	out, resp, err := qa.completeQAWithRetry(ctx, llm.CompletionReq{
 		System: "You are a strict fact-checking QA auditor. Unmapped product claims are blocking.",
 		// Roomy budget: a long article's claims array must fit in one response, or
 		// the JSON truncates and parses as "unexpected EOF" (§5.3 reliability).
 		Prompt: prompt, JSON: true, MaxTokens: 10000,
 	})
 	if err != nil {
-		return nil, resp, err
-	}
-	out, err := extractQAOutput(resp.Text)
-	if err != nil {
+		// Every attempt failed to call or parse the model — a transient infra
+		// failure, not a content verdict. Try the smaller, stricter compact prompt
+		// before giving up so "Re-run QA" doesn't dead-end on a passing draft.
 		fallback, fallbackResp, fallbackErr := qa.compactCheck(ctx, profileJSON, evidence, contentMD)
 		if fallbackErr != nil {
 			return nil, fallbackResp, fmt.Errorf("parse qa: %w; compact fallback failed: %w", err, fallbackErr)
@@ -90,6 +89,34 @@ ARTICLE:
 	enforceQAGate(&out)
 	enforceBannedClaims(&out, profileJSON, contentMD)
 	return &out, resp, nil
+}
+
+// qaParseRetries is how many extra times Check re-asks the model when its QA
+// response can't be parsed. Truncated/garbled QA responses are transient and the
+// dominant QA failure mode, so retrying inside one check lets "Re-run QA"
+// reliably produce a verdict instead of dead-ending on a single bad response.
+const qaParseRetries = 2
+
+// completeQAWithRetry runs the QA model and parses its JSON output, retrying on a
+// transport error or an unparseable response. It returns the last error only when
+// no attempt produced a valid QA object, so the caller can fall back or surface
+// it as a genuine infrastructure failure.
+func (qa *QA) completeQAWithRetry(ctx context.Context, req llm.CompletionReq) (QAOutput, llm.CompletionResp, error) {
+	var lastResp llm.CompletionResp
+	var lastErr error
+	for attempt := 0; attempt <= qaParseRetries; attempt++ {
+		resp, err := qa.LLM.Complete(ctx, req)
+		if err != nil {
+			lastResp, lastErr = resp, err
+			continue
+		}
+		out, perr := extractQAOutput(resp.Text)
+		if perr == nil {
+			return out, resp, nil
+		}
+		lastResp, lastErr = resp, perr
+	}
+	return QAOutput{}, lastResp, lastErr
 }
 
 const qaScoreAdvisoryThreshold = 0.75
@@ -163,14 +190,10 @@ EVIDENCE SNIPPETS:
 ARTICLE EXCERPT:
 %s`, clip(string(profileJSON), 1200), clip(evidence, 1200), clip(contentMD, 2500))
 
-	resp, err := qa.LLM.Complete(ctx, llm.CompletionReq{
+	out, resp, err := qa.completeQAWithRetry(ctx, llm.CompletionReq{
 		System: "You are a strict fact-checking QA auditor. Return only compact JSON.",
 		Prompt: prompt, JSON: true, MaxTokens: 4096,
 	})
-	if err != nil {
-		return nil, resp, err
-	}
-	out, err := extractQAOutput(resp.Text)
 	if err != nil {
 		return nil, resp, err
 	}
