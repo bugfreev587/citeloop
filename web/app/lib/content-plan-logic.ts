@@ -21,11 +21,22 @@ export function isBacklogStatus(status: string) {
 export function topicPickScore(topic: ContentPlanTopic) {
   const briefComplete = Boolean((topic.target_keyword || topic.target_prompt) && topic.angle && topic.format);
   return (
-    topic.priority * 10 +
+    topicPriorityRank(topic.priority) * 10 +
     Math.min(topic.internal_links.length, 5) * 2 +
     (topic.channel === "both" ? 3 : 0) +
     (briefComplete ? 4 : 0)
   );
+}
+
+export function normalizedTopicPriority(priority: number) {
+  if (!Number.isFinite(priority) || priority <= 0) return 0;
+  if (priority > 10) return Math.min(10, Math.max(1, Math.ceil((100 - priority) / 10)));
+  return Math.min(10, Math.max(1, Math.round(priority)));
+}
+
+export function topicPriorityRank(priority: number) {
+  const normalized = normalizedTopicPriority(priority);
+  return normalized > 0 ? 11 - normalized : 0;
 }
 
 export function topicWhy(topic: ContentPlanTopic) {

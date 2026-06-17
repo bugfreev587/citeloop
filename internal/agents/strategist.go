@@ -181,9 +181,9 @@ func normalizeTopicSpecs(specs []TopicSpec) []TopicSpec {
 }
 
 func fallbackTopicPriority(index int) int {
-	priority := 10 - index
-	if priority < 1 {
-		return 1
+	priority := index + 1
+	if priority > 10 {
+		return 10
 	}
 	return priority
 }

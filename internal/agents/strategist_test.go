@@ -15,7 +15,7 @@ func TestStrategistTopicSpecAcceptsPriorityScoreAlias(t *testing.T) {
 		t.Fatalf("extractJSON: %v", err)
 	}
 
-	if got, want := wrap.Topics[0].Priority, 8; got != want {
+	if got, want := wrap.Topics[0].Priority, 2; got != want {
 		t.Fatalf("priority = %d, want %d", got, want)
 	}
 }
@@ -30,7 +30,7 @@ func TestStrategistTopicSpecPrefersPriorityScoreWhenPriorityNonPositive(t *testi
 		t.Fatalf("extractJSON: %v", err)
 	}
 
-	if got, want := wrap.Topics[0].Priority, 8; got != want {
+	if got, want := wrap.Topics[0].Priority, 2; got != want {
 		t.Fatalf("priority = %d, want %d (priority_score alias should win over non-positive priority)", got, want)
 	}
 }
@@ -58,7 +58,7 @@ func TestTopicSpecUnmarshalAcceptsStringPriority(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got, want := spec.Priority, 8; got != want {
+	if got, want := spec.Priority, 1; got != want {
 		t.Fatalf("priority = %d, want %d", got, want)
 	}
 }

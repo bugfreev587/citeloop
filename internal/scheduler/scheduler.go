@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -350,10 +351,7 @@ func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db
 	}
 	targetPrompt := firstNonEmpty(stringPtrValue(opp.Query), stringPtrValue(opp.ExpectedImpact), action.ActionType)
 	angle := firstNonEmpty(stringPtrValue(opp.ExpectedImpact), action.ActionType)
-	priority := int32(pgutil.Float(opp.PriorityScore))
-	if priority <= 0 {
-		priority = 50
-	}
+	priority := priorityFromOpportunityScore(pgutil.Float(opp.PriorityScore))
 	internalLinks := []map[string]string{}
 	if action.TargetUrl != nil && strings.TrimSpace(*action.TargetUrl) != "" {
 		internalLinks = append(internalLinks, map[string]string{"url": strings.TrimSpace(*action.TargetUrl)})
@@ -597,7 +595,7 @@ func (s *Scheduler) generateCandidate(ctx context.Context, q *db.Queries, p db.P
 	if err != nil {
 		s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
 		s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
-		// leave topic in generating; next tick may retry. Do not block others.
+		s.resetTopicAfterGenerationFailure(ctx, q, p.ID, generatingTopic, sourceActionID)
 		return
 	}
 	if sourceActionID != uuid.Nil {
@@ -612,6 +610,55 @@ func (s *Scheduler) generateCandidate(ctx context.Context, q *db.Queries, p db.P
 		}
 	}
 	s.Log.Info("generated into review queue", "project", p.ID, "topic", t.Title)
+}
+
+func priorityFromOpportunityScore(score float64) int32 {
+	if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
+		return 5
+	}
+	if score > 10 {
+		priority := int32(math.Ceil((100 - score) / 10))
+		if priority < 1 {
+			return 1
+		}
+		if priority > 10 {
+			return 10
+		}
+		return priority
+	}
+	priority := int32(math.Round(score))
+	if priority < 1 {
+		return 1
+	}
+	if priority > 10 {
+		return 10
+	}
+	return priority
+}
+
+func (s *Scheduler) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Queries, projectID uuid.UUID, topic db.Topic, sourceActionID uuid.UUID) {
+	status, err := topicstate.GenerationFailureStatus(topicstate.Status(topic.Status), topic.ScheduledAt.Valid)
+	if err != nil {
+		s.Log.Warn("generation failure topic state transition rejected", "project", projectID, "topic", topic.ID, "status", topic.Status, "err", err)
+		return
+	}
+	if _, err := q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
+		ID:        topic.ID,
+		ProjectID: projectID,
+		Status:    string(status),
+	}); err != nil {
+		s.Log.Warn("reset topic after generation failure failed", "project", projectID, "topic", topic.ID, "err", err)
+		return
+	}
+	if sourceActionID != uuid.Nil {
+		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+			ID:        sourceActionID,
+			ProjectID: projectID,
+			Status:    "approved",
+		}); err != nil {
+			s.Log.Warn("reset content action after generation failure failed", "project", projectID, "topic", topic.ID, "action", sourceActionID, "err", err)
+		}
+	}
 }
 
 // TickScheduledTopics generates topics whose operator-set scheduled_at slot has

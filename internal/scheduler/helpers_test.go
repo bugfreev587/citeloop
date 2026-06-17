@@ -67,3 +67,40 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 		t.Fatal("Start must register TickGEO weekly")
 	}
 }
+
+func TestStartRegistersFrequentGenerationTick(t *testing.T) {
+	raw, err := os.ReadFile("helpers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, "TickGenerate") || !strings.Contains(source, "@every 5m") {
+		t.Fatal("Start must register TickGenerate every 5 minutes so automatic drafting does not wait for the daily cron")
+	}
+	if strings.Contains(source, "0 2 * * *") {
+		t.Fatal("Start must not leave automatic drafting on the old daily 02:00 cron")
+	}
+}
+
+func TestGenerationFailureRequeuesTopic(t *testing.T) {
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, "resetTopicAfterGenerationFailure") {
+		t.Fatal("generateCandidate must reset failed automatic drafts back to a retryable topic status")
+	}
+	if strings.Contains(source, "leave topic in generating") {
+		t.Fatal("generation failure must not strand topics in generating")
+	}
+}
+
+func TestOpportunityPriorityScoreUsesP1AsHighest(t *testing.T) {
+	if got, want := priorityFromOpportunityScore(80), int32(2); got != want {
+		t.Fatalf("priorityFromOpportunityScore(80) = %d, want %d", got, want)
+	}
+	if got, want := priorityFromOpportunityScore(0), int32(5); got != want {
+		t.Fatalf("priorityFromOpportunityScore(0) = %d, want %d fallback", got, want)
+	}
+}

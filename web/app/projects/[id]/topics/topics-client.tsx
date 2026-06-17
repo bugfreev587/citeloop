@@ -9,6 +9,7 @@ import {
   planHealthForTopics,
   recommendedTopicIds,
   topicCardSpanClass,
+  topicPickScore,
   topicPickSignal,
   topicWhy,
 } from "../../../lib/content-plan-logic";
@@ -149,7 +150,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const nextTopic = useMemo(() => {
     const recommendedFirst = queuedTopics.filter((topic) => recommendedIds.has(topic.id));
     const pool = recommendedFirst.length ? recommendedFirst : queuedTopics;
-    return [...pool].sort((a, b) => b.priority - a.priority)[0] ?? null;
+    return [...pool].sort((a, b) => {
+      const score = topicPickScore(b) - topicPickScore(a);
+      if (score !== 0) return score;
+      return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
+    })[0] ?? null;
   }, [queuedTopics, recommendedIds]);
   const nextTopicBusy = nextTopic ? Boolean(generatingIds[nextTopic.id]) : false;
   const pacingNote = useMemo(() => {

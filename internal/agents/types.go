@@ -114,14 +114,18 @@ func parseTopicPriority(raw json.RawMessage) (int, bool) {
 		return 0, false
 	}
 	switch text {
-	case "urgent", "critical", "highest", "p0":
-		return 10, true
-	case "high", "p1":
-		return 8, true
-	case "medium", "moderate", "normal", "p2":
-		return 5, true
-	case "low", "p3":
+	case "urgent", "critical", "highest", "p0", "high", "p1":
+		return 1, true
+	case "p2":
+		return 2, true
+	case "p3":
 		return 3, true
+	case "medium", "moderate", "normal":
+		return 5, true
+	case "low":
+		return 8, true
+	case "lowest":
+		return 10, true
 	default:
 		return 0, false
 	}
@@ -132,7 +136,14 @@ func normalizeTopicPriorityNumber(value float64) int {
 		return 0
 	}
 	if value > 10 {
-		value = value / 10
+		priority := int(math.Ceil((100 - value) / 10))
+		if priority < 1 {
+			return 1
+		}
+		if priority > 10 {
+			return 10
+		}
+		return priority
 	}
 	priority := int(math.Round(value))
 	if priority < 1 {

@@ -72,6 +72,16 @@ test("recommendedTopicIds only ranks unscheduled backlog topics", async () => {
   assert.deepEqual(ids, ["backlog-linked", "backlog-older"]);
 });
 
+test("priority 1 outranks priority 3 in plan recommendations", async () => {
+  const { recommendedTopicIds, topicPickScore } = await loadContentPlanLogicModule();
+
+  const p1 = topic({ id: "p1", priority: 1, created_at: "2026-06-01T00:00:00.000Z" });
+  const p3 = topic({ id: "p3", priority: 3, created_at: "2026-06-02T00:00:00.000Z" });
+
+  assert.ok(topicPickScore(p1) > topicPickScore(p3));
+  assert.deepEqual(recommendedTopicIds([p3, p1]), ["p1", "p3"]);
+});
+
 test("planHealthForTopics reports whole-plan health independent of active filters", async () => {
   const { planHealthForTopics } = await loadContentPlanLogicModule();
 

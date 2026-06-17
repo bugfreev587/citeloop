@@ -282,7 +282,7 @@ func (q *Queries) ListArticlesByTopicForProject(ctx context.Context, arg ListArt
 const listTopics = `-- name: ListTopics :many
 select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
 where project_id = $1
-order by priority desc, created_at desc
+order by priority asc, created_at desc
 `
 
 func (q *Queries) ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error) {
@@ -377,7 +377,7 @@ where project_id = $1
   and status in ('backlog','scheduled')
 order by
   case when source_content_action_id is not null then 0 else 1 end,
-  priority desc,
+  priority asc,
   created_at asc
 limit $2
 for update skip locked

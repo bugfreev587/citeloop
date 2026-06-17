@@ -14,7 +14,7 @@ where id = $1 and project_id = $2;
 -- name: ListTopics :many
 select * from topics
 where project_id = $1
-order by priority desc, created_at desc;
+order by priority asc, created_at desc;
 
 -- name: UpdateTopic :one
 update topics set
@@ -70,7 +70,7 @@ where project_id = $1
   and status in ('backlog','scheduled')
 order by
   case when source_content_action_id is not null then 0 else 1 end,
-  priority desc,
+  priority asc,
   created_at asc
 limit $2
 for update skip locked;

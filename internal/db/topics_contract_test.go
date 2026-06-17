@@ -25,6 +25,15 @@ func TestTopicMutationQueriesAreProjectScoped(t *testing.T) {
 	}
 }
 
+func TestTopicQueriesTreatPriorityOneAsHighest(t *testing.T) {
+	if !strings.Contains(listTopics, "order by priority asc, created_at desc") {
+		t.Fatal("ListTopics must order lower priority numbers first so P1 appears before P3")
+	}
+	if !strings.Contains(selectGenerationCandidates, "priority asc") {
+		t.Fatal("SelectGenerationCandidates must generate lower priority numbers first so P1 drafts before P3")
+	}
+}
+
 func TestTopicPriorityBackfillMigrationCoversZeroPriorityBacklog(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "migrations", "0016_backfill_topic_priority.sql"))
 	if err != nil {
@@ -44,6 +53,29 @@ func TestTopicPriorityBackfillMigrationCoversZeroPriorityBacklog(t *testing.T) {
 	} {
 		if !strings.Contains(migration, want) {
 			t.Fatalf("topic priority backfill migration missing %q", want)
+		}
+	}
+}
+
+func TestOrphanGeneratingTopicMigrationRearmsStuckDrafts(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "migrations", "0019_rearm_orphan_generating_topics.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := strings.ToLower(string(body))
+
+	for _, want := range []string{
+		"update topics",
+		"status = case when scheduled_at is null then 'backlog' else 'scheduled' end",
+		"where t.status = 'generating'",
+		"not exists",
+		"from articles",
+		"status <> 'rejected'",
+		"update content_actions",
+		"status = 'approved'",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("orphan generating topic migration missing %q", want)
 		}
 	}
 }
