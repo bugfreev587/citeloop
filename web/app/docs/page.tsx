@@ -10,6 +10,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Target,
   UploadCloud,
 } from "lucide-react";
 import { AdminDocsLink } from "./admin-link";
@@ -28,6 +29,7 @@ const docsNav = [
 const loopSteps = [
   "Read your domain",
   "Build context",
+  "Review opportunities",
   "Plan content",
   "Generate drafts",
   "Check evidence",
@@ -45,7 +47,7 @@ const startPaths = [
   },
   {
     title: "Create a content plan",
-    detail: "Turn context and visibility gaps into topics, schedules, and content intent before drafting starts.",
+    detail: "Review generated opportunities, then turn the ones you keep into topics, schedules, and content intent.",
     href: "/",
   },
   {
@@ -58,22 +60,24 @@ const startPaths = [
 const concepts = [
   ["Project", "The domain-level workspace CiteLoop reads, plans, reviews, publishes, and measures."],
   ["Context", "The product profile, evidence library, source pages, voice, and rules used for every draft."],
-  ["Content Plan", "The backlog of topics, visibility opportunities, angles, schedules, and generation intent."],
+  ["Opportunities", "Generated content and visibility gaps that need review before they enter the plan."],
+  ["Content Plan", "The backlog of reviewed topics, angles, schedules, and generation intent."],
   ["Canonical", "The primary article published on your main content surface."],
   ["Variant", "A rewritten version prepared for a distribution surface after the canonical URL exists."],
   ["Distribution / Syndication", "The semi-manual channel path for Dev.to, Hashnode, LinkedIn, forums, and other surfaces."],
   ["Review gate", "The only human approval step before publishable content can go live."],
-  ["Visibility", "SEO and AI-answer signals that identify opportunities and feed the loop back into planning."],
+  ["Visibility", "Measurement and diagnostics for SEO, GEO, crawler access, and AI-answer signals."],
   ["Settings > Activity Log", "The advanced audit trail for degraded checks, failures, and automation details."],
 ];
 
 const dashboardPages = [
   ["Home", "Shows the current next action, loop momentum, context health, and what needs attention now."],
   ["Context", "Shows what CiteLoop believes about your domain and the evidence behind publishable claims."],
-  ["Content Plan", "Turns context and visibility gaps into topics, opportunities, and schedules."],
+  ["Opportunities", "Reviews automatically generated opportunities before they become content work."],
+  ["Content Plan", "Turns reviewed opportunities into topics, schedules, and drafting intent."],
   ["Review", "Groups drafts that need approval and explains evidence issues in reviewer language."],
   ["Publish", "Tracks canonical publishing, URL verification, and distribution-ready variants."],
-  ["Visibility", "Summarizes SEO and AI-answer visibility, opportunities, confidence, and loop closure."],
+  ["Visibility", "Shows measurement coverage, diagnostics, crawler access, and GEO visibility signals."],
   ["Settings", "Controls cadence, budget, automation, crawl boundaries, publisher connections, and notifications."],
   ["Settings > Activity Log", "Keeps run details available for audit without making them a daily navigation item."],
 ];
@@ -192,7 +196,7 @@ export default function DocsPage() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="text-sm font-bold text-slate-950">The CiteLoop loop</div>
                   <div className="rounded-md bg-white px-2 py-1 text-xs font-bold text-[#d93820] ring-1 ring-slate-200">
-                    Visibility feeds planning
+                    Opportunities feed planning
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
@@ -320,7 +324,7 @@ export default function DocsPage() {
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                   <div className="text-sm font-bold text-slate-950">After a project exists</div>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Open Context, Content Plan, Review, Publish, Visibility, and Settings from the project sidebar.
+                    Open Context, Opportunities, Content Plan, Review, Publish, Visibility, and Settings from the project sidebar.
                   </p>
                 </div>
               </div>
@@ -334,6 +338,7 @@ export default function DocsPage() {
                 {[
                   [FileText, "Overview"],
                   [ListChecks, "Start here"],
+                  [Target, "Opportunities"],
                   [CheckCircle2, "Review gate"],
                   [UploadCloud, "Publish"],
                   [Search, "Visibility"],
@@ -355,4 +360,3 @@ export default function DocsPage() {
     </main>
   );
 }
-

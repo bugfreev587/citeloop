@@ -88,7 +88,17 @@ function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
 }
 
-export function SEOClient({ projectId }: { projectId: string }) {
+type SEOClientMode = "opportunities" | "visibility";
+
+export function OpportunitiesClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="opportunities" />;
+}
+
+export function VisibilityClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="visibility" />;
+}
+
+export function SEOClient({ projectId, mode = "opportunities" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
@@ -465,8 +475,8 @@ export function SEOClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <SectionHeader
-        title="Review opportunities"
-        eyebrow="Find opportunities"
+        title={mode === "opportunities" ? "Review opportunities" : "Measurement and diagnostics"}
+        eyebrow={mode === "opportunities" ? "Find opportunities" : "Measure visibility"}
         action={
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={manualRefresh} disabled={!!busy}>
@@ -485,6 +495,7 @@ export function SEOClient({ projectId }: { projectId: string }) {
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
+      {mode === "opportunities" && (
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -591,10 +602,10 @@ export function SEOClient({ projectId }: { projectId: string }) {
           )}
         </aside>
       </section>
+      )}
 
-      <details className="rounded-xl border border-slate-200 bg-white p-4">
-        <summary className="cursor-pointer text-sm font-bold text-slate-900">Measurement and diagnostics</summary>
-        <div className="mt-5 space-y-7">
+      {mode === "visibility" && (
+        <div className="space-y-7">
       <section>
         <SectionHeader
           title="Setup"
@@ -1032,8 +1043,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
         </div>
       </section>
         </div>
-      </details>
+      )}
 
+      {mode === "opportunities" && (
       <details className="rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm font-bold text-slate-900">
           <span>{brief?.title ?? "Visibility brief"}</span>
@@ -1093,8 +1105,9 @@ export function SEOClient({ projectId }: { projectId: string }) {
         )}
         </div>
       </details>
+      )}
 
-      {actions.length > 0 && (
+      {mode === "opportunities" && actions.length > 0 && (
       <section>
         <SectionHeader title="Content actions" action={<Badge tone="neutral">{actions.length}</Badge>} />
           <div className="grid gap-2">

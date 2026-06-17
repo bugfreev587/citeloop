@@ -199,7 +199,7 @@ export function nextWorkspaceAction({
     return {
       title: "Review opportunities",
       detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
-      href: `/projects/${projectId}/visibility`,
+      href: `/projects/${projectId}/opportunities`,
     };
   }
   if (topicsCount === 0) {
@@ -241,7 +241,7 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       label: "Opportunities converted",
       value: input.opportunitiesConvertedCount,
       detail: "visibility gaps entered the loop",
-      href: `/projects/${input.projectId}/visibility`,
+      href: `/projects/${input.projectId}/opportunities`,
       actionLabel: "Review loop",
       tone: "blue",
     },
@@ -287,7 +287,7 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     emptyAction: {
       title: "Context is ready",
       detail: "Review opportunities when they appear; CiteLoop will advance planning and drafting automatically after the review gate.",
-      href: `/projects/${input.projectId}/visibility`,
+      href: `/projects/${input.projectId}/opportunities`,
       actionLabel: "Review opportunities",
     },
   };

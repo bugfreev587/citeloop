@@ -67,7 +67,7 @@ test("buildActionableMomentum hides zero values and returns the next useful empt
   assert.deepEqual(momentum.items, []);
   assert.equal(momentum.emptyAction.title, "Context is ready");
   assert.equal(momentum.emptyAction.actionLabel, "Review opportunities");
-  assert.equal(momentum.emptyAction.href, "/projects/project_1/visibility");
+  assert.equal(momentum.emptyAction.href, "/projects/project_1/opportunities");
 });
 
 test("buildActionableMomentum turns non-zero metrics into actions", async () => {
@@ -92,7 +92,7 @@ test("buildActionableMomentum turns non-zero metrics into actions", async () => 
     [
       "/projects/project_1/publish",
       "/projects/project_1/visibility",
-      "/projects/project_1/visibility",
+      "/projects/project_1/opportunities",
       "/projects/project_1",
     ],
   );
@@ -212,11 +212,11 @@ test("nextWorkspaceAction sends confirmed projects to opportunity review before 
   });
 
   assert.equal(action.title, "Review opportunities");
-  assert.equal(action.href, "/projects/project_1/visibility");
+  assert.equal(action.href, "/projects/project_1/opportunities");
   assert.match(action.detail, /ready to review/i);
 });
 
-test("nextWorkspaceAction follows visibility review work before creating a first plan", async () => {
+test("nextWorkspaceAction follows opportunity review work before creating a first plan", async () => {
   const { nextWorkspaceAction } = await loadDashboardUXLogicModule();
 
   const action = nextWorkspaceAction({
@@ -229,11 +229,11 @@ test("nextWorkspaceAction follows visibility review work before creating a first
     readyCount: 0,
     topicsCount: 0,
     openOpportunityCount: 3,
-    currentPathname: "/projects/project_1/visibility",
+    currentPathname: "/projects/project_1/opportunities",
   });
 
   assert.equal(action.title, "Review opportunities");
-  assert.equal(action.href, "/projects/project_1/visibility");
+  assert.equal(action.href, "/projects/project_1/opportunities");
   assert.match(action.detail, /ready to review/i);
 });
 

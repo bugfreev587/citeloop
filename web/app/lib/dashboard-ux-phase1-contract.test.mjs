@@ -10,7 +10,7 @@ const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath))
 test("project shell uses user-facing Phase 1 navigation and hides Runs from primary nav", () => {
   const shell = read("components/project-shell.tsx");
 
-  for (const label of ["Context", "Content Plan", "Review", "Publish", "Visibility", "Settings", "Admin"]) {
+  for (const label of ["Context", "Opportunities", "Content Plan", "Review", "Publish", "Visibility", "Settings", "Admin"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
   }
 
@@ -47,7 +47,7 @@ test("project shell groups desktop navigation into SuperX-style sections", () =>
   const shell = read("components/project-shell.tsx");
 
   assert.match(shell, /const navSections = \[/);
-  assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"[\s\S]*label: "Context"[\s\S]*label: "Content Plan"/);
+  assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"[\s\S]*label: "Context"[\s\S]*label: "Opportunities"[\s\S]*label: "Content Plan"/);
   assert.match(shell, /id: "create"[\s\S]*label: "CREATE"[\s\S]*label: "Review"[\s\S]*label: "Publish"/);
   for (const label of ["CREATE", "MEASURE", "SYSTEM"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
@@ -128,14 +128,30 @@ test("home shows parallel context-building tracks during onboarding", () => {
   assert.doesNotMatch(workspace, /Estimated progress/);
 });
 
-test("visibility defaults to opportunity review and keeps measurement details secondary", () => {
-  const visibility = read("projects/[id]/seo/seo-client.tsx");
-  assert.match(visibility, /Review opportunities/);
-  assert.match(visibility, /need review/);
-  assert.match(visibility, /Add to Content Plan/);
-  assert.match(visibility, /Measurement and diagnostics/);
-  assert.doesNotMatch(visibility, /The numbers below are placeholders/);
-  assert.doesNotMatch(visibility, /Showing \{loopRows\.length\} of \{loopTotal\}/);
+test("opportunities owns review while visibility owns measurement diagnostics", () => {
+  assert.equal(exists("projects/[id]/opportunities/page.tsx"), true, "opportunities route should exist");
+
+  const opportunitiesPage = read("projects/[id]/opportunities/page.tsx");
+  const visibilityPage = read("projects/[id]/visibility/page.tsx");
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+
+  assert.match(opportunitiesPage, /OpportunitiesClient/);
+  assert.match(visibilityPage, /VisibilityClient/);
+  assert.match(seo, /export function OpportunitiesClient/);
+  assert.match(seo, /export function VisibilityClient/);
+  assert.match(seo, /mode="opportunities"/);
+  assert.match(seo, /mode="visibility"/);
+
+  for (const copy of ["Review opportunities", "need review", "Add to Content Plan", "What to review", "Review result"]) {
+    assert.match(seo, new RegExp(copy));
+  }
+  for (const copy of ["Measurement and diagnostics", "Setup", "GEO visibility"]) {
+    assert.match(seo, new RegExp(copy));
+  }
+  assert.doesNotMatch(opportunitiesPage, /VisibilityClient/);
+  assert.doesNotMatch(visibilityPage, /OpportunitiesClient/);
+  assert.doesNotMatch(seo, /The numbers below are placeholders/);
+  assert.doesNotMatch(seo, /Showing \{loopRows\.length\} of \{loopTotal\}/);
 
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
   // Evidence and source lists stay compact on the page and move full lists into drawers.
@@ -237,6 +253,7 @@ test("publishing schedule cards show publish time and target platform", () => {
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",
+    "projects/[id]/opportunities/page.tsx",
     "projects/[id]/plan/page.tsx",
     "projects/[id]/publish/page.tsx",
     "projects/[id]/visibility/page.tsx",
@@ -394,6 +411,7 @@ test("home renders the loop as a single connected pipeline stepper", () => {
     assert.match(workspace, new RegExp(copy));
   }
   assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/context`/);
+  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/opportunities`/);
   assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/visibility`/);
 
   // The decorative circular loop, arrow connectors, and 3x3 grid are gone.
@@ -435,8 +453,10 @@ test("context page is a user-reviewable product cognition center, not a raw know
   }
 });
 
-test("visibility page presents opportunity review before measurement diagnostics", () => {
-  const visibility = read("projects/[id]/seo/seo-client.tsx");
+test("opportunities page presents review and visibility page presents measurement diagnostics", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const opportunitiesPage = read("projects/[id]/opportunities/page.tsx");
+  const visibilityPage = read("projects/[id]/visibility/page.tsx");
 
   for (const copy of [
     "Review opportunities",
@@ -449,12 +469,14 @@ test("visibility page presents opportunity review before measurement diagnostics
     "Dismiss",
     "Public crawl only",
   ]) {
-    assert.match(visibility, new RegExp(copy));
+    assert.match(seo, new RegExp(copy));
   }
 
-  assert.doesNotMatch(visibility, /title="SEO"/);
-  assert.doesNotMatch(visibility, /title="Visibility overview"/);
-  assert.doesNotMatch(visibility, /title="Opportunities"/);
+  assert.match(opportunitiesPage, /OpportunitiesClient/);
+  assert.match(visibilityPage, /VisibilityClient/);
+  assert.doesNotMatch(seo, /title="SEO"/);
+  assert.doesNotMatch(seo, /title="Visibility overview"/);
+  assert.doesNotMatch(seo, /title="Opportunities"/);
 });
 
 test("activity log defaults to user-facing attention events and hides run internals in details", () => {

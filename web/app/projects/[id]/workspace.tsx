@@ -341,7 +341,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             ? "Reviewed"
             : "Scanning",
       tone: !contextConfirmed ? "neutral" : seoOpportunities.length > 0 ? "amber" : "green",
-      href: `/projects/${projectId}/visibility`,
+      href: `/projects/${projectId}/opportunities`,
     },
     {
       label: "Plan",
@@ -415,7 +415,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         id: `opportunity-${opportunity.id}`,
         title: opportunityTitle(opportunity),
         detail: "Visibility opportunity detected",
-        href: `/projects/${projectId}/visibility`,
+        href: `/projects/${projectId}/opportunities`,
       })),
     ],
     nextEvent: nextScheduledRow
@@ -432,7 +432,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     { id: "failed", label: "Publishing failed", count: failedPublish.length, href: `/projects/${projectId}/publish`, tone: "red" as const },
     { id: "blocked", label: "Drafts blocked by QA", count: reviewArticles.filter((a) => a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "red" as const },
     { id: "review", label: "Drafts waiting for review", count: reviewArticles.filter((a) => !a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "amber" as const },
-    { id: "opportunities", label: "Opportunities to review", count: seoOpportunities.length, href: `/projects/${projectId}/visibility`, tone: "amber" as const },
+    { id: "opportunities", label: "Opportunities to review", count: seoOpportunities.length, href: `/projects/${projectId}/opportunities`, tone: "amber" as const },
     { id: "distribute", label: "Variants ready to distribute", count: ready.length, href: `/projects/${projectId}/publish`, tone: "green" as const },
     { id: "warnings", label: "Automation warnings", count: automationWarnings.length, href: `/projects/${projectId}/settings/activity`, tone: "amber" as const },
     { id: "waiting-canonical", label: "Variants waiting on canonical", count: waitingVariants.length, href: `/projects/${projectId}/publish`, tone: "neutral" as const },

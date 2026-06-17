@@ -198,13 +198,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               tone: "amber",
               title: `${openOpportunities} ${openOpportunities === 1 ? "opportunity is" : "opportunities are"} waiting for review`,
               detail: "Review opportunities to add them to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/visibility` },
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/opportunities` },
             }
           : {
               tone: "neutral",
               title: "No opportunities are waiting",
-              detail: "CiteLoop plans automatically once you review opportunities in Visibility. You can also seed a starter backlog from your domain (advanced).",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/visibility` },
+              detail: "CiteLoop plans automatically once you review opportunities. You can also seed a starter backlog from your domain (advanced).",
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/opportunities` },
             };
   const autoPlanToneClass = {
     green: "border-emerald-200 bg-emerald-50",

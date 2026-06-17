@@ -21,6 +21,7 @@ test("global docs route exists and explains the CiteLoop loop with Phase 1 IA la
     "Workflow model",
     "Common states and signals",
     "Context",
+    "Opportunities",
     "Content Plan",
     "Publish",
     "Visibility",

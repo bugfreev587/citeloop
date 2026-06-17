@@ -15,6 +15,7 @@ import {
   Search,
   Send,
   Settings2,
+  Target,
 } from "lucide-react";
 import { Project } from "../lib/api";
 import { useApi } from "../lib/use-api";
@@ -27,6 +28,7 @@ const navSections = [
     items: [
       { label: "Home", href: "", icon: Home },
       { label: "Context", href: "context", icon: Database },
+      { label: "Opportunities", href: "opportunities", icon: Target },
       { label: "Content Plan", href: "plan", icon: ListChecks },
     ],
   },
