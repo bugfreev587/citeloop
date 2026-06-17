@@ -177,12 +177,12 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       {summary.total === 0 ? (
         <EmptyState
           title="Nothing needs you"
-          detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real evidence or positioning decision will show up here."
+          detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real positioning choice or manual edit will show up here."
         />
       ) : (
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="grid border-b border-slate-200 bg-white sm:grid-cols-3">
-            <SummaryCard label="Needs your decision" value={summary.needsHuman} detail="Only genuine evidence calls" tone="red" />
+            <SummaryCard label="Needs your decision" value={summary.needsHuman} detail="Only rare manual calls" tone="red" />
             <SummaryCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
             <SummaryCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
           </div>
@@ -484,7 +484,7 @@ function RecoveringPanel({ article }: { article: Article }) {
       <p className="mt-2 text-xs leading-5 text-amber-900">
         {repairing
           ? "An automatic edit is in progress; QA will re-run when it finishes."
-          : "QA is being re-run on this draft. If it can't be cleared automatically, CiteLoop repairs or regenerates it — and only asks you if a real evidence decision remains."}
+          : "QA is being re-run on this draft. If it can't be cleared automatically, CiteLoop repairs or regenerates it — and only asks you for a real positioning choice or manual edit."}
       </p>
       <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-700">No action needed</p>
     </section>

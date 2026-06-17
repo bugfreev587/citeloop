@@ -177,7 +177,7 @@ export function nextWorkspaceAction({
   if (hasBlockedDrafts) {
     return {
       title: "Review blocked drafts",
-      detail: "Some drafts need evidence or positioning fixes before they can be approved.",
+      detail: "Some drafts need a manual review before they can be approved.",
       href: `/projects/${projectId}/review`,
     };
   }
