@@ -31,7 +31,7 @@ export default async function ProjectsIndexPage() {
 
   return (
     <main className="min-h-[100dvh] bg-stone-100 px-4 py-8 text-slate-950">
-      <div className="mx-auto grid max-w-5xl gap-8 lg:grid-cols-[1fr_320px]">
+      <div className="mx-auto max-w-3xl">
         <section className="min-w-0">
           <div className="mb-8">
             <div className="mb-4 flex items-center justify-between gap-2">
@@ -94,8 +94,15 @@ export default async function ProjectsIndexPage() {
             </div>
           )}
 
+          {!signedOut && (
+            <div className="mb-8">
+              <h2 className="mb-4 text-xl font-bold leading-7 text-slate-900">Connect Product</h2>
+              <ProjectCreateForm />
+            </div>
+          )}
+
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-bold leading-7 text-slate-900">Projects</h2>
+            <h2 className="text-xl font-bold leading-7 text-slate-900">Products</h2>
             {!signedOut && <Badge tone="neutral">{projects.length} total</Badge>}
           </div>
 
@@ -110,8 +117,6 @@ export default async function ProjectsIndexPage() {
             <ProjectManagementClient initialProjects={projects} />
           )}
         </section>
-
-        <aside className="self-start">{!signedOut && <ProjectCreateForm />}</aside>
       </div>
     </main>
   );
