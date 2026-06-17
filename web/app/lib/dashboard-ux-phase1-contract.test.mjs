@@ -212,6 +212,28 @@ test("destructive content-plan and distribution actions confirm before running",
   assert.match(publishing, /Mark this variant as distributed\?/);
 });
 
+test("publishing schedule cards show publish time and target platform", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+
+  assert.match(publishing, /function publishTimeLabel/);
+  assert.match(publishing, /function publishTargetLabel/);
+
+  const readyBlock = publishing.slice(
+    publishing.indexOf('title="Ready to publish"'),
+    publishing.indexOf('title="Scheduled to publish"'),
+  );
+  assert.match(readyBlock, /publishTimeLabel\(article\)/);
+  assert.match(readyBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
+  assert.doesNotMatch(readyBlock, /Publishing on the next pass/);
+
+  const scheduledBlock = publishing.slice(
+    publishing.indexOf('title="Scheduled to publish"'),
+    publishing.indexOf("{/* Right column"),
+  );
+  assert.match(scheduledBlock, /publishTimeLabel\(article\)/);
+  assert.match(scheduledBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
+});
+
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",

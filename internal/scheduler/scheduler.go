@@ -899,7 +899,11 @@ func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project
 		}
 		if err := s.verifyPublishedURL(ctx, res.URL); err != nil {
 			if a.Status == "pending_url_verification" {
-				s.Log.Info("publish still waiting for URL verification", "article", a.ID, "url", res.URL, "err", err)
+				if pendingURLVerificationDeadlineReached(a, s.currentTime()) {
+					s.markPublishFailed(ctx, q, p, a, "reconcile_url_unverified", "reconcile url verification failed: "+err.Error(), true)
+				} else {
+					s.Log.Info("publish still waiting for URL verification", "article", a.ID, "url", res.URL, "err", err)
+				}
 			} else {
 				s.markPublishFailed(ctx, q, p, a, "reconcile_url_unverified", "reconcile url verification failed: "+err.Error(), true)
 			}
@@ -1140,6 +1144,12 @@ func nextPublishRetryAt(now time.Time, attempt int32) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: now.Add(delays[attempt-1]), Valid: true}
+}
+
+func pendingURLVerificationDeadlineReached(a db.Article, now time.Time) bool {
+	return a.Status == "pending_url_verification" &&
+		a.NextPublishRetryAt.Valid &&
+		!a.NextPublishRetryAt.Time.After(now)
 }
 
 func (s *Scheduler) markPublishFailed(ctx context.Context, q *db.Queries, p db.Project, a db.Article, phase, errText string, transition bool) {
