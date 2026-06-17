@@ -28,7 +28,7 @@ func TestReviewRecoveryDrivesAutomatedLadderAndAutoApprove(t *testing.T) {
 	body := string(source)
 	for _, want := range []string{
 		"func (s *Scheduler) TickReviewRecovery",
-		"AutoAdvanceEnabled",                  // hands-off recovery only with auto-advance
+		"AutoAdvanceEnabled",                  // gates auto-approval only; recovery runs for all projects
 		"ListRecoverableArticlesForProject",   // blocked, not-human drafts
 		"Requalify",                           // re-run QA on infra failures
 		"RepairArticle",                       // AI repair on auto-fixable issues

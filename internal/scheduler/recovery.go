@@ -33,12 +33,13 @@ const (
 	autoReviewer      = "citeloop-auto"
 )
 
-// TickReviewRecovery drains the review queue without a human: for every
-// auto-advance project it pushes blocked-but-not-human drafts through re-QA →
-// AI repair → regeneration, escalating to a genuine human decision only when QA
-// actually finds an unresolvable evidence/positioning issue or the automated
-// budget is spent. It then auto-approves any draft QA has cleared so a hands-off
-// project never parks clean content in front of the operator (§5.5).
+// TickReviewRecovery drains the review queue without a human: for every project
+// it pushes blocked-but-not-human drafts through re-QA → AI repair →
+// regeneration, escalating to a genuine human decision only when QA actually
+// finds an unresolvable evidence/positioning issue or the automated budget is
+// spent. A QA-blocked draft is a correctness problem CiteLoop always resolves
+// automatically; the auto-advance setting only decides whether the *cleared*
+// draft is auto-approved or waits for a human to approve it (§5.5).
 func (s *Scheduler) TickReviewRecovery(ctx context.Context) {
 	q := db.New(s.Pool)
 	projects, err := q.ListProjects(ctx)
@@ -58,11 +59,6 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 	if err != nil {
 		return err
 	}
-	// Hands-off recovery + auto-approval only run when the project opted into
-	// auto-advance; otherwise the human stays the gate.
-	if !cfg.AutoAdvanceEnabled {
-		return nil
-	}
 	q := db.New(s.Pool)
 
 	// Cost breaker (§5.4): recovery makes LLM calls, so stop when the month's
@@ -71,6 +67,10 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 		return nil
 	}
 
+	// Recovery runs for every project: a QA-blocked draft is a correctness
+	// problem CiteLoop should always work through (re-QA → repair → regenerate →
+	// escalate), so a draft never parks indefinitely under a "CiteLoop is
+	// handling this" label that nothing is acting on.
 	recoverable, err := q.ListRecoverableArticlesForProject(ctx, db.ListRecoverableArticlesForProjectParams{
 		ProjectID: p.ID,
 		Limit:     reviewRecoveryLimit,
@@ -84,7 +84,12 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 		}
 	}
 
-	s.autoApproveReadyForProject(ctx, q, p.ID, cfg)
+	// Auto-approval is the only step gated by auto-advance: hands-off projects
+	// publish QA-cleared drafts without a click, while manual projects keep the
+	// human as the approval gate (cleared drafts wait in "Ready to approve").
+	if cfg.AutoAdvanceEnabled {
+		s.autoApproveReadyForProject(ctx, q, p.ID, cfg)
+	}
 	return nil
 }
 
