@@ -423,6 +423,16 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
   }
 
+  function reuseGithub() {
+    // The same owner already installed the App on another project. A GitHub App
+    // installs once per account, so skip GitHub entirely: drive the callback's
+    // repo picker directly with the existing installation id.
+    const reuse = githubIntegration?.reusable_installation_id;
+    if (reuse) {
+      window.location.href = `/integrations/github/callback?installation_id=${encodeURIComponent(reuse)}&state=${encodeURIComponent(projectId)}`;
+    }
+  }
+
   async function testConnection(connectionID: string) {
     setBusy(`test-${connectionID}`);
     setMessage(null);
@@ -851,6 +861,32 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                       Change repository or access
                     </span>
                   </Button>
+                </div>
+              </div>
+            ) : githubIntegration.reusable_installation_id ? (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                  <GitBranch size={16} />
+                  Use your connected GitHub
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  You already authorized the CiteLoop GitHub App on your account. Reuse it for this project and just pick a repository — no second install needed.
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="primary" onClick={reuseGithub}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <GitBranch size={14} />
+                      Pick a repository
+                    </span>
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={connectGithub}
+                    disabled={!githubIntegration.install_url}
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-900 disabled:opacity-50"
+                  >
+                    Connect a different account
+                  </button>
                 </div>
               </div>
             ) : (

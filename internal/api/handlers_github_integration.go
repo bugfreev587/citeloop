@@ -77,6 +77,11 @@ type githubIntegrationStatus struct {
 	ContentDir     string `json:"content_dir,omitempty"`
 	BaseURL        string `json:"base_url,omitempty"`
 	InstallURL     string `json:"install_url,omitempty"`
+	// ReusableInstallationID is an installation the SAME owner already linked on
+	// another project. A GitHub App installs once per account, so the UI can
+	// offer to reuse it instead of re-running the install (which dead-ends on
+	// GitHub's "already installed" page).
+	ReusableInstallationID string `json:"reusable_installation_id,omitempty"`
 }
 
 func (s *Server) getGithubIntegration(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +100,14 @@ func (s *Server) getGithubIntegration(w http.ResponseWriter, r *http.Request) {
 		out.InstallationID = cfg.InstallationID
 		out.Connected = strings.TrimSpace(cfg.InstallationID) != ""
 		out.Repo, out.Branch, out.ContentDir, out.BaseURL = cfg.Repo, cfg.Branch, cfg.ContentDir, cfg.BaseURL
+	}
+	// Not yet connected but the App is set up: surface an installation the same
+	// owner already linked elsewhere so the UI can reuse it (one install per
+	// GitHub account) rather than re-running the dead-ending install flow.
+	if app.Configured() && !out.Connected {
+		if reuse, err := s.Q.FindReusableGitHubInstallation(r.Context(), projectID); err == nil && strings.TrimSpace(reuse) != "" {
+			out.ReusableInstallationID = strings.TrimSpace(reuse)
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

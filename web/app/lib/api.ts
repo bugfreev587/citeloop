@@ -208,6 +208,7 @@ export type GithubIntegrationStatus = {
   content_dir?: string;
   base_url?: string;
   install_url?: string;
+  reusable_installation_id?: string;
 };
 
 export type SEOIntegration = {
@@ -942,6 +943,7 @@ function normalizeGithubIntegration(raw: any): GithubIntegrationStatus {
     content_dir: data.content_dir ?? undefined,
     base_url: data.base_url ?? undefined,
     install_url: data.install_url ?? undefined,
+    reusable_installation_id: data.reusable_installation_id ?? undefined,
   };
 }
 
