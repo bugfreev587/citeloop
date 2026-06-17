@@ -1,10 +1,47 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/llm"
 )
+
+// A single transient unparseable QA response (the dominant QA failure mode)
+// should not dead-end the check — the next attempt's valid response wins.
+func TestCompleteQAWithRetryRecoversFromTransientBadResponse(t *testing.T) {
+	valid := `{"claims":[],"qa_blocking":false,"geo_score":0.9,"seo_score":0.9,"issues":[]}`
+	provider := &sequenceLLM{resps: []string{"sorry, I can't produce that", valid}}
+	qa := NewQA(Deps{LLM: provider}, nil)
+
+	out, _, err := qa.completeQAWithRetry(context.Background(), llm.CompletionReq{Prompt: "audit", JSON: true})
+	if err != nil {
+		t.Fatalf("retry should recover from a transient bad response: %v", err)
+	}
+	if out.QABlocking {
+		t.Fatal("the valid response was non-blocking")
+	}
+	if len(provider.reqs) != 2 {
+		t.Fatalf("expected exactly 2 attempts (1 retry), got %d", len(provider.reqs))
+	}
+}
+
+// When every attempt is unparseable, the helper exhausts its budget and returns
+// the last error so the caller surfaces a genuine infrastructure failure.
+func TestCompleteQAWithRetryExhaustsAndReturnsError(t *testing.T) {
+	provider := &sequenceLLM{resps: []string{"no", "json", "at all", "ever"}}
+	qa := NewQA(Deps{LLM: provider}, nil)
+
+	_, _, err := qa.completeQAWithRetry(context.Background(), llm.CompletionReq{Prompt: "audit", JSON: true})
+	if err == nil {
+		t.Fatal("expected an error after exhausting retries")
+	}
+	if len(provider.reqs) != qaParseRetries+1 {
+		t.Fatalf("expected %d attempts, got %d", qaParseRetries+1, len(provider.reqs))
+	}
+}
 
 func TestEnforceBannedClaimsBlocksLiteralMatch(t *testing.T) {
 	out := &QAOutput{GeoScore: 0.9, SeoScore: 0.9}
