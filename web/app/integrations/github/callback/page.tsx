@@ -22,6 +22,23 @@ function deriveBaseURL(siteURL: string, contentDir: string): string {
   return leaf ? `${root}/${leaf}` : root;
 }
 
+// A bare hostname like "staging.unipost.dev" — dotted, no spaces/scheme/path.
+function looksLikeHostname(raw: string): boolean {
+  const v = (raw || "").trim();
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v);
+}
+
+// normalizeDomain turns a configured site_url OR a domain-shaped project name
+// into a scheme-qualified root (no trailing slash). Returns "" if it isn't
+// usable as a domain (e.g. a human project name like "UniPost (placeholder)").
+function normalizeDomain(raw: string): string {
+  const v = (raw || "").trim();
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v.replace(/\/+$/, "");
+  if (looksLikeHostname(v)) return `https://${v.replace(/\/+$/, "")}`;
+  return "";
+}
+
 function GithubCallbackInner() {
   const api = useApi();
   const router = useRouter();
@@ -64,7 +81,9 @@ function GithubCallbackInner() {
       // the repo is being connected to publish THIS project's posts.
       try {
         const project = await api.getProject(projectID);
-        const domain = project.config?.site_url?.trim() ?? "";
+        // Prefer the configured domain; fall back to the project name when it is
+        // itself a hostname (e.g. a project literally named "staging.unipost.dev").
+        const domain = normalizeDomain(project.config?.site_url ?? "") || normalizeDomain(project.name ?? "");
         setSiteURL(domain);
         if (domain) setBaseURL(deriveBaseURL(domain, nextContentDir));
       } catch {
