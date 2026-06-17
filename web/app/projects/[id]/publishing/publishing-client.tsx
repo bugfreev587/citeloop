@@ -70,11 +70,33 @@ function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} article`;
 }
 
+function publishTimeLabel(article: Article) {
+  return article.scheduled_at ? `Publishes ${formatDate(article.scheduled_at)}` : "Publishes on next pass";
+}
+
+function connectionTargetLabel(connection: PublisherConnection | null) {
+  if (!connection) return "No platform connected";
+  return connection.label || connection.config?.repo || connection.kind.replace(/_/g, " ");
+}
+
+function publishTargetLabel(article: Article, defaultPublishTarget: string) {
+  return article.platform || defaultPublishTarget;
+}
+
 function connectionTone(status: string): LaneTone {
   if (status === "connected") return "green";
   if (status === "error") return "red";
   if (status === "revoked") return "amber";
   return "neutral";
+}
+
+function PublishTargetPill({ target }: { target: string }) {
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">
+      <Plug size={12} className="shrink-0 text-slate-400" />
+      <span className="truncate">{target}</span>
+    </span>
+  );
 }
 
 // Slide-out panel from the right. Used for the publish-schedule and platform-binding
@@ -288,6 +310,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const publishIntervalDays = config?.publish_interval_days ?? 2;
   const connectedCount = useMemo(() => connections.filter((c) => c.status === "connected").length, [connections]);
   const githubPublisher = useMemo(() => connections.find((c) => c.kind === "github_nextjs") ?? null, [connections]);
+  const defaultPublishTarget = useMemo(
+    () => connectionTargetLabel(connections.find((c) => c.status === "connected" && c.is_default) ?? connections.find((c) => c.status === "connected") ?? githubPublisher),
+    [connections, githubPublisher],
+  );
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -505,12 +531,17 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             {readyCanonicals.map((article) => (
               <PostCard
                 key={article.id}
-                badges={<Badge tone="green">ready</Badge>}
+                badges={
+                  <>
+                    <Badge tone="green">ready</Badge>
+                    <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
+                  </>
+                }
                 title={articleTitle(article)}
                 meta={
                   <span className="inline-flex items-center gap-1.5">
                     <CalendarClock size={12} />
-                    {article.scheduled_at ? "Publishing on the next pass" : "Awaiting publish"}
+                    {publishTimeLabel(article)}
                   </span>
                 }
                 actions={
@@ -541,12 +572,17 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             {scheduledCanonicals.map((article) => (
               <PostCard
                 key={article.id}
-                badges={<Badge tone="blue">scheduled</Badge>}
+                badges={
+                  <>
+                    <Badge tone="blue">scheduled</Badge>
+                    <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
+                  </>
+                }
                 title={articleTitle(article)}
                 meta={
                   <span className="inline-flex items-center gap-1.5">
                     <CalendarClock size={12} />
-                    {`Publishes ${formatDate(article.scheduled_at)}`}
+                    {publishTimeLabel(article)}
                   </span>
                 }
                 actions={
