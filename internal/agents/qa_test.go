@@ -9,6 +9,49 @@ import (
 	"github.com/citeloop/citeloop/internal/llm"
 )
 
+// QA models routinely return issues/fix_instructions as structured objects
+// rather than plain strings. The typed decode must tolerate that instead of
+// failing the whole verdict and misreporting it as "missing claims".
+func TestExtractQAOutputToleratesStructuredIssueAndFixShapes(t *testing.T) {
+	raw := "```json\n" + `{
+	  "claims": [{"claim":"UniPost supports 9 platforms","mapped":true,"evidence":"profile"}],
+	  "qa_blocking": true,
+	  "geo_score": 0.6,
+	  "seo_score": 0.7,
+	  "issues": [{"code":"SEO_H1","severity":"medium","message":"Add an H1 before the first H2."}],
+	  "fix_instructions": [{"priority":"high","action":"add_h1","instruction":"Insert an H1 heading."}],
+	  "human_decision_options": [{"label":"Add evidence","description":"Provide a source."}],
+	  "blocking_reason": "promotional bias",
+	  "can_auto_fix": false
+	}` + "\n```"
+
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("structured issue/fix shapes must parse, got: %v", err)
+	}
+	if len(out.Claims) != 1 {
+		t.Fatalf("claims = %d, want 1", len(out.Claims))
+	}
+	if len(out.Issues) != 1 || !strings.Contains(out.Issues[0], "H1") {
+		t.Fatalf("issues should coerce object->string, got %#v", out.Issues)
+	}
+	if len(out.FixInstructions) != 1 || !strings.Contains(out.FixInstructions[0], "Insert an H1") {
+		t.Fatalf("fix_instructions should coerce object->string, got %#v", out.FixInstructions)
+	}
+}
+
+// Plain string arrays must still parse unchanged (regression guard).
+func TestExtractQAOutputStillAcceptsPlainStringArrays(t *testing.T) {
+	raw := `{"claims":[],"qa_blocking":false,"geo_score":0.9,"seo_score":0.9,"issues":["a","b"],"fix_instructions":["do x"]}`
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("plain string arrays must parse, got: %v", err)
+	}
+	if len(out.Issues) != 2 || out.Issues[1] != "b" {
+		t.Fatalf("issues = %#v", out.Issues)
+	}
+}
+
 // A single transient unparseable QA response (the dominant QA failure mode)
 // should not dead-end the check — the next attempt's valid response wins.
 func TestCompleteQAWithRetryRecoversFromTransientBadResponse(t *testing.T) {

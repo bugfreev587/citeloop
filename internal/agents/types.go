@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -166,6 +167,81 @@ type Claim struct {
 	Evidence string `json:"evidence"`
 }
 
+// stringList tolerates a JSON array whose elements are strings OR objects. QA
+// models frequently return issues/fix_instructions as structured objects
+// (e.g. {code,severity,message} or {priority,action,instruction}) instead of
+// plain strings. Without this, the typed decode of the whole QA result fails and
+// extractValidJSON falls through to an inner claim object — so a QA verdict that
+// actually ran is misreported as "missing claims" and the draft dead-ends.
+type stringList []string
+
+func (sl *stringList) UnmarshalJSON(b []byte) error {
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" || trimmed == "null" {
+		*sl = nil
+		return nil
+	}
+	// Fast path: a plain []string.
+	var ss []string
+	if err := json.Unmarshal(b, &ss); err == nil {
+		*sl = ss
+		return nil
+	}
+	// Tolerant path: an array whose elements may be strings or objects.
+	var raw []json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		// Not an array at all — coerce a lone string/object into one entry.
+		if s := coerceJSONToString(b); s != "" {
+			*sl = stringList{s}
+			return nil
+		}
+		return err
+	}
+	out := make([]string, 0, len(raw))
+	for _, el := range raw {
+		if s := coerceJSONToString(el); s != "" {
+			out = append(out, s)
+		}
+	}
+	*sl = out
+	return nil
+}
+
+// coerceJSONToString renders a JSON string or object as one readable line, so a
+// richly-structured QA issue/fix entry collapses back into the []string the rest
+// of the pipeline (writer feedback, UI) expects.
+func coerceJSONToString(b []byte) string {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) == nil {
+		// Prefer the most human-readable field if present.
+		for _, k := range []string{"message", "instruction", "action", "text", "detail", "description", "summary", "reason", "issue", "claim", "label"} {
+			if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+		// Otherwise join whatever string values exist, in a stable order.
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+				parts = append(parts, strings.TrimSpace(v))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " — ")
+		}
+	}
+	return strings.TrimSpace(string(b))
+}
+
 type QAFeedbackIssue struct {
 	Code     string `json:"code"`
 	Severity string `json:"severity"`
@@ -184,9 +260,9 @@ type QAOutput struct {
 	QABlocking           bool                  `json:"qa_blocking"`
 	GeoScore             float64               `json:"geo_score"`
 	SeoScore             float64               `json:"seo_score"`
-	Issues               []string              `json:"issues"`
+	Issues               stringList            `json:"issues"`
 	BlockingIssues       []QAFeedbackIssue     `json:"blocking_issues"`
-	FixInstructions      []string              `json:"fix_instructions"`
+	FixInstructions      stringList            `json:"fix_instructions"`
 	HumanDecisionOptions []HumanDecisionOption `json:"human_decision_options"`
 	BlockingReason       string                `json:"blocking_reason"`
 	CanAutoFix           bool                  `json:"can_auto_fix"`
