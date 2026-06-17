@@ -25,20 +25,20 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
   }
 });
 
-test("project shell hides the sidebar primary action when it repeats the active page", () => {
+test("project shell does not render a sidebar primary action slot", () => {
   const shell = read("components/project-shell.tsx");
 
-  assert.match(shell, /showPrimaryAction/);
-  assert.match(shell, /primaryAction !== null && primaryAction\.href !== pathname/);
-  assert.match(shell, /\{primaryAction && showPrimaryAction && \(/);
+  assert.doesNotMatch(shell, /primaryAction/);
+  assert.doesNotMatch(shell, /showPrimaryAction/);
+  assert.doesNotMatch(shell, /bg-gradient-to-r/);
 });
 
-test("project shell never renders an Open Home sidebar primary action", () => {
+test("project shell never renders global sidebar CTA logic", () => {
   const shell = read("components/project-shell.tsx");
   const dashboardLogic = read("lib/dashboard-ux-logic.ts");
 
-  assert.match(shell, /WorkspaceAction \| null/);
-  assert.match(shell, /return null;/);
+  assert.doesNotMatch(shell, /sidebarPrimaryAction/);
+  assert.doesNotMatch(dashboardLogic, /sidebarPrimaryAction/);
   assert.doesNotMatch(shell, /title: "Open Home"/);
   assert.doesNotMatch(dashboardLogic, /title: "Open Home"/);
 });
@@ -58,21 +58,22 @@ test("project shell groups desktop navigation into SuperX-style sections", () =>
   assert.match(shell, /tracking-\[0\.18em\]/);
 });
 
-test("project shell keeps the fixed-width sidebar primary action to one line when shown", () => {
+test("project shell keeps primary navigation labels stable without a CTA above Home", () => {
   const shell = read("components/project-shell.tsx");
 
-  assert.match(shell, /overflow-hidden/);
-  assert.match(shell, /truncate whitespace-nowrap/);
-  assert.match(shell, /className="shrink-0"/);
+  assert.match(shell, /label: "Home"/);
+  assert.match(shell, /label: "Context"/);
+  assert.match(shell, /label: "Content Plan"/);
+  assert.doesNotMatch(shell, /truncate whitespace-nowrap/);
 });
 
-test("project shell feeds route and opportunity state into the sidebar CTA", () => {
+test("project shell does not fetch route or opportunity state for a sidebar CTA", () => {
   const shell = read("components/project-shell.tsx");
 
-  assert.match(shell, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 10 \}\)/);
-  assert.match(shell, /openOpportunityCount/);
-  assert.match(shell, /currentPathname: pathname/);
-  assert.match(shell, /\[actionSummary, pathname, projectId\]/);
+  assert.doesNotMatch(shell, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 10 \}\)/);
+  assert.doesNotMatch(shell, /openOpportunityCount/);
+  assert.doesNotMatch(shell, /currentPathname: pathname/);
+  assert.doesNotMatch(shell, /actionSummary/);
 });
 
 test("project shell uses the review-width canvas for every project page", () => {

@@ -3,7 +3,7 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BookOpen,
   Database,
@@ -17,7 +17,6 @@ import {
   Settings2,
 } from "lucide-react";
 import { Project } from "../lib/api";
-import { sidebarPrimaryAction, type NextWorkspaceActionInput, type WorkspaceAction } from "../lib/dashboard-ux-logic";
 import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
 
@@ -88,7 +87,6 @@ export function ProjectShell({
   const pathname = usePathname();
   const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
-  const [actionSummary, setActionSummary] = useState<NextWorkspaceActionInput | null>(null);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -110,59 +108,6 @@ export function ProjectShell({
     }))
     .filter((section) => section.items.length > 0);
   const visibleNav = visibleNavSections.flatMap((section) => section.items);
-  const primaryAction: WorkspaceAction | null = useMemo(() => {
-    if (!actionSummary) {
-      return null;
-    }
-    return sidebarPrimaryAction({ ...actionSummary, currentPathname: pathname });
-  }, [actionSummary, pathname, projectId]);
-  const showPrimaryAction = primaryAction !== null && primaryAction.href !== pathname;
-  const PrimaryIcon = primaryAction?.href.endsWith("/publish")
-    ? Send
-    : primaryAction?.href.endsWith("/review")
-      ? PenLine
-      : primaryAction?.href.endsWith("/plan")
-        ? ListChecks
-        : primaryAction?.href.endsWith("/context")
-          ? Database
-          : primaryAction?.href.endsWith("/visibility")
-            ? Search
-            : Home;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPrimaryAction() {
-      const [profile, failedPublish, review, ready, topics, opportunities] = await Promise.all([
-        api.getProfile(projectId).catch(() => null),
-        api.listArticles(projectId, "publish_failed").catch(() => []),
-        api.listReview(projectId).catch(() => []),
-        api.listDistribute(projectId).catch(() => []),
-        api.listTopics(projectId).catch(() => []),
-        api.listSEOOpportunities(projectId, { status: "open", limit: 10 }).catch(() => []),
-      ]);
-      if (cancelled) return;
-      const reviewArticles = review.flatMap((group) => group.articles);
-      const profilePayload: Record<string, any> | null =
-        profile?.profile && typeof profile.profile === "object" ? profile.profile : null;
-      setActionSummary({
-        projectId,
-        hasProfile: Boolean(profile),
-        contextConfirmed: Boolean(profilePayload?.context_confirmed_at || profilePayload?.confirmed_at),
-        failedPublishCount: failedPublish.length,
-        hasBlockedDrafts: reviewArticles.some((article) => article.qa_blocking),
-        reviewCount: reviewArticles.length,
-        readyCount: ready.length,
-        topicsCount: topics.length,
-        openOpportunityCount: opportunities.length,
-      });
-    }
-
-    loadPrimaryAction();
-    return () => {
-      cancelled = true;
-    };
-  }, [api, projectId]);
 
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
@@ -173,17 +118,6 @@ export function ProjectShell({
         </Link>
 
         <div className="mb-4 h-px w-[185px] bg-slate-200" />
-
-        {primaryAction && showPrimaryAction && (
-          <Link
-            href={primaryAction.href}
-            title={primaryAction.detail}
-            className="mb-4 flex h-10 w-[185px] items-center justify-start gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
-          >
-            <PrimaryIcon className="shrink-0" size={17} strokeWidth={2} />
-            <span className="min-w-0 truncate whitespace-nowrap">{primaryAction.title}</span>
-          </Link>
-        )}
 
         <nav className="grid gap-5">
           {visibleNavSections.map((section, sectionIndex) => (
@@ -276,11 +210,6 @@ export function ProjectShell({
           <Link href="/" className="font-bold text-slate-900">
             CiteLoop
           </Link>
-          {primaryAction && showPrimaryAction && (
-            <Link href={primaryAction.href} className="text-sm font-semibold text-[#d93820]">
-              {primaryAction.title}
-            </Link>
-          )}
         </div>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {visibleNav.map((item) => (

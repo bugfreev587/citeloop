@@ -34,7 +34,7 @@ test("nextWorkspaceAction prioritizes context before content generation", async 
 });
 
 test("nextWorkspaceAction requires confirmation before opportunity discovery", async () => {
-  const { nextWorkspaceAction, sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+  const { nextWorkspaceAction } = await loadDashboardUXLogicModule();
 
   const input = {
     projectId: "project_1",
@@ -49,7 +49,6 @@ test("nextWorkspaceAction requires confirmation before opportunity discovery", a
 
   assert.equal(nextWorkspaceAction(input).title, "Confirm context");
   assert.equal(nextWorkspaceAction(input).href, "/projects/project_1/context");
-  assert.equal(sidebarPrimaryAction(input).title, "Confirm context");
 });
 
 test("buildActionableMomentum hides zero values and returns the next useful empty action", async () => {
@@ -161,10 +160,10 @@ test("visibleHomeSectionIds keeps the control center compact in steady state", a
   assert.deepEqual(budget.overflowIds, ["this-week", "waiting-canonical"]);
 });
 
-test("sidebarPrimaryAction uses the current highest-priority action and hides when there is no sidebar CTA", async () => {
-  const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+test("nextWorkspaceAction still exposes urgent work for in-page surfaces", async () => {
+  const { nextWorkspaceAction } = await loadDashboardUXLogicModule();
 
-  const urgent = sidebarPrimaryAction({
+  const urgent = nextWorkspaceAction({
     projectId: "project_1",
     hasProfile: true,
     failedPublishCount: 2,
@@ -177,7 +176,7 @@ test("sidebarPrimaryAction uses the current highest-priority action and hides wh
   assert.equal(urgent.title, "Fix publishing");
   assert.equal(urgent.href, "/projects/project_1/publish");
 
-  const healthy = sidebarPrimaryAction({
+  const healthy = nextWorkspaceAction({
     projectId: "project_1",
     hasProfile: true,
     failedPublishCount: 0,
@@ -187,36 +186,14 @@ test("sidebarPrimaryAction uses the current highest-priority action and hides wh
     topicsCount: 5,
   });
 
-  assert.equal(healthy, null);
+  assert.equal(healthy.title, "Refresh context");
+  assert.equal(healthy.href, "/projects/project_1/context");
 });
 
-test("sidebarPrimaryAction uses compact labels that fit the fixed sidebar CTA", async () => {
-  const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+test("dashboard UX logic no longer exports sidebarPrimaryAction", async () => {
+  const module = await loadDashboardUXLogicModule();
 
-  const blocked = sidebarPrimaryAction({
-    projectId: "project_1",
-    hasProfile: true,
-    failedPublishCount: 0,
-    hasBlockedDrafts: true,
-    reviewCount: 4,
-    readyCount: 0,
-    topicsCount: 5,
-  });
-  const noPlan = sidebarPrimaryAction({
-    projectId: "project_1",
-    hasProfile: true,
-    failedPublishCount: 0,
-    hasBlockedDrafts: false,
-    reviewCount: 0,
-    readyCount: 0,
-    topicsCount: 0,
-  });
-
-  assert.equal(blocked.title, "Review blocked");
-  assert.equal(blocked.href, "/projects/project_1/review");
-  assert.equal(noPlan.title, "Create plan");
-  assert.equal(noPlan.href, "/projects/project_1/plan");
-  assert.ok([blocked, noPlan].every((action) => action.title.length <= 15));
+  assert.equal("sidebarPrimaryAction" in module, false);
 });
 
 test("nextWorkspaceAction sends confirmed projects to opportunity review before planning", async () => {
@@ -239,10 +216,10 @@ test("nextWorkspaceAction sends confirmed projects to opportunity review before 
   assert.match(action.detail, /ready to review/i);
 });
 
-test("sidebarPrimaryAction follows visibility review work before creating a first plan", async () => {
-  const { sidebarPrimaryAction } = await loadDashboardUXLogicModule();
+test("nextWorkspaceAction follows visibility review work before creating a first plan", async () => {
+  const { nextWorkspaceAction } = await loadDashboardUXLogicModule();
 
-  const action = sidebarPrimaryAction({
+  const action = nextWorkspaceAction({
     projectId: "project_1",
     hasProfile: true,
     contextConfirmed: true,
