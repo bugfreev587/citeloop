@@ -82,6 +82,17 @@ function stageDotClass(tone: StageTone) {
   return classes[tone];
 }
 
+function needsYouCountClass(tone: StageTone) {
+  const classes: Record<StageTone, string> = {
+    green: "text-emerald-600",
+    amber: "text-amber-600",
+    blue: "text-blue-600",
+    red: "text-[#d93820]",
+    neutral: "text-slate-900",
+  };
+  return classes[tone];
+}
+
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
   const [project, setProject] = useState<Project | null>(null);
@@ -316,7 +327,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   ];
 
   // Pipeline stages — same honest per-stage status logic, rendered as a compact stepper.
-  const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string }> = [
+  const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string; highlight?: boolean }> = [
     {
       label: "Context",
       metricValue: sourcePageCount,
@@ -342,6 +353,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             : "Scanning",
       tone: !contextConfirmed ? "neutral" : seoOpportunities.length > 0 ? "amber" : "green",
       href: `/projects/${projectId}/opportunities`,
+      highlight: contextConfirmed && seoOpportunities.length > 0,
     },
     {
       label: "Plan",
@@ -560,13 +572,14 @@ export function Workspace({ projectId }: { projectId: string }) {
         <div className="flex gap-2 overflow-x-auto pb-1">
           {stages.map((stage, index) => {
             const isNext = stage.href === primaryAction.href && (stage.tone === "amber" || stage.tone === "red");
+            const highlighted = isNext || Boolean(stage.highlight);
             return (
               <a
                 key={stage.label}
                 href={stage.href}
                 className={cx(
                   "relative flex min-w-[140px] flex-1 flex-col rounded-xl border bg-white px-3 py-3 transition-colors hover:border-slate-300",
-                  isNext ? "border-[#d93820] ring-1 ring-[#d93820]" : "border-slate-200",
+                  highlighted ? "border-[#d93820] ring-1 ring-[#d93820]" : "border-slate-200",
                 )}
               >
                 <span className="absolute left-2.5 top-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1 text-[11px] font-bold text-slate-500">
@@ -588,15 +601,15 @@ export function Workspace({ projectId }: { projectId: string }) {
       {needsYou.length > 0 && (
         <section>
           <SectionHeader title="Needs you" eyebrow="Open gates and blockers" />
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {needsYou.map((row) => (
               <a
                 key={row.id}
                 href={row.href}
-                className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 hover:text-[#d93820]"
+                className="flex min-h-[112px] flex-col items-center rounded-xl border border-slate-200 bg-white p-4 text-center transition-colors hover:border-slate-300 hover:text-[#d93820]"
               >
-                <span className="min-w-0 truncate">{row.label}</span>
-                <Badge tone={row.tone}>{row.count}</Badge>
+                <span className="text-sm font-bold text-slate-600">{row.label}</span>
+                <span className={cx("mt-auto pt-3 text-2xl font-bold leading-none", needsYouCountClass(row.tone))}>{row.count}</span>
               </a>
             ))}
           </div>
