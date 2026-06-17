@@ -256,7 +256,7 @@ export function reviewArticleState(article: RepairableArticleLike): ReviewArticl
     return {
       kind: "needs_human",
       label: "Needs your decision",
-      detail: "A product claim needs an evidence or positioning decision only you can make.",
+      detail: "A positioning choice or manual edit needs human judgment.",
       approvable: false,
     };
   }

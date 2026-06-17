@@ -1,9 +1,12 @@
 package scheduler
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/db"
 )
 
 func TestReviewRecoveryTickIsRegistered(t *testing.T) {
@@ -28,15 +31,15 @@ func TestReviewRecoveryDrivesAutomatedLadderAndAutoApprove(t *testing.T) {
 	body := string(source)
 	for _, want := range []string{
 		"func (s *Scheduler) TickReviewRecovery",
-		"AutoAdvanceEnabled",                  // gates auto-approval only; recovery runs for all projects
-		"ListRecoverableArticlesForProject",   // blocked, not-human drafts
-		"Requalify",                           // re-run QA on infra failures
-		"RepairArticle",                       // AI repair on auto-fixable issues
-		"regenerateOrEscalate",                // fresh draft as last resort
-		"EscalateArticleToHumanForProject",    // only genuine decisions reach a human
-		"autoApproveReadyForProject",          // hands-off approval
-		"workflow.EventDraftApproved",         // approved drafts flow to publishing
-		"MonthlySpend",                        // cost breaker
+		"AutoAdvanceEnabled",                // gates auto-approval only; recovery runs for all projects
+		"ListRecoverableArticlesForProject", // blocked, not-human drafts
+		"Requalify",                         // re-run QA on infra failures
+		"RepairArticle",                     // AI repair on auto-fixable issues
+		"regenerateOrEscalate",              // fresh draft as last resort
+		"EscalateArticleToHumanForProject",  // only genuine decisions reach a human
+		"autoApproveReadyForProject",        // hands-off approval
+		"workflow.EventDraftApproved",       // approved drafts flow to publishing
+		"MonthlySpend",                      // cost breaker
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("review recovery must wire %q", want)
@@ -66,4 +69,62 @@ func TestReviewRecoveryOnlyEscalatesGenuineDecisions(t *testing.T) {
 			t.Fatalf("review recovery classifier missing %q", want)
 		}
 	}
+}
+
+func TestArticleNeedsHumanKeepsUnsupportedClaimsAutomated(t *testing.T) {
+	art := db.Article{
+		QaBlocking: true,
+		QaFeedback: mustTestJSON(t, map[string]any{
+			"claims": []map[string]any{
+				{"claim": "UniPost includes a native MCP server", "mapped": false},
+			},
+			"can_auto_fix": false,
+			"human_decision_options": []map[string]string{
+				{"label": "Add evidence", "description": "Update Context before approving."},
+			},
+		}),
+	}
+
+	if articleNeedsHuman(art) {
+		t.Fatal("unsupported claims should stay in automated repair/regeneration instead of asking for Context edits")
+	}
+}
+
+func TestArticleNeedsHumanStillAllowsTruePositioningDecisions(t *testing.T) {
+	art := db.Article{
+		QaBlocking: true,
+		QaFeedback: mustTestJSON(t, map[string]any{
+			"claims":       []map[string]any{{"claim": "UniPost helps small teams ship faster", "mapped": true}},
+			"can_auto_fix": false,
+			"human_decision_options": []map[string]string{
+				{"label": "Choose positioning", "description": "Pick the approved positioning before publication."},
+			},
+		}),
+	}
+
+	if !articleNeedsHuman(art) {
+		t.Fatal("non-editorial positioning choices can still reach a human")
+	}
+}
+
+func TestEscalationOptionsFiltersContextEvidenceChoices(t *testing.T) {
+	options := escalationOptions(mustTestJSON(t, map[string]any{
+		"human_decision_options": []map[string]string{
+			{"label": "Add evidence", "description": "Update Context before approving."},
+			{"label": "Choose positioning", "description": "Pick the approved positioning."},
+		},
+	}))
+
+	if len(options) != 1 || options[0].Label != "Choose positioning" {
+		t.Fatalf("escalation options = %#v", options)
+	}
+}
+
+func mustTestJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

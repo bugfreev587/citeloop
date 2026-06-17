@@ -12,7 +12,7 @@ func TestIsGenuineHumanDecision(t *testing.T) {
 		{"not blocking", &QAOutput{QABlocking: false}, false},
 		{"auto-fixable", &QAOutput{QABlocking: true, CanAutoFix: true, Claims: []Claim{{Mapped: false}}}, false},
 		{"infra failure (no claims, no options)", &QAOutput{QABlocking: true, CanAutoFix: false}, false},
-		{"unmapped claim, not auto-fixable", &QAOutput{QABlocking: true, CanAutoFix: false, Claims: []Claim{{Mapped: false}}}, true},
+		{"unmapped claim, not auto-fixable", &QAOutput{QABlocking: true, CanAutoFix: false, Claims: []Claim{{Mapped: false}}}, false},
 		{"model decision options", &QAOutput{QABlocking: true, CanAutoFix: false, HumanDecisionOptions: []HumanDecisionOption{{Label: "choose"}}}, true},
 	}
 	for _, tc := range cases {
@@ -35,10 +35,11 @@ func TestRepairOutcomeDoesNotEscalateInfraFailures(t *testing.T) {
 		t.Fatalf("infra failure: got (%q, %v), want (exhausted, false)", status, human)
 	}
 
-	// A real unmapped claim that cannot be auto-fixed is a genuine human decision.
-	genuine := &QAOutput{QABlocking: true, CanAutoFix: false, Claims: []Claim{{Mapped: false}}}
-	if status, human := repairOutcome(genuine, maxDraftRepairAttempts, maxDraftRepairAttempts); status != "exhausted" || !human {
-		t.Fatalf("genuine decision: got (%q, %v), want (exhausted, true)", status, human)
+	// A real unmapped claim is an editor repair/regeneration problem, not a
+	// prompt for the user to rewrite confirmed Product Context.
+	unsupported := &QAOutput{QABlocking: true, CanAutoFix: false, Claims: []Claim{{Mapped: false}}}
+	if status, human := repairOutcome(unsupported, maxDraftRepairAttempts, maxDraftRepairAttempts); status != "exhausted" || human {
+		t.Fatalf("unsupported claim: got (%q, %v), want (exhausted, false)", status, human)
 	}
 
 	// Cleared QA after a repair is approvable.

@@ -186,8 +186,11 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /selectedArticleId/);
   assert.match(review, /articlePreviewHref/);
   assert.equal(previewRouteExists, true);
-  assert.match(review, /Fix evidence in Context/);
+  assert.match(review, /Edit draft/);
+  assert.match(review, /Reject/);
   // The dead "Resolve" button and the raw QA jargon it exposed are gone.
+  assert.doesNotMatch(review, /Fix evidence in Context/);
+  assert.doesNotMatch(review, /Fixing evidence/);
   assert.doesNotMatch(review, /Auto repair active/);
   assert.doesNotMatch(review, />\s*Resolve\s*</);
   assert.doesNotMatch(review, /QA evidence map was not returned/);

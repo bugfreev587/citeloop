@@ -35,11 +35,11 @@ const (
 
 // TickReviewRecovery drains the review queue without a human: for every project
 // it pushes blocked-but-not-human drafts through re-QA → AI repair →
-// regeneration, escalating to a genuine human decision only when QA actually
-// finds an unresolvable evidence/positioning issue or the automated budget is
-// spent. A QA-blocked draft is a correctness problem CiteLoop always resolves
-// automatically; the auto-advance setting only decides whether the *cleared*
-// draft is auto-approved or waits for a human to approve it (§5.5).
+// regeneration, escalating to a genuine human decision only for non-editorial
+// positioning choices or when the automated budget is spent. A QA-blocked draft
+// is a correctness problem CiteLoop always resolves automatically; the
+// auto-advance setting only decides whether the *cleared* draft is auto-approved
+// or waits for a human to approve it (§5.5).
 func (s *Scheduler) TickReviewRecovery(ctx context.Context) {
 	q := db.New(s.Pool)
 	projects, err := q.ListProjects(ctx)
@@ -97,9 +97,9 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 // work is bounded and observable: each tick either re-runs QA, repairs, or
 // regenerates, then lets the next tick re-evaluate the fresh state.
 func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article) error {
-	// QA found a real decision a human must make — hand it over.
+	// QA found a real non-editorial decision a human must make — hand it over.
 	if articleNeedsHuman(art) {
-		return s.escalateArticle(ctx, q, projectID, art, "QA found a product claim that needs a human evidence or positioning decision.")
+		return s.escalateArticle(ctx, q, projectID, art, "QA found a positioning decision that needs human judgment.")
 	}
 	if art.RecoveryAttempts >= maxReviewRecoveryAttempts {
 		return s.escalateArticle(ctx, q, projectID, art, "CiteLoop could not automatically produce a publishable draft after several attempts.")
@@ -211,6 +211,9 @@ func escalationOptions(qaFeedback json.RawMessage) []decisionOption {
 	}
 	var out []decisionOption
 	for _, o := range parsed.HumanDecisionOptions {
+		if asksForContextOrEvidence(o.Label) || asksForContextOrEvidence(o.Description) {
+			continue
+		}
 		if strings.TrimSpace(o.Label) != "" || strings.TrimSpace(o.Description) != "" {
 			out = append(out, o)
 		}
@@ -219,7 +222,6 @@ func escalationOptions(qaFeedback json.RawMessage) []decisionOption {
 		return out
 	}
 	return []decisionOption{
-		{Label: "Add or fix evidence in Context", Description: "Supply the source/evidence the claim needs, then CiteLoop re-checks automatically."},
 		{Label: "Edit the draft", Description: "Adjust the wording yourself; saving re-runs QA."},
 		{Label: "Reject", Description: "Discard the draft and return the topic to the backlog."},
 	}
@@ -290,8 +292,13 @@ type recoveryQAView struct {
 	Claims []struct {
 		Mapped bool `json:"mapped"`
 	} `json:"claims"`
-	CanAutoFix           bool              `json:"can_auto_fix"`
-	HumanDecisionOptions []json.RawMessage `json:"human_decision_options"`
+	CanAutoFix           bool                          `json:"can_auto_fix"`
+	HumanDecisionOptions []recoveryHumanDecisionOption `json:"human_decision_options"`
+}
+
+type recoveryHumanDecisionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
 }
 
 func parseRecoveryQA(raw json.RawMessage) recoveryQAView {
@@ -310,9 +317,10 @@ func articleCanAutoFix(art db.Article) bool {
 	return art.QaBlocking && parseRecoveryQA(art.QaFeedback).CanAutoFix
 }
 
-// articleNeedsHuman is true only when QA actually evaluated the draft and found a
-// real, non-auto-fixable decision (an unmapped product claim or model-provided
-// options). Infra failures with no claim map are recoverable, not human work.
+// articleNeedsHuman is true only when QA actually evaluated the draft and found
+// a non-editorial positioning choice. Unsupported product claims stay in the
+// automated editor/regeneration ladder; the user should not rewrite confirmed
+// Product Context for one draft.
 func articleNeedsHuman(art db.Article) bool {
 	if !art.QaBlocking {
 		return false
@@ -321,10 +329,33 @@ func articleNeedsHuman(art db.Article) bool {
 	if view.CanAutoFix {
 		return false
 	}
+	hasUnmapped := false
 	for _, c := range view.Claims {
 		if !c.Mapped {
+			hasUnmapped = true
+			break
+		}
+	}
+	if hasUnmapped {
+		return false
+	}
+	for _, option := range view.HumanDecisionOptions {
+		if !asksForContextOrEvidence(option.Label) && !asksForContextOrEvidence(option.Description) {
 			return true
 		}
 	}
-	return len(view.HumanDecisionOptions) > 0
+	return false
+}
+
+func asksForContextOrEvidence(s string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	if normalized == "" {
+		return false
+	}
+	for _, token := range []string{"context", "evidence", "profile", "source"} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
 }

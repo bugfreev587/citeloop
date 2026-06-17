@@ -103,7 +103,7 @@ func TestExtractQAOutputParsesStructuredFeedback(t *testing.T) {
 	if len(out.FixInstructions) != 1 {
 		t.Fatalf("fix instructions = %#v", out.FixInstructions)
 	}
-	if len(out.HumanDecisionOptions) != 2 {
+	if len(out.HumanDecisionOptions) != 1 || out.HumanDecisionOptions[0].Label != "Remove claim" {
 		t.Fatalf("human decision options = %#v", out.HumanDecisionOptions)
 	}
 	if !out.CanAutoFix {

@@ -528,22 +528,15 @@ func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool)
 	return "repaired", false
 }
 
-// isGenuineHumanDecision is true only when QA actually evaluated the draft and
-// surfaced a real evidence/positioning decision a human must make — an unmapped
-// product claim the editor cannot safely auto-fix, or model-provided decision
-// options. QA infrastructure failures (no claim map returned, parse errors) are
-// NOT human decisions: they are auto-recoverable and stay off the human queue so
-// CiteLoop can re-run QA, repair, or regenerate them itself (§5.5).
+// isGenuineHumanDecision is true only when QA surfaced a real positioning
+// decision a human must make. Unsupported product claims are editor work:
+// CiteLoop should remove or rewrite them against confirmed Product Context
+// instead of asking the operator to change Context for one draft.
 func isGenuineHumanDecision(qa *QAOutput) bool {
 	if qa == nil || !qa.QABlocking || qa.CanAutoFix {
 		return false
 	}
-	for _, c := range qa.Claims {
-		if !c.Mapped {
-			return true
-		}
-	}
-	return len(qa.HumanDecisionOptions) > 0
+	return len(editorOnlyDecisionOptions(qa.HumanDecisionOptions)) > 0
 }
 
 func repairFailureReason(qa *QAOutput, status string) string {
@@ -564,13 +557,14 @@ func repairFailureReason(qa *QAOutput, status string) string {
 }
 
 func humanDecisionOptions(qa *QAOutput) []HumanDecisionOption {
-	if qa != nil && len(qa.HumanDecisionOptions) > 0 {
-		return qa.HumanDecisionOptions
+	if qa != nil {
+		if options := editorOnlyDecisionOptions(qa.HumanDecisionOptions); len(options) > 0 {
+			return options
+		}
 	}
 	return []HumanDecisionOption{
 		{Label: "Reject and regenerate", Description: "Discard this draft and send the topic back to backlog."},
-		{Label: "Edit product evidence", Description: "Add or correct profile/evidence, then regenerate or rerun QA."},
-		{Label: "Manual edit", Description: "Edit the draft directly when the positioning decision needs human judgment."},
+		{Label: "Edit draft", Description: "Adjust the wording directly; saving re-runs QA."},
 	}
 }
 

@@ -38,6 +38,41 @@ func TestExtractQAOutputToleratesStructuredIssueAndFixShapes(t *testing.T) {
 	if len(out.FixInstructions) != 1 || !strings.Contains(out.FixInstructions[0], "Insert an H1") {
 		t.Fatalf("fix_instructions should coerce object->string, got %#v", out.FixInstructions)
 	}
+	if len(out.HumanDecisionOptions) != 0 {
+		t.Fatalf("Context/evidence decision options should be stripped, got %#v", out.HumanDecisionOptions)
+	}
+}
+
+func TestExtractQAOutputTreatsUnsupportedClaimsAsAutoEditable(t *testing.T) {
+	raw := `{
+		"claims":[{"claim":"UniPost includes native MCP server support","mapped":false,"evidence":""}],
+		"qa_blocking":true,
+		"geo_score":0.7,
+		"seo_score":0.8,
+		"issues":["unsupported MCP claim"],
+		"blocking_issues":[{"code":"unmapped_product_claim","severity":"blocking","message":"MCP claim lacks evidence","claim":"UniPost includes native MCP server support"}],
+		"fix_instructions":[],
+		"human_decision_options":[{"label":"Add evidence","description":"Update Context before approving."}],
+		"blocking_reason":"MCP claim lacks evidence",
+		"can_auto_fix":false
+	}`
+
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("extractQAOutput: %v", err)
+	}
+	if !out.QABlocking {
+		t.Fatal("unsupported product claims must still block publication")
+	}
+	if !out.CanAutoFix {
+		t.Fatal("unsupported product claims should route to the AI editor, not Context edits")
+	}
+	if len(out.HumanDecisionOptions) != 0 {
+		t.Fatalf("Context/evidence decision options should be stripped, got %#v", out.HumanDecisionOptions)
+	}
+	if len(out.FixInstructions) == 0 {
+		t.Fatal("unsupported claims should carry an editor fix instruction")
+	}
 }
 
 // Plain string arrays must still parse unchanged (regression guard).

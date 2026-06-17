@@ -449,7 +449,6 @@ function ReviewInspector({
         {state.kind === "needs_human" && (
           <DecisionPanel
             article={article}
-            projectId={projectId}
             busy={busy}
             rejectBusy={rejectBusy}
             onReject={onReject}
@@ -536,6 +535,7 @@ function ReadyPanel({
 }
 
 const genericOptionPattern = /^(reject|edit the draft|add or fix evidence)/i;
+const contextEvidenceOptionPattern = /\b(context|evidence|profile|source)\b/i;
 
 function decisionText(value: any): string {
   return typeof value === "string" ? value.trim() : "";
@@ -543,7 +543,6 @@ function decisionText(value: any): string {
 
 function DecisionPanel({
   article,
-  projectId,
   busy,
   rejectBusy,
   onReject,
@@ -554,7 +553,6 @@ function DecisionPanel({
   recheckBusy,
 }: {
   article: Article;
-  projectId: string;
   busy: boolean;
   rejectBusy: boolean;
   onReject: () => void;
@@ -569,7 +567,10 @@ function DecisionPanel({
   // have their own buttons below.
   const fixOptions = allOptions
     .map((option, index) => ({ option, index }))
-    .filter(({ option }) => !genericOptionPattern.test((option.label ?? "").trim()));
+    .filter(({ option }) => {
+      const text = `${option.label ?? ""} ${option.description ?? ""}`.trim();
+      return !genericOptionPattern.test((option.label ?? "").trim()) && !contextEvidenceOptionPattern.test(text);
+    });
   const unmapped = qaClaimRows(article).filter((row) => !row.mapped);
   const rawReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
   // A QA *infrastructure* failure (truncated/unparseable model response) is not a
@@ -597,8 +598,8 @@ function DecisionPanel({
             ? "CiteLoop couldn't finish its automated quality check on this draft — a temporary model/formatting issue, not a problem with your content. Re-run the check (it usually clears on its own)."
             : blockingReason ||
               (unmapped.length > 0
-                ? `${unmapped.length === 1 ? "A product claim" : `${unmapped.length} product claims`} could not be backed by your Context evidence.`
-                : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it.")}
+                ? `CiteLoop could not automatically rewrite ${unmapped.length === 1 ? "this unsupported product claim" : `${unmapped.length} unsupported product claims`} after several attempts. Edit the draft or reject it.`
+                : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it. Edit the draft or reject it.")}
         </p>
         {isInfraFailure && (
           <Button disabled={busy} size="sm" variant="primary" className="mt-2" onClick={onRecheck}>
@@ -661,9 +662,6 @@ function DecisionPanel({
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <a href={`/projects/${projectId}/context`} className="inline-flex h-8 items-center gap-2 rounded-lg bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-xs font-semibold text-white hover:brightness-[1.02]">
-          Fix evidence in Context
-        </a>
         <Button disabled={busy} size="sm" onClick={onToggleEditor}>
           <FileText size={14} />
           Edit draft

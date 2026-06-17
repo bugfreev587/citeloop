@@ -401,10 +401,57 @@ func normalizeQAOutput(out QAOutput) QAOutput {
 	if out.HumanDecisionOptions == nil {
 		out.HumanDecisionOptions = []HumanDecisionOption{}
 	}
+	normalizeUnsupportedClaimFeedback(&out)
 	if out.QABlocking && !out.CanAutoFix && len(out.HumanDecisionOptions) == 0 && out.BlockingReason == "" && len(out.BlockingIssues) == 0 {
 		out.CanAutoFix = true
 	}
 	return out
+}
+
+func normalizeUnsupportedClaimFeedback(out *QAOutput) {
+	if out == nil {
+		return
+	}
+	hasUnmapped := false
+	for _, claim := range out.Claims {
+		if !claim.Mapped {
+			hasUnmapped = true
+			break
+		}
+	}
+	out.HumanDecisionOptions = editorOnlyDecisionOptions(out.HumanDecisionOptions)
+	if !hasUnmapped {
+		return
+	}
+	out.QABlocking = true
+	out.CanAutoFix = true
+	if len(out.FixInstructions) == 0 {
+		out.FixInstructions = []string{"Remove or rewrite unsupported product claims using only facts in the confirmed Product Context."}
+	}
+}
+
+func editorOnlyDecisionOptions(options []HumanDecisionOption) []HumanDecisionOption {
+	kept := make([]HumanDecisionOption, 0, len(options))
+	for _, option := range options {
+		if asksForContextOrEvidence(option.Label) || asksForContextOrEvidence(option.Description) {
+			continue
+		}
+		kept = append(kept, option)
+	}
+	return kept
+}
+
+func asksForContextOrEvidence(s string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	if normalized == "" {
+		return false
+	}
+	for _, token := range []string{"context", "evidence", "profile", "source"} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func toJSON(v any) json.RawMessage {
