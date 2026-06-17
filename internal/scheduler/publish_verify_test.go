@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestVerifyPublishedURLAcceptsHEAD2xx(t *testing.T) {
@@ -61,6 +64,35 @@ func TestVerifyPublishedURLRejectsNon2xx(t *testing.T) {
 
 	if err := s.verifyPublishedURL(context.Background(), server.URL+"/blog/missing"); err == nil {
 		t.Fatal("expected non-2xx URL verification to fail")
+	}
+}
+
+func TestPendingURLVerificationDeadlineReached(t *testing.T) {
+	now := time.Date(2026, 6, 17, 9, 0, 0, 0, time.UTC)
+	article := db.Article{
+		Status: "pending_url_verification",
+		NextPublishRetryAt: pgtype.Timestamptz{
+			Time:  now.Add(time.Minute),
+			Valid: true,
+		},
+	}
+
+	if pendingURLVerificationDeadlineReached(article, now) {
+		t.Fatal("pending URL verification should keep waiting before the deadline")
+	}
+	if !pendingURLVerificationDeadlineReached(article, now.Add(time.Minute)) {
+		t.Fatal("pending URL verification should fail once the deadline is reached")
+	}
+
+	article.Status = "published"
+	if pendingURLVerificationDeadlineReached(article, now.Add(time.Minute)) {
+		t.Fatal("only pending URL verification articles should use the deadline")
+	}
+
+	article.Status = "pending_url_verification"
+	article.NextPublishRetryAt = pgtype.Timestamptz{}
+	if pendingURLVerificationDeadlineReached(article, now.Add(time.Hour)) {
+		t.Fatal("missing deadline should not force failure")
 	}
 }
 
