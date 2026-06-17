@@ -10,6 +10,18 @@ import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput 
 
 type Phase = "linking" | "picking" | "saving" | "done" | "error";
 
+// The public URL is built as base_url + "/" + slug, so the base must be the
+// site's blog root (no slug). We derive a sensible default from the project's
+// own configured domain (not the repo) and append the content directory's last
+// segment as the path — e.g. https://unipost.dev + content/citeloop/blog →
+// https://unipost.dev/blog. Always editable before the operator confirms.
+function deriveBaseURL(siteURL: string, contentDir: string): string {
+  const root = (siteURL || "").trim().replace(/\/+$/, "");
+  if (!root) return "";
+  const leaf = (contentDir || "").split("/").filter(Boolean).pop() || "";
+  return leaf ? `${root}/${leaf}` : root;
+}
+
 function GithubCallbackInner() {
   const api = useApi();
   const router = useRouter();
@@ -27,6 +39,8 @@ function GithubCallbackInner() {
   const [branch, setBranch] = useState("citeloop-content");
   const [contentDir, setContentDir] = useState("content/citeloop/blog");
   const [baseURL, setBaseURL] = useState("");
+  const [baseTouched, setBaseTouched] = useState(false);
+  const [siteURL, setSiteURL] = useState("");
 
   const publishingHref = projectID ? `/projects/${projectID}/publishing` : "/";
 
@@ -41,9 +55,20 @@ function GithubCallbackInner() {
     try {
       const { repositories } = await api.storeGithubInstallation(projectID, installationID);
       setRepos(repositories);
+      let nextContentDir = "content/citeloop/blog";
       if (repositories.length > 0) {
         setRepo(repositories[0].full_name);
         setBranch(repositories[0].default_branch || "citeloop-content");
+      }
+      // Default the Site base URL from this project's own configured domain —
+      // the repo is being connected to publish THIS project's posts.
+      try {
+        const project = await api.getProject(projectID);
+        const domain = project.config?.site_url?.trim() ?? "";
+        setSiteURL(domain);
+        if (domain) setBaseURL(deriveBaseURL(domain, nextContentDir));
+      } catch {
+        // Project lookup is best-effort; the field stays empty + editable.
       }
       setPhase("picking");
     } catch (e: any) {
@@ -151,8 +176,22 @@ function GithubCallbackInner() {
             )}
           </Field>
 
-          <Field label="Site base URL" helper="The public URL where published articles live (used to build canonical links).">
-            <TextInput value={baseURL} placeholder="https://example.com" onChange={(event) => setBaseURL(event.target.value)} />
+          <Field
+            label="Site base URL"
+            helper={
+              siteURL
+                ? `Prefilled from this project's domain. Posts publish to <base>/<slug> — edit if your blog lives elsewhere.`
+                : "The public URL where published articles live (posts publish to <base>/<slug>)."
+            }
+          >
+            <TextInput
+              value={baseURL}
+              placeholder="https://example.com/blog"
+              onChange={(event) => {
+                setBaseTouched(true);
+                setBaseURL(event.target.value);
+              }}
+            />
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -160,7 +199,15 @@ function GithubCallbackInner() {
               <TextInput value={branch} onChange={(event) => setBranch(event.target.value)} />
             </Field>
             <Field label="Content directory">
-              <TextInput value={contentDir} onChange={(event) => setContentDir(event.target.value)} />
+              <TextInput
+                value={contentDir}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setContentDir(next);
+                  // Keep the derived base URL in sync until the operator edits it.
+                  if (!baseTouched && siteURL) setBaseURL(deriveBaseURL(siteURL, next));
+                }}
+              />
             </Field>
           </div>
 
