@@ -1,7 +1,5 @@
-import { redirect } from "next/navigation";
+import { AdminClient } from "./admin-client";
 
-export default async function ProjectAdminPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-
-  redirect(`/admin?from=${encodeURIComponent(id)}`);
+export default function AdminPage() {
+  return <AdminClient />;
 }
