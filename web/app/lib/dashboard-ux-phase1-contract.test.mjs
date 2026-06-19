@@ -23,6 +23,9 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
   ]) {
     assert.doesNotMatch(shell, new RegExp(legacy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+
+  assert.doesNotMatch(shell, /\/admin\?from=/);
+  assert.match(shell, /\/projects\/\$\{projectId\}\/admin/);
 });
 
 test("project shell does not render a sidebar primary action slot", () => {
@@ -613,7 +616,8 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const settings = read("projects/[id]/settings/settings-client.tsx");
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
-  const admin = read("admin/page.tsx");
+  const adminPage = read("projects/[id]/admin/page.tsx");
+  const admin = read("projects/[id]/admin/admin-client.tsx");
   const workspace = read("projects/[id]/workspace.tsx");
 
   assert.match(ui, /export function ButtonProgress/);
@@ -649,4 +653,11 @@ test("blocking mutations expose button-level progress and keep opportunity revie
       assert.match(source, new RegExp(marker));
     }
   }
+
+  assert.match(adminPage, /<AdminClient \/>/);
+  assert.ok(!adminPage.includes("redirect(`/admin?from="));
+  assert.match(admin, /api\.testLLMCredentials/);
+  assert.match(admin, /api\.deleteLLMCredentials/);
+  assert.match(admin, /Test connection/);
+  assert.match(admin, /Delete key/);
 });
