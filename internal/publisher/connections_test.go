@@ -49,11 +49,26 @@ func TestParseGitHubNextJSConfigNormalizesDefaults(t *testing.T) {
 	if cfg.ContentDir != "content/citeloop/blog" {
 		t.Fatalf("content dir = %q", cfg.ContentDir)
 	}
-	if cfg.BaseURL != "https://dev.unipost.dev/blog" {
+	if cfg.BaseURL != "https://unipost.dev/blog" {
 		t.Fatalf("base url = %q", cfg.BaseURL)
 	}
 	if cfg.PublishMode != "publish" {
 		t.Fatalf("publish mode = %q", cfg.PublishMode)
+	}
+}
+
+func TestParseGitHubNextJSConfigKeepsCustomerDomains(t *testing.T) {
+	raw := json.RawMessage(`{
+		"repo":"owner/customer-site",
+		"base_url":" https://dev.customer.example/blog/ "
+	}`)
+
+	cfg, err := ParseGitHubNextJSConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseGitHubNextJSConfig returned error: %v", err)
+	}
+	if cfg.BaseURL != "https://dev.customer.example/blog" {
+		t.Fatalf("base url = %q", cfg.BaseURL)
 	}
 }
 

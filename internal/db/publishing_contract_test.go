@@ -2,6 +2,7 @@ package db
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,30 @@ func TestPublishPhaseMigrationBackfillsAlreadyUpgradedDatabases(t *testing.T) {
 	} {
 		if !strings.Contains(migration, want) {
 			t.Fatalf("publish phase migration missing %q", want)
+		}
+	}
+}
+
+func TestUniPostCanonicalURLMigrationRewritesLegacyDevURLs(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0020_unipost_prod_canonical_urls.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := strings.ToLower(string(raw))
+
+	for _, want := range []string{
+		"dev\\.unipost\\.dev",
+		"https://unipost.dev",
+		"update articles",
+		"canonical_url",
+		"publish_result",
+		"jsonb_set",
+		"update publisher_connections",
+		"base_url",
+		"github_nextjs",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("unipost canonical migration missing %q", want)
 		}
 	}
 }

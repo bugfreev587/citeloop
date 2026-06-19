@@ -3,6 +3,7 @@ package publisher
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -61,7 +62,7 @@ func ParseGitHubNextJSConfig(raw json.RawMessage) (GitHubNextJSConfig, error) {
 	cfg.Repo = strings.TrimSpace(cfg.Repo)
 	cfg.Branch = strings.TrimSpace(cfg.Branch)
 	cfg.ContentDir = strings.TrimSpace(cfg.ContentDir)
-	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	cfg.BaseURL = normalizePublicBaseURL(cfg.BaseURL)
 	cfg.PublishMode = strings.TrimSpace(cfg.PublishMode)
 	if cfg.Branch == "" {
 		cfg.Branch = "citeloop-content"
@@ -76,6 +77,17 @@ func ParseGitHubNextJSConfig(raw json.RawMessage) (GitHubNextJSConfig, error) {
 		return cfg, errors.New("repo and base_url are required")
 	}
 	return cfg, nil
+}
+
+func normalizePublicBaseURL(raw string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Hostname() != "dev.unipost.dev" {
+		return trimmed
+	}
+	parsed.Scheme = "https"
+	parsed.Host = "unipost.dev"
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 func (c Capabilities) JSON() json.RawMessage {
