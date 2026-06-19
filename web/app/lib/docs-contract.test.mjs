@@ -14,6 +14,15 @@ test("global docs route exists and explains the CiteLoop loop with Phase 1 IA la
 
   for (const copy of [
     "Overview",
+    "Search docs",
+    "Using CiteLoop",
+    "Interactive quickstart",
+    "Dashboard-first",
+    "API-style handoff",
+    "The four steps",
+    "At a glance",
+    "Install and initialize",
+    "On This Page",
     "How CiteLoop turns your domain into evidence-backed SEO and GEO content.",
     "Feed opportunities back into the plan",
     "Start here",
