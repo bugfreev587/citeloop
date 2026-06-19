@@ -25,7 +25,7 @@ func NewOpenAIChat(apiKey, baseURL, model string) *OpenAIChat {
 		baseURL = "https://tokengate-production.up.railway.app/v1"
 	}
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		model = ModelClaudeSonnet
 	}
 	return &OpenAIChat{
 		APIKey:  apiKey,
@@ -73,6 +73,10 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 	if c.APIKey == "" {
 		return CompletionResp{}, fmt.Errorf("tokengate api key not set")
 	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = c.Model
+	}
 
 	prompt := req.Prompt
 	var format *responseFormat
@@ -88,7 +92,7 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 	messages = append(messages, openAIMessage{Role: "user", Content: prompt})
 
 	body, _ := json.Marshal(openAIChatReq{
-		Model:          c.Model,
+		Model:          model,
 		Messages:       messages,
 		Temperature:    req.Temperature,
 		MaxTokens:      req.MaxTokens,
@@ -125,15 +129,15 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 	if tokens == 0 {
 		tokens = cr.Usage.PromptTokens + cr.Usage.CompletionTokens
 	}
-	model := cr.Model
-	if model == "" {
-		model = c.Model
+	respModel := cr.Model
+	if respModel == "" {
+		respModel = model
 	}
 	return CompletionResp{
 		Text:    cr.Choices[0].Message.Content,
-		Model:   model,
+		Model:   respModel,
 		Tokens:  tokens,
-		CostUSD: estimateOpenAIChatCost(model, cr.Usage.PromptTokens, cr.Usage.CompletionTokens),
+		CostUSD: estimateOpenAIChatCost(respModel, cr.Usage.PromptTokens, cr.Usage.CompletionTokens),
 	}, nil
 }
 
@@ -145,6 +149,7 @@ func estimateOpenAIChatCost(model string, in, out int) float64 {
 	}{
 		{"claude-haiku-4-5", pricing{1, 5}},
 		{"claude-sonnet-4-6", pricing{3, 15}},
+		{"claude-opus-4-8", pricing{5, 25}},
 		{"claude-opus-4", pricing{15, 75}},
 		{"gpt-5.2", pricing{1.25, 10}},
 		{"gpt-5.1", pricing{1.25, 10}},

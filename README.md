@@ -56,11 +56,13 @@ For real text generation through TokenGate, prefer the OpenAI-compatible chat-co
 ```bash
 TOKENGATE_API_KEY=sk-...
 TOKENGATE_BASE_URL=https://tokengate-production.up.railway.app/v1
-TOKENGATE_MODEL=claude-haiku-4-5-20251001
+TOKENGATE_MODEL=claude-sonnet-4-6
 ```
 
 `TOKENGATE_BASE_URL` must be the Railway backend `/v1` API base, not the
 TokenGate Vercel dashboard URL.
+Draft-writing requests use Claude Sonnet 4.6, while QA, repair, strategy, and
+profile-analysis requests explicitly route to Claude Opus 4.8.
 
 ## Deploy frontend to Vercel
 
@@ -98,8 +100,10 @@ Preset to Next.js, Build Command to `npm run build`, and Install Command to
 ## Providers (decisions baked in)
 
 - **LLM/Search:** TokenGate's OpenAI-compatible gateway is preferred when
-  `TOKENGATE_API_KEY` is set (`TOKENGATE_BASE_URL` + `TOKENGATE_MODEL` control
-  routing). Claude remains available through `ANTHROPIC_API_KEY` as a fallback;
+  `TOKENGATE_API_KEY` is set (`TOKENGATE_BASE_URL` + `TOKENGATE_MODEL` set the
+  default model). CiteLoop uses per-request model hints so drafts run on Sonnet
+  and higher-stakes QA/analysis runs on Opus. Claude remains available through
+  `ANTHROPIC_API_KEY` as a fallback;
   mock fallback is used when neither LLM key is set. Search defaults to Brave —
   swap the concrete in `internal/search` to use Tavily/Serper/etc. behind the
   same interface.

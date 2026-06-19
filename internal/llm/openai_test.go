@@ -91,6 +91,44 @@ func TestOpenAIChatCompleteUsesTokenGateCompatibleChatCompletions(t *testing.T) 
 	}
 }
 
+func TestOpenAIChatCompleteHonorsRequestModelOverride(t *testing.T) {
+	var gotBody map[string]any
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"id": "chatcmpl_test",
+				"choices": [
+					{"message": {"role": "assistant", "content": "pong"}}
+				],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+			}`)),
+		}, nil
+	})
+
+	p := NewOpenAIChat("tg-test-key", "https://tokengate.example/v1", "claude-sonnet-4-6")
+	p.client = &http.Client{Transport: transport}
+	resp, err := p.Complete(context.Background(), CompletionReq{
+		Model:  "claude-opus-4-8",
+		Prompt: "ping",
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	if gotBody["model"] != "claude-opus-4-8" {
+		t.Fatalf("model = %v", gotBody["model"])
+	}
+	if resp.Model != "claude-opus-4-8" {
+		t.Fatalf("resp model = %q", resp.Model)
+	}
+}
+
 func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	p := NewOpenAIChat("", "https://example.test/v1", "claude-haiku-4-5-20251001")
 	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "hi"}); err == nil {

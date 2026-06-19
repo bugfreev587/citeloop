@@ -59,6 +59,11 @@ func TestWriterDraftFallsBackToMarkdownWhenStructuredJSONIsInvalid(t *testing.T)
 	if provider.reqs[1].MaxTokens != 8192 {
 		t.Fatalf("fallback max tokens = %d, want 8192", provider.reqs[1].MaxTokens)
 	}
+	for i, req := range provider.reqs {
+		if req.Model != "claude-sonnet-4-6" {
+			t.Fatalf("request %d model = %q, want Sonnet draft model", i, req.Model)
+		}
+	}
 }
 
 func TestWriterPromptTreatsBannedClaimsAsNegativeConstraints(t *testing.T) {
@@ -87,6 +92,9 @@ func TestWriterPromptTreatsBannedClaimsAsNegativeConstraints(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Do not repeat or imply banned_claims") {
 		t.Fatal("prompt must forbid repeating banned claims")
+	}
+	if provider.reqs[0].Model != "claude-sonnet-4-6" {
+		t.Fatalf("draft model = %q, want Sonnet", provider.reqs[0].Model)
 	}
 }
 

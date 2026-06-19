@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -21,14 +22,14 @@ type Claude struct {
 
 func NewClaude(apiKey, model string) *Claude {
 	if model == "" {
-		model = "claude-opus-4-8"
+		model = ModelClaudeOpus
 	}
 	return &Claude{APIKey: apiKey, Model: model, client: &http.Client{Timeout: 120 * time.Second}}
 }
 
 // Per-million-token prices (USD) for cost accounting (§5.4). Update on model change.
 var priceTable = map[string]struct{ in, out float64 }{
-	"claude-opus-4-8":   {15, 75},
+	"claude-opus-4-8":   {5, 25},
 	"claude-sonnet-4-6": {3, 15},
 	"claude-haiku-4-5":  {1, 5},
 }
@@ -64,6 +65,10 @@ func (c *Claude) Complete(ctx context.Context, req CompletionReq) (CompletionRes
 	if c.APIKey == "" {
 		return CompletionResp{}, fmt.Errorf("anthropic api key not set")
 	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = c.Model
+	}
 	maxTok := req.MaxTokens
 	if maxTok == 0 {
 		maxTok = 4096
@@ -73,7 +78,7 @@ func (c *Claude) Complete(ctx context.Context, req CompletionReq) (CompletionRes
 		prompt += "\n\nRespond with a single valid JSON object and nothing else."
 	}
 	body, _ := json.Marshal(anthReq{
-		Model:       c.Model,
+		Model:       model,
 		MaxTokens:   maxTok,
 		Temperature: req.Temperature,
 		System:      req.System,
@@ -108,18 +113,22 @@ func (c *Claude) Complete(ctx context.Context, req CompletionReq) (CompletionRes
 	for _, b := range ar.Content {
 		text += b.Text
 	}
+	respModel := ar.Model
+	if respModel == "" {
+		respModel = model
+	}
 	return CompletionResp{
 		Text:    text,
-		Model:   ar.Model,
+		Model:   respModel,
 		Tokens:  ar.Usage.InputTokens + ar.Usage.OutputTokens,
-		CostUSD: cost(c.Model, ar.Usage.InputTokens, ar.Usage.OutputTokens),
+		CostUSD: cost(respModel, ar.Usage.InputTokens, ar.Usage.OutputTokens),
 	}, nil
 }
 
 func cost(model string, in, out int) float64 {
 	p, ok := priceTable[model]
 	if !ok {
-		p = priceTable["claude-opus-4-8"]
+		p = priceTable[ModelClaudeOpus]
 	}
 	return float64(in)/1e6*p.in + float64(out)/1e6*p.out
 }

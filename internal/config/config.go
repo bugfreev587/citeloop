@@ -47,7 +47,7 @@ func FromEnv() Env {
 		Port:                     getenv("PORT", "8080"),
 		TokenGateAPIKey:          os.Getenv("TOKENGATE_API_KEY"),
 		TokenGateBaseURL:         getenv("TOKENGATE_BASE_URL", "https://tokengate-production.up.railway.app/v1"),
-		TokenGateModel:           getenv("TOKENGATE_MODEL", "claude-haiku-4-5-20251001"),
+		TokenGateModel:           getenv("TOKENGATE_MODEL", "claude-sonnet-4-6"),
 		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:           getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
 		ClerkSecretKey:           os.Getenv("CLERK_SECRET_KEY"),

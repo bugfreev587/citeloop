@@ -373,7 +373,7 @@ CONTENT:
 %s`, corpus)
 	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are a product analyst extracting verifiable product facts.",
-		Prompt: prompt, JSON: true, MaxTokens: 2000,
+		Prompt: prompt, Model: llm.ModelClaudeOpus, JSON: true, MaxTokens: 2000,
 	})
 	if err != nil {
 		return nil, resp, err
@@ -394,7 +394,7 @@ ARTICLE (%s):
 %s`, page.URL, clip(page.Title+"\n"+page.Text, 6000))
 	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You extract structured content inventory with verbatim evidence.",
-		Prompt: prompt, JSON: true, MaxTokens: 1500,
+		Prompt: prompt, Model: llm.ModelClaudeSonnet, JSON: true, MaxTokens: 1500,
 	})
 	if err != nil {
 		return nil, resp, err

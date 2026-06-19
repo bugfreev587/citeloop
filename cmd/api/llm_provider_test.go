@@ -13,7 +13,7 @@ func TestSelectLLMProviderPrefersTokenGateWhenConfigured(t *testing.T) {
 	provider := selectLLMProvider(config.Env{
 		TokenGateAPIKey:  "tg-test-key",
 		TokenGateBaseURL: "https://tokengate-production.up.railway.app/v1",
-		TokenGateModel:   "claude-haiku-4-5-20251001",
+		TokenGateModel:   "claude-sonnet-4-6",
 		AnthropicAPIKey:  "anthropic-key",
 		AnthropicModel:   "claude-opus-4-8",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -22,7 +22,7 @@ func TestSelectLLMProviderPrefersTokenGateWhenConfigured(t *testing.T) {
 	if !ok {
 		t.Fatalf("provider = %T, want *llm.OpenAIChat", provider)
 	}
-	if openai.Model != "claude-haiku-4-5-20251001" {
+	if openai.Model != "claude-sonnet-4-6" {
 		t.Fatalf("model = %q", openai.Model)
 	}
 }
