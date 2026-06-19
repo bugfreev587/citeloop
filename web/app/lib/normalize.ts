@@ -125,6 +125,21 @@ function normalizeObject(value: any): Record<string, any> {
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
 }
 
+function normalizeCanonicalURL(value: any): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string") return value;
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname !== "dev.unipost.dev") return value;
+    parsed.protocol = "https:";
+    parsed.hostname = "unipost.dev";
+    parsed.port = "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 export function normalizeNumeric(value: RawPgNumeric): number | null {
   if (value == null) return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -161,7 +176,7 @@ export function normalizeArticle(raw: any): Article {
     seo_score: normalizeNumeric(raw.seo_score),
     qa_issues: normalizeArray(raw.qa_issues).map(String),
     qa_blocking: Boolean(raw.qa_blocking),
-    canonical_url: raw.canonical_url ?? null,
+    canonical_url: normalizeCanonicalURL(raw.canonical_url),
     status: raw.status ?? "unknown",
     scheduled_at: normalizeTime(raw.scheduled_at),
     reviewed_at: normalizeTime(raw.reviewed_at),

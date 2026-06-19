@@ -65,3 +65,16 @@ test("normalizeArticle returns clean scores, time fields, and qa issues", async 
   assert.equal(article.published_at, null);
   assert.deepEqual(article.qa_issues, ["unsupported claim"]);
 });
+
+test("normalizeArticle maps legacy UniPost dev canonical URLs to production", async () => {
+  const { normalizeArticle } = await loadNormalizeModule();
+
+  const article = normalizeArticle({
+    id: "a1",
+    topic_id: "t1",
+    kind: "canonical",
+    canonical_url: "https://dev.unipost.dev/blog/how-agents-post?ref=dashboard#live",
+  });
+
+  assert.equal(article.canonical_url, "https://unipost.dev/blog/how-agents-post?ref=dashboard#live");
+});
