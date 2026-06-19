@@ -165,9 +165,9 @@ function Lane({ title, count, tone, empty, children }: {
   children?: React.ReactNode;
 }) {
   return (
-    <section>
+    <section className="min-w-0">
       <SectionHeader title={title} action={<Badge tone={count ? tone : "neutral"}>{count}</Badge>} />
-      {count === 0 ? <EmptyState title={empty.title} detail={empty.detail} /> : <div className="grid gap-3">{children}</div>}
+      {count === 0 ? <EmptyState title={empty.title} detail={empty.detail} /> : <div className="grid min-w-0 gap-3">{children}</div>}
     </section>
   );
 }
@@ -186,14 +186,14 @@ function PostCard({ accent, badges, title, meta, children, actions }: {
     accent === "red" ? "border-red-200 bg-red-50" : accent === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white";
   const titleClass = accent === "red" ? "text-red-950" : accent === "amber" ? "text-amber-950" : "text-slate-900";
   return (
-    <div className={cx("flex flex-col rounded-xl border px-4 py-3", accentClass)}>
-      {badges && <div className="flex flex-wrap items-center gap-2">{badges}</div>}
+    <div className={cx("flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border px-4 py-3", accentClass)}>
+      {badges && <div className="flex min-w-0 flex-wrap items-center gap-2">{badges}</div>}
       <div className={cx("min-w-0", badges ? "mt-3" : "")}>
-        <div className={cx("break-words text-[15px] font-bold leading-5", titleClass)}>{title}</div>
-        {meta && <div className="mt-1.5 text-xs font-semibold text-slate-500">{meta}</div>}
+        <div className={cx("min-w-0 break-words text-[15px] font-bold leading-5", titleClass)}>{title}</div>
+        {meta && <div className="mt-1.5 min-w-0 break-words text-xs font-semibold text-slate-500">{meta}</div>}
         {children}
       </div>
-      {actions && <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">{actions}</div>}
+      {actions && <div className="mt-4 flex min-w-0 flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">{actions}</div>}
     </div>
   );
 }
@@ -519,9 +519,9 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+      <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
         {/* Left column — Ready then Scheduled. */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Lane
             title="Ready to publish"
             count={readyCanonicals.length}
@@ -606,7 +606,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         </div>
 
         {/* Right column — outcomes. */}
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Lane
             title="Published"
             count={published.length + inflight.length}
@@ -624,7 +624,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                   </span>
                 }
                 title={articleTitle(article)}
-                meta={(article.canonical_url || article.publish_path) && <span className="truncate text-amber-700">{article.canonical_url || article.publish_path}</span>}
+                meta={(article.canonical_url || article.publish_path) && <span className="break-all text-amber-700">{article.canonical_url || article.publish_path}</span>}
                 actions={
                   article.canonical_url && (
                     <a
@@ -694,10 +694,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                   </>
                 }
               >
-                <div className="mt-2 line-clamp-3 text-sm leading-5 text-red-800">
+                <div className="mt-2 line-clamp-3 break-words text-sm leading-5 text-red-800">
                   {article.last_publish_error || "No publish error captured."}
                 </div>
-                {article.publish_path && <div className="mt-1 truncate text-xs text-red-700">{article.publish_path}</div>}
+                {article.publish_path && <div className="mt-1 break-all text-xs text-red-700">{article.publish_path}</div>}
               </PostCard>
             ))}
           </Lane>
@@ -707,7 +707,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       {(ready.length > 0 || waiting.length > 0) && (
         <section className="space-y-3">
           <SectionHeader title="Syndication" eyebrow="Variants for third-party platforms (unlock after the canonical is live)" />
-          <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+          <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
             <Lane
               title="Ready to distribute"
               count={ready.length}
