@@ -250,6 +250,31 @@ test("publishing schedule cards show publish time and target platform", () => {
   assert.match(scheduledBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
 });
 
+test("publishing cards constrain long titles, errors, and publish paths inside the page", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+
+  const postCardBlock = publishing.slice(
+    publishing.indexOf("function PostCard"),
+    publishing.indexOf("export function PublishingClient"),
+  );
+  assert.match(postCardBlock, /flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border/);
+  assert.match(postCardBlock, /min-w-0 break-words text-\[15px\]/);
+  assert.match(postCardBlock, /mt-1\.5 min-w-0 break-words text-xs/);
+
+  assert.match(publishing, /<div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">[\s\S]*\{\/\* Left column/);
+  assert.match(publishing, /<div className="min-w-0 space-y-6">[\s\S]*title="Ready to publish"/);
+  assert.match(publishing, /<div className="min-w-0 space-y-6">[\s\S]*title="Published"/);
+
+  const failedBlock = publishing.slice(
+    publishing.indexOf('title="Publishing failed"'),
+    publishing.indexOf('<SectionHeader title="Syndication"'),
+  );
+  assert.match(failedBlock, /break-words[\s\S]*last_publish_error/);
+  assert.match(failedBlock, /mt-1 break-all text-xs text-red-700/);
+  assert.doesNotMatch(failedBlock, /mt-1 truncate text-xs text-red-700/);
+  assert.doesNotMatch(publishing, /canonical_url \|\| article\.publish_path\)[\s\S]{0,160}truncate/);
+});
+
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",
