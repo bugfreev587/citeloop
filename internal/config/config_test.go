@@ -94,7 +94,7 @@ func TestFromEnvReadsTokenGateDefaults(t *testing.T) {
 	if env.TokenGateBaseURL != "https://tokengate-production.up.railway.app/v1" {
 		t.Fatalf("TokenGateBaseURL = %q", env.TokenGateBaseURL)
 	}
-	if env.TokenGateModel != "claude-haiku-4-5-20251001" {
+	if env.TokenGateModel != "claude-sonnet-4-6" {
 		t.Fatalf("TokenGateModel = %q", env.TokenGateModel)
 	}
 }

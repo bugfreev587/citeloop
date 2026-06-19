@@ -118,7 +118,7 @@ func TestProviderFromCredentialsUsesTokenGateBaseURL(t *testing.T) {
 		Provider: ProviderTokenGate,
 		APIKey:   "tg-test-key",
 		BaseURL:  "https://tokengate.example/v1",
-	}, config.Env{TokenGateModel: "claude-haiku-4-5-20251001"})
+	}, config.Env{TokenGateModel: "claude-sonnet-4-6"})
 
 	openai, ok := provider.(*llm.OpenAIChat)
 	if !ok {

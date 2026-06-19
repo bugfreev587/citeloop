@@ -121,6 +121,22 @@ func TestCompleteQAWithRetryExhaustsAndReturnsError(t *testing.T) {
 	}
 }
 
+func TestQACompactCheckUsesOpusModel(t *testing.T) {
+	valid := `{"claims":[],"qa_blocking":false,"geo_score":0.9,"seo_score":0.9,"issues":[]}`
+	provider := &sequenceLLM{resps: []string{valid}}
+	qa := NewQA(Deps{LLM: provider}, nil)
+
+	if _, _, err := qa.compactCheck(context.Background(), []byte(`{"features":["proof"]}`), "evidence", "# Draft"); err != nil {
+		t.Fatalf("compactCheck: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
+	}
+	if provider.reqs[0].Model != "claude-opus-4-8" {
+		t.Fatalf("compact QA model = %q, want Opus", provider.reqs[0].Model)
+	}
+}
+
 func TestEnforceBannedClaimsBlocksLiteralMatch(t *testing.T) {
 	out := &QAOutput{GeoScore: 0.9, SeoScore: 0.9}
 	profile := json.RawMessage(`{"banned_claims":["SOC 2 certified","HIPAA compliant"]}`)
