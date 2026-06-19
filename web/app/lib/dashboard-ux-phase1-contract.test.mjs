@@ -588,7 +588,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const settings = read("projects/[id]/settings/settings-client.tsx");
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
-  const admin = read("projects/[id]/admin/admin-client.tsx");
+  const admin = read("admin/page.tsx");
   const workspace = read("projects/[id]/workspace.tsx");
 
   assert.match(ui, /export function ButtonProgress/);
@@ -617,7 +617,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
     [publishing, ["Reconciling", "Retrying", "Marking distributed"]],
     [settings, ["Saving publisher", "Saving token", "Testing", "Retrying", "Saving settings"]],
     [context, ["Refreshing context", "Confirming context", "Saving source page", "Saving advanced context"]],
-    [admin, ["Saving credentials"]],
+    [admin, ["Saving", "Testing", "Removing"]],
   ]) {
     assert.match(source, /ButtonProgress/);
     for (const marker of markers) {
