@@ -37,6 +37,11 @@ type GitHubNextJSConfig struct {
 	PublishMode string `json:"publish_mode"`
 }
 
+type GitHubNextJSTarget struct {
+	Branch  string
+	BaseURL string
+}
+
 func GitHubNextJSCapabilities() Capabilities {
 	return Capabilities{
 		CapabilityCreateArticle:  true,
@@ -65,7 +70,11 @@ func ParseGitHubNextJSConfig(raw json.RawMessage) (GitHubNextJSConfig, error) {
 	cfg.BaseURL = normalizePublicBaseURL(cfg.BaseURL)
 	cfg.PublishMode = strings.TrimSpace(cfg.PublishMode)
 	if cfg.Branch == "" {
-		cfg.Branch = "citeloop-content"
+		if target, ok := GitHubNextJSTargetForBaseURL(cfg.BaseURL); ok {
+			cfg.Branch = target.Branch
+		} else {
+			cfg.Branch = "citeloop-content"
+		}
 	}
 	if cfg.ContentDir == "" {
 		cfg.ContentDir = "content/citeloop/blog"
@@ -79,15 +88,68 @@ func ParseGitHubNextJSConfig(raw json.RawMessage) (GitHubNextJSConfig, error) {
 	return cfg, nil
 }
 
-func normalizePublicBaseURL(raw string) string {
-	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Hostname() != "dev.unipost.dev" {
-		return trimmed
+func GitHubNextJSTargetForSiteURL(raw string) (GitHubNextJSTarget, bool) {
+	_, host, ok := parseURLHost(raw)
+	if !ok {
+		return GitHubNextJSTarget{}, false
 	}
-	parsed.Scheme = "https"
-	parsed.Host = "unipost.dev"
-	return strings.TrimRight(parsed.String(), "/")
+	branch, ok := unipostBranchForHost(host)
+	if !ok {
+		return GitHubNextJSTarget{}, false
+	}
+	return GitHubNextJSTarget{
+		Branch:  branch,
+		BaseURL: "https://" + host + "/blog",
+	}, true
+}
+
+func GitHubNextJSTargetForBaseURL(raw string) (GitHubNextJSTarget, bool) {
+	trimmed := normalizePublicBaseURL(raw)
+	if trimmed == "" {
+		return GitHubNextJSTarget{}, false
+	}
+	_, host, ok := parseURLHost(trimmed)
+	if !ok {
+		return GitHubNextJSTarget{}, false
+	}
+	branch, ok := unipostBranchForHost(host)
+	if !ok {
+		return GitHubNextJSTarget{}, false
+	}
+	return GitHubNextJSTarget{Branch: branch, BaseURL: trimmed}, true
+}
+
+func normalizePublicBaseURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func parseURLHost(raw string) (*url.URL, string, bool) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return nil, "", false
+	}
+	candidate := trimmed
+	if !strings.Contains(candidate, "://") {
+		candidate = "https://" + candidate
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, "", false
+	}
+	return parsed, strings.ToLower(parsed.Hostname()), true
+}
+
+func unipostBranchForHost(host string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "dev.unipost.dev":
+		return "dev", true
+	case "staging.unipost.dev":
+		return "staging", true
+	case "unipost.dev":
+		return "main", true
+	default:
+		return "", false
+	}
 }
 
 func (c Capabilities) JSON() json.RawMessage {
