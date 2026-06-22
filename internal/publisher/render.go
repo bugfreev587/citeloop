@@ -40,19 +40,29 @@ var scriptTagRe = regexp.MustCompile(`(?i)<\s*script\b`)
 var mdxImportRe = regexp.MustCompile(`(?m)^\s*import\s+`)
 var htmlEventHandlerRe = regexp.MustCompile(`(?i)\son[a-z]+\s*=`)
 
+const maxBlogSlugLength = 96
+
 func slugOf(a *db.Article) string {
 	if a.ResolvedSlug != nil && strings.TrimSpace(*a.ResolvedSlug) != "" {
-		return strings.TrimSpace(*a.ResolvedSlug)
+		return NormalizeBlogSlug(*a.ResolvedSlug)
 	}
 	m := parseSEO(a)
 	s := m.Slug
 	if s == "" {
 		s = strings.ToLower(title(a))
 	}
-	s = slugRe.ReplaceAllString(strings.ToLower(s), "-")
-	s = strings.Trim(s, "-")
+	s = NormalizeBlogSlug(s)
 	if s == "" {
 		s = "post-" + a.ID.String()[:8]
+	}
+	return s
+}
+
+func NormalizeBlogSlug(s string) string {
+	s = slugRe.ReplaceAllString(strings.ToLower(s), "-")
+	s = strings.Trim(s, "-")
+	if len(s) > maxBlogSlugLength {
+		s = strings.Trim(s[:maxBlogSlugLength], "-")
 	}
 	return s
 }
