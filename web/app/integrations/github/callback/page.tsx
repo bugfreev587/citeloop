@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, GitBranch, Loader2, XCircle } from "lucide-react";
 import { GithubRepo } from "../../../lib/api";
+import { forgetGithubConnectProject, resolveGithubCallbackProjectID } from "../../../lib/github-connect";
 import { deriveGitHubBranch, derivePublishTarget, normalizeDomain } from "../../../lib/publisher-target";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
@@ -19,7 +20,7 @@ function GithubCallbackInner() {
   // GitHub redirects here after an App install with the installation_id and the
   // state we sent (the project id). setup_action is "install" or "update".
   const installationID = params.get("installation_id") ?? "";
-  const projectID = params.get("state") ?? "";
+  const projectID = resolveGithubCallbackProjectID(params.get("state") ?? "");
 
   const [phase, setPhase] = useState<Phase>("linking");
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +91,7 @@ function GithubCallbackInner() {
         content_dir: contentDir.trim() || "content/citeloop/blog",
         base_url: baseURL.trim(),
       });
+      forgetGithubConnectProject();
       setPhase("done");
       router.push(`${publishingHref}?github=connected`);
     } catch (e: any) {

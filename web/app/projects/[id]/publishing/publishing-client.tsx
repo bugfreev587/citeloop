@@ -26,6 +26,7 @@ import {
   PublisherConnection,
   defaultProjectConfig,
 } from "../../../lib/api";
+import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
@@ -445,6 +446,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     // Hand off to GitHub's App install screen; it redirects back to our callback
     // (carrying installation_id + the project id as state) to finish the link.
     if (githubIntegration?.install_url) {
+      rememberGithubConnectProject(projectId);
       window.location.href = githubIntegration.install_url;
     }
   }
