@@ -127,6 +127,26 @@ func TestBlogPublisherReusesResolvedSlugOnRetry(t *testing.T) {
 	}
 }
 
+func TestBlogPublisherCapsSlugToUniPostRouteContract(t *testing.T) {
+	article := testArticle(t)
+	rawSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integrations"
+	expectedSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integr"
+	article.SeoMeta = json.RawMessage(`{"title":"White Label","meta_description":"Meta","slug":"` + rawSlug + `","h1":"White Label"}`)
+	blog := NewBlog("", "", "dev", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+
+	result, err := blog.Publish(context.Background(), article)
+	if err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+
+	if result.Path != "content/citeloop/blog/"+expectedSlug+".mdx" {
+		t.Fatalf("result path = %q", result.Path)
+	}
+	if result.URL != "https://dev.unipost.dev/blog/"+expectedSlug {
+		t.Fatalf("result url = %q", result.URL)
+	}
+}
+
 func TestBlogPublisherResultMarksPendingURLVerification(t *testing.T) {
 	article := testArticle(t)
 	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())

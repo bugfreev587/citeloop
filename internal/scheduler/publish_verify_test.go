@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,53 @@ func TestVerifyPublishedURLRejectsNon2xx(t *testing.T) {
 
 	if err := s.verifyPublishedURL(context.Background(), server.URL+"/blog/missing"); err == nil {
 		t.Fatal("expected non-2xx URL verification to fail")
+	}
+}
+
+func TestResolvePublishedURLAcceptsNormalizedSlugFallback(t *testing.T) {
+	fullSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integrations"
+	normalizedSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integr"
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		if r.URL.Path == "/blog/"+normalizedSlug {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	s := &Scheduler{httpClient: server.Client()}
+
+	got, err := s.resolvePublishedURL(context.Background(), server.URL+"/blog/"+fullSlug)
+	if err != nil {
+		t.Fatalf("resolvePublishedURL returned error: %v", err)
+	}
+	if got != server.URL+"/blog/"+normalizedSlug {
+		t.Fatalf("resolved url = %q", got)
+	}
+	if len(seen) < 3 {
+		t.Fatalf("expected primary and fallback checks, saw %#v", seen)
+	}
+}
+
+func TestResolvePublishedURLReportsPrimaryAndNormalizedFailures(t *testing.T) {
+	fullSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integrations"
+	normalizedSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integr"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	s := &Scheduler{httpClient: server.Client()}
+
+	_, err := s.resolvePublishedURL(context.Background(), server.URL+"/blog/"+fullSlug)
+
+	if err == nil {
+		t.Fatal("expected URL resolution to fail")
+	}
+	errText := err.Error()
+	if !strings.Contains(errText, "/blog/"+fullSlug) || !strings.Contains(errText, "/blog/"+normalizedSlug) {
+		t.Fatalf("error should mention primary and normalized URLs, got %q", errText)
 	}
 }
 

@@ -844,9 +844,14 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 			s.markPublishFailed(ctx, q, p, a, "db_backfill", errText, true)
 			continue
 		}
-		if err := s.verifyPublishedURL(ctx, res.URL); err != nil {
+		verifiedURL, err := s.resolvePublishedURL(ctx, res.URL)
+		if err != nil {
 			s.Log.Info("published content waiting for URL verification", "article", a.ID, "url", res.URL, "err", err)
 			continue
+		}
+		if verifiedURL != res.URL {
+			res.URL = verifiedURL
+			pubResult = mustJSON(res)
 		}
 		published, err := q.MarkPublished(ctx, db.MarkPublishedParams{
 			ID:            a.ID,
@@ -944,7 +949,8 @@ func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project
 			s.markPublishFailed(ctx, q, p, a, "reconcile_missing_file", "reconcile content path failed: "+err.Error(), true)
 			continue
 		}
-		if err := s.verifyPublishedURL(ctx, res.URL); err != nil {
+		verifiedURL, err := s.resolvePublishedURL(ctx, res.URL)
+		if err != nil {
 			if a.Status == "pending_url_verification" {
 				if pendingURLVerificationDeadlineReached(a, s.currentTime()) {
 					s.markPublishFailed(ctx, q, p, a, "reconcile_url_unverified", "reconcile url verification failed: "+err.Error(), true)
@@ -955,6 +961,9 @@ func (s *Scheduler) reconcilePublishForProject(ctx context.Context, p db.Project
 				s.markPublishFailed(ctx, q, p, a, "reconcile_url_unverified", "reconcile url verification failed: "+err.Error(), true)
 			}
 			continue
+		}
+		if verifiedURL != res.URL {
+			res.URL = verifiedURL
 		}
 		resolvedSlug, publishPath := publishResultRefs(res)
 		published, err := q.MarkPublished(ctx, db.MarkPublishedParams{
@@ -1041,6 +1050,44 @@ func (s *Scheduler) verifyPublishedURL(ctx context.Context, url string) error {
 		return fmt.Errorf("published URL did not return 2xx")
 	}
 	return nil
+}
+
+func (s *Scheduler) resolvePublishedURL(ctx context.Context, publishedURL string) (string, error) {
+	if err := s.verifyPublishedURL(ctx, publishedURL); err == nil {
+		return publishedURL, nil
+	} else {
+		normalizedURL, ok := normalizedPublishedURL(publishedURL)
+		if !ok {
+			return "", err
+		}
+		if normalizedErr := s.verifyPublishedURL(ctx, normalizedURL); normalizedErr == nil {
+			return normalizedURL, nil
+		} else {
+			return "", fmt.Errorf("published URL %q did not verify: %w; normalized URL %q also did not verify: %v", publishedURL, err, normalizedURL, normalizedErr)
+		}
+	}
+}
+
+func normalizedPublishedURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Path == "" {
+		return "", false
+	}
+	base := path.Base(u.Path)
+	if base == "." || base == "/" || base == "" {
+		return "", false
+	}
+	normalized := publisher.NormalizeBlogSlug(base)
+	if normalized == "" || normalized == base {
+		return "", false
+	}
+	dir := path.Dir(u.Path)
+	if dir == "." || dir == "/" {
+		u.Path = "/" + normalized
+	} else {
+		u.Path = strings.TrimRight(dir, "/") + "/" + normalized
+	}
+	return u.String(), true
 }
 
 func (s *Scheduler) triggerUniPostDeployHook(ctx context.Context) error {
