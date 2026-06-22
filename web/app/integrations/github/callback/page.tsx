@@ -2,42 +2,14 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, GitBranch, Loader2, XCircle } from "lucide-react";
 import { GithubRepo } from "../../../lib/api";
+import { deriveGitHubBranch, derivePublishTarget, normalizeDomain } from "../../../lib/publisher-target";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
 
 type Phase = "linking" | "picking" | "saving" | "done" | "error";
-
-// The public URL is built as base_url + "/" + slug, so the base must be the
-// site's blog root (no slug). We derive a sensible default from the project's
-// own configured domain (not the repo) and append the content directory's last
-// segment as the path — e.g. https://unipost.dev + content/citeloop/blog →
-// https://unipost.dev/blog. Always editable before the operator confirms.
-function deriveBaseURL(siteURL: string, contentDir: string): string {
-  const root = (siteURL || "").trim().replace(/\/+$/, "");
-  if (!root) return "";
-  const leaf = (contentDir || "").split("/").filter(Boolean).pop() || "";
-  return leaf ? `${root}/${leaf}` : root;
-}
-
-// A bare hostname like "staging.unipost.dev" — dotted, no spaces/scheme/path.
-function looksLikeHostname(raw: string): boolean {
-  const v = (raw || "").trim();
-  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v);
-}
-
-// normalizeDomain turns a configured site_url OR a domain-shaped project name
-// into a scheme-qualified root (no trailing slash). Returns "" if it isn't
-// usable as a domain (e.g. a human project name like "UniPost (placeholder)").
-function normalizeDomain(raw: string): string {
-  const v = (raw || "").trim();
-  if (!v) return "";
-  if (/^https?:\/\//i.test(v)) return v.replace(/\/+$/, "");
-  if (looksLikeHostname(v)) return `https://${v.replace(/\/+$/, "")}`;
-  return "";
-}
 
 function GithubCallbackInner() {
   const api = useApi();
@@ -53,10 +25,11 @@ function GithubCallbackInner() {
   const [error, setError] = useState<string | null>(null);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [repo, setRepo] = useState("");
-  const [branch, setBranch] = useState("citeloop-content");
+  const [branch, setBranch] = useState("");
   const [contentDir, setContentDir] = useState("content/citeloop/blog");
   const [baseURL, setBaseURL] = useState("");
   const [baseTouched, setBaseTouched] = useState(false);
+  const [branchTouched, setBranchTouched] = useState(false);
   const [siteURL, setSiteURL] = useState("");
 
   const publishingHref = projectID ? `/projects/${projectID}/publishing` : "/";
@@ -75,7 +48,6 @@ function GithubCallbackInner() {
       let nextContentDir = "content/citeloop/blog";
       if (repositories.length > 0) {
         setRepo(repositories[0].full_name);
-        setBranch(repositories[0].default_branch || "citeloop-content");
       }
       // Default the Site base URL from this project's own configured domain —
       // the repo is being connected to publish THIS project's posts.
@@ -85,7 +57,11 @@ function GithubCallbackInner() {
         // itself a hostname (e.g. a project literally named "staging.unipost.dev").
         const domain = normalizeDomain(project.config?.site_url ?? "") || normalizeDomain(project.name ?? "");
         setSiteURL(domain);
-        if (domain) setBaseURL(deriveBaseURL(domain, nextContentDir));
+        if (domain) {
+          const target = derivePublishTarget(domain, nextContentDir);
+          setBaseURL(target.baseURL);
+          if (target.branch) setBranch(target.branch);
+        }
       } catch {
         // Project lookup is best-effort; the field stays empty + editable.
       }
@@ -100,12 +76,8 @@ function GithubCallbackInner() {
     link();
   }, [link]);
 
-  const selectedRepo = useMemo(() => repos.find((r) => r.full_name === repo) ?? null, [repos, repo]);
-
   function chooseRepo(fullName: string) {
     setRepo(fullName);
-    const match = repos.find((r) => r.full_name === fullName);
-    if (match?.default_branch) setBranch(match.default_branch);
   }
 
   async function save() {
@@ -114,7 +86,7 @@ function GithubCallbackInner() {
     try {
       await api.selectGithubRepo(projectID, {
         repo: repo.trim(),
-        branch: branch.trim() || "citeloop-content",
+        branch: branch.trim(),
         content_dir: contentDir.trim() || "content/citeloop/blog",
         base_url: baseURL.trim(),
       });
@@ -208,14 +180,23 @@ function GithubCallbackInner() {
               placeholder="https://example.com/blog"
               onChange={(event) => {
                 setBaseTouched(true);
-                setBaseURL(event.target.value);
+                const next = event.target.value;
+                setBaseURL(next);
+                const nextBranch = deriveGitHubBranch(next);
+                if (nextBranch && !branchTouched) setBranch(nextBranch);
               }}
             />
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Branch" helper={selectedRepo ? `Default: ${selectedRepo.default_branch}` : undefined}>
-              <TextInput value={branch} onChange={(event) => setBranch(event.target.value)} />
+            <Field label="Branch" helper={siteURL ? "Matched from this project's domain when possible." : "Choose the branch that deploys this site."}>
+              <TextInput
+                value={branch}
+                onChange={(event) => {
+                  setBranchTouched(true);
+                  setBranch(event.target.value);
+                }}
+              />
             </Field>
             <Field label="Content directory">
               <TextInput
@@ -224,14 +205,14 @@ function GithubCallbackInner() {
                   const next = event.target.value;
                   setContentDir(next);
                   // Keep the derived base URL in sync until the operator edits it.
-                  if (!baseTouched && siteURL) setBaseURL(deriveBaseURL(siteURL, next));
+                  if (!baseTouched && siteURL) setBaseURL(derivePublishTarget(siteURL, next).baseURL);
                 }}
               />
             </Field>
           </div>
 
           <div className="flex justify-end">
-            <Button disabled={phase === "saving" || !repo.trim() || !baseURL.trim()} variant="primary" onClick={save}>
+            <Button disabled={phase === "saving" || !repo.trim() || !branch.trim() || !baseURL.trim()} variant="primary" onClick={save}>
               <ButtonProgress busy={phase === "saving"} busyLabel="Saving" idleIcon={<CheckCircle2 size={16} />}>
                 Finish connecting
               </ButtonProgress>

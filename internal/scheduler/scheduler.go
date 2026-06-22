@@ -1138,13 +1138,14 @@ func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConn
 	if q == nil {
 		return s.Blog, nil
 	}
+	projectTarget := githubNextJSTargetForProject(p)
 	conn, err := q.GetDefaultPublisherConnectionForProject(ctx, db.GetDefaultPublisherConnectionForProjectParams{
 		ProjectID: p.ID,
 		Kind:      publisher.ConnectionKindGitHubNextJS,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return s.Blog, nil
+			return blogPublisherWithTarget(s.Blog, projectTarget), nil
 		}
 		return nil, err
 	}
@@ -1160,7 +1161,7 @@ func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConn
 			return nil, err
 		}
 	}
-	blog, _, err := blogPublisherFromConnection(s.Blog, token, conn, s.Log)
+	blog, _, err := blogPublisherFromConnection(s.Blog, token, conn, s.Log, projectTarget)
 	return blog, err
 }
 
@@ -1182,7 +1183,7 @@ func (s *Scheduler) githubInstallationToken(ctx context.Context, conn db.Publish
 	return s.GitHubApp.InstallationToken(ctx, cfg.InstallationID)
 }
 
-func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string, conn db.PublisherConnection, log *slog.Logger) (*publisher.BlogPublisher, bool, error) {
+func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string, conn db.PublisherConnection, log *slog.Logger, target *publisher.GitHubNextJSTarget) (*publisher.BlogPublisher, bool, error) {
 	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
 		return fallback, false, fmt.Errorf("unsupported publisher connection kind %q", conn.Kind)
 	}
@@ -1190,7 +1191,30 @@ func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string
 	if err != nil {
 		return fallback, false, err
 	}
+	if target != nil {
+		cfg.Branch = target.Branch
+		cfg.BaseURL = target.BaseURL
+	}
 	return publisher.NewBlog(token, cfg.Repo, cfg.Branch, cfg.BaseURL, cfg.ContentDir, log), true, nil
+}
+
+func githubNextJSTargetForProject(p db.Project) *publisher.GitHubNextJSTarget {
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return nil
+	}
+	target, ok := publisher.GitHubNextJSTargetForSiteURL(cfg.SiteURL)
+	if !ok {
+		return nil
+	}
+	return &target
+}
+
+func blogPublisherWithTarget(fallback *publisher.BlogPublisher, target *publisher.GitHubNextJSTarget) *publisher.BlogPublisher {
+	if fallback == nil || target == nil {
+		return fallback
+	}
+	return publisher.NewBlog(fallback.Token, fallback.Repo, target.Branch, target.BaseURL, fallback.ContentDir, fallback.Log)
 }
 
 func (s *Scheduler) publisherCredentialToken(ctx context.Context, q publisherConnectionQuerier, conn db.PublisherConnection) (string, error) {

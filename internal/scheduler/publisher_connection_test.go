@@ -10,6 +10,7 @@ import (
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/secretbox"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestBlogPublisherForProjectWithoutQueryUsesFallbackPublisher(t *testing.T) {
@@ -22,6 +23,27 @@ func TestBlogPublisherForProjectWithoutQueryUsesFallbackPublisher(t *testing.T) 
 	}
 	if blog != fallback {
 		t.Fatal("expected missing query/connection path to use fallback publisher")
+	}
+}
+
+func TestBlogPublisherForProjectDerivesUniPostTargetWithoutConnection(t *testing.T) {
+	projectID := uuid.New()
+	store := &publisherConnectionStoreFake{noConnection: true}
+	fallback := publisher.NewBlog("fallback-token", "bugfreev587/unipost", "citeloop-content", "https://unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	s := &Scheduler{Blog: fallback, Log: slog.Default()}
+
+	blog, err := s.blogPublisherForProject(context.Background(), store, db.Project{
+		ID:     projectID,
+		Config: json.RawMessage(`{"site_url":"https://dev.unipost.dev/"}`),
+	})
+	if err != nil {
+		t.Fatalf("blogPublisherForProject returned error: %v", err)
+	}
+	if blog.Repo != "bugfreev587/unipost" || blog.Branch != "dev" || blog.BaseURL != "https://dev.unipost.dev/blog" || blog.ContentDir != "content/citeloop/blog" {
+		t.Fatalf("blog publisher did not use project target: %+v", blog)
+	}
+	if blog.Token != "fallback-token" {
+		t.Fatalf("token = %q, want fallback token", blog.Token)
 	}
 }
 
@@ -41,7 +63,7 @@ func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
 	}
 	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
 
-	blog, fromConnection, err := blogPublisherFromConnection(fallback, "connection-token", conn, slog.Default())
+	blog, fromConnection, err := blogPublisherFromConnection(fallback, "connection-token", conn, slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("blogPublisherFromConnection returned error: %v", err)
 	}
@@ -53,6 +75,38 @@ func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
 	}
 	if !blogConfiguredWithToken(blog) {
 		t.Fatal("expected connection token to configure publisher")
+	}
+}
+
+func TestBlogPublisherForProjectTargetOverridesConnectionEnvironment(t *testing.T) {
+	projectID := uuid.New()
+	store := &publisherConnectionStoreFake{
+		conn: db.PublisherConnection{
+			ID:            uuid.New(),
+			ProjectID:     projectID,
+			Kind:          publisher.ConnectionKindGitHubNextJS,
+			Status:        "connected",
+			CredentialRef: ptr("env:GITHUB_TOKEN"),
+			Config: json.RawMessage(`{
+				"repo":"bugfreev587/unipost",
+				"branch":"main",
+				"content_dir":"content/citeloop/blog",
+				"base_url":"https://unipost.dev/blog"
+			}`),
+		},
+	}
+	fallback := publisher.NewBlog("fallback-token", "bugfreev587/unipost", "main", "https://unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	s := &Scheduler{Blog: fallback, Log: slog.Default()}
+
+	blog, err := s.blogPublisherForProject(context.Background(), store, db.Project{
+		ID:     projectID,
+		Config: json.RawMessage(`{"site_url":"https://staging.unipost.dev"}`),
+	})
+	if err != nil {
+		t.Fatalf("blogPublisherForProject returned error: %v", err)
+	}
+	if blog.Repo != "bugfreev587/unipost" || blog.Branch != "staging" || blog.BaseURL != "https://staging.unipost.dev/blog" {
+		t.Fatalf("blog publisher did not use staging target: %+v", blog)
 	}
 }
 
@@ -69,7 +123,7 @@ func TestBlogPublisherFromConnectionWithoutCredentialDoesNotUseFallbackToken(t *
 	}
 	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
 
-	blog, fromConnection, err := blogPublisherFromConnection(fallback, "", conn, slog.Default())
+	blog, fromConnection, err := blogPublisherFromConnection(fallback, "", conn, slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("blogPublisherFromConnection returned error: %v", err)
 	}
@@ -130,11 +184,15 @@ func TestBlogPublisherForProjectUsesEncryptedPublisherCredential(t *testing.T) {
 }
 
 type publisherConnectionStoreFake struct {
-	conn db.PublisherConnection
-	cred db.PublisherCredential
+	conn         db.PublisherConnection
+	cred         db.PublisherCredential
+	noConnection bool
 }
 
 func (f *publisherConnectionStoreFake) GetDefaultPublisherConnectionForProject(context.Context, db.GetDefaultPublisherConnectionForProjectParams) (db.PublisherConnection, error) {
+	if f.noConnection {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
 	return f.conn, nil
 }
 
