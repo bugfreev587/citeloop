@@ -399,6 +399,7 @@ test("article mutation APIs call project scoped endpoints", async () => {
     await client.getArticle("project-1", "article-1");
     await client.edit("project-1", "article-1", { content_md: "Body" });
     await client.fixArticle("project-1", "article-1");
+    await client.applyFix("project-1", "article-1", "Remove unsupported claim");
     await client.approve("project-1", "article-1");
     await client.reject("project-1", "article-1");
     await client.distributed("project-1", "article-1");
@@ -411,14 +412,17 @@ test("article mutation APIs call project scoped endpoints", async () => {
     assert.deepEqual(JSON.parse(calls[1].init.body), { content_md: "Body" });
     assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/articles/article-1/ai-fix");
     assert.equal(calls[2].init.method, "POST");
-    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/articles/article-1/approve");
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/articles/article-1/apply-fix");
     assert.equal(calls[3].init.method, "POST");
-    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/articles/article-1/reject");
+    assert.deepEqual(JSON.parse(calls[3].init.body), { instruction: "Remove unsupported claim" });
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/articles/article-1/approve");
     assert.equal(calls[4].init.method, "POST");
-    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/articles/article-1/distributed");
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/articles/article-1/reject");
     assert.equal(calls[5].init.method, "POST");
-    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/articles/article-1/retry-publish");
+    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/articles/article-1/distributed");
     assert.equal(calls[6].init.method, "POST");
+    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/articles/article-1/retry-publish");
+    assert.equal(calls[7].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

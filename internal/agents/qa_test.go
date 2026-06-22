@@ -75,6 +75,32 @@ func TestExtractQAOutputTreatsUnsupportedClaimsAsAutoEditable(t *testing.T) {
 	}
 }
 
+func TestExtractQAOutputAddsActionableFixInstructionForBlockingComments(t *testing.T) {
+	raw := `{
+		"claims":[{"claim":"UniPost is a scheduling platform","mapped":true,"evidence":"profile"}],
+		"qa_blocking":true,
+		"geo_score":0.7,
+		"seo_score":0.8,
+		"issues":["The introduction is too broad to pass QA."],
+		"blocking_issues":[{"code":"required_seo_metadata","severity":"blocking","message":"Add a specific H1 and meta description."}],
+		"fix_instructions":[],
+		"human_decision_options":[],
+		"blocking_reason":"Missing required SEO metadata",
+		"can_auto_fix":true
+	}`
+
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("extractQAOutput: %v", err)
+	}
+	if len(out.FixInstructions) == 0 {
+		t.Fatal("blocking QA comments must be converted into actionable editor fix instructions")
+	}
+	if !strings.Contains(strings.ToLower(out.FixInstructions[0]), "missing required seo metadata") {
+		t.Fatalf("fix instruction should explain how to pass QA, got %#v", out.FixInstructions)
+	}
+}
+
 // Plain string arrays must still parse unchanged (regression guard).
 func TestExtractQAOutputStillAcceptsPlainStringArrays(t *testing.T) {
 	raw := `{"claims":[],"qa_blocking":false,"geo_score":0.9,"seo_score":0.9,"issues":["a","b"],"fix_instructions":["do x"]}`

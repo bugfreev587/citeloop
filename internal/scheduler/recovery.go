@@ -79,7 +79,7 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 		return err
 	}
 	for _, art := range recoverable {
-		if err := s.recoverArticle(ctx, q, p.ID, art); err != nil {
+		if err := s.recoverArticle(ctx, q, p.ID, art, cfg); err != nil {
 			s.Log.Warn("review recovery: article step failed", "project", p.ID, "article", art.ID, "err", err)
 		}
 	}
@@ -96,7 +96,7 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 // recoverArticle advances one blocked draft by exactly one automated step so the
 // work is bounded and observable: each tick either re-runs QA, repairs, or
 // regenerates, then lets the next tick re-evaluate the fresh state.
-func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article) error {
+func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, cfg config.ProjectConfig) error {
 	// QA found a real non-editorial decision a human must make — hand it over.
 	if articleNeedsHuman(art) {
 		return s.escalateArticle(ctx, q, projectID, art, "QA found a positioning decision that needs human judgment.")
@@ -114,29 +114,38 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	case articleCanAutoFix(claimed) && claimed.RepairAttempts < draftRepairBudget:
 		// QA evaluated the draft and flagged a safe, editor-fixable issue.
 		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-		_, err := writer.RepairArticle(ctx, projectID, claimed.ID)
-		return err
+		updated, err := writer.RepairArticle(ctx, projectID, claimed.ID)
+		if err != nil {
+			return err
+		}
+		return s.approveRecoveredArticle(ctx, q, projectID, updated, cfg)
 	case !articleHasClaimMap(claimed) && claimed.RecoveryAttempts <= maxRequalifyBeforeRegen:
 		// QA never returned a claim map (infrastructure/parse failure, not a
 		// content problem) — re-run QA; transient failures clear here.
 		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-		_, err := qa.Requalify(ctx, projectID, claimed.ID)
-		return err
+		updated, err := qa.Requalify(ctx, projectID, claimed.ID)
+		if err != nil {
+			return err
+		}
+		return s.approveRecoveredArticle(ctx, q, projectID, updated, cfg)
 	case articleHasClaimMap(claimed):
 		// QA evaluated but the draft is still blocking and not auto-fixable; one
 		// more QA pass before we give the topic a fresh draft.
 		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-		_, err := qa.Requalify(ctx, projectID, claimed.ID)
-		return err
+		updated, err := qa.Requalify(ctx, projectID, claimed.ID)
+		if err != nil {
+			return err
+		}
+		return s.approveRecoveredArticle(ctx, q, projectID, updated, cfg)
 	default:
-		return s.regenerateOrEscalate(ctx, q, projectID, claimed)
+		return s.regenerateOrEscalate(ctx, q, projectID, claimed, cfg)
 	}
 }
 
 // regenerateOrEscalate discards a draft CiteLoop could not evaluate and asks the
 // Writer for a fresh one, bounded per topic; once that budget is spent it
 // becomes a human decision.
-func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article) error {
+func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, cfg config.ProjectConfig) error {
 	topic, err := q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: art.TopicID, ProjectID: projectID})
 	if err != nil {
 		return err
@@ -177,8 +186,14 @@ func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, pro
 		return err
 	}
 	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-	if _, err := writer.Generate(ctx, projectID, genTopic); err != nil {
+	created, err := writer.Generate(ctx, projectID, genTopic)
+	if err != nil {
 		return err
+	}
+	for _, draft := range created {
+		if err := s.approveRecoveredArticle(ctx, q, projectID, draft, cfg); err != nil {
+			return err
+		}
 	}
 	s.Log.Info("review recovery regenerated draft", "project", projectID, "topic", topic.ID)
 	return nil
@@ -195,6 +210,54 @@ func (s *Scheduler) escalateArticle(ctx context.Context, q *db.Queries, projectI
 		HumanDecisionOptions: mustJSON(options),
 	})
 	return err
+}
+
+func shouldAutoApproveRecoveryResult(art db.Article) bool {
+	return art.Status == "pending_review" && !art.QaBlocking && !art.RequiresHumanDecision
+}
+
+func (s *Scheduler) approveRecoveredArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, cfg config.ProjectConfig) error {
+	if !shouldAutoApproveRecoveryResult(art) {
+		return nil
+	}
+	schedAt := pgtype.Timestamptz{}
+	if art.Kind == "canonical" {
+		topic, err := q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: art.TopicID, ProjectID: projectID})
+		if err != nil {
+			return err
+		}
+		if topic.ScheduledAt.Valid {
+			schedAt = topic.ScheduledAt
+		} else if latest, err := q.LatestCanonicalPublishSlotForProject(ctx, projectID); err == nil && latest.Valid {
+			if when, ok := cfg.NextPublishSlot(latest.Time, s.now()); ok {
+				schedAt = pgutil.TS(when)
+			}
+		} else if when, ok := cfg.NextPublishSlot(time.Time{}, s.now()); ok {
+			schedAt = pgutil.TS(when)
+		}
+	}
+	approved, err := q.ApproveArticleForProject(ctx, db.ApproveArticleForProjectParams{
+		ID:          art.ID,
+		Status:      "approved",
+		ScheduledAt: schedAt,
+		ReviewedBy:  ptr(autoReviewer),
+		ProjectID:   projectID,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+		ProjectID:  projectID,
+		EventType:  workflow.EventDraftApproved,
+		DedupeKey:  workflowEventDedupeKey(workflow.EventDraftApproved, projectID, approved.ID.String()),
+		Payload:    mustJSON(map[string]any{"article_id": approved.ID, "kind": approved.Kind, "auto": true, "source": "qa_recovery"}),
+		EntityType: ptr("article"),
+		EntityID:   pgtype.UUID{Bytes: approved.ID, Valid: true},
+	}); err != nil {
+		return err
+	}
+	s.Log.Info("review recovery auto-approved recovered draft", "project", projectID, "article", approved.ID, "kind", approved.Kind)
+	return nil
 }
 
 type decisionOption struct {

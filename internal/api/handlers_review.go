@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const autoFixReviewer = "citeloop-auto"
 
 // listReview returns pending_review articles grouped by topic so a canonical and
 // its variants appear together (§5.5).
@@ -218,7 +221,16 @@ func (s *Server) applyFixProjectArticle(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 500, "apply fix failed: "+err.Error())
 		return
 	}
-	writeJSON(w, 200, updated)
+	if updated.QaBlocking {
+		writeErr(w, 500, "apply fix did not clear QA")
+		return
+	}
+	approved, err := s.approveArticleRecord(r.Context(), updated, projectID, autoFixReviewer)
+	if err != nil {
+		writeErr(w, 500, "apply fix approve failed: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, approved)
 }
 
 func (s *Server) approveProjectArticle(w http.ResponseWriter, r *http.Request) {
@@ -266,59 +278,66 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
+	updated, err := s.approveArticleRecord(r.Context(), a, projectID, in.ReviewedBy)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) approveArticleRecord(ctx context.Context, a db.Article, projectID uuid.UUID, reviewedBy string) (db.Article, error) {
 	schedAt := pgtype.Timestamptz{}
 	if a.Kind == "canonical" {
 		// scheduled_at single source of truth (§3): inherit topic or follow
 		// the project's auto-advance scheduling policy.
 		var topic db.Topic
+		var err error
 		if projectID == uuid.Nil {
-			topic, err = s.Q.GetTopic(r.Context(), a.TopicID)
+			topic, err = s.Q.GetTopic(ctx, a.TopicID)
 		} else {
-			topic, err = s.Q.GetTopicForProject(r.Context(), db.GetTopicForProjectParams{ID: a.TopicID, ProjectID: projectID})
+			topic, err = s.Q.GetTopicForProject(ctx, db.GetTopicForProjectParams{ID: a.TopicID, ProjectID: projectID})
 		}
 		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
+			return db.Article{}, err
 		}
-		cfg, err := s.projectConfigByID(r.Context(), a.ProjectID)
+		cfg, err := s.projectConfigByID(ctx, a.ProjectID)
 		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
+			return db.Article{}, err
 		}
-		latest, _ := s.Q.LatestCanonicalPublishSlotForProject(r.Context(), a.ProjectID)
+		latest, _ := s.Q.LatestCanonicalPublishSlotForProject(ctx, a.ProjectID)
 		schedAt = canonicalApprovalScheduleAt(topic.ScheduledAt, latest, cfg, time.Now())
 	}
 
 	var updated db.Article
+	var err error
 	if projectID == uuid.Nil {
-		updated, err = s.Q.ApproveArticle(r.Context(), db.ApproveArticleParams{
-			ID:          aid,
+		updated, err = s.Q.ApproveArticle(ctx, db.ApproveArticleParams{
+			ID:          a.ID,
 			Status:      "approved",
 			ScheduledAt: schedAt,
-			ReviewedBy:  &in.ReviewedBy,
+			ReviewedBy:  &reviewedBy,
 		})
 	} else {
-		updated, err = s.Q.ApproveArticleForProject(r.Context(), db.ApproveArticleForProjectParams{
-			ID:          aid,
+		updated, err = s.Q.ApproveArticleForProject(ctx, db.ApproveArticleForProjectParams{
+			ID:          a.ID,
 			Status:      "approved",
 			ScheduledAt: schedAt,
-			ReviewedBy:  &in.ReviewedBy,
+			ReviewedBy:  &reviewedBy,
 			ProjectID:   projectID,
 		})
 	}
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return db.Article{}, err
 	}
-	if err := s.enqueueWorkflowEvent(r.Context(), updated.ProjectID, workflow.EventDraftApproved, "article", updated.ID, workflowDedupeKey(workflow.EventDraftApproved, updated.ProjectID, updated.ID), map[string]any{
+	if err := s.enqueueWorkflowEvent(ctx, updated.ProjectID, workflow.EventDraftApproved, "article", updated.ID, workflowDedupeKey(workflow.EventDraftApproved, updated.ProjectID, updated.ID), map[string]any{
 		"article_id": updated.ID,
 		"kind":       updated.Kind,
 		"status":     updated.Status,
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return db.Article{}, err
 	}
-	writeJSON(w, 200, updated)
+	return updated, nil
 }
 
 // canonicalApprovalScheduleAt decides a freshly approved canonical's publish
