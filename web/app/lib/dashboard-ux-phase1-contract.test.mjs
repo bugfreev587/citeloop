@@ -281,6 +281,17 @@ test("publishing cards constrain long titles, errors, and publish paths inside t
   assert.doesNotMatch(publishing, /canonical_url \|\| article\.publish_path\)[\s\S]{0,160}truncate/);
 });
 
+test("publishing platforms drawer shows one GitHub App connection with disconnect", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+
+  assert.match(publishing, /const summaryConnections = useMemo/);
+  assert.match(publishing, /connection\.kind === "github_nextjs" && githubIntegration\?\.connected/);
+  assert.match(publishing, /summaryConnections\.map\(\(connection\) =>/);
+  assert.match(publishing, /async function disconnectConnection\(connection: PublisherConnection\)/);
+  assert.match(publishing, /api\.deletePublisherConnection\(projectId, connection\.id\)/);
+  assert.match(publishing, />\s*Disconnect\s*</);
+});
+
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",

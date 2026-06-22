@@ -311,6 +311,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const publishIntervalDays = config?.publish_interval_days ?? 2;
   const connectedCount = useMemo(() => connections.filter((c) => c.status === "connected").length, [connections]);
   const githubPublisher = useMemo(() => connections.find((c) => c.kind === "github_nextjs") ?? null, [connections]);
+  const summaryConnections = useMemo(
+    () => connections.filter((connection) => !(connection.kind === "github_nextjs" && githubIntegration?.connected)),
+    [connections, githubIntegration?.connected],
+  );
   const defaultPublishTarget = useMemo(
     () => connectionTargetLabel(connections.find((c) => c.status === "connected" && c.is_default) ?? connections.find((c) => c.status === "connected") ?? githubPublisher),
     [connections, githubPublisher],
@@ -470,6 +474,22 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Platform connection verified", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Platform test failed", detail: friendlyError(e.message), tone: "red" });
+      await loadConnections();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnectConnection(connection: PublisherConnection) {
+    setBusy(`disconnect-${connection.id}`);
+    setMessage(null);
+    try {
+      await api.deletePublisherConnection(projectId, connection.id);
+      setConnections((current) => current.filter((item) => item.id !== connection.id));
+      await loadConnections();
+      setMessage({ title: "GitHub disconnected", detail: "This project is no longer linked to that repository.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not disconnect GitHub", detail: friendlyError(e.message), tone: "red" });
       await loadConnections();
     } finally {
       setBusy(null);
@@ -839,10 +859,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         onClose={() => setDrawer(null)}
       >
         <div className="grid gap-3">
-          {connections.length === 0 ? (
+          {connections.length === 0 && !githubIntegration?.connected ? (
             <EmptyState title="No platforms connected" detail="Add your GitHub / Next.js blog below to start publishing." />
           ) : (
-            connections.map((connection) => (
+            summaryConnections.map((connection) => (
               <div key={connection.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -881,15 +901,31 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           {githubIntegration?.configured ? (
             githubIntegration.connected ? (
               <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-bold text-emerald-900">
-                  <GitBranch size={16} />
-                  Connected via GitHub App
-                </div>
-                <div className="mt-1 text-xs text-emerald-800">
-                  {githubIntegration.repo ? (
-                    <>Publishing to <span className="font-semibold">{githubIntegration.repo}</span>{githubIntegration.branch ? ` · ${githubIntegration.branch}` : ""}. No token to manage — CiteLoop mints short-lived access automatically.</>
-                  ) : (
-                    "Installed. Choose a repository to finish."
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-bold text-emerald-900">
+                      <GitBranch size={16} />
+                      Connected via GitHub App
+                    </div>
+                    <div className="mt-1 text-xs text-emerald-800">
+                      {githubIntegration.repo ? (
+                        <>Publishing to <span className="font-semibold">{githubIntegration.repo}</span>{githubIntegration.branch ? ` · ${githubIntegration.branch}` : ""}. No token to manage — CiteLoop mints short-lived access automatically.</>
+                      ) : (
+                        "Installed. Choose a repository to finish."
+                      )}
+                    </div>
+                  </div>
+                  {githubPublisher && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={busy === `disconnect-${githubPublisher.id}`}
+                      onClick={() => disconnectConnection(githubPublisher)}
+                    >
+                      <ButtonProgress busy={busy === `disconnect-${githubPublisher.id}`} busyLabel="Disconnecting" idleIcon={<X size={14} />}>
+                        Disconnect
+                      </ButtonProgress>
+                    </Button>
                   )}
                 </div>
                 <div className="mt-3">

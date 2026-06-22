@@ -12,6 +12,11 @@ select * from publisher_connections
 where project_id = $1 and kind = $2 and is_default
 limit 1;
 
+-- name: DeletePublisherConnectionForProject :one
+delete from publisher_connections
+where id = $1 and project_id = $2
+returning *;
+
 -- FindReusableGitHubInstallation returns a GitHub App installation_id already
 -- linked by ANOTHER project of the SAME owner. A GitHub App installs once per
 -- account, so a second project can reuse the existing installation instead of

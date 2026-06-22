@@ -53,6 +53,42 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 	return i, err
 }
 
+const deletePublisherConnectionForProject = `-- name: DeletePublisherConnectionForProject :one
+delete from publisher_connections
+where id = $1 and project_id = $2
+returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+`
+
+type DeletePublisherConnectionForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) DeletePublisherConnectionForProject(ctx context.Context, arg DeletePublisherConnectionForProjectParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, deletePublisherConnectionForProject, arg.ID, arg.ProjectID)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const findReusableGitHubInstallation = `-- name: FindReusableGitHubInstallation :one
 select coalesce(pc.config ->> 'installation_id', '')::text as installation_id
 from publisher_connections pc
