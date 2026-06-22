@@ -548,6 +548,7 @@ test("publisher connection APIs call project scoped endpoints without raw token 
     });
     await client.testPublisherConnection("project-1", "publisher-1");
     await client.revokePublisherCredential("project-1", "publisher-1");
+    await client.deletePublisherConnection("project-1", "publisher-1");
 
     assert.equal(connections[0].capabilities.create_article, true);
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publisher-connections");
@@ -564,6 +565,8 @@ test("publisher connection APIs call project scoped endpoints without raw token 
     assert.equal(calls[3].init.method, "POST");
     assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/credential");
     assert.equal(calls[4].init.method, "DELETE");
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1");
+    assert.equal(calls[5].init.method, "DELETE");
   } finally {
     globalThis.fetch = originalFetch;
   }

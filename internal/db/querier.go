@@ -40,6 +40,7 @@ type Querier interface {
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
+	DeletePublisherConnectionForProject(ctx context.Context, arg DeletePublisherConnectionForProjectParams) (PublisherConnection, error)
 	// DeleteRecoverableArticlesForTopic clears a topic's non-terminal drafts so the
 	// recovery loop can regenerate a fresh canonical/variant without colliding with
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.

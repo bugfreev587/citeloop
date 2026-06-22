@@ -1132,6 +1132,14 @@ export function createApi(auth?: AuthOptions) {
     );
     return normalizePublisherConnection(raw);
   },
+  deletePublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/${connectionID}`,
+      { method: "DELETE" },
+      auth,
+    );
+    return normalizePublisherConnection(raw);
+  },
   getGithubIntegration: async (id: string): Promise<GithubIntegrationStatus> => {
     const raw = await req<any>(`/projects/${id}/integrations/github`, undefined, auth);
     return normalizeGithubIntegration(raw);

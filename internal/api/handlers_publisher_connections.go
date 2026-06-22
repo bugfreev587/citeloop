@@ -185,6 +185,30 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
 }
 
+func (s *Server) deletePublisherConnection(w http.ResponseWriter, r *http.Request) {
+	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
+	if !ok {
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	deleted, err := s.Q.DeletePublisherConnectionForProject(r.Context(), db.DeletePublisherConnectionForProjectParams{
+		ID:        connectionID,
+		ProjectID: projectID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "publisher connection not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, publisherConnectionResponse(deleted))
+}
+
 func (s *Server) upsertPublisherCredential(w http.ResponseWriter, r *http.Request) {
 	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
 	if !ok {

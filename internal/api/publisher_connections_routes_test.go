@@ -21,6 +21,7 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/projects/not-a-uuid/publisher-connections"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/github-nextjs"},
+		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection"},
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
 		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
@@ -42,6 +43,7 @@ func TestPublisherCredentialRoutesAreRegistered(t *testing.T) {
 		method string
 		path   string
 	}{
+		{http.MethodDelete, "/api/projects/" + projectID + "/publisher-connections/not-a-connection"},
 		{http.MethodPut, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
 		{http.MethodDelete, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
 	} {
