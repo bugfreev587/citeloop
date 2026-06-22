@@ -145,7 +145,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     return mutate("Content saved and QA re-checked", `save-${article.id}`, () => api.edit(projectId, article.id, { content_md: nextContent }));
   }
   function onApplyFix(article: Article, optionIndex: number, instruction: string) {
-    return mutate("CiteLoop applied the fix and re-ran QA", `apply-${article.id}-${optionIndex}`, () => api.applyFix(projectId, article.id, instruction));
+    return mutate("CiteLoop applied the fix and approved the draft", `apply-${article.id}-${optionIndex}`, () => api.applyFix(projectId, article.id, instruction));
   }
   function onRecheck(article: Article) {
     return mutate("CiteLoop re-ran the QA check", `recheck-${article.id}`, () => api.recheckArticle(projectId, article.id));
@@ -569,6 +569,7 @@ function DecisionPanel({
     .map((option, index) => ({ option, index }))
     .filter(({ option }) => {
       const text = `${option.label ?? ""} ${option.description ?? ""}`.trim();
+      if ((option.label ?? "").trim() === "Apply QA fix") return true;
       return !genericOptionPattern.test((option.label ?? "").trim()) && !contextEvidenceOptionPattern.test(text);
     });
   const unmapped = qaClaimRows(article).filter((row) => !row.mapped);
@@ -620,7 +621,7 @@ function DecisionPanel({
         )}
       </div>
 
-      {/* One-click fixes proposed by QA — applied by the AI editor, then re-checked. */}
+      {/* One-click fixes proposed by QA — applied by the AI editor, then approved. */}
       {fixOptions.length > 0 && (
         <div className="mt-3">
           <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-red-700">Apply a fix</div>
@@ -644,7 +645,7 @@ function DecisionPanel({
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-slate-900">{option.label || `Fix ${index + 1}`}</span>
                     {option.description && <span className="mt-0.5 block text-xs leading-5 text-slate-600">{option.description}</span>}
-                    <span className="mt-1 block text-[11px] font-semibold text-[#d93820]">{applying ? "Applying & re-checking…" : "Apply this fix"}</span>
+                    <span className="mt-1 block text-[11px] font-semibold text-[#d93820]">{applying ? "Applying & approving…" : "Apply this fix"}</span>
                   </span>
                 </button>
               );
@@ -673,7 +674,7 @@ function DecisionPanel({
         </Button>
       </div>
       <p className="mt-2 text-[11px] leading-4 text-red-700/80">
-        QA only blocks unsupported product claims, banned claims, or missing required SEO — never writing style. Applying a fix or saving an edit re-runs QA automatically.
+        QA only blocks unsupported product claims, banned claims, or missing required SEO — never writing style. Applying a fix approves the draft automatically; saving a manual edit still re-runs QA.
       </p>
     </section>
   );

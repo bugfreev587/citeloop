@@ -150,3 +150,54 @@ func TestShouldAttemptArticleRepairHonorsPersistentLoopState(t *testing.T) {
 		t.Fatal("article escalated to human decision must not be repaired again")
 	}
 }
+
+func TestHumanDecisionOptionsExposeFixInstructionsForApplyFix(t *testing.T) {
+	options := humanDecisionOptions(&QAOutput{
+		QABlocking:      true,
+		CanAutoFix:      true,
+		FixInstructions: []string{"Remove the unsupported MCP claim and keep only profile-backed capabilities."},
+	})
+
+	if len(options) != 1 {
+		t.Fatalf("fix instructions should become one-click editor options, got %#v", options)
+	}
+	if options[0].Label != "Apply QA fix" {
+		t.Fatalf("label = %q, want Apply QA fix", options[0].Label)
+	}
+	if !strings.Contains(options[0].Description, "unsupported MCP claim") {
+		t.Fatalf("description should carry the fix instruction, got %#v", options[0])
+	}
+}
+
+func TestApprovedQAAfterAppliedFixClearsComments(t *testing.T) {
+	previous := &QAOutput{
+		Claims:               []Claim{{Claim: "UniPost includes native MCP support", Mapped: false}},
+		QABlocking:           true,
+		GeoScore:             0.61,
+		SeoScore:             0.72,
+		Issues:               []string{"unsupported MCP claim"},
+		BlockingIssues:       []QAFeedbackIssue{{Code: "unmapped_product_claim", Severity: "blocking", Message: "MCP claim lacks evidence"}},
+		FixInstructions:      []string{"Remove the MCP claim."},
+		HumanDecisionOptions: []HumanDecisionOption{{Label: "Edit draft", Description: "Rewrite manually."}},
+		BlockingReason:       "MCP claim lacks evidence",
+		CanAutoFix:           true,
+	}
+
+	cleared := approvedQAAfterAppliedFix(previous, "Remove the unsupported MCP claim.")
+
+	if cleared.QABlocking {
+		t.Fatal("applying the requested AI editor fix must clear the QA gate")
+	}
+	if cleared.CanAutoFix {
+		t.Fatal("cleared QA should not remain marked as auto-fixable")
+	}
+	if len(cleared.Claims) != 0 || len(cleared.Issues) != 0 || len(cleared.BlockingIssues) != 0 || len(cleared.FixInstructions) != 0 || len(cleared.HumanDecisionOptions) != 0 {
+		t.Fatalf("cleared QA must not carry old or new comments: %#v", cleared)
+	}
+	if cleared.BlockingReason != "" {
+		t.Fatalf("blocking reason = %q, want empty", cleared.BlockingReason)
+	}
+	if cleared.GeoScore != previous.GeoScore || cleared.SeoScore != previous.SeoScore {
+		t.Fatalf("scores = %.2f/%.2f, want previous %.2f/%.2f", cleared.GeoScore, cleared.SeoScore, previous.GeoScore, previous.SeoScore)
+	}
+}

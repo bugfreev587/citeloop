@@ -144,7 +144,8 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 
 // RepairArticle applies the same AI feedback loop to an existing pending draft.
 // It is the reviewer-facing escape hatch: feedback goes to the writer first, QA
-// re-runs, and only the remaining unresolved choices stay in the human queue.
+// instructions that the writer applies are treated as the terminal QA approval,
+// and only unresolved editor failures stay in the human queue.
 func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UUID) (db.Article, error) {
 	art, err := w.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: articleID, ProjectID: projectID})
 	if err != nil {
@@ -185,11 +186,9 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	if len(qa.Issues) == 0 && art.QaBlocking {
 		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
 	}
-	qaAgent := NewQA(w.Deps, w.Log)
-	var qaErr error
-	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, qaErr)
+	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, nil)
 	recordRun(ctx, w.Q, projectID, agentWriter,
-		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": art.RepairAttempts, "feedback": repairFeedback(qa, qaErr)},
+		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": art.RepairAttempts, "feedback": repairFeedback(qa, nil)},
 		repaired, repairResp, repairErr)
 	if repairErr != nil {
 		qa = &QAOutput{QABlocking: true, Issues: []string{"ai repair failed: " + repairErr.Error()}, BlockingReason: repairErr.Error(), CanAutoFix: false}
@@ -197,13 +196,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	}
 	out = repaired
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-	qaResp, finalQAResp, finalQAErr := qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
-	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "post_repair_check": true}, qaResp, finalQAResp, finalQAErr)
-	if finalQAErr != nil {
-		qa = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after AI repair: " + finalQAErr.Error()}, BlockingReason: finalQAErr.Error(), CanAutoFix: true}
-	} else {
-		qa = qaResp
-	}
+	qa = approvedQAAfterAppliedFix(qa, "automatic AI repair")
 
 	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
 		ID:        articleID,
@@ -230,10 +223,10 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
 }
 
-// RepairArticleWithInstruction applies a specific human-chosen resolution to a
-// draft and re-runs QA. Unlike RepairArticle it deliberately bypasses the
-// repair-attempt/human-decision gate: the operator is explicitly choosing this
-// fix from the Review decision panel, so a cleared QA result un-blocks the draft.
+// RepairArticleWithInstruction applies a specific QA-proposed resolution to a
+// draft. It deliberately bypasses the repair-attempt/human-decision gate: the
+// operator is explicitly choosing this fix from the Review decision panel, so a
+// successful AI edit becomes the terminal QA approval for that draft.
 func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, articleID uuid.UUID, instruction string) (db.Article, error) {
 	art, err := w.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: articleID, ProjectID: projectID})
 	if err != nil {
@@ -271,13 +264,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	}
 	out = repaired
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-
-	qaAgent := NewQA(w.Deps, w.Log)
-	checked, finalQAResp, finalQAErr := qaAgent.Check(ctx, projectID, out.ContentMD, profile.Profile)
-	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "post_apply_fix_check": true}, checked, finalQAResp, finalQAErr)
-	if finalQAErr != nil {
-		checked = &QAOutput{QABlocking: true, Issues: []string{"qa step failed after fix: " + finalQAErr.Error()}, BlockingReason: finalQAErr.Error(), CanAutoFix: true}
-	}
+	checked := approvedQAAfterAppliedFix(qa, instruction)
 
 	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
 		ID:        articleID,
@@ -302,6 +289,23 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	}
 	repairStatus, requiresHuman := repairOutcome(checked, updated.RepairAttempts, maxDraftRepairAttempts)
 	return w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+}
+
+func approvedQAAfterAppliedFix(previous *QAOutput, instruction string) *QAOutput {
+	out := &QAOutput{
+		Claims:               []Claim{},
+		QABlocking:           false,
+		Issues:               []string{},
+		BlockingIssues:       []QAFeedbackIssue{},
+		FixInstructions:      []string{},
+		HumanDecisionOptions: []HumanDecisionOption{},
+		CanAutoFix:           false,
+	}
+	if previous != nil {
+		out.GeoScore = previous.GeoScore
+		out.SeoScore = previous.SeoScore
+	}
+	return out
 }
 
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
@@ -559,6 +563,9 @@ func repairFailureReason(qa *QAOutput, status string) string {
 
 func humanDecisionOptions(qa *QAOutput) []HumanDecisionOption {
 	if qa != nil {
+		if qa.QABlocking && qa.CanAutoFix && len(qa.FixInstructions) > 0 {
+			return fixInstructionOptions(qa.FixInstructions)
+		}
 		if options := editorOnlyDecisionOptions(qa.HumanDecisionOptions); len(options) > 0 {
 			return options
 		}
@@ -567,6 +574,18 @@ func humanDecisionOptions(qa *QAOutput) []HumanDecisionOption {
 		{Label: "Reject and regenerate", Description: "Discard this draft and send the topic back to backlog."},
 		{Label: "Edit draft", Description: "Adjust the wording directly; saving re-runs QA."},
 	}
+}
+
+func fixInstructionOptions(instructions []string) []HumanDecisionOption {
+	out := make([]HumanDecisionOption, 0, len(instructions))
+	for _, instruction := range instructions {
+		instruction = strings.TrimSpace(instruction)
+		if instruction == "" {
+			continue
+		}
+		out = append(out, HumanDecisionOption{Label: "Apply QA fix", Description: instruction})
+	}
+	return out
 }
 
 func qaFromArticle(art db.Article) *QAOutput {

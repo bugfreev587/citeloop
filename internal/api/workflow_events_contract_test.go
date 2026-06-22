@@ -58,3 +58,22 @@ func TestArticleApproveEnqueuesDraftApprovedWithProjectSchedulePolicy(t *testing
 		}
 	}
 }
+
+func TestApplyFixAutoApprovesAndEnqueuesDraftApproved(t *testing.T) {
+	source, err := os.ReadFile("handlers_review.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"applyFixProjectArticle",
+		"RepairArticleWithInstruction",
+		"approveArticleRecord",
+		"autoFixReviewer",
+		"workflow.EventDraftApproved",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("apply fix must become a terminal QA approval flow; missing %q", want)
+		}
+	}
+}

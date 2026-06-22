@@ -413,10 +413,35 @@ func normalizeQAOutput(out QAOutput) QAOutput {
 		out.HumanDecisionOptions = []HumanDecisionOption{}
 	}
 	normalizeUnsupportedClaimFeedback(&out)
+	ensureActionableFixInstructions(&out)
 	if out.QABlocking && !out.CanAutoFix && len(out.HumanDecisionOptions) == 0 && out.BlockingReason == "" && len(out.BlockingIssues) == 0 {
 		out.CanAutoFix = true
 	}
 	return out
+}
+
+func ensureActionableFixInstructions(out *QAOutput) {
+	if out == nil || !out.QABlocking || len(out.FixInstructions) > 0 {
+		return
+	}
+	var parts []string
+	if s := strings.TrimSpace(out.BlockingReason); s != "" {
+		parts = append(parts, s)
+	}
+	for _, issue := range out.BlockingIssues {
+		if s := strings.TrimSpace(issue.Message); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	for _, issue := range out.Issues {
+		if s := strings.TrimSpace(issue); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "Resolve the blocking QA issue using only facts already supported by the project profile and draft evidence.")
+	}
+	out.FixInstructions = []string{"Revise the draft so it passes QA: " + strings.Join(parts, " ")}
 }
 
 func normalizeUnsupportedClaimFeedback(out *QAOutput) {

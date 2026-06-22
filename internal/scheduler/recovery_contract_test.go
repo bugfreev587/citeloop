@@ -38,6 +38,7 @@ func TestReviewRecoveryDrivesAutomatedLadderAndAutoApprove(t *testing.T) {
 		"regenerateOrEscalate",              // fresh draft as last resort
 		"EscalateArticleToHumanForProject",  // only genuine decisions reach a human
 		"autoApproveReadyForProject",        // hands-off approval
+		"approveRecoveredArticle",           // QA recovery approval never waits for a user click
 		"workflow.EventDraftApproved",       // approved drafts flow to publishing
 		"MonthlySpend",                      // cost breaker
 	} {
@@ -117,6 +118,39 @@ func TestEscalationOptionsFiltersContextEvidenceChoices(t *testing.T) {
 
 	if len(options) != 1 || options[0].Label != "Choose positioning" {
 		t.Fatalf("escalation options = %#v", options)
+	}
+}
+
+func TestReviewRecoveryAutoApprovesClearedResultsWithoutAutoAdvanceGate(t *testing.T) {
+	source, err := os.ReadFile("recovery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"func shouldAutoApproveRecoveryResult",
+		"return art.Status == \"pending_review\" && !art.QaBlocking && !art.RequiresHumanDecision",
+		"approveRecoveredArticle(ctx, q, projectID, updated, cfg)",
+		"cfg.AutoAdvanceEnabled",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("review recovery must auto-approve cleared QA fixes and keep the separate auto-advance batch gate; missing %q", want)
+		}
+	}
+}
+
+func TestShouldAutoApproveRecoveryResult(t *testing.T) {
+	if !shouldAutoApproveRecoveryResult(db.Article{Status: "pending_review", QaBlocking: false}) {
+		t.Fatal("QA-cleared pending-review recovery results should be approved automatically")
+	}
+	if shouldAutoApproveRecoveryResult(db.Article{Status: "pending_review", QaBlocking: true}) {
+		t.Fatal("still-blocking recovery results must not be approved")
+	}
+	if shouldAutoApproveRecoveryResult(db.Article{Status: "pending_review", RequiresHumanDecision: true}) {
+		t.Fatal("genuine human decisions must not be auto-approved")
+	}
+	if shouldAutoApproveRecoveryResult(db.Article{Status: "approved", QaBlocking: false}) {
+		t.Fatal("already-approved or non-review articles do not need recovery approval")
 	}
 }
 

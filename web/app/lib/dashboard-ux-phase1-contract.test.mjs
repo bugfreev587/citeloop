@@ -202,6 +202,8 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /Claim evidence map/);
   assert.match(review, /How this article appears in search/);
   assert.match(review, /Preview/);
+  assert.match(review, /applied the fix and approved the draft/);
+  assert.match(review, /Apply QA fix/);
   assert.match(review, /reviewQueueSummary/);
   assert.match(review, /selectedArticleId/);
   assert.match(review, /articlePreviewHref/);
@@ -216,6 +218,7 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.doesNotMatch(review, /QA evidence map was not returned/);
   assert.doesNotMatch(review, /Web preview/);
   assert.doesNotMatch(review, /qa blocking/);
+  assert.doesNotMatch(review, /Applying & re-checking/);
   assert.match(articleDetail, /Cannot approve:/);
   assert.doesNotMatch(articleDetail, /qa blocking/);
 });
