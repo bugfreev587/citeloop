@@ -88,6 +88,40 @@ function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
 }
 
+function assetTypeForOpportunity(opportunity: SEOOpportunity) {
+  const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
+  if (text.includes("comparison")) return "comparison_page";
+  if (text.includes("alternative")) return "alternative_page";
+  if (text.includes("template") || text.includes("checklist")) return "template_or_checklist";
+  if (text.includes("schema")) return "schema_patch";
+  if (text.includes("internal link")) return "internal_link_patch";
+  if (text.includes("metadata") || text.includes("title") || text.includes("meta")) return "metadata_rewrite";
+  if (text.includes("sitemap")) return "sitemap_update";
+  if (text.includes("geo")) return "glossary_definition";
+  return "blog_post";
+}
+
+function selectedPortfolioActions(plan: SEOActionPlan) {
+  return plan.portfolio.selected_actions;
+}
+
+function measurementLabel(schedule: any) {
+  const checkpoints: Array<number | string> = Array.isArray(schedule?.checkpoints) ? schedule.checkpoints : [];
+  if (checkpoints.length === 0) return "Not scheduled";
+  return checkpoints.map((day) => `D+${day}`).join(" / ");
+}
+
+function measurementWindowLabel(measurement_window: any) {
+  const structured = Array.isArray(measurement_window?.checkpoints)
+    ? measurement_window.checkpoints.map((checkpoint: any) => checkpoint?.day).filter(Boolean)
+    : [];
+  const legacy = Array.isArray(measurement_window?.checkpoints_days) ? measurement_window.checkpoints_days : [];
+  const checkpoints: Array<number | string> = structured.length > 0 ? structured : legacy;
+  if (checkpoints.length === 0) return "Not scheduled";
+  const metric = measurement_window?.primary_metric ? `${measurement_window.primary_metric}: ` : "";
+  return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
+}
+
 type SEOClientMode = "opportunities" | "visibility";
 
 export function OpportunitiesClient({ projectId }: { projectId: string }) {
@@ -113,6 +147,13 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
   const [assetBriefs, setAssetBriefs] = useState<GEOAssetBrief[]>([]);
   const [siteURL, setSiteURL] = useState("");
   const [surfaceURL, setSurfaceURL] = useState("");
+  const [surfaceSourceURL, setSurfaceSourceURL] = useState("");
+  const [surfaceOwnerType, setSurfaceOwnerType] = useState("managed_external");
+  const [surfacePlatform, setSurfacePlatform] = useState("devto");
+  const [surfacePublicationStatus, setSurfacePublicationStatus] = useState("draft");
+  const [surfaceIndexabilityStatus, setSurfaceIndexabilityStatus] = useState("unknown");
+  const [surfaceCanonicalStatus, setSurfaceCanonicalStatus] = useState("unknown");
+  const [surfaceOwnerConfidence, setSurfaceOwnerConfidence] = useState("medium");
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
@@ -178,6 +219,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     ...(brief?.geo_blockers ?? []),
   ].slice(0, 4);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
+  const latestPortfolioPlan = plans[0] ?? null;
 
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
@@ -276,8 +318,21 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     setBusy("geo-surface");
     setMessage(null);
     try {
-      await api.createGEOExternalSurface(projectId, { url: surfaceURL.trim(), owner_type: "project" });
+      await api.createGEOExternalSurface(projectId, {
+        url: surfaceURL.trim(),
+        owner_type: surfaceOwnerType,
+        platform: surfacePlatform,
+        surface_type: "page",
+        publication_status: surfacePublicationStatus,
+        indexability_status: surfaceIndexabilityStatus,
+        canonical_status: surfaceCanonicalStatus,
+        owner_confidence: surfaceOwnerConfidence,
+        source_url: surfaceSourceURL.trim() || undefined,
+        backlink_state: "unknown",
+        verification_snapshot: { source: "manual_inventory" },
+      });
       setSurfaceURL("");
+      setSurfaceSourceURL("");
       await refresh();
       setMessage({ title: "External surface saved", tone: "green" });
     } catch (e: any) {
@@ -388,7 +443,11 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
-      const action = await api.createSEOContentAction(projectId, opp.id, { action_type: opp.recommended_action ?? undefined });
+      const action = await api.createSEOContentAction(projectId, opp.id, {
+        action_type: opp.recommended_action ?? undefined,
+        asset_type: assetTypeForOpportunity(opp),
+        review_required: opp.risk_level !== "low",
+      });
       setOpportunities((current) => current.filter((item) => item.id !== opp.id));
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setMessage({ title: "Content action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
@@ -396,6 +455,23 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
     } finally {
       setOpportunityPending(opp.id, null);
+    }
+  }
+
+  async function verifyAction(action: SEOContentAction, status: "verified" | "failed") {
+    setBusy(`verify-${action.id}-${status}`);
+    setMessage(null);
+    try {
+      const updated = await api.verifySEOContentAction(projectId, action.id, {
+        status,
+        verification_snapshot: { source: "manual_dashboard", status },
+      });
+      setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage({ title: status === "verified" ? "Action verified" : "Verification failed", detail: action.action_type, tone: status === "verified" ? "green" : "amber" });
+    } catch (e: any) {
+      setMessage({ title: "Could not update verification", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -898,8 +974,65 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-2 md:flex-row">
-            <TextInput value={surfaceURL} onChange={(event) => setSurfaceURL(event.target.value)} placeholder="https://dev.to/team/source" />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_repeat(5,minmax(120px,1fr))]">
+            <Field label="Surface URL">
+              <TextInput value={surfaceURL} onChange={(event) => setSurfaceURL(event.target.value)} placeholder="https://dev.to/team/source" />
+            </Field>
+            <Field label="Source URL">
+              <TextInput value={surfaceSourceURL} onChange={(event) => setSurfaceSourceURL(event.target.value)} placeholder="https://example.com/blog/source" />
+            </Field>
+            <Field label="Owner">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceOwnerType} onChange={(event) => setSurfaceOwnerType(event.target.value)}>
+                <option value="managed_external">Managed external</option>
+                <option value="project">Owned</option>
+                <option value="third_party">Third party</option>
+              </select>
+            </Field>
+            <Field label="Platform">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfacePlatform} onChange={(event) => setSurfacePlatform(event.target.value)}>
+                <option value="devto">Dev.to</option>
+                <option value="hashnode">Hashnode</option>
+                <option value="medium">Medium</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="github">GitHub</option>
+                <option value="product_hunt">Product Hunt</option>
+                <option value="site">Site</option>
+              </select>
+            </Field>
+            <Field label="Publication">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfacePublicationStatus} onChange={(event) => setSurfacePublicationStatus(event.target.value)}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="observed">Observed</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </Field>
+            <Field label="Indexability">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceIndexabilityStatus} onChange={(event) => setSurfaceIndexabilityStatus(event.target.value)}>
+                <option value="unknown">Unknown</option>
+                <option value="indexable">Indexable</option>
+                <option value="noindex">Noindex</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </Field>
+            <Field label="Canonical">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceCanonicalStatus} onChange={(event) => setSurfaceCanonicalStatus(event.target.value)}>
+                <option value="unknown">Unknown</option>
+                <option value="canonical">Canonical</option>
+                <option value="source_linked">Source linked</option>
+                <option value="missing">Missing</option>
+                <option value="mismatch">Mismatch</option>
+              </select>
+            </Field>
+            <Field label="Confidence">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceOwnerConfidence} onChange={(event) => setSurfaceOwnerConfidence(event.target.value)}>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="low">Low</option>
+              </select>
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={addExternalSurface} disabled={busy === "geo-surface" || !surfaceURL.trim()}>
               <ButtonProgress busy={busy === "geo-surface"} busyLabel="Saving surface" idleIcon={<FileText size={14} />}>
                 Surface
@@ -911,11 +1044,43 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
               </ButtonProgress>
             </Button>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <div className="mt-4 divide-y divide-slate-100">
             {(geoOverview?.external_surfaces ?? []).slice(0, 6).map((surface) => (
-              <div key={surface.id} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2">
-                <span className="truncate text-sm text-slate-700">{surface.url}</span>
-                <Badge tone={surface.owner_type === "project" ? "green" : "neutral"}>{surface.owner_type}</Badge>
+              <div key={surface.id} className="py-3">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-slate-900">{surface.url}</span>
+                  <Badge tone={surface.owner_type === "project" ? "green" : "neutral"}>
+                    {surface.owner_type === "project" ? "owned" : surface.owner_type}
+                  </Badge>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-5">
+                  <div>
+                    <span className="font-semibold text-slate-700">Platform</span>
+                    <br />
+                    {surface.platform}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Publication</span>
+                    <br />
+                    {surface.publication_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Indexability</span>
+                    <br />
+                    {surface.indexability_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Canonical</span>
+                    <br />
+                    {surface.canonical_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Confidence</span>
+                    <br />
+                    {surface.owner_confidence}
+                  </div>
+                </div>
+                {surface.source_url && <div className="mt-2 truncate text-xs text-slate-500">Source URL: {surface.source_url}</div>}
               </div>
             ))}
           </div>
@@ -1041,6 +1206,57 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
             <p className="mt-1 text-sm text-slate-500">Open safe mode</p>
           </div>
         </div>
+        {latestPortfolioPlan && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-bold text-slate-900">Action portfolio</div>
+                <p className="text-sm text-slate-500">Selected actions grouped by bucket, risk, review, and measurement.</p>
+              </div>
+              <Badge tone={toneForRisk(latestPortfolioPlan.aggregate_risk)}>{latestPortfolioPlan.aggregate_risk}</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+              <div>
+                <div className="mb-2 text-sm font-bold text-slate-900">Selected actions</div>
+                <div className="divide-y divide-slate-100">
+                  {selectedPortfolioActions(latestPortfolioPlan).slice(0, 8).map((action, index) => (
+                    <div key={`${action.opportunity_id ?? index}`} className="py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{action.action_bucket}</Badge>
+                        <Badge tone={toneForRisk(action.risk_level)}>{action.risk_level}</Badge>
+                        {action.review_required && <Badge tone="amber">Review required</Badge>}
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">{action.recommended_action ?? action.type}</div>
+                      <div className="mt-1 text-xs text-slate-500">Measurement: {measurementLabel(action.measurement_schedule)}</div>
+                    </div>
+                  ))}
+                  {selectedPortfolioActions(latestPortfolioPlan).length === 0 && (
+                    <div className="py-3 text-sm text-slate-500">No selected actions in this portfolio.</div>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-sm font-bold text-slate-900">Risk summary</div>
+                <div className="grid gap-2 text-sm text-slate-600">
+                  {Object.entries(latestPortfolioPlan.portfolio.risk_summary).map(([risk, count]) => (
+                    <div key={risk} className="flex items-center justify-between border-b border-slate-100 py-2">
+                      <span>{risk}</span>
+                      <span className="font-semibold text-slate-900">{count}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-b border-slate-100 py-2">
+                    <span>Review required</span>
+                    <span className="font-semibold text-slate-900">{latestPortfolioPlan.portfolio.required_approvals.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <span>Measurement</span>
+                    <span className="font-semibold text-slate-900">{latestPortfolioPlan.portfolio.measurement_schedule.length}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
         </div>
       )}
@@ -1122,6 +1338,40 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
                     <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
                     <span className="text-xs text-slate-400">{formatDate(action.created_at ?? null)}</span>
                   </div>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
+                  <div>
+                    <span className="font-semibold text-slate-700">Asset</span>
+                    <br />
+                    {action.asset_type ?? "unspecified"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Review</span>
+                    <br />
+                    {action.review_required === false ? "Optional" : "Required"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Verification</span>
+                    <br />
+                    {action.verified_at ? "Verified" : action.verification_snapshot ? "Pending" : "Not started"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Measurement</span>
+                    <br />
+                    {measurementWindowLabel(action.measurement_window)}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
+                    <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
+                      Manual verify
+                    </ButtonProgress>
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
+                    <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
+                      Verification failed
+                    </ButtonProgress>
+                  </Button>
                 </div>
               </div>
             ))}

@@ -230,6 +230,15 @@ update content_actions set
 where id = $1 and project_id = $2
 returning *;
 
+-- name: MarkContentActionVerification :one
+update content_actions set
+  status = sqlc.arg(status)::text,
+  verified_at = sqlc.narg(verified_at)::timestamptz,
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: MarkContentActionDraftReady :one
 update content_actions set
   status = 'ready_for_review',
@@ -246,6 +255,24 @@ update content_actions set
 where project_id = $1 and draft_article_id = $2
 returning *;
 
+-- name: UpdateContentActionExecutionMetadata :one
+update content_actions set
+  asset_type = coalesce(sqlc.narg(asset_type)::text, asset_type),
+  target_surface_id = coalesce(sqlc.narg(target_surface_id)::uuid, target_surface_id),
+  risk_reasons = sqlc.arg(risk_reasons)::jsonb,
+  evidence_snapshot = sqlc.arg(evidence_snapshot)::jsonb,
+  input_snapshot = sqlc.arg(input_snapshot)::jsonb,
+  output_snapshot = sqlc.arg(output_snapshot)::jsonb,
+  diff_snapshot = sqlc.arg(diff_snapshot)::jsonb,
+  review_required = sqlc.arg(review_required)::boolean,
+  approved_by = coalesce(sqlc.narg(approved_by)::text, approved_by),
+  approved_at = coalesce(sqlc.narg(approved_at)::timestamptz, approved_at),
+  verified_at = coalesce(sqlc.narg(verified_at)::timestamptz, verified_at),
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: ListUnplannedContentActions :many
 select ca.* from content_actions ca
 left join topics t
@@ -256,6 +283,27 @@ where ca.project_id = $1
 order by ca.created_at asc
 limit $2
 for update of ca skip locked;
+
+-- name: UpsertSEOAssetType :one
+insert into seo_asset_types
+  (key, name, description, default_risk_level, default_measurement_window_days,
+   supported_publication_surfaces, requires_evidence, requires_review_by_default, default_generation_path)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+on conflict (key) do update set
+  name = excluded.name,
+  description = excluded.description,
+  default_risk_level = excluded.default_risk_level,
+  default_measurement_window_days = excluded.default_measurement_window_days,
+  supported_publication_surfaces = excluded.supported_publication_surfaces,
+  requires_evidence = excluded.requires_evidence,
+  requires_review_by_default = excluded.requires_review_by_default,
+  default_generation_path = excluded.default_generation_path,
+  updated_at = now()
+returning *;
+
+-- name: ListSEOAssetTypes :many
+select * from seo_asset_types
+order by key asc;
 
 -- name: ListPublishedCanonicalArticlesForSEO :many
 select * from articles

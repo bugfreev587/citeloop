@@ -287,9 +287,25 @@ export type SEOContentAction = {
   opportunity_id: string;
   action_type: string;
   status: string;
+  asset_type?: string | null;
+  target_surface_id?: string | null;
   target_url?: string | null;
   normalized_target_url?: string | null;
   target_content_hash_before?: string | null;
+  risk_reasons?: any;
+  evidence_snapshot?: any;
+  input_snapshot?: any;
+  output_snapshot?: any;
+  diff_snapshot?: any;
+  review_required?: boolean;
+  approved_by?: string | null;
+  approved_at?: any;
+  verified_at?: any;
+  verification_snapshot?: any;
+  baseline_window?: any;
+  measurement_window?: any;
+  published_at?: any;
+  outcome_summary?: any;
   created_at?: any;
 };
 
@@ -335,10 +351,37 @@ export type SEOObjective = {
   budget_usd?: RawPgNumeric;
 };
 
+export type SEOActionPortfolioItem = {
+  opportunity_id?: string;
+  type: string;
+  recommended_action?: string | null;
+  action_bucket: string;
+  asset_type?: string | null;
+  risk_level: string;
+  risk_reasons: string[];
+  classifier_version?: string;
+  auto_publish_allowed: boolean;
+  review_required: boolean;
+  measurement_schedule?: any;
+};
+
+export type SEOActionPortfolio = {
+  selected_actions: SEOActionPortfolioItem[];
+  deferred_actions: SEOActionPortfolioItem[];
+  rejected_actions: SEOActionPortfolioItem[];
+  reason_codes: Record<string, any>;
+  policy_snapshot: Record<string, any>;
+  budget_snapshot: Record<string, any>;
+  risk_summary: Record<string, number>;
+  required_approvals: any[];
+  measurement_schedule: any[];
+};
+
 export type SEOActionPlan = {
   id: string;
   status: string;
   actions: any[];
+  portfolio: SEOActionPortfolio;
   aggregate_risk: string;
   risk_classifier_version: string;
   approval_required: boolean;
@@ -473,6 +516,14 @@ export type GEOExternalSurface = {
   backlink_state: string;
   last_http_status?: number | null;
   last_cited_at?: any;
+  source_url?: string | null;
+  canonical_status: string;
+  indexability_status: string;
+  publication_status: string;
+  owner_confidence: string;
+  last_verified_at?: any;
+  verification_snapshot?: any;
+  related_action_ids: string[];
   created_at?: any;
   updated_at?: any;
 };
@@ -704,6 +755,62 @@ function normalizeSEOBrief(raw: any): SEOBrief {
   };
 }
 
+function normalizePortfolioItem(raw: any): SEOActionPortfolioItem {
+  const data = raw ?? {};
+  return {
+    opportunity_id: data.opportunity_id ? String(data.opportunity_id) : undefined,
+    type: data.type ?? "",
+    recommended_action: data.recommended_action ?? null,
+    action_bucket: data.action_bucket ?? "create new asset",
+    asset_type: data.asset_type ?? null,
+    risk_level: data.risk_level ?? "low",
+    risk_reasons: arrayFrom<string>(data.risk_reasons).map(String),
+    classifier_version: data.classifier_version ?? undefined,
+    auto_publish_allowed: Boolean(data.auto_publish_allowed),
+    review_required: Boolean(data.review_required ?? !data.auto_publish_allowed),
+    measurement_schedule: data.measurement_schedule ?? undefined,
+  };
+}
+
+function normalizeRiskSummary(raw: any): Record<string, number> {
+  const data = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out: Record<string, number> = { low: 0, medium: 0, high: 0 };
+  for (const [key, value] of Object.entries(data)) {
+    out[key] = Number(value ?? 0);
+  }
+  return out;
+}
+
+function normalizeSEOActionPortfolio(raw: any): SEOActionPortfolio {
+  const data = Array.isArray(raw) ? { selected_actions: raw } : raw ?? {};
+  return {
+    selected_actions: arrayFrom(data.selected_actions).map(normalizePortfolioItem),
+    deferred_actions: arrayFrom(data.deferred_actions).map(normalizePortfolioItem),
+    rejected_actions: arrayFrom(data.rejected_actions).map(normalizePortfolioItem),
+    reason_codes: data.reason_codes ?? {},
+    policy_snapshot: data.policy_snapshot ?? {},
+    budget_snapshot: data.budget_snapshot ?? {},
+    risk_summary: normalizeRiskSummary(data.risk_summary),
+    required_approvals: arrayFrom(data.required_approvals),
+    measurement_schedule: arrayFrom(data.measurement_schedule),
+  };
+}
+
+function normalizeSEOActionPlan(raw: any): SEOActionPlan {
+  const data = raw ?? {};
+  const portfolio = normalizeSEOActionPortfolio(data.actions);
+  return {
+    id: data.id ?? "",
+    status: data.status ?? "",
+    actions: portfolio.selected_actions,
+    portfolio,
+    aggregate_risk: data.aggregate_risk ?? "low",
+    risk_classifier_version: data.risk_classifier_version ?? "",
+    approval_required: Boolean(data.approval_required),
+    created_at: data.created_at ?? undefined,
+  };
+}
+
 function normalizeAICrawlerAccessSnapshot(raw: any): AICrawlerAccessSnapshot {
   const data = raw ?? {};
   return {
@@ -800,6 +907,14 @@ function normalizeGEOExternalSurface(raw: any): GEOExternalSurface {
     backlink_state: data.backlink_state ?? "unknown",
     last_http_status: data.last_http_status ?? null,
     last_cited_at: data.last_cited_at ?? undefined,
+    source_url: data.source_url ?? null,
+    canonical_status: data.canonical_status ?? "unknown",
+    indexability_status: data.indexability_status ?? "unknown",
+    publication_status: data.publication_status ?? "unknown",
+    owner_confidence: data.owner_confidence ?? "medium",
+    last_verified_at: data.last_verified_at ?? undefined,
+    verification_snapshot: data.verification_snapshot ?? undefined,
+    related_action_ids: arrayFrom<string>(data.related_action_ids).map(String),
     created_at: data.created_at ?? undefined,
     updated_at: data.updated_at ?? undefined,
   };
@@ -1276,7 +1391,22 @@ export function createApi(auth?: AuthOptions) {
   },
   createGEOExternalSurface: async (
     id: string,
-    body: { url: string; normalized_url?: string; platform?: string; surface_type?: string; owner_type?: string; canonical_target_url?: string; backlink_state?: string },
+    body: {
+      url: string;
+      normalized_url?: string;
+      platform?: string;
+      surface_type?: string;
+      owner_type?: string;
+      canonical_target_url?: string;
+      backlink_state?: string;
+      source_url?: string;
+      canonical_status?: string;
+      indexability_status?: string;
+      publication_status?: string;
+      owner_confidence?: string;
+      verification_snapshot?: any;
+      related_action_ids?: string[];
+    },
   ): Promise<GEOExternalSurface> => {
     const raw = await req<any>(`/projects/${id}/geo/external-surfaces`, { method: "POST", body: JSON.stringify(body) }, auth);
     return normalizeGEOExternalSurface(raw);
@@ -1324,7 +1454,7 @@ export function createApi(auth?: AuthOptions) {
   createSEOContentAction: async (
     id: string,
     opportunityID: string,
-    body: { action_type?: string } = {},
+    body: { action_type?: string; asset_type?: string; review_required?: boolean } = {},
   ): Promise<SEOContentAction> => {
     return req<SEOContentAction>(
       `/projects/${id}/seo/opportunities/${opportunityID}/actions`,
@@ -1340,6 +1470,17 @@ export function createApi(auth?: AuthOptions) {
     const suffix = params.toString() ? `?${params}` : "";
     const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
     return arrayFrom(raw);
+  },
+  verifySEOContentAction: async (
+    id: string,
+    actionID: string,
+    body: { status: "verified" | "failed" | "recovery_required" | string; verification_snapshot?: any },
+  ): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(
+      `/projects/${id}/seo/actions/${actionID}/verify`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
   },
   listSEOObjectives: async (id: string): Promise<SEOObjective[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
@@ -1358,11 +1499,12 @@ export function createApi(auth?: AuthOptions) {
     return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
   generateAutopilotPlan: async (id: string): Promise<{ plan: SEOActionPlan; run: any }> => {
-    return req<{ plan: SEOActionPlan; run: any }>(`/projects/${id}/seo/autopilot/plans/generate`, { method: "POST" }, auth);
+    const raw = await req<any>(`/projects/${id}/seo/autopilot/plans/generate`, { method: "POST" }, auth);
+    return { plan: normalizeSEOActionPlan(raw?.plan), run: raw?.run };
   },
   listAutopilotPlans: async (id: string): Promise<SEOActionPlan[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/plans`, undefined, auth);
-    return arrayFrom(raw);
+    return arrayFrom(raw).map(normalizeSEOActionPlan);
   },
   listSafeModeEvents: async (id: string): Promise<SafeModeEvent[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/safe-mode`, undefined, auth);

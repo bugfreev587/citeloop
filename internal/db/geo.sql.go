@@ -28,7 +28,7 @@ on conflict (project_id, opportunity_id) do update set
   publication_surface = excluded.publication_surface,
   created_by_run_id = coalesce(geo_asset_briefs.created_by_run_id, excluded.created_by_run_id),
   updated_at = now()
-returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at
+returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at, target_queries, target_personas, expected_citation_mechanism, source_type
 `
 
 type CreateGEOAssetBriefParams struct {
@@ -72,6 +72,10 @@ func (q *Queries) CreateGEOAssetBrief(ctx context.Context, arg CreateGEOAssetBri
 		&i.CreatedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TargetQueries,
+		&i.TargetPersonas,
+		&i.ExpectedCitationMechanism,
+		&i.SourceType,
 	)
 	return i, err
 }
@@ -357,7 +361,7 @@ func (q *Queries) FinishGEORun(ctx context.Context, arg FinishGEORunParams) (Geo
 }
 
 const getGEOAssetBriefForProject = `-- name: GetGEOAssetBriefForProject :one
-select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at from geo_asset_briefs
+select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at, target_queries, target_personas, expected_citation_mechanism, source_type from geo_asset_briefs
 where id = $1 and project_id = $2
 `
 
@@ -383,6 +387,10 @@ func (q *Queries) GetGEOAssetBriefForProject(ctx context.Context, arg GetGEOAsse
 		&i.CreatedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TargetQueries,
+		&i.TargetPersonas,
+		&i.ExpectedCitationMechanism,
+		&i.SourceType,
 	)
 	return i, err
 }
@@ -545,7 +553,7 @@ func (q *Queries) ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID)
 }
 
 const listGEOAssetBriefs = `-- name: ListGEOAssetBriefs :many
-select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at from geo_asset_briefs
+select id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at, target_queries, target_personas, expected_citation_mechanism, source_type from geo_asset_briefs
 where project_id = $1
   and ($2::text = '' or status = $2)
 order by updated_at desc
@@ -581,6 +589,10 @@ func (q *Queries) ListGEOAssetBriefs(ctx context.Context, arg ListGEOAssetBriefs
 			&i.CreatedByRunID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TargetQueries,
+			&i.TargetPersonas,
+			&i.ExpectedCitationMechanism,
+			&i.SourceType,
 		); err != nil {
 			return nil, err
 		}
@@ -636,7 +648,7 @@ func (q *Queries) ListGEOCompetitors(ctx context.Context, arg ListGEOCompetitors
 }
 
 const listGEOExternalSurfaces = `-- name: ListGEOExternalSurfaces :many
-select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at from geo_external_surfaces
+select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at, source_url, canonical_status, indexability_status, publication_status, owner_confidence, last_verified_at, verification_snapshot, related_action_ids from geo_external_surfaces
 where project_id = $1
   and ($2::text = '' or owner_type = $2)
 order by owner_type asc, updated_at desc
@@ -670,6 +682,14 @@ func (q *Queries) ListGEOExternalSurfaces(ctx context.Context, arg ListGEOExtern
 			&i.LastCitedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceUrl,
+			&i.CanonicalStatus,
+			&i.IndexabilityStatus,
+			&i.PublicationStatus,
+			&i.OwnerConfidence,
+			&i.LastVerifiedAt,
+			&i.VerificationSnapshot,
+			&i.RelatedActionIds,
 		); err != nil {
 			return nil, err
 		}
@@ -1041,7 +1061,7 @@ func (q *Queries) ListLatestAICrawlerAccessSnapshots(ctx context.Context, projec
 }
 
 const listProjectOwnedGEOExternalSurfaces = `-- name: ListProjectOwnedGEOExternalSurfaces :many
-select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at from geo_external_surfaces
+select id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at, source_url, canonical_status, indexability_status, publication_status, owner_confidence, last_verified_at, verification_snapshot, related_action_ids from geo_external_surfaces
 where project_id = $1 and owner_type = 'project'
 order by updated_at desc
 `
@@ -1069,6 +1089,14 @@ func (q *Queries) ListProjectOwnedGEOExternalSurfaces(ctx context.Context, proje
 			&i.LastCitedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceUrl,
+			&i.CanonicalStatus,
+			&i.IndexabilityStatus,
+			&i.PublicationStatus,
+			&i.OwnerConfidence,
+			&i.LastVerifiedAt,
+			&i.VerificationSnapshot,
+			&i.RelatedActionIds,
 		); err != nil {
 			return nil, err
 		}
@@ -1119,12 +1147,64 @@ func (q *Queries) StartGEORun(ctx context.Context, arg StartGEORunParams) (GeoRu
 	return i, err
 }
 
+const updateGEOAssetBriefMultiSurfaceMetadata = `-- name: UpdateGEOAssetBriefMultiSurfaceMetadata :one
+update geo_asset_briefs set
+  target_queries = $1::jsonb,
+  target_personas = $2::jsonb,
+  expected_citation_mechanism = $3::text,
+  source_type = $4::text,
+  updated_at = now()
+where id = $5 and project_id = $6
+returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at, target_queries, target_personas, expected_citation_mechanism, source_type
+`
+
+type UpdateGEOAssetBriefMultiSurfaceMetadataParams struct {
+	TargetQueries             json.RawMessage `json:"target_queries"`
+	TargetPersonas            json.RawMessage `json:"target_personas"`
+	ExpectedCitationMechanism string          `json:"expected_citation_mechanism"`
+	SourceType                string          `json:"source_type"`
+	ID                        uuid.UUID       `json:"id"`
+	ProjectID                 uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateGEOAssetBriefMultiSurfaceMetadata(ctx context.Context, arg UpdateGEOAssetBriefMultiSurfaceMetadataParams) (GeoAssetBrief, error) {
+	row := q.db.QueryRow(ctx, updateGEOAssetBriefMultiSurfaceMetadata,
+		arg.TargetQueries,
+		arg.TargetPersonas,
+		arg.ExpectedCitationMechanism,
+		arg.SourceType,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i GeoAssetBrief
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.AssetType,
+		&i.Status,
+		&i.TargetPrompts,
+		&i.RequiredEvidence,
+		&i.RecommendedOutline,
+		&i.InternalLinkPlan,
+		&i.PublicationSurface,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TargetQueries,
+		&i.TargetPersonas,
+		&i.ExpectedCitationMechanism,
+		&i.SourceType,
+	)
+	return i, err
+}
+
 const updateGEOAssetBriefStatus = `-- name: UpdateGEOAssetBriefStatus :one
 update geo_asset_briefs set
   status = $3,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at
+returning id, project_id, opportunity_id, asset_type, status, target_prompts, required_evidence, recommended_outline, internal_link_plan, publication_surface, created_by_run_id, created_at, updated_at, target_queries, target_personas, expected_citation_mechanism, source_type
 `
 
 type UpdateGEOAssetBriefStatusParams struct {
@@ -1150,6 +1230,10 @@ func (q *Queries) UpdateGEOAssetBriefStatus(ctx context.Context, arg UpdateGEOAs
 		&i.CreatedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TargetQueries,
+		&i.TargetPersonas,
+		&i.ExpectedCitationMechanism,
+		&i.SourceType,
 	)
 	return i, err
 }
@@ -1198,6 +1282,74 @@ func (q *Queries) UpdateGEOCompetitor(ctx context.Context, arg UpdateGEOCompetit
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateGEOExternalSurfaceMetadata = `-- name: UpdateGEOExternalSurfaceMetadata :one
+update geo_external_surfaces set
+  source_url = coalesce($1::text, source_url),
+  canonical_status = $2::text,
+  indexability_status = $3::text,
+  publication_status = $4::text,
+  owner_confidence = $5::text,
+  last_verified_at = coalesce($6::timestamptz, last_verified_at),
+  verification_snapshot = $7::jsonb,
+  related_action_ids = $8::jsonb,
+  updated_at = now()
+where id = $9 and project_id = $10
+returning id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at, source_url, canonical_status, indexability_status, publication_status, owner_confidence, last_verified_at, verification_snapshot, related_action_ids
+`
+
+type UpdateGEOExternalSurfaceMetadataParams struct {
+	SourceUrl            *string            `json:"source_url"`
+	CanonicalStatus      string             `json:"canonical_status"`
+	IndexabilityStatus   string             `json:"indexability_status"`
+	PublicationStatus    string             `json:"publication_status"`
+	OwnerConfidence      string             `json:"owner_confidence"`
+	LastVerifiedAt       pgtype.Timestamptz `json:"last_verified_at"`
+	VerificationSnapshot json.RawMessage    `json:"verification_snapshot"`
+	RelatedActionIds     json.RawMessage    `json:"related_action_ids"`
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) UpdateGEOExternalSurfaceMetadata(ctx context.Context, arg UpdateGEOExternalSurfaceMetadataParams) (GeoExternalSurface, error) {
+	row := q.db.QueryRow(ctx, updateGEOExternalSurfaceMetadata,
+		arg.SourceUrl,
+		arg.CanonicalStatus,
+		arg.IndexabilityStatus,
+		arg.PublicationStatus,
+		arg.OwnerConfidence,
+		arg.LastVerifiedAt,
+		arg.VerificationSnapshot,
+		arg.RelatedActionIds,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i GeoExternalSurface
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Url,
+		&i.NormalizedUrl,
+		&i.Platform,
+		&i.SurfaceType,
+		&i.OwnerType,
+		&i.CanonicalTargetUrl,
+		&i.BacklinkState,
+		&i.LastHttpStatus,
+		&i.LastCitedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SourceUrl,
+		&i.CanonicalStatus,
+		&i.IndexabilityStatus,
+		&i.PublicationStatus,
+		&i.OwnerConfidence,
+		&i.LastVerifiedAt,
+		&i.VerificationSnapshot,
+		&i.RelatedActionIds,
 	)
 	return i, err
 }
@@ -1410,18 +1562,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = ''
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, null, $8, $9, $10, $11, $12, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from inserted
 `
 
 type UpsertCrawlerAccessOpportunityParams struct {
@@ -1459,6 +1611,7 @@ type UpsertCrawlerAccessOpportunityRow struct {
 	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey    string             `json:"opportunity_key"`
 }
 
 func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error) {
@@ -1497,6 +1650,7 @@ func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg Upsert
 		&i.CreatedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpportunityKey,
 	)
 	return i, err
 }
@@ -1562,7 +1716,7 @@ on conflict (project_id, normalized_url) do update set
   last_http_status = excluded.last_http_status,
   last_cited_at = coalesce(excluded.last_cited_at, geo_external_surfaces.last_cited_at),
   updated_at = now()
-returning id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at
+returning id, project_id, url, normalized_url, platform, surface_type, owner_type, canonical_target_url, backlink_state, last_http_status, last_cited_at, created_at, updated_at, source_url, canonical_status, indexability_status, publication_status, owner_confidence, last_verified_at, verification_snapshot, related_action_ids
 `
 
 type UpsertGEOExternalSurfaceParams struct {
@@ -1606,6 +1760,14 @@ func (q *Queries) UpsertGEOExternalSurface(ctx context.Context, arg UpsertGEOExt
 		&i.LastCitedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceUrl,
+		&i.CanonicalStatus,
+		&i.IndexabilityStatus,
+		&i.PublicationStatus,
+		&i.OwnerConfidence,
+		&i.LastVerifiedAt,
+		&i.VerificationSnapshot,
+		&i.RelatedActionIds,
 	)
 	return i, err
 }
@@ -1628,18 +1790,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = coalesce($8, '')
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from inserted
 `
 
 type UpsertGEOObservationOpportunityParams struct {
@@ -1678,6 +1840,7 @@ type UpsertGEOObservationOpportunityRow struct {
 	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey    string             `json:"opportunity_key"`
 }
 
 func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error) {
@@ -1717,6 +1880,7 @@ func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg Upser
 		&i.CreatedByRunID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpportunityKey,
 	)
 	return i, err
 }

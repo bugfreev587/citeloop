@@ -77,6 +77,11 @@ type Article struct {
 	HumanDecisionOptions   json.RawMessage    `json:"human_decision_options"`
 	QaFeedback             json.RawMessage    `json:"qa_feedback"`
 	RecoveryAttempts       int32              `json:"recovery_attempts"`
+	PublicationMode        string             `json:"publication_mode"`
+	SourceUrl              *string            `json:"source_url"`
+	ExternalUrl            *string            `json:"external_url"`
+	VerificationStatus     string             `json:"verification_status"`
+	ExternalSurfaceID      pgtype.UUID        `json:"external_surface_id"`
 }
 
 type AutopilotAuditEvent struct {
@@ -127,6 +132,18 @@ type ContentAction struct {
 	OutcomeSummary          json.RawMessage    `json:"outcome_summary"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	AssetType               *string            `json:"asset_type"`
+	TargetSurfaceID         pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons             json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot        json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot           json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot          json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot            json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired          bool               `json:"review_required"`
+	ApprovedBy              *string            `json:"approved_by"`
+	ApprovedAt              pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot    json.RawMessage    `json:"verification_snapshot"`
 }
 
 type ContentInventory struct {
@@ -157,19 +174,23 @@ type GenerationRun struct {
 }
 
 type GeoAssetBrief struct {
-	ID                 uuid.UUID          `json:"id"`
-	ProjectID          uuid.UUID          `json:"project_id"`
-	OpportunityID      uuid.UUID          `json:"opportunity_id"`
-	AssetType          string             `json:"asset_type"`
-	Status             string             `json:"status"`
-	TargetPrompts      json.RawMessage    `json:"target_prompts"`
-	RequiredEvidence   json.RawMessage    `json:"required_evidence"`
-	RecommendedOutline json.RawMessage    `json:"recommended_outline"`
-	InternalLinkPlan   json.RawMessage    `json:"internal_link_plan"`
-	PublicationSurface string             `json:"publication_surface"`
-	CreatedByRunID     pgtype.UUID        `json:"created_by_run_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	OpportunityID             uuid.UUID          `json:"opportunity_id"`
+	AssetType                 string             `json:"asset_type"`
+	Status                    string             `json:"status"`
+	TargetPrompts             json.RawMessage    `json:"target_prompts"`
+	RequiredEvidence          json.RawMessage    `json:"required_evidence"`
+	RecommendedOutline        json.RawMessage    `json:"recommended_outline"`
+	InternalLinkPlan          json.RawMessage    `json:"internal_link_plan"`
+	PublicationSurface        string             `json:"publication_surface"`
+	CreatedByRunID            pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	TargetQueries             json.RawMessage    `json:"target_queries"`
+	TargetPersonas            json.RawMessage    `json:"target_personas"`
+	ExpectedCitationMechanism string             `json:"expected_citation_mechanism"`
+	SourceType                string             `json:"source_type"`
 }
 
 type GeoCompetitor struct {
@@ -186,19 +207,27 @@ type GeoCompetitor struct {
 }
 
 type GeoExternalSurface struct {
-	ID                 uuid.UUID          `json:"id"`
-	ProjectID          uuid.UUID          `json:"project_id"`
-	Url                string             `json:"url"`
-	NormalizedUrl      string             `json:"normalized_url"`
-	Platform           string             `json:"platform"`
-	SurfaceType        string             `json:"surface_type"`
-	OwnerType          string             `json:"owner_type"`
-	CanonicalTargetUrl *string            `json:"canonical_target_url"`
-	BacklinkState      string             `json:"backlink_state"`
-	LastHttpStatus     *int32             `json:"last_http_status"`
-	LastCitedAt        pgtype.Timestamptz `json:"last_cited_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	Url                  string             `json:"url"`
+	NormalizedUrl        string             `json:"normalized_url"`
+	Platform             string             `json:"platform"`
+	SurfaceType          string             `json:"surface_type"`
+	OwnerType            string             `json:"owner_type"`
+	CanonicalTargetUrl   *string            `json:"canonical_target_url"`
+	BacklinkState        string             `json:"backlink_state"`
+	LastHttpStatus       *int32             `json:"last_http_status"`
+	LastCitedAt          pgtype.Timestamptz `json:"last_cited_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	SourceUrl            *string            `json:"source_url"`
+	CanonicalStatus      string             `json:"canonical_status"`
+	IndexabilityStatus   string             `json:"indexability_status"`
+	PublicationStatus    string             `json:"publication_status"`
+	OwnerConfidence      string             `json:"owner_confidence"`
+	LastVerifiedAt       pgtype.Timestamptz `json:"last_verified_at"`
+	VerificationSnapshot json.RawMessage    `json:"verification_snapshot"`
+	RelatedActionIds     json.RawMessage    `json:"related_action_ids"`
 }
 
 type GeoObservation struct {
@@ -505,6 +534,21 @@ type SeoActionPlan struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SeoAssetType struct {
+	ID                           uuid.UUID          `json:"id"`
+	Key                          string             `json:"key"`
+	Name                         string             `json:"name"`
+	Description                  string             `json:"description"`
+	DefaultRiskLevel             string             `json:"default_risk_level"`
+	DefaultMeasurementWindowDays int32              `json:"default_measurement_window_days"`
+	SupportedPublicationSurfaces json.RawMessage    `json:"supported_publication_surfaces"`
+	RequiresEvidence             bool               `json:"requires_evidence"`
+	RequiresReviewByDefault      bool               `json:"requires_review_by_default"`
+	DefaultGenerationPath        string             `json:"default_generation_path"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SeoExperiment struct {
 	ID               uuid.UUID          `json:"id"`
 	ProjectID        uuid.UUID          `json:"project_id"`
@@ -573,6 +617,7 @@ type SeoOpportunity struct {
 	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey    string             `json:"opportunity_key"`
 }
 
 type SeoPolicy struct {

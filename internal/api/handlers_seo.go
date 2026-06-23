@@ -197,7 +197,15 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in struct {
-		ActionType string `json:"action_type"`
+		ActionType       string          `json:"action_type"`
+		AssetType        string          `json:"asset_type"`
+		TargetSurfaceID  *uuid.UUID      `json:"target_surface_id"`
+		RiskReasons      json.RawMessage `json:"risk_reasons"`
+		EvidenceSnapshot json.RawMessage `json:"evidence_snapshot"`
+		InputSnapshot    json.RawMessage `json:"input_snapshot"`
+		OutputSnapshot   json.RawMessage `json:"output_snapshot"`
+		DiffSnapshot     json.RawMessage `json:"diff_snapshot"`
+		ReviewRequired   *bool           `json:"review_required"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: oppID, ProjectID: projectID})
@@ -211,6 +219,11 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 	}
 	if actionType == "" {
 		actionType = "technical SEO fix task"
+	}
+	assetTypeValue := strings.TrimSpace(in.AssetType)
+	var assetType *string
+	if assetTypeValue != "" {
+		assetType = &assetTypeValue
 	}
 	var targetHash *string
 	if opp.ArticleID.Valid {
@@ -232,7 +245,32 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		NormalizedTargetUrl:     strPtrFrom(opp.NormalizedPageUrl),
 		TargetContentHashBefore: targetHash,
 		BaselineWindow:          json.RawMessage(`{"days":28}`),
-		MeasurementWindow:       json.RawMessage(`{"checkpoints_days":[7,14,28]}`),
+		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	reviewRequired := true
+	if in.ReviewRequired != nil {
+		reviewRequired = *in.ReviewRequired
+	}
+	targetSurfaceID := pgtype.UUID{}
+	if in.TargetSurfaceID != nil {
+		targetSurfaceID = pgtype.UUID{Bytes: *in.TargetSurfaceID, Valid: true}
+	}
+	action, err = s.Q.UpdateContentActionExecutionMetadata(r.Context(), db.UpdateContentActionExecutionMetadataParams{
+		ID:                   action.ID,
+		ProjectID:            projectID,
+		AssetType:            assetType,
+		TargetSurfaceID:      targetSurfaceID,
+		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
+		EvidenceSnapshot:     rawOrDefault(in.EvidenceSnapshot, `{}`),
+		InputSnapshot:        rawOrDefault(in.InputSnapshot, `{}`),
+		OutputSnapshot:       rawOrDefault(in.OutputSnapshot, `{}`),
+		DiffSnapshot:         rawOrDefault(in.DiffSnapshot, `{}`),
+		ReviewRequired:       reviewRequired,
+		VerificationSnapshot: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -304,6 +342,56 @@ func (s *Server) updateSEOContentActionStatus(w http.ResponseWriter, r *http.Req
 		ID:        actionID,
 		ProjectID: projectID,
 		Status:    status,
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) verifySEOContentAction(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	var in struct {
+		Status               string          `json:"status"`
+		VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+	}
+	if err := decodeOptionalJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(in.Status))
+	if status == "" {
+		status = "verified"
+	}
+	nextStatus := "measuring"
+	verifiedAt := pgutil.TS(time.Now().UTC())
+	switch status {
+	case "verified", "ok", "passed":
+		nextStatus = "measuring"
+	case "failed", "verification_failed":
+		nextStatus = "verification_failed"
+		verifiedAt = pgtype.Timestamptz{}
+	case "recovery_required":
+		nextStatus = "recovery_required"
+		verifiedAt = pgtype.Timestamptz{}
+	default:
+		writeErr(w, http.StatusBadRequest, "bad verification status")
+		return
+	}
+	snapshot := in.VerificationSnapshot
+	if len(snapshot) == 0 || !json.Valid(snapshot) {
+		snapshot = mustJSONLocal(map[string]any{"source": "manual", "status": status})
+	}
+	action, err := s.Q.MarkContentActionVerification(r.Context(), db.MarkContentActionVerificationParams{
+		ID:                   actionID,
+		ProjectID:            projectID,
+		Status:               nextStatus,
+		VerifiedAt:           verifiedAt,
+		VerificationSnapshot: snapshot,
 	})
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "action not found")
@@ -464,4 +552,41 @@ func strPtrFrom(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func measurementWindowForAction(assetType, actionType string) json.RawMessage {
+	days, primary, secondary := measurementPlanFor(assetType, actionType)
+	return mustJSONLocal(map[string]any{
+		"baseline":          map[string]any{"days": 28},
+		"checkpoints":       checkpointObjects(days),
+		"primary_metric":    primary,
+		"secondary_metrics": secondary,
+	})
+}
+
+func measurementPlanFor(assetType, actionType string) ([]int, string, []string) {
+	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
+	switch {
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata") || strings.Contains(text, "title") || strings.Contains(text, "meta"):
+		return []int{7, 14, 28}, "ctr", []string{"impressions", "clicks", "position"}
+	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
+		return []int{14, 28, 56}, "clicks", []string{"impressions", "position"}
+	case strings.Contains(text, "external_distribution") || strings.Contains(text, "distribution") || strings.Contains(text, "syndication"):
+		return []int{7, 14, 28}, "referral_sessions", []string{"brand_mentions", "backlinks"}
+	case strings.Contains(text, "geo") || strings.Contains(text, "citation"):
+		// GEO citation-ready asset checks run weekly for the first eight weeks.
+		return []int{7, 14, 21, 28, 35, 42, 49, 56}, "project_owned_citations", []string{"brand_mentions", "competitor_citations"}
+	case strings.Contains(text, "sitemap") || strings.Contains(text, "technical"):
+		return []int{1, 7, 14, 28}, "indexed_status", []string{"http_status", "technical_issue_count"}
+	default:
+		return []int{14, 28, 56, 90}, "clicks", []string{"impressions", "ctr", "position"}
+	}
+}
+
+func checkpointObjects(days []int) []map[string]any {
+	out := make([]map[string]any, 0, len(days))
+	for _, day := range days {
+		out = append(out, map[string]any{"day": day, "status": "scheduled"})
+	}
+	return out
 }
