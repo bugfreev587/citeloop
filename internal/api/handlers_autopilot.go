@@ -216,14 +216,20 @@ func (s *Server) generateAutopilotPlan(w http.ResponseWriter, r *http.Request) {
 			TrafficPercentile: 0,
 			Confidence:        pgutil.Float(opp.Confidence),
 		}, riskPolicyFromDB(policy))
+		autoPublishAllowed := policy.AutopilotLevel >= 2 && result.Level == autopilot.RiskLow && !policy.KillSwitchEnabled && !policy.SafeModeEnabled
+		actionBucket := actionBucketFor(valueOr(opp.RecommendedAction, opp.Type), opp.Type)
+		measurementSchedule := measurementScheduleForAction(actionBucket)
 		selected = append(selected, map[string]any{
 			"opportunity_id":       opp.ID,
 			"type":                 opp.Type,
 			"recommended_action":   opp.RecommendedAction,
+			"action_bucket":        actionBucket,
 			"risk_level":           result.Level,
 			"risk_reasons":         result.Reasons,
 			"classifier_version":   result.ClassifierVersion,
-			"auto_publish_allowed": policy.AutopilotLevel >= 2 && result.Level == autopilot.RiskLow && !policy.KillSwitchEnabled && !policy.SafeModeEnabled,
+			"auto_publish_allowed": autoPublishAllowed,
+			"review_required":      !autoPublishAllowed,
+			"measurement_schedule": measurementSchedule,
 		})
 	}
 	now := time.Now().UTC()
@@ -244,13 +250,14 @@ func (s *Server) generateAutopilotPlan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	portfolio := actionPortfolioDocument(selected, []map[string]any{}, policy, now)
 	plan, err := s.Q.CreateSEOActionPlan(r.Context(), db.CreateSEOActionPlanParams{
 		ProjectID:             projectID,
 		AutopilotRunID:        uuidToPGLocal(run.ID),
 		PlanWindowStart:       pgtype.Date{Time: now, Valid: true},
 		PlanWindowEnd:         pgtype.Date{Time: now.AddDate(0, 0, 7), Valid: true},
 		Status:                "ready_for_review",
-		Actions:               mustJSONLocal(selected),
+		Actions:               mustJSONLocal(portfolio),
 		ExpectedImpact:        mustJSONLocal(map[string]any{"basis": "open_opportunities"}),
 		ExpectedEffort:        int32(len(selected)),
 		AggregateRisk:         aggregateRisk(selected),
@@ -426,15 +433,97 @@ func derivedMode(level int32) string {
 func aggregateRisk(actions []map[string]any) string {
 	out := "low"
 	for _, action := range actions {
-		risk, _ := action["risk_level"].(autopilot.RiskLevel)
-		if risk == autopilot.RiskHigh {
+		risk := riskLevelString(action["risk_level"])
+		if risk == string(autopilot.RiskHigh) {
 			return "high"
 		}
-		if risk == autopilot.RiskMedium {
+		if risk == string(autopilot.RiskMedium) {
 			out = "medium"
 		}
 	}
 	return out
+}
+
+func actionPortfolioDocument(selected, rejected []map[string]any, policy db.SeoPolicy, now time.Time) map[string]any {
+	riskSummary := map[string]int{"low": 0, "medium": 0, "high": 0}
+	requiredApprovals := []map[string]any{}
+	measurementSchedule := []map[string]any{}
+	for _, action := range selected {
+		risk := riskLevelString(action["risk_level"])
+		if _, ok := riskSummary[risk]; ok {
+			riskSummary[risk]++
+		}
+		if required, _ := action["review_required"].(bool); required {
+			requiredApprovals = append(requiredApprovals, map[string]any{
+				"opportunity_id": action["opportunity_id"],
+				"risk_level":     risk,
+				"action_bucket":  action["action_bucket"],
+			})
+		}
+		if schedule, ok := action["measurement_schedule"].(map[string]any); ok {
+			measurementSchedule = append(measurementSchedule, schedule)
+		}
+	}
+	return map[string]any{
+		"selected_actions":     selected,
+		"deferred_actions":     []map[string]any{},
+		"rejected_actions":     rejected,
+		"reason_codes":         map[string]any{"selection": "open_opportunity_priority"},
+		"policy_snapshot":      map[string]any{"autopilot_level": policy.AutopilotLevel, "weekly_action_limit": policy.WeeklyActionLimit, "safe_mode_enabled": policy.SafeModeEnabled, "kill_switch_enabled": policy.KillSwitchEnabled},
+		"budget_snapshot":      map[string]any{"expected_effort": len(selected)},
+		"risk_summary":         riskSummary,
+		"required_approvals":   requiredApprovals,
+		"measurement_schedule": measurementSchedule,
+		"generated_at":         now,
+	}
+}
+
+func riskLevelString(value any) string {
+	switch risk := value.(type) {
+	case autopilot.RiskLevel:
+		return string(risk)
+	case string:
+		return risk
+	default:
+		return "low"
+	}
+}
+
+func actionBucketFor(actionType, opportunityType string) string {
+	text := strings.ToLower(strings.TrimSpace(actionType + " " + opportunityType))
+	switch {
+	case strings.Contains(text, "metadata") || strings.Contains(text, "title") || strings.Contains(text, "meta"):
+		return "rewrite title/meta"
+	case strings.Contains(text, "internal link"):
+		return "add internal links"
+	case strings.Contains(text, "schema") || strings.Contains(text, "structured"):
+		return "add structured data"
+	case strings.Contains(text, "sitemap"):
+		return "submit/update sitemap"
+	case strings.Contains(text, "distribution") || strings.Contains(text, "syndication") || strings.Contains(text, "external"):
+		return "distribute canonical variant"
+	case strings.Contains(text, "mention") || strings.Contains(text, "monitor"):
+		return "monitor external mention"
+	case strings.Contains(text, "refresh") || strings.Contains(text, "decay"):
+		return "refresh existing page"
+	default:
+		return "create new asset"
+	}
+}
+
+func measurementScheduleForAction(actionBucket string) map[string]any {
+	switch actionBucket {
+	case "rewrite title/meta", "distribute canonical variant":
+		return map[string]any{"bucket": actionBucket, "checkpoints": []int{7, 14, 28}, "primary_metric": "clicks"}
+	case "add internal links":
+		return map[string]any{"bucket": actionBucket, "checkpoints": []int{14, 28, 56}, "primary_metric": "clicks"}
+	case "submit/update sitemap", "add structured data":
+		return map[string]any{"bucket": actionBucket, "checkpoints": []int{1, 7, 14, 28}, "primary_metric": "indexability"}
+	case "monitor external mention":
+		return map[string]any{"bucket": actionBucket, "checkpoints": []int{7, 14, 28}, "primary_metric": "mentions"}
+	default:
+		return map[string]any{"bucket": actionBucket, "checkpoints": []int{14, 28, 56, 90}, "primary_metric": "clicks"}
+	}
 }
 
 func uuidToPGLocal(id uuid.UUID) pgtype.UUID {

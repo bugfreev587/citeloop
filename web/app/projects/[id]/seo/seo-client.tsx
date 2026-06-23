@@ -101,6 +101,16 @@ function assetTypeForOpportunity(opportunity: SEOOpportunity) {
   return "blog_post";
 }
 
+function selectedPortfolioActions(plan: SEOActionPlan) {
+  return plan.portfolio.selected_actions;
+}
+
+function measurementLabel(schedule: any) {
+  const checkpoints: Array<number | string> = Array.isArray(schedule?.checkpoints) ? schedule.checkpoints : [];
+  if (checkpoints.length === 0) return "Not scheduled";
+  return checkpoints.map((day) => `D+${day}`).join(" / ");
+}
+
 type SEOClientMode = "opportunities" | "visibility";
 
 export function OpportunitiesClient({ projectId }: { projectId: string }) {
@@ -198,6 +208,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     ...(brief?.geo_blockers ?? []),
   ].slice(0, 4);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
+  const latestPortfolioPlan = plans[0] ?? null;
 
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
@@ -1167,6 +1178,57 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
             <p className="mt-1 text-sm text-slate-500">Open safe mode</p>
           </div>
         </div>
+        {latestPortfolioPlan && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-bold text-slate-900">Action portfolio</div>
+                <p className="text-sm text-slate-500">Selected actions grouped by bucket, risk, review, and measurement.</p>
+              </div>
+              <Badge tone={toneForRisk(latestPortfolioPlan.aggregate_risk)}>{latestPortfolioPlan.aggregate_risk}</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+              <div>
+                <div className="mb-2 text-sm font-bold text-slate-900">Selected actions</div>
+                <div className="divide-y divide-slate-100">
+                  {selectedPortfolioActions(latestPortfolioPlan).slice(0, 8).map((action, index) => (
+                    <div key={`${action.opportunity_id ?? index}`} className="py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="neutral">{action.action_bucket}</Badge>
+                        <Badge tone={toneForRisk(action.risk_level)}>{action.risk_level}</Badge>
+                        {action.review_required && <Badge tone="amber">Review required</Badge>}
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">{action.recommended_action ?? action.type}</div>
+                      <div className="mt-1 text-xs text-slate-500">Measurement: {measurementLabel(action.measurement_schedule)}</div>
+                    </div>
+                  ))}
+                  {selectedPortfolioActions(latestPortfolioPlan).length === 0 && (
+                    <div className="py-3 text-sm text-slate-500">No selected actions in this portfolio.</div>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-sm font-bold text-slate-900">Risk summary</div>
+                <div className="grid gap-2 text-sm text-slate-600">
+                  {Object.entries(latestPortfolioPlan.portfolio.risk_summary).map(([risk, count]) => (
+                    <div key={risk} className="flex items-center justify-between border-b border-slate-100 py-2">
+                      <span>{risk}</span>
+                      <span className="font-semibold text-slate-900">{count}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-b border-slate-100 py-2">
+                    <span>Review required</span>
+                    <span className="font-semibold text-slate-900">{latestPortfolioPlan.portfolio.required_approvals.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-2">
+                    <span>Measurement</span>
+                    <span className="font-semibold text-slate-900">{latestPortfolioPlan.portfolio.measurement_schedule.length}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
         </div>
       )}
