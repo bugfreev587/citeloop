@@ -3,6 +3,7 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -124,6 +126,10 @@ func (s Service) GeneratePromptSet(ctx context.Context, projectID uuid.UUID, req
 	}
 
 	profile, err := s.Q.GetActiveProfile(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		result.DataSourceNotes = append(result.DataSourceNotes, "missing_active_profile")
+		return finish("degraded", result, nil)
+	}
 	if err != nil {
 		return finish("error", result, err)
 	}

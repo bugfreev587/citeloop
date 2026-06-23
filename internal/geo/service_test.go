@@ -124,6 +124,7 @@ type geoStoreStub struct {
 	opportunityCount int
 	latestSnapshots  []db.AiCrawlerAccessSnapshot
 	profile          db.ProductProfile
+	profileErr       error
 	topics           []db.Topic
 	promptSets       []db.GeoPromptSet
 	prompts          []db.GeoPrompt

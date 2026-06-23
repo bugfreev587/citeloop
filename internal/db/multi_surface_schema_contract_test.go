@@ -86,3 +86,22 @@ func TestMultiSurfaceQueriesExposeFoundationRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestGEORunsAgentCheckAllowsExternalSurfaceMonitor(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "migrations", "*.sql"))
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	var combined strings.Builder
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", file, err)
+		}
+		combined.Write(raw)
+		combined.WriteByte('\n')
+	}
+	if !strings.Contains(combined.String(), "'geo_external_surface_monitor'") {
+		t.Fatalf("geo_runs agent check must allow %q", "geo_external_surface_monitor")
+	}
+}
