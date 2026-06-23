@@ -220,6 +220,11 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 	if actionType == "" {
 		actionType = "technical SEO fix task"
 	}
+	assetTypeValue := strings.TrimSpace(in.AssetType)
+	var assetType *string
+	if assetTypeValue != "" {
+		assetType = &assetTypeValue
+	}
 	var targetHash *string
 	if opp.ArticleID.Valid {
 		article, err := s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{
@@ -240,7 +245,7 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		NormalizedTargetUrl:     strPtrFrom(opp.NormalizedPageUrl),
 		TargetContentHashBefore: targetHash,
 		BaselineWindow:          json.RawMessage(`{"days":28}`),
-		MeasurementWindow:       json.RawMessage(`{"checkpoints_days":[7,14,28]}`),
+		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -249,10 +254,6 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 	reviewRequired := true
 	if in.ReviewRequired != nil {
 		reviewRequired = *in.ReviewRequired
-	}
-	var assetType *string
-	if trimmed := strings.TrimSpace(in.AssetType); trimmed != "" {
-		assetType = &trimmed
 	}
 	targetSurfaceID := pgtype.UUID{}
 	if in.TargetSurfaceID != nil {
@@ -501,4 +502,41 @@ func strPtrFrom(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func measurementWindowForAction(assetType, actionType string) json.RawMessage {
+	days, primary, secondary := measurementPlanFor(assetType, actionType)
+	return mustJSONLocal(map[string]any{
+		"baseline":          map[string]any{"days": 28},
+		"checkpoints":       checkpointObjects(days),
+		"primary_metric":    primary,
+		"secondary_metrics": secondary,
+	})
+}
+
+func measurementPlanFor(assetType, actionType string) ([]int, string, []string) {
+	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
+	switch {
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata") || strings.Contains(text, "title") || strings.Contains(text, "meta"):
+		return []int{7, 14, 28}, "ctr", []string{"impressions", "clicks", "position"}
+	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
+		return []int{14, 28, 56}, "clicks", []string{"impressions", "position"}
+	case strings.Contains(text, "external_distribution") || strings.Contains(text, "distribution") || strings.Contains(text, "syndication"):
+		return []int{7, 14, 28}, "referral_sessions", []string{"brand_mentions", "backlinks"}
+	case strings.Contains(text, "geo") || strings.Contains(text, "citation"):
+		// GEO citation-ready asset checks run weekly for the first eight weeks.
+		return []int{7, 14, 21, 28, 35, 42, 49, 56}, "project_owned_citations", []string{"brand_mentions", "competitor_citations"}
+	case strings.Contains(text, "sitemap") || strings.Contains(text, "technical"):
+		return []int{1, 7, 14, 28}, "indexed_status", []string{"http_status", "technical_issue_count"}
+	default:
+		return []int{14, 28, 56, 90}, "clicks", []string{"impressions", "ctr", "position"}
+	}
+}
+
+func checkpointObjects(days []int) []map[string]any {
+	out := make([]map[string]any, 0, len(days))
+	for _, day := range days {
+		out = append(out, map[string]any{"day": day, "status": "scheduled"})
+	}
+	return out
 }

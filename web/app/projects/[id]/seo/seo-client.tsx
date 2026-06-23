@@ -111,6 +111,17 @@ function measurementLabel(schedule: any) {
   return checkpoints.map((day) => `D+${day}`).join(" / ");
 }
 
+function measurementWindowLabel(measurement_window: any) {
+  const structured = Array.isArray(measurement_window?.checkpoints)
+    ? measurement_window.checkpoints.map((checkpoint: any) => checkpoint?.day).filter(Boolean)
+    : [];
+  const legacy = Array.isArray(measurement_window?.checkpoints_days) ? measurement_window.checkpoints_days : [];
+  const checkpoints: Array<number | string> = structured.length > 0 ? structured : legacy;
+  if (checkpoints.length === 0) return "Not scheduled";
+  const metric = measurement_window?.primary_metric ? `${measurement_window.primary_metric}: ` : "";
+  return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
+}
+
 type SEOClientMode = "opportunities" | "visibility";
 
 export function OpportunitiesClient({ projectId }: { projectId: string }) {
@@ -1330,7 +1341,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
                   <div>
                     <span className="font-semibold text-slate-700">Measurement</span>
                     <br />
-                    {action.measurement_window ? "Scheduled" : "Not scheduled"}
+                    {measurementWindowLabel(action.measurement_window)}
                   </div>
                 </div>
               </div>
