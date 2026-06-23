@@ -489,6 +489,14 @@ export type GEOExternalSurface = {
   backlink_state: string;
   last_http_status?: number | null;
   last_cited_at?: any;
+  source_url?: string | null;
+  canonical_status: string;
+  indexability_status: string;
+  publication_status: string;
+  owner_confidence: string;
+  last_verified_at?: any;
+  verification_snapshot?: any;
+  related_action_ids: string[];
   created_at?: any;
   updated_at?: any;
 };
@@ -816,6 +824,14 @@ function normalizeGEOExternalSurface(raw: any): GEOExternalSurface {
     backlink_state: data.backlink_state ?? "unknown",
     last_http_status: data.last_http_status ?? null,
     last_cited_at: data.last_cited_at ?? undefined,
+    source_url: data.source_url ?? null,
+    canonical_status: data.canonical_status ?? "unknown",
+    indexability_status: data.indexability_status ?? "unknown",
+    publication_status: data.publication_status ?? "unknown",
+    owner_confidence: data.owner_confidence ?? "medium",
+    last_verified_at: data.last_verified_at ?? undefined,
+    verification_snapshot: data.verification_snapshot ?? undefined,
+    related_action_ids: arrayFrom<string>(data.related_action_ids).map(String),
     created_at: data.created_at ?? undefined,
     updated_at: data.updated_at ?? undefined,
   };
@@ -1292,7 +1308,22 @@ export function createApi(auth?: AuthOptions) {
   },
   createGEOExternalSurface: async (
     id: string,
-    body: { url: string; normalized_url?: string; platform?: string; surface_type?: string; owner_type?: string; canonical_target_url?: string; backlink_state?: string },
+    body: {
+      url: string;
+      normalized_url?: string;
+      platform?: string;
+      surface_type?: string;
+      owner_type?: string;
+      canonical_target_url?: string;
+      backlink_state?: string;
+      source_url?: string;
+      canonical_status?: string;
+      indexability_status?: string;
+      publication_status?: string;
+      owner_confidence?: string;
+      verification_snapshot?: any;
+      related_action_ids?: string[];
+    },
   ): Promise<GEOExternalSurface> => {
     const raw = await req<any>(`/projects/${id}/geo/external-surfaces`, { method: "POST", body: JSON.stringify(body) }, auth);
     return normalizeGEOExternalSurface(raw);

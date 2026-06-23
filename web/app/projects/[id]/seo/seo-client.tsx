@@ -126,6 +126,13 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
   const [assetBriefs, setAssetBriefs] = useState<GEOAssetBrief[]>([]);
   const [siteURL, setSiteURL] = useState("");
   const [surfaceURL, setSurfaceURL] = useState("");
+  const [surfaceSourceURL, setSurfaceSourceURL] = useState("");
+  const [surfaceOwnerType, setSurfaceOwnerType] = useState("managed_external");
+  const [surfacePlatform, setSurfacePlatform] = useState("devto");
+  const [surfacePublicationStatus, setSurfacePublicationStatus] = useState("draft");
+  const [surfaceIndexabilityStatus, setSurfaceIndexabilityStatus] = useState("unknown");
+  const [surfaceCanonicalStatus, setSurfaceCanonicalStatus] = useState("unknown");
+  const [surfaceOwnerConfidence, setSurfaceOwnerConfidence] = useState("medium");
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
@@ -289,8 +296,21 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     setBusy("geo-surface");
     setMessage(null);
     try {
-      await api.createGEOExternalSurface(projectId, { url: surfaceURL.trim(), owner_type: "project" });
+      await api.createGEOExternalSurface(projectId, {
+        url: surfaceURL.trim(),
+        owner_type: surfaceOwnerType,
+        platform: surfacePlatform,
+        surface_type: "page",
+        publication_status: surfacePublicationStatus,
+        indexability_status: surfaceIndexabilityStatus,
+        canonical_status: surfaceCanonicalStatus,
+        owner_confidence: surfaceOwnerConfidence,
+        source_url: surfaceSourceURL.trim() || undefined,
+        backlink_state: "unknown",
+        verification_snapshot: { source: "manual_inventory" },
+      });
       setSurfaceURL("");
+      setSurfaceSourceURL("");
       await refresh();
       setMessage({ title: "External surface saved", tone: "green" });
     } catch (e: any) {
@@ -915,8 +935,65 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-2 md:flex-row">
-            <TextInput value={surfaceURL} onChange={(event) => setSurfaceURL(event.target.value)} placeholder="https://dev.to/team/source" />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.5fr)_repeat(5,minmax(120px,1fr))]">
+            <Field label="Surface URL">
+              <TextInput value={surfaceURL} onChange={(event) => setSurfaceURL(event.target.value)} placeholder="https://dev.to/team/source" />
+            </Field>
+            <Field label="Source URL">
+              <TextInput value={surfaceSourceURL} onChange={(event) => setSurfaceSourceURL(event.target.value)} placeholder="https://example.com/blog/source" />
+            </Field>
+            <Field label="Owner">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceOwnerType} onChange={(event) => setSurfaceOwnerType(event.target.value)}>
+                <option value="managed_external">Managed external</option>
+                <option value="project">Owned</option>
+                <option value="third_party">Third party</option>
+              </select>
+            </Field>
+            <Field label="Platform">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfacePlatform} onChange={(event) => setSurfacePlatform(event.target.value)}>
+                <option value="devto">Dev.to</option>
+                <option value="hashnode">Hashnode</option>
+                <option value="medium">Medium</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="github">GitHub</option>
+                <option value="product_hunt">Product Hunt</option>
+                <option value="site">Site</option>
+              </select>
+            </Field>
+            <Field label="Publication">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfacePublicationStatus} onChange={(event) => setSurfacePublicationStatus(event.target.value)}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="observed">Observed</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </Field>
+            <Field label="Indexability">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceIndexabilityStatus} onChange={(event) => setSurfaceIndexabilityStatus(event.target.value)}>
+                <option value="unknown">Unknown</option>
+                <option value="indexable">Indexable</option>
+                <option value="noindex">Noindex</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </Field>
+            <Field label="Canonical">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceCanonicalStatus} onChange={(event) => setSurfaceCanonicalStatus(event.target.value)}>
+                <option value="unknown">Unknown</option>
+                <option value="canonical">Canonical</option>
+                <option value="source_linked">Source linked</option>
+                <option value="missing">Missing</option>
+                <option value="mismatch">Mismatch</option>
+              </select>
+            </Field>
+            <Field label="Confidence">
+              <select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700" value={surfaceOwnerConfidence} onChange={(event) => setSurfaceOwnerConfidence(event.target.value)}>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="low">Low</option>
+              </select>
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={addExternalSurface} disabled={busy === "geo-surface" || !surfaceURL.trim()}>
               <ButtonProgress busy={busy === "geo-surface"} busyLabel="Saving surface" idleIcon={<FileText size={14} />}>
                 Surface
@@ -928,11 +1005,43 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
               </ButtonProgress>
             </Button>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <div className="mt-4 divide-y divide-slate-100">
             {(geoOverview?.external_surfaces ?? []).slice(0, 6).map((surface) => (
-              <div key={surface.id} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2">
-                <span className="truncate text-sm text-slate-700">{surface.url}</span>
-                <Badge tone={surface.owner_type === "project" ? "green" : "neutral"}>{surface.owner_type}</Badge>
+              <div key={surface.id} className="py-3">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-slate-900">{surface.url}</span>
+                  <Badge tone={surface.owner_type === "project" ? "green" : "neutral"}>
+                    {surface.owner_type === "project" ? "owned" : surface.owner_type}
+                  </Badge>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-5">
+                  <div>
+                    <span className="font-semibold text-slate-700">Platform</span>
+                    <br />
+                    {surface.platform}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Publication</span>
+                    <br />
+                    {surface.publication_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Indexability</span>
+                    <br />
+                    {surface.indexability_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Canonical</span>
+                    <br />
+                    {surface.canonical_status}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Confidence</span>
+                    <br />
+                    {surface.owner_confidence}
+                  </div>
+                </div>
+                {surface.source_url && <div className="mt-2 truncate text-xs text-slate-500">Source URL: {surface.source_url}</div>}
               </div>
             ))}
           </div>

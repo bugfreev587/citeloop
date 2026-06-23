@@ -416,13 +416,20 @@ func (s *Server) createGEOExternalSurface(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var in struct {
-		URL                string `json:"url"`
-		NormalizedURL      string `json:"normalized_url"`
-		Platform           string `json:"platform"`
-		SurfaceType        string `json:"surface_type"`
-		OwnerType          string `json:"owner_type"`
-		CanonicalTargetURL string `json:"canonical_target_url"`
-		BacklinkState      string `json:"backlink_state"`
+		URL                  string          `json:"url"`
+		NormalizedURL        string          `json:"normalized_url"`
+		Platform             string          `json:"platform"`
+		SurfaceType          string          `json:"surface_type"`
+		OwnerType            string          `json:"owner_type"`
+		CanonicalTargetURL   string          `json:"canonical_target_url"`
+		BacklinkState        string          `json:"backlink_state"`
+		SourceURL            string          `json:"source_url"`
+		CanonicalStatus      string          `json:"canonical_status"`
+		IndexabilityStatus   string          `json:"indexability_status"`
+		PublicationStatus    string          `json:"publication_status"`
+		OwnerConfidence      string          `json:"owner_confidence"`
+		VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+		RelatedActionIDs     json.RawMessage `json:"related_action_ids"`
 	}
 	if err := decodeOptionalJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -467,6 +474,22 @@ func (s *Server) createGEOExternalSurface(w http.ResponseWriter, r *http.Request
 		CanonicalTargetUrl: strPtrFrom(in.CanonicalTargetURL),
 		BacklinkState:      backlinkState,
 		LastCitedAt:        pgtype.Timestamptz{},
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	row, err = s.Q.UpdateGEOExternalSurfaceMetadata(r.Context(), db.UpdateGEOExternalSurfaceMetadataParams{
+		ID:                   row.ID,
+		ProjectID:            projectID,
+		SourceUrl:            strPtrFrom(in.SourceURL),
+		CanonicalStatus:      textOr(in.CanonicalStatus, row.CanonicalStatus, "unknown"),
+		IndexabilityStatus:   textOr(in.IndexabilityStatus, row.IndexabilityStatus, "unknown"),
+		PublicationStatus:    textOr(in.PublicationStatus, row.PublicationStatus, "unknown"),
+		OwnerConfidence:      ownerConfidenceOr(in.OwnerConfidence, row.OwnerConfidence),
+		LastVerifiedAt:       pgtype.Timestamptz{},
+		VerificationSnapshot: rawOrExisting(in.VerificationSnapshot, row.VerificationSnapshot, `{}`),
+		RelatedActionIds:     rawOrExisting(in.RelatedActionIDs, row.RelatedActionIds, `[]`),
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -581,6 +604,38 @@ func platformForURL(raw string) string {
 		return "site"
 	}
 	return parsed.Host
+}
+
+func textOr(value, existing, fallback string) string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return trimmed
+	}
+	if trimmed := strings.TrimSpace(existing); trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+func ownerConfidenceOr(value, existing string) string {
+	switch strings.TrimSpace(value) {
+	case "high", "medium", "low":
+		return strings.TrimSpace(value)
+	}
+	switch strings.TrimSpace(existing) {
+	case "high", "medium", "low":
+		return strings.TrimSpace(existing)
+	}
+	return "medium"
+}
+
+func rawOrExisting(raw, existing json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 && json.Valid(raw) {
+		return raw
+	}
+	if len(existing) > 0 && json.Valid(existing) {
+		return existing
+	}
+	return json.RawMessage(fallback)
 }
 
 func jsonStringList(raw json.RawMessage) []string {
