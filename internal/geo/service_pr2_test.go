@@ -10,6 +10,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -72,6 +73,36 @@ func TestGeneratePromptSetCreatesPromptsCompetitorsAndOwnedSurface(t *testing.T)
 		if strings.TrimSpace(prompt.PromptText) == "" || prompt.Status != "active" || prompt.Locale != "en-US" {
 			t.Fatalf("bad prompt = %+v", prompt)
 		}
+	}
+}
+
+func TestGeneratePromptSetDegradesWhenActiveProfileMissing(t *testing.T) {
+	projectID := uuid.New()
+	runID := uuid.New()
+	store := &geoStoreStub{
+		runID:      runID,
+		profileErr: pgx.ErrNoRows,
+	}
+
+	result, err := Service{
+		Q:   store,
+		Now: func() time.Time { return time.Date(2026, 6, 23, 8, 30, 0, 0, time.UTC) },
+	}.GeneratePromptSet(context.Background(), projectID, GeneratePromptSetRequest{Locale: "en-US", Status: "active"})
+	if err != nil {
+		t.Fatalf("GeneratePromptSet error = %v, want degraded result", err)
+	}
+
+	if !store.started || store.finishedStatus != "degraded" {
+		t.Fatalf("run started=%v finished=%q, want started and degraded", store.started, store.finishedStatus)
+	}
+	if result.Run.ID != runID || result.Run.Status != "degraded" {
+		t.Fatalf("run = %+v, want degraded run %s", result.Run, runID)
+	}
+	if result.PromptSet.ID != uuid.Nil || len(result.Prompts) != 0 || len(result.Competitors) != 0 {
+		t.Fatalf("result = %+v, want no prompt artifacts without an active profile", result)
+	}
+	if !hasNote(result.DataSourceNotes, "missing_active_profile") {
+		t.Fatalf("data source notes = %+v, want missing_active_profile", result.DataSourceNotes)
 	}
 }
 
@@ -209,7 +240,19 @@ func hasCitedSurfaceTimestamp(surfaces []db.GeoExternalSurface, normalizedURL st
 	return false
 }
 
+func hasNote(notes []string, want string) bool {
+	for _, note := range notes {
+		if note == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *geoStoreStub) GetActiveProfile(_ context.Context, projectID uuid.UUID) (db.ProductProfile, error) {
+	if s.profileErr != nil {
+		return db.ProductProfile{}, s.profileErr
+	}
 	s.profile.ProjectID = projectID
 	return s.profile, nil
 }
