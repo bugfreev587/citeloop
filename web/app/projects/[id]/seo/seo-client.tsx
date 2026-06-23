@@ -88,6 +88,19 @@ function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
 }
 
+function assetTypeForOpportunity(opportunity: SEOOpportunity) {
+  const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
+  if (text.includes("comparison")) return "comparison_page";
+  if (text.includes("alternative")) return "alternative_page";
+  if (text.includes("template") || text.includes("checklist")) return "template_or_checklist";
+  if (text.includes("schema")) return "schema_patch";
+  if (text.includes("internal link")) return "internal_link_patch";
+  if (text.includes("metadata") || text.includes("title") || text.includes("meta")) return "metadata_rewrite";
+  if (text.includes("sitemap")) return "sitemap_update";
+  if (text.includes("geo")) return "glossary_definition";
+  return "blog_post";
+}
+
 type SEOClientMode = "opportunities" | "visibility";
 
 export function OpportunitiesClient({ projectId }: { projectId: string }) {
@@ -388,7 +401,11 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
-      const action = await api.createSEOContentAction(projectId, opp.id, { action_type: opp.recommended_action ?? undefined });
+      const action = await api.createSEOContentAction(projectId, opp.id, {
+        action_type: opp.recommended_action ?? undefined,
+        asset_type: assetTypeForOpportunity(opp),
+        review_required: opp.risk_level !== "low",
+      });
       setOpportunities((current) => current.filter((item) => item.id !== opp.id));
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setMessage({ title: "Content action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
@@ -1121,6 +1138,28 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
                   <div className="flex items-center gap-2">
                     <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
                     <span className="text-xs text-slate-400">{formatDate(action.created_at ?? null)}</span>
+                  </div>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
+                  <div>
+                    <span className="font-semibold text-slate-700">Asset</span>
+                    <br />
+                    {action.asset_type ?? "unspecified"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Review</span>
+                    <br />
+                    {action.review_required === false ? "Optional" : "Required"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Verification</span>
+                    <br />
+                    {action.verified_at ? "Verified" : action.verification_snapshot ? "Pending" : "Not started"}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-700">Measurement</span>
+                    <br />
+                    {action.measurement_window ? "Scheduled" : "Not scheduled"}
                   </div>
                 </div>
               </div>

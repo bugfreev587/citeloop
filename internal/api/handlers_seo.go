@@ -197,7 +197,15 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in struct {
-		ActionType string `json:"action_type"`
+		ActionType       string          `json:"action_type"`
+		AssetType        string          `json:"asset_type"`
+		TargetSurfaceID  *uuid.UUID      `json:"target_surface_id"`
+		RiskReasons      json.RawMessage `json:"risk_reasons"`
+		EvidenceSnapshot json.RawMessage `json:"evidence_snapshot"`
+		InputSnapshot    json.RawMessage `json:"input_snapshot"`
+		OutputSnapshot   json.RawMessage `json:"output_snapshot"`
+		DiffSnapshot     json.RawMessage `json:"diff_snapshot"`
+		ReviewRequired   *bool           `json:"review_required"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: oppID, ProjectID: projectID})
@@ -233,6 +241,35 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		TargetContentHashBefore: targetHash,
 		BaselineWindow:          json.RawMessage(`{"days":28}`),
 		MeasurementWindow:       json.RawMessage(`{"checkpoints_days":[7,14,28]}`),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	reviewRequired := true
+	if in.ReviewRequired != nil {
+		reviewRequired = *in.ReviewRequired
+	}
+	var assetType *string
+	if trimmed := strings.TrimSpace(in.AssetType); trimmed != "" {
+		assetType = &trimmed
+	}
+	targetSurfaceID := pgtype.UUID{}
+	if in.TargetSurfaceID != nil {
+		targetSurfaceID = pgtype.UUID{Bytes: *in.TargetSurfaceID, Valid: true}
+	}
+	action, err = s.Q.UpdateContentActionExecutionMetadata(r.Context(), db.UpdateContentActionExecutionMetadataParams{
+		ID:                   action.ID,
+		ProjectID:            projectID,
+		AssetType:            assetType,
+		TargetSurfaceID:      targetSurfaceID,
+		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
+		EvidenceSnapshot:     rawOrDefault(in.EvidenceSnapshot, `{}`),
+		InputSnapshot:        rawOrDefault(in.InputSnapshot, `{}`),
+		OutputSnapshot:       rawOrDefault(in.OutputSnapshot, `{}`),
+		DiffSnapshot:         rawOrDefault(in.DiffSnapshot, `{}`),
+		ReviewRequired:       reviewRequired,
+		VerificationSnapshot: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

@@ -287,9 +287,25 @@ export type SEOContentAction = {
   opportunity_id: string;
   action_type: string;
   status: string;
+  asset_type?: string | null;
+  target_surface_id?: string | null;
   target_url?: string | null;
   normalized_target_url?: string | null;
   target_content_hash_before?: string | null;
+  risk_reasons?: any;
+  evidence_snapshot?: any;
+  input_snapshot?: any;
+  output_snapshot?: any;
+  diff_snapshot?: any;
+  review_required?: boolean;
+  approved_by?: string | null;
+  approved_at?: any;
+  verified_at?: any;
+  verification_snapshot?: any;
+  baseline_window?: any;
+  measurement_window?: any;
+  published_at?: any;
+  outcome_summary?: any;
   created_at?: any;
 };
 
@@ -1324,7 +1340,7 @@ export function createApi(auth?: AuthOptions) {
   createSEOContentAction: async (
     id: string,
     opportunityID: string,
-    body: { action_type?: string } = {},
+    body: { action_type?: string; asset_type?: string; review_required?: boolean } = {},
   ): Promise<SEOContentAction> => {
     return req<SEOContentAction>(
       `/projects/${id}/seo/opportunities/${opportunityID}/actions`,
