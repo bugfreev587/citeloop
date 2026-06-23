@@ -216,6 +216,20 @@ where project_id = sqlc.arg(project_id)
   and (sqlc.arg(owner_type)::text = '' or owner_type = sqlc.arg(owner_type))
 order by owner_type asc, updated_at desc;
 
+-- name: UpdateGEOExternalSurfaceMetadata :one
+update geo_external_surfaces set
+  source_url = coalesce(sqlc.narg(source_url)::text, source_url),
+  canonical_status = sqlc.arg(canonical_status)::text,
+  indexability_status = sqlc.arg(indexability_status)::text,
+  publication_status = sqlc.arg(publication_status)::text,
+  owner_confidence = sqlc.arg(owner_confidence)::text,
+  last_verified_at = coalesce(sqlc.narg(last_verified_at)::timestamptz, last_verified_at),
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  related_action_ids = sqlc.arg(related_action_ids)::jsonb,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: ListProjectOwnedGEOExternalSurfaces :many
 select * from geo_external_surfaces
 where project_id = $1 and owner_type = 'project'
@@ -327,4 +341,14 @@ update geo_asset_briefs set
   status = $3,
   updated_at = now()
 where id = $1 and project_id = $2
+returning *;
+
+-- name: UpdateGEOAssetBriefMultiSurfaceMetadata :one
+update geo_asset_briefs set
+  target_queries = sqlc.arg(target_queries)::jsonb,
+  target_personas = sqlc.arg(target_personas)::jsonb,
+  expected_citation_mechanism = sqlc.arg(expected_citation_mechanism)::text,
+  source_type = sqlc.arg(source_type)::text,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;

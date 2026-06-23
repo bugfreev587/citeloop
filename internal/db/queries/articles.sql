@@ -53,6 +53,16 @@ update articles set
 where id = $1 and project_id = $4
 returning *;
 
+-- name: UpdateArticleDistributionMetadataForProject :one
+update articles set
+  publication_mode = $3,
+  source_url = sqlc.narg(source_url),
+  external_url = sqlc.narg(external_url),
+  verification_status = $4,
+  external_surface_id = sqlc.narg(external_surface_id)
+where id = $1 and project_id = $2
+returning *;
+
 -- name: ApproveArticle :one
 update articles set
   status = $2,

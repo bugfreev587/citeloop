@@ -68,3 +68,38 @@ func TestClassifyRiskLowConfidenceIsMedium(t *testing.T) {
 		t.Fatalf("level = %s, want medium; reasons=%v", got.Level, got.Reasons)
 	}
 }
+
+func TestClassifyRiskUsesMultiSurfaceInputs(t *testing.T) {
+	policy := RiskPolicy{}
+
+	comparison := ClassifyRisk(RiskInput{
+		ActionType:         "create comparison page",
+		AssetType:          "comparison_page",
+		PublicationSurface: "blog",
+		Confidence:         90,
+	}, policy)
+	if comparison.Level != RiskMedium {
+		t.Fatalf("comparison pages should be medium risk, got %s reasons=%v", comparison.Level, comparison.Reasons)
+	}
+
+	community := ClassifyRisk(RiskInput{
+		ActionType:           "external distribution",
+		AssetType:            "blog_post",
+		PublicationSurface:   "external",
+		DistributionPlatform: "reddit",
+		Confidence:           90,
+	}, policy)
+	if community.Level != RiskHigh {
+		t.Fatalf("community auto distribution should be high risk, got %s reasons=%v", community.Level, community.Reasons)
+	}
+
+	schemaPatch := ClassifyRisk(RiskInput{
+		ActionType:   "schema patch",
+		AssetType:    "schema_patch",
+		SchemaChange: true,
+		Confidence:   90,
+	}, policy)
+	if schemaPatch.Level != RiskMedium {
+		t.Fatalf("schema patch should be medium risk, got %s reasons=%v", schemaPatch.Level, schemaPatch.Reasons)
+	}
+}

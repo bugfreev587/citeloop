@@ -21,18 +21,23 @@ type RiskPolicy struct {
 }
 
 type RiskInput struct {
-	ActionType          string
-	PageType            string
-	DiffScope           string
-	Clicks28D           int
-	Impressions28D      int
-	TrafficPercentile   float64
-	Confidence          float64
-	TouchesProductClaim bool
-	TouchesCanonical    bool
-	TouchesRobots       bool
-	TouchesRedirect     bool
-	MergeNoindexDelete  bool
+	ActionType           string
+	PageType             string
+	DiffScope            string
+	AssetType            string
+	PublicationSurface   string
+	DistributionPlatform string
+	ExternalOwnerType    string
+	Clicks28D            int
+	Impressions28D       int
+	TrafficPercentile    float64
+	Confidence           float64
+	TouchesProductClaim  bool
+	TouchesCanonical     bool
+	TouchesRobots        bool
+	TouchesRedirect      bool
+	MergeNoindexDelete   bool
+	SchemaChange         bool
 }
 
 type RiskResult struct {
@@ -52,6 +57,10 @@ func ClassifyRisk(input RiskInput, policy RiskPolicy) RiskResult {
 	pageType := strings.ToLower(strings.TrimSpace(input.PageType))
 	action := strings.ToLower(strings.TrimSpace(input.ActionType))
 	diff := strings.ToLower(strings.TrimSpace(input.DiffScope))
+	asset := strings.ToLower(strings.TrimSpace(input.AssetType))
+	surface := strings.ToLower(strings.TrimSpace(input.PublicationSurface))
+	platform := strings.ToLower(strings.TrimSpace(input.DistributionPlatform))
+	owner := strings.ToLower(strings.TrimSpace(input.ExternalOwnerType))
 
 	if criticalPage(pageType) {
 		return result.high("critical_page")
@@ -68,9 +77,21 @@ func ClassifyRisk(input RiskInput, policy RiskPolicy) RiskResult {
 	if input.TrafficPercentile >= 80 {
 		return result.high("high_traffic_page")
 	}
+	if surface == "external" && communityPlatform(platform) {
+		return result.high("community_distribution_requires_manual_review")
+	}
 
 	if strings.Contains(action, "create supporting article") || strings.Contains(action, "refresh") || diff == "paragraph" || diff == "section" {
 		result.medium("content_body_change")
+	}
+	if asset == "comparison_page" || asset == "alternative_page" {
+		result.medium("buyer_intent_asset")
+	}
+	if asset == "schema_patch" || input.SchemaChange {
+		result.medium("structured_data_change")
+	}
+	if surface == "external" || owner == "third_party" {
+		result.medium("external_surface_change")
 	}
 	if strings.Contains(action, "internal link") && !result.LowTraffic {
 		result.medium("internal_link_on_non_low_traffic_page")
@@ -82,6 +103,15 @@ func ClassifyRisk(input RiskInput, policy RiskPolicy) RiskResult {
 		result.medium("confidence_below_auto_publish_threshold")
 	}
 	return result
+}
+
+func communityPlatform(platform string) bool {
+	switch platform {
+	case "reddit", "hacker_news", "hn":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizePolicy(policy RiskPolicy) RiskPolicy {
