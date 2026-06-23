@@ -1471,6 +1471,17 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
     return arrayFrom(raw);
   },
+  verifySEOContentAction: async (
+    id: string,
+    actionID: string,
+    body: { status: "verified" | "failed" | "recovery_required" | string; verification_snapshot?: any },
+  ): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(
+      `/projects/${id}/seo/actions/${actionID}/verify`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
   listSEOObjectives: async (id: string): Promise<SEOObjective[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
     return arrayFrom(raw);

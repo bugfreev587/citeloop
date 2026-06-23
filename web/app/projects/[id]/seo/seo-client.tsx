@@ -458,6 +458,23 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     }
   }
 
+  async function verifyAction(action: SEOContentAction, status: "verified" | "failed") {
+    setBusy(`verify-${action.id}-${status}`);
+    setMessage(null);
+    try {
+      const updated = await api.verifySEOContentAction(projectId, action.id, {
+        status,
+        verification_snapshot: { source: "manual_dashboard", status },
+      });
+      setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setMessage({ title: status === "verified" ? "Action verified" : "Verification failed", detail: action.action_type, tone: status === "verified" ? "green" : "amber" });
+    } catch (e: any) {
+      setMessage({ title: "Could not update verification", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function dismiss(opp: SEOOpportunity) {
     setOpportunityPending(opp.id, "dismiss");
     setMessage(null);
@@ -1343,6 +1360,18 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
                     <br />
                     {measurementWindowLabel(action.measurement_window)}
                   </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
+                    <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
+                      Manual verify
+                    </ButtonProgress>
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
+                    <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
+                      Verification failed
+                    </ButtonProgress>
+                  </Button>
                 </div>
               </div>
             ))}

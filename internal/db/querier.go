@@ -148,6 +148,7 @@ type Querier interface {
 	ListUnplannedContentActions(ctx context.Context, arg ListUnplannedContentActionsParams) ([]ContentAction, error)
 	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
 	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
+	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
 	MarkNotificationChannelVerified(ctx context.Context, arg MarkNotificationChannelVerifiedParams) (NotificationChannel, error)

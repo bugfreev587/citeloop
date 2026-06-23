@@ -135,6 +135,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/actions/{actionID}/publish", func(w http.ResponseWriter, r *http.Request) {
 					s.updateSEOContentActionStatus(w, r, "measuring")
 				})
+				r.Post("/actions/{actionID}/verify", s.verifySEOContentAction)
 				r.Get("/briefs/latest", s.getSEOBrief)
 				r.Get("/settings", s.getSEOSettings)
 				r.Put("/settings", s.updateSEOSettings)

@@ -350,6 +350,56 @@ func (s *Server) updateSEOContentActionStatus(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, action)
 }
 
+func (s *Server) verifySEOContentAction(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	var in struct {
+		Status               string          `json:"status"`
+		VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+	}
+	if err := decodeOptionalJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(in.Status))
+	if status == "" {
+		status = "verified"
+	}
+	nextStatus := "measuring"
+	verifiedAt := pgutil.TS(time.Now().UTC())
+	switch status {
+	case "verified", "ok", "passed":
+		nextStatus = "measuring"
+	case "failed", "verification_failed":
+		nextStatus = "verification_failed"
+		verifiedAt = pgtype.Timestamptz{}
+	case "recovery_required":
+		nextStatus = "recovery_required"
+		verifiedAt = pgtype.Timestamptz{}
+	default:
+		writeErr(w, http.StatusBadRequest, "bad verification status")
+		return
+	}
+	snapshot := in.VerificationSnapshot
+	if len(snapshot) == 0 || !json.Valid(snapshot) {
+		snapshot = mustJSONLocal(map[string]any{"source": "manual", "status": status})
+	}
+	action, err := s.Q.MarkContentActionVerification(r.Context(), db.MarkContentActionVerificationParams{
+		ID:                   actionID,
+		ProjectID:            projectID,
+		Status:               nextStatus,
+		VerifiedAt:           verifiedAt,
+		VerificationSnapshot: snapshot,
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, action)
+}
+
 func (s *Server) getSEOBrief(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {

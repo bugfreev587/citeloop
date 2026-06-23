@@ -230,6 +230,15 @@ update content_actions set
 where id = $1 and project_id = $2
 returning *;
 
+-- name: MarkContentActionVerification :one
+update content_actions set
+  status = sqlc.arg(status)::text,
+  verified_at = sqlc.narg(verified_at)::timestamptz,
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: MarkContentActionDraftReady :one
 update content_actions set
   status = 'ready_for_review',

@@ -847,6 +847,67 @@ func (q *Queries) MarkContentActionMeasuringForDraftArticle(ctx context.Context,
 	return i, err
 }
 
+const markContentActionVerification = `-- name: MarkContentActionVerification :one
+update content_actions set
+  status = $1::text,
+  verified_at = $2::timestamptz,
+  verification_snapshot = $3::jsonb,
+  updated_at = now()
+where id = $4 and project_id = $5
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+`
+
+type MarkContentActionVerificationParams struct {
+	Status               string             `json:"status"`
+	VerifiedAt           pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot json.RawMessage    `json:"verification_snapshot"`
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, markContentActionVerification,
+		arg.Status,
+		arg.VerifiedAt,
+		arg.VerificationSnapshot,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+	)
+	return i, err
+}
+
 const sEODataDayCount = `-- name: SEODataDayCount :one
 select count(distinct date)::bigint
 from page_performance_daily
