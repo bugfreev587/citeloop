@@ -189,6 +189,11 @@ const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "notifications", title: "Notifications" },
 ];
 
+function settingsTabFromHash(hash: string): SettingsTabId {
+  const tabId = hash.replace(/^#/, "");
+  return settingsTabs.some((tab) => tab.id === tabId) ? (tabId as SettingsTabId) : "project";
+}
+
 export function SettingsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
@@ -212,7 +217,25 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>("project");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>(() => {
+    if (typeof window === "undefined") return "project";
+    return settingsTabFromHash(window.location.hash);
+  });
+
+  useEffect(() => {
+    function syncTabFromHash() {
+      setActiveSettingsTab(settingsTabFromHash(window.location.hash));
+    }
+
+    syncTabFromHash();
+    window.addEventListener("hashchange", syncTabFromHash);
+    return () => window.removeEventListener("hashchange", syncTabFromHash);
+  }, []);
+
+  function activateSettingsTab(tabId: SettingsTabId) {
+    setActiveSettingsTab(tabId);
+    window.history.replaceState(null, "", `#${tabId}`);
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -608,7 +631,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               role="tab"
               aria-selected={activeSettingsTab === tab.id}
               aria-controls={`settings-panel-${tab.id}`}
-              onClick={() => setActiveSettingsTab(tab.id)}
+              onClick={() => activateSettingsTab(tab.id)}
               className={cx(
                 "border-b-2 px-0 pb-3 pt-1 text-sm font-semibold transition-colors",
                 activeSettingsTab === tab.id
