@@ -7,6 +7,8 @@ test("middleware keeps the landing page public", async () => {
 
   assert.equal(source.includes('"/"'), true);
   assert.equal(source.includes('"/docs(.*)"'), true);
+  assert.equal(source.includes('"/privacy(.*)"'), true);
+  assert.equal(source.includes('"/terms(.*)"'), true);
   assert.equal(source.includes('"/sign-in(.*)"'), true);
   assert.equal(source.includes('"/sign-up(.*)"'), true);
 });
