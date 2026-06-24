@@ -242,6 +242,47 @@ Account / Workspace switcher
 | Publish | CMS draft/update approval、canonical publish、variant unlock、publish failure、URL verification | 数据分析和机会发现 |
 | Results | 已发布 action 的 measurement、traffic/citation/CTR/position outcome | 未接受 opportunity queue |
 
+### 5.3 Page UX contract
+
+Every primary workflow page should answer one user question first:
+
+```text
+What do I need to do now?
+```
+
+The default page layout should follow the same hierarchy:
+
+1. Current status or page-specific state.
+2. The next user action, if any.
+3. Items that need approval, decision, or recovery.
+4. Relevant summary context.
+5. Collapsed details, history, raw evidence, diagnostics, and completed work.
+
+No page should default to a flat table of everything the system knows.
+
+| Page | Primary user question | Default top section | Primary CTA | Hidden by default |
+|---|---|---|---|---|
+| Home | What needs my attention across the project? | One next step, connection gates, blockers, loop health | Continue / Review / Connect | Full analytics, full opportunity queue, logs |
+| Context | Is CiteLoop using the right understanding of my product? | Product summary, audience, competitors, rules needing confirmation | Confirm / Edit context | Raw crawl notes, scraped page lists, old context versions |
+| Analysis | What opportunity should I accept, dismiss, or investigate? | Search/public data status and prioritized recommendation cards | Accept / Dismiss / Snooze / Connect GSC | Raw GSC rows, full evidence tables, diagnostics, completed/dismissed opportunities |
+| Content Plan | What accepted work is planned next? | Accepted work that is ready, scheduled, blocked, or needs approval | Generate / Edit / Send to Review | Unaccepted opportunities, generated intermediates, completed history |
+| Review | What needs my approval before it can move forward? | Drafts or CMS updates requiring human approval | Approve / Request changes / Block | Generation logs, full scoring details, previous revisions |
+| Publish | What is ready to publish, update, retry, or verify? | Approved items ready for CMS publish/update and publish failures | Publish / Retry / Verify URL | Provider API responses, post IDs, credential refs, old publish attempts |
+| Results | What changed after publishing? | Outcome summaries, measurement windows, positive/negative/inconclusive exceptions | Open details / Create follow-up action | Long per-query/per-URL tables, low-signal history, raw measurement rows |
+| Settings | What connections or project settings do I need to manage? | Connection health and configuration groups | Connect / Reconnect / Disconnect | Advanced diagnostics, credentials, raw provider payloads |
+
+For GSC-specific Analysis:
+
+| State | Analysis default experience |
+|---|---|
+| No GSC | Public analysis mode, setup assistant, public opportunities, clear GSC connection CTA |
+| GSC missing property | GSC setup assistant with DNS / URL-prefix / admin handoff paths |
+| GSC connected but backfilling | Connected state, backfill progress, no fake precision |
+| GSC connected with data | Prioritized search opportunity cards with query/page evidence collapsed |
+| GSC stale/revoked/mismatch | Recovery action first, last-known data only if clearly labeled |
+
+For every page, the first viewport should be enough for a non-SEO user to decide whether they need to act now.
+
 ## 6. Analysis Workflow
 
 ### 6.1 用户路径
@@ -851,6 +892,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 5. `/projects/[id]/opportunities` redirects to Analysis or remains as a compatibility alias.
 6. UI copy uses user-facing language and avoids provider or internal job terminology in default user surfaces.
 7. Primary workflow pages default to action-first summaries, not flat lists of every generated artifact or diagnostic.
+8. Each primary workflow page follows the Page UX contract: status, next action, approval/recovery items, summary context, then collapsed details.
 
 ### Phase 2 Analysis surface
 
@@ -933,6 +975,7 @@ The verifier should:
 5. Confirm that default pages are action-first and do not expose raw provider details.
 6. Confirm downstream state changes in the UI.
 7. Inspect backend/API state only as supporting evidence, not as a substitute for the user flow.
+8. Confirm the first viewport answers what the user needs to do now.
 
 If a feature is behind a preview deployment, the same Chrome flow should run on preview before merge and on production after release.
 
@@ -957,7 +1000,7 @@ Create/select project -> input domain -> Connect Search Console -> user complete
 
 | Phase | Feature area | Chrome verification | Supporting checks |
 |---|---|---|---|
-| Phase 1 | IA / sidebar | Verify sidebar has Home, Context, Analysis, Content Plan, Review, Publish, Results; Settings is bottom utility; no primary SYSTEM group. | Route redirects for old `/opportunities`; navigation tests. |
+| Phase 1 | IA / sidebar | Verify sidebar has Home, Context, Analysis, Content Plan, Review, Publish, Results; Settings is bottom utility; no primary SYSTEM group; each primary page's first viewport exposes the page's next action. | Route redirects for old `/opportunities`; navigation tests. |
 | Phase 2 | Analysis surface | Verify Analysis shows search data status, prioritized recommendation cards, accept/dismiss/snooze actions, collapsed evidence. | API returns connection state, opportunities, evidence summaries; raw tables hidden by default. |
 | Phase 3 | Results surface | Verify Results shows published action outcomes and measurement states, not raw opportunity acceptance. | Measurement API returns waiting/inconclusive/positive/negative states. |
 | Phase 4 | GSC OAuth onboarding | Verify Connect Search Console from Home/Analysis/Settings, user OAuth, property list, property selection, denied/revoked/missing-property states. | OAuth state/CSRF tests, encrypted token storage, integration records, no token leakage in logs. |
@@ -979,6 +1022,17 @@ Analysis recommendations:
 - Default view shows only decision-ready cards.
 - Each recommendation has reason, expected impact, confidence/risk, and accept/dismiss/snooze.
 - `View evidence` reveals raw supporting details only after user action.
+
+Page UX:
+
+- Home answers the project-wide next-step question in the first viewport.
+- Context asks for confirmation or correction, not passive reading.
+- Analysis asks for accept/dismiss/snooze/investigate.
+- Content Plan shows accepted work that is ready, scheduled, blocked, or needs approval.
+- Review shows approval decisions only.
+- Publish shows publish/update/retry/verify work only.
+- Results shows outcome summaries and exceptions only.
+- Settings groups connection and project configuration tasks.
 
 Content Plan:
 
