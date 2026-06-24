@@ -133,7 +133,31 @@ function analysisSearchDataStatus(overview: SEOOverview | null, gscStatus: strin
       action: null,
     };
   }
-  if (["error", "expired", "revoked", "stale"].includes(gscStatus)) {
+  if (gscStatus === "backfilling") {
+    return {
+      tone: "amber" as const,
+      label: "Backfilling Search Console",
+      detail: "CiteLoop is importing the first search data window. Analysis stays public-only until enough rows are ready.",
+      action: null,
+    };
+  }
+  if (gscStatus === "stale") {
+    return {
+      tone: "red" as const,
+      label: "Search data is stale",
+      detail: "Reconnect or sync Search Console before trusting fresh query, CTR, or position signals.",
+      action: "Reconnect Search Console",
+    };
+  }
+  if (gscStatus === "mismatch") {
+    return {
+      tone: "red" as const,
+      label: "Property mismatch",
+      detail: "The selected Search Console property no longer matches this project domain. Select the matching property before using private search data.",
+      action: "Reconnect Search Console",
+    };
+  }
+  if (["error", "expired", "revoked"].includes(gscStatus)) {
     return {
       tone: "red" as const,
       label: "Search Console needs attention",

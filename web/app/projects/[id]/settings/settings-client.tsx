@@ -62,13 +62,16 @@ function friendlyError(raw: unknown) {
 
 function gscTone(status?: string): "green" | "amber" | "red" | "neutral" {
   if (status === "connected") return "green";
-  if (["error", "expired", "revoked"].includes(status ?? "")) return "red";
-  if (status === "property_selection_required" || status === "missing") return "amber";
+  if (["error", "expired", "revoked", "stale", "mismatch"].includes(status ?? "")) return "red";
+  if (["property_selection_required", "missing", "backfilling"].includes(status ?? "")) return "amber";
   return "neutral";
 }
 
 function gscStatusLabel(status?: string) {
   if (status === "property_selection_required") return "select property";
+  if (status === "backfilling") return "backfilling";
+  if (status === "stale") return "stale";
+  if (status === "mismatch") return "mismatch";
   return status ?? "missing";
 }
 

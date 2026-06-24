@@ -13,9 +13,14 @@ func TestProviderCanAttemptAfterRecoverableStatus(t *testing.T) {
 		want   bool
 	}{
 		{status: "connected", want: true},
+		{status: "backfilling", want: true},
+		{status: "stale", want: true},
 		{status: "error", want: true},
 		{status: "expired", want: true},
 		{status: "missing", want: false},
+		{status: "property_selection_required", want: false},
+		{status: "mismatch", want: false},
+		{status: "revoked", want: false},
 	}
 	for _, tc := range cases {
 		got := isProviderAttemptable([]db.SeoIntegration{{

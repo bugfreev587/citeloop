@@ -257,17 +257,18 @@ func (s *Server) selectGSCProperty(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	status := s.deriveGSCStatusForProject(r.Context(), projectID, token, properties, "connected", time.Now().UTC())
 	if _, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
 		ProjectID:      projectID,
 		Provider:       seopkg.ProviderGSC,
-		Status:         "connected",
+		Status:         status,
 		CredentialRef:  strPtrFrom(gscOAuthCredentialRef),
 		LastVerifiedAt: pgutil.TS(time.Now().UTC()),
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.gscConnectionFromToken(projectID, token, siteURL, "connected"))
+	writeJSON(w, http.StatusOK, s.gscConnectionFromToken(projectID, token, siteURL, status))
 }
 
 func (s *Server) revokeGSCConnection(w http.ResponseWriter, r *http.Request) {
@@ -305,11 +306,15 @@ func (s *Server) gscConnection(ctx context.Context, projectID uuid.UUID) (gscCon
 	if s.Q == nil {
 		return out, nil
 	}
+	var lastVerifiedAt time.Time
 	if integrations, err := s.Q.ListSEOIntegrations(ctx, projectID); err == nil {
 		for _, integration := range integrations {
 			if integration.Provider == seopkg.ProviderGSC {
 				out.Status = integration.Status
 				out.LastError = integration.LastError
+				if integration.LastVerifiedAt.Valid {
+					lastVerifiedAt = integration.LastVerifiedAt.Time
+				}
 				break
 			}
 		}
@@ -322,10 +327,7 @@ func (s *Server) gscConnection(ctx context.Context, projectID uuid.UUID) (gscCon
 		return out, err
 	}
 	siteURL := s.projectSiteURL(ctx, projectID)
-	status := out.Status
-	if status == "" || status == "missing" {
-		status = gscStatusForToken(token, decodeGSCProperties(token.AuthorizedProperties))
-	}
+	status := s.deriveGSCStatusForProject(ctx, projectID, token, decodeGSCProperties(token.AuthorizedProperties), out.Status, lastVerifiedAt)
 	return s.gscConnectionFromToken(projectID, token, siteURL, status), nil
 }
 
@@ -490,6 +492,61 @@ func containsGSCProperty(properties []gscPropertyResponse, siteURL string) bool 
 	return false
 }
 
+type gscStatusInput struct {
+	IntegrationStatus string
+	SelectedProperty  *string
+	Properties        []gscPropertyResponse
+	PropertyGSCURL    *string
+	DataDayCount      int64
+	HasDataDayCount   bool
+	LastVerifiedAt    time.Time
+	Now               time.Time
+}
+
+func deriveGSCConnectionStatus(in gscStatusInput) string {
+	switch in.IntegrationStatus {
+	case "revoked", "expired", "error":
+		return in.IntegrationStatus
+	}
+	if in.SelectedProperty == nil || strings.TrimSpace(*in.SelectedProperty) == "" {
+		return "property_selection_required"
+	}
+	selected := strings.TrimSpace(*in.SelectedProperty)
+	if !containsGSCProperty(in.Properties, selected) {
+		return "mismatch"
+	}
+	if in.PropertyGSCURL != nil && strings.TrimSpace(*in.PropertyGSCURL) != "" && strings.TrimSpace(*in.PropertyGSCURL) != selected {
+		return "mismatch"
+	}
+	if in.HasDataDayCount && in.DataDayCount == 0 {
+		return "backfilling"
+	}
+	if !in.LastVerifiedAt.IsZero() && !in.Now.IsZero() && in.Now.Sub(in.LastVerifiedAt) > 72*time.Hour {
+		return "stale"
+	}
+	return "connected"
+}
+
+func (s *Server) deriveGSCStatusForProject(ctx context.Context, projectID uuid.UUID, token db.SeoOauthToken, properties []gscPropertyResponse, integrationStatus string, lastVerifiedAt time.Time) string {
+	input := gscStatusInput{
+		IntegrationStatus: integrationStatus,
+		SelectedProperty:  token.SelectedProperty,
+		Properties:        properties,
+		LastVerifiedAt:    lastVerifiedAt,
+		Now:               time.Now().UTC(),
+	}
+	if s.Q != nil {
+		if prop, err := s.Q.GetSEOPropertyForProject(ctx, projectID); err == nil {
+			input.PropertyGSCURL = prop.GscSiteUrl
+			if days, err := s.Q.SEODataDayCount(ctx, db.SEODataDayCountParams{ProjectID: projectID, PropertyID: prop.ID}); err == nil {
+				input.DataDayCount = days
+				input.HasDataDayCount = true
+			}
+		}
+	}
+	return deriveGSCConnectionStatus(input)
+}
+
 func gscStatusForToken(token db.SeoOauthToken, properties []gscPropertyResponse) string {
 	if token.SelectedProperty != nil && containsGSCProperty(properties, *token.SelectedProperty) {
 		return "connected"
@@ -527,4 +584,36 @@ func siteURLFromGSCProperty(property string) string {
 		return property
 	}
 	return ""
+}
+
+func (s *Server) googleDataProviderForProject(ctx context.Context, projectID uuid.UUID) (seopkg.GoogleDataProvider, bool) {
+	if s.Q == nil || !s.gscOAuthConfigured() {
+		return nil, false
+	}
+	token, err := s.Q.GetActiveSEOOAuthToken(ctx, db.GetActiveSEOOAuthTokenParams{ProjectID: projectID, Provider: seopkg.ProviderGSC})
+	if err != nil || token.SelectedProperty == nil || strings.TrimSpace(*token.SelectedProperty) == "" {
+		return nil, false
+	}
+	refreshToken, err := secretbox.DecryptString(token.EncryptedRefreshToken, s.gscTokenSecret())
+	if err != nil || strings.TrimSpace(refreshToken) == "" {
+		errText := "Search Console token could not be decrypted"
+		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+			ProjectID: projectID,
+			Provider:  seopkg.ProviderGSC,
+			Status:    "error",
+			LastError: &errText,
+		})
+		return nil, true
+	}
+	oauthToken := &oauth2.Token{
+		RefreshToken: strings.TrimSpace(refreshToken),
+		TokenType:    strings.TrimSpace(token.TokenType),
+	}
+	if oauthToken.TokenType == "" {
+		oauthToken.TokenType = "Bearer"
+	}
+	if token.AccessTokenExpiresAt.Valid {
+		oauthToken.Expiry = token.AccessTokenExpiresAt.Time
+	}
+	return googledata.NewSearchConsoleOAuthClient(ctx, s.Env.GoogleOAuthClientID, s.Env.GoogleOAuthClientSecret, "", oauthToken), true
 }

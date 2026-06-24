@@ -215,7 +215,17 @@ export type SEOIntegration = {
   id: string;
   project_id: string;
   provider: string;
-  status: "missing" | "connected" | "property_selection_required" | "expired" | "error" | "revoked" | string;
+  status:
+    | "missing"
+    | "connected"
+    | "property_selection_required"
+    | "backfilling"
+    | "stale"
+    | "mismatch"
+    | "expired"
+    | "error"
+    | "revoked"
+    | string;
   credential_ref?: string | null;
   last_verified_at?: any;
   last_error?: string | null;
@@ -328,7 +338,17 @@ export type GSCProperty = {
 
 export type GSCConnection = {
   configured: boolean;
-  status: "missing" | "connected" | "property_selection_required" | "expired" | "error" | "revoked" | string;
+  status:
+    | "missing"
+    | "connected"
+    | "property_selection_required"
+    | "backfilling"
+    | "stale"
+    | "mismatch"
+    | "expired"
+    | "error"
+    | "revoked"
+    | string;
   selected_property?: string | null;
   recommended_property?: string | null;
   properties: GSCProperty[];

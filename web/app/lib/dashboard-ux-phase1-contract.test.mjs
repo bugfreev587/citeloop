@@ -244,10 +244,10 @@ test("gsc oauth entry points are self-serve and action-first", () => {
 
   for (const [file, copies] of [
     ["projects/[id]/workspace.tsx", ["Connect Search Console", "first-party search data"]],
-    ["projects/[id]/seo/seo-client.tsx", ["Connect Search Console", "Search Console property", "Select property"]],
+    ["projects/[id]/seo/seo-client.tsx", ["Connect Search Console", "Search Console property", "Select property", "Backfilling Search Console", "Search data is stale", "Property mismatch"]],
     [
       "projects/[id]/settings/settings-client.tsx",
-      ["Search Console connection", "Connect Search Console", "Authorized properties"],
+      ["Search Console connection", "Connect Search Console", "Authorized properties", "backfilling", "stale", "mismatch"],
     ],
     ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings"]],
   ]) {

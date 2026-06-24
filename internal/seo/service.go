@@ -1204,7 +1204,7 @@ func isProviderAttemptable(integrations []db.SeoIntegration, provider string) bo
 			continue
 		}
 		switch integration.Status {
-		case "connected", "error", "expired":
+		case "connected", "backfilling", "stale", "error", "expired":
 			return true
 		}
 	}
