@@ -76,8 +76,7 @@ func TestStartGSCOAuthReturnsGoogleAuthorizationURL(t *testing.T) {
 		PublicAppURL:            "https://app.citeloop.test",
 		NotificationSecretKey:   "state-secret",
 	}}
-	body := strings.NewReader(`{"redirect_uri":"https://app.citeloop.test/projects/` + projectID.String() + `/settings/gsc/callback"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/seo/gsc/oauth/start", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/seo/gsc/oauth/start", nil)
 	res := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(res, req)
@@ -100,6 +99,9 @@ func TestStartGSCOAuthReturnsGoogleAuthorizationURL(t *testing.T) {
 	}
 	if parsed.Query().Get("scope") != googledata.ScopeSearchConsoleReadonly {
 		t.Fatalf("scope = %q, want %q", parsed.Query().Get("scope"), googledata.ScopeSearchConsoleReadonly)
+	}
+	if parsed.Query().Get("redirect_uri") != "https://app.citeloop.test/integrations/google/search-console/callback" {
+		t.Fatalf("redirect_uri = %q", parsed.Query().Get("redirect_uri"))
 	}
 	if parsed.Query().Get("state") == "" {
 		t.Fatalf("authorization_url missing state: %q", out.AuthorizationURL)

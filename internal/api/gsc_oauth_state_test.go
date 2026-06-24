@@ -14,7 +14,7 @@ func TestGSCOAuthStateRoundTripsAndValidatesOwnerProjectAndExpiry(t *testing.T) 
 	state, err := signGSCOAuthState("state-secret", gscOAuthStateClaims{
 		ProjectID:   projectID,
 		OwnerID:     "user_123",
-		RedirectURI: "https://app.citeloop.test/projects/" + projectID.String() + "/settings/gsc/callback",
+		RedirectURI: "https://app.citeloop.test/integrations/google/search-console/callback",
 		Nonce:       "nonce-1",
 		ExpiresAt:   now.Add(10 * time.Minute),
 	})
@@ -29,7 +29,7 @@ func TestGSCOAuthStateRoundTripsAndValidatesOwnerProjectAndExpiry(t *testing.T) 
 	if claims.ProjectID != projectID || claims.OwnerID != "user_123" || claims.Nonce != "nonce-1" {
 		t.Fatalf("claims = %#v", claims)
 	}
-	if claims.RedirectURI != "https://app.citeloop.test/projects/"+projectID.String()+"/settings/gsc/callback" {
+	if claims.RedirectURI != "https://app.citeloop.test/integrations/google/search-console/callback" {
 		t.Fatalf("redirect uri = %q", claims.RedirectURI)
 	}
 
@@ -50,7 +50,7 @@ func TestGSCOAuthStateRejectsTamperedPayload(t *testing.T) {
 	state, err := signGSCOAuthState("state-secret", gscOAuthStateClaims{
 		ProjectID:   projectID,
 		OwnerID:     "user_123",
-		RedirectURI: "https://app.citeloop.test/projects/" + projectID.String() + "/settings/gsc/callback",
+		RedirectURI: "https://app.citeloop.test/integrations/google/search-console/callback",
 		Nonce:       "nonce-1",
 		ExpiresAt:   now.Add(10 * time.Minute),
 	})

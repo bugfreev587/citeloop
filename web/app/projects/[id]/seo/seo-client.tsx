@@ -374,8 +374,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setBusy("gsc-oauth");
     setMessage(null);
     try {
-      const redirectURI = new URL(`/projects/${projectId}/settings/gsc/callback`, window.location.origin).toString();
-      const result = await api.startGSCOAuth(projectId, { redirect_uri: redirectURI });
+      const result = await api.startGSCOAuth(projectId);
       window.location.assign(result.authorization_url);
     } catch (e: any) {
       setMessage({ title: "Could not connect Search Console", detail: e.message, tone: "red" });

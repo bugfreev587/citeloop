@@ -736,9 +736,7 @@ test("GSC OAuth APIs call project scoped endpoints without exposing tokens", asy
     const client = createApi();
 
     const connection = await client.getGSCConnection("project-1");
-    const start = await client.startGSCOAuth("project-1", {
-      redirect_uri: "https://app.example.test/projects/project-1/settings/gsc/callback",
-    });
+    const start = await client.startGSCOAuth("project-1");
     const completed = await client.completeGSCOAuth("project-1", { code: "code-1", state: "state-1" });
     const selected = await client.selectGSCProperty("project-1", { site_url: "sc-domain:unipost.dev" });
     const revoked = await client.revokeGSCConnection("project-1");
@@ -752,9 +750,7 @@ test("GSC OAuth APIs call project scoped endpoints without exposing tokens", asy
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/gsc/connection");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/gsc/oauth/start");
     assert.equal(calls[1].init.method, "POST");
-    assert.deepEqual(JSON.parse(calls[1].init.body), {
-      redirect_uri: "https://app.example.test/projects/project-1/settings/gsc/callback",
-    });
+    assert.equal(calls[1].init.body, undefined);
     assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/seo/gsc/oauth/complete");
     assert.equal(calls[2].init.method, "POST");
     assert.deepEqual(JSON.parse(calls[2].init.body), { code: "code-1", state: "state-1" });

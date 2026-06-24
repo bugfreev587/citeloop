@@ -241,9 +241,19 @@ test("results surface defaults to published outcomes with collapsed measurement 
 test("gsc oauth entry points are self-serve and action-first", () => {
   assert.equal(exists("projects/[id]/settings/gsc/callback/page.tsx"), true, "GSC callback route should exist");
   assert.equal(
+    exists("integrations/google/search-console/callback/page.tsx"),
+    true,
+    "Google OAuth should use one static callback URI for Google Console registration",
+  );
+  assert.equal(
     exists("projects/[id]/settings/gsc/callback/gsc-callback-client.tsx"),
     true,
     "GSC callback client should exist",
+  );
+  assert.equal(
+    exists("integrations/google/search-console/callback/gsc-callback-client.tsx"),
+    true,
+    "Static GSC callback client should exist",
   );
 
   for (const [file, copies] of [
@@ -264,6 +274,7 @@ test("gsc oauth entry points are self-serve and action-first", () => {
         "mismatch",
       ],
     ],
+    ["integrations/google/search-console/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings", "project_id"]],
     ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings"]],
   ]) {
     const source = read(file);

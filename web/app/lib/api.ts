@@ -1367,10 +1367,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/seo/gsc/connection`, undefined, auth);
     return normalizeGSCConnection(raw);
   },
-  startGSCOAuth: async (id: string, body: { redirect_uri: string }): Promise<{ authorization_url: string }> => {
+  startGSCOAuth: async (id: string): Promise<{ authorization_url: string }> => {
     return req<{ authorization_url: string }>(
       `/projects/${id}/seo/gsc/oauth/start`,
-      { method: "POST", body: JSON.stringify(body) },
+      { method: "POST" },
       auth,
     );
   },
