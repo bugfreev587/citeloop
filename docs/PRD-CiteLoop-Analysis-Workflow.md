@@ -73,6 +73,7 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 5. 让 Measure 页面专注发布后的结果和闭环反馈，不再混入原始机会发现。
 6. 简化 sidebar，把 Settings 移到左下角 Docs 下方，Admin 保持左下角入口，移除主导航中的 SYSTEM 分组。
 7. 保持 Home 作为控制中心，只展示当前最重要的状态、下一步和数据连接 gate。
+8. 降低默认页面的信息负担，只展示用户需要知晓、决策、批准或处理的内容。
 
 ## 3. 非目标
 
@@ -145,6 +146,42 @@ Home 不展示完整 analytics，不展示所有机会列表。Home 只展示:
 - `Create refresh brief`
 - `Draft title and meta update`
 - `Live URL is not confirmed yet`
+
+### 4.6 Progressive disclosure protects user attention
+
+CiteLoop should not expose every generated artifact, sync result, diagnostic, or historical record by default. Default pages should be action-first and decision-focused.
+
+Default visible content should be limited to:
+
+- current status
+- next action
+- items requiring user approval
+- blockers that need user attention
+- concise reason why an action is recommended
+- confidence, risk, and expected outcome when they affect the decision
+
+Default hidden or collapsed content:
+
+- raw GSC rows
+- full evidence tables
+- sync logs
+- completed automation steps
+- generated intermediate briefs that do not need approval
+- old dismissed opportunities
+- provider diagnostics
+- token and credential details
+- long historical lists
+- metrics not connected to a user decision
+
+These details should be available through deliberate disclosure controls such as:
+
+- `Why this?`
+- `View evidence`
+- `Show completed`
+- `View diagnostics`
+- `See measurement details`
+
+The default experience should feel like a prioritized work queue, not an operations console.
 
 ## 5. 推荐信息架构
 
@@ -269,7 +306,7 @@ Analysis
 │  ├─ Internal linking opportunities
 │  ├─ Indexing and technical issues
 │  └─ GEO citation gaps
-└─ Evidence inspector
+└─ Evidence inspector, collapsed by default
    ├─ query
    ├─ page
    ├─ impressions
@@ -280,6 +317,17 @@ Analysis
    ├─ source
    └─ confidence
 ```
+
+Analysis default view should show a small number of prioritized recommendation cards, not a complete table of all signals. Each card should answer:
+
+- what happened
+- why it matters
+- recommended action
+- expected impact
+- risk or confidence
+- accept / dismiss / snooze
+
+Raw evidence, query lists, diagnostic details, and generated reasoning should be hidden behind `View evidence` or `Why this?` controls.
 
 ### 6.4 Opportunity taxonomy
 
@@ -410,6 +458,17 @@ Not allowed in Content Plan:
 - search data connection prompts
 - provider diagnostics
 - broad visibility score explanations
+- generated intermediate artifacts that do not require review
+- completed items unless the user opens Completed or History
+
+Content Plan default view should prioritize:
+
+- work that needs approval
+- work scheduled next
+- blocked work
+- manually seeded topics
+
+Completed work, in-progress automation details, and generated supporting artifacts should be summarized, not laid out flat.
 
 When an Analysis opportunity is accepted, Content Plan should show the reason in user language:
 
@@ -435,6 +494,8 @@ Results should show:
 - inconclusive / positive / negative / waiting states
 
 Results should not be the place where users decide whether to accept raw opportunities. That belongs in Analysis.
+
+Results default view should show outcome summaries and exceptions. Long per-URL measurement details, historical rows, and inconclusive low-signal records should be collapsed behind measurement detail views.
 
 ## 10. Settings and Admin Placement
 
@@ -651,6 +712,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 4. Analysis appears as a distinct workflow area, separate from Content Plan.
 5. `/projects/[id]/opportunities` redirects to Analysis or remains as a compatibility alias.
 6. UI copy uses user-facing language and avoids provider or internal job terminology in default user surfaces.
+7. Primary workflow pages default to action-first summaries, not flat lists of every generated artifact or diagnostic.
 
 ### Phase 2 Analysis surface
 
@@ -659,12 +721,15 @@ When Analysis routes work downstream, it must create or update a durable action 
 3. Accepted opportunities carry evidence and reason into downstream production work.
 4. Empty states route users to one next action, not a grid of future modules.
 5. Analysis can explain public-only, OAuth not connected, property missing, property selected, connected, stale, revoked, mismatch, and no-opportunity states.
+6. Analysis shows prioritized recommendation cards by default; raw evidence and full signal tables are collapsed behind explicit disclosure controls.
+7. Completed, dismissed, or snoozed opportunities are not visible in the default queue unless they become relevant again.
 
 ### Phase 3 Results surface
 
 1. Results / Visibility no longer owns opportunity acceptance.
 2. Results shows published action outcomes, measurement windows, and waiting/inconclusive/positive/negative states.
 3. Home does not become a full analytics page after GSC is connected.
+4. Results summarizes outcomes and exceptions by default; long per-URL or per-query detail is hidden behind measurement detail views.
 
 ### Phase 4 Self-serve GSC OAuth onboarding
 
@@ -688,31 +753,34 @@ When Analysis routes work downstream, it must create or update a durable action 
 1. **Analysis becomes another overloaded dashboard.**
    Mitigation: keep default view to status, weekly brief, opportunity queue, evidence inspector.
 
-2. **Content Plan loses context after isolation.**
+2. **Pages become flat walls of generated content.**
+   Mitigation: enforce progressive disclosure. Default views show only current status, next action, required approvals, and blockers; diagnostics, history, and raw evidence stay collapsed.
+
+3. **Content Plan loses context after isolation.**
    Mitigation: accepted work must carry evidence summary and source opportunity.
 
-3. **Users without GSC feel blocked.**
+4. **Users without GSC feel blocked.**
    Mitigation: public-only mode remains useful and clearly labeled.
 
-4. **GSC property mismatch creates wrong recommendations.**
+5. **GSC property mismatch creates wrong recommendations.**
    Mitigation: show selected property label, canonical domain match confidence, and mismatch warnings.
 
-5. **OAuth implementation expands scope beyond IA.**
+6. **OAuth implementation expands scope beyond IA.**
    Mitigation: split IA, OAuth onboarding, and OAuth-powered analysis into separate rollout phases. Phase 1-3 can ship before OAuth, but Phase 4 makes self-serve onboarding first-class.
 
-6. **Google OAuth verification or consent setup delays launch.**
+7. **Google OAuth verification or consent setup delays launch.**
    Mitigation: start with the minimum read-only Search Console scope, prepare clear consent-screen copy, and keep internal service-account fallback for controlled pilots.
 
-7. **Token storage or revocation handling creates security risk.**
+8. **Token storage or revocation handling creates security risk.**
    Mitigation: encrypt refresh tokens, store only required metadata, support explicit disconnect, and treat revoked/expired tokens as recoverable connection states.
 
-8. **Permission model is unclear for team projects.**
+9. **Permission model is unclear for team projects.**
    Mitigation: project owners/admins can connect and disconnect GSC; other members can view status and ask an admin to connect.
 
-9. **Visibility to Results rename causes migration confusion.**
+10. **Visibility to Results rename causes migration confusion.**
    Mitigation: keep route compatibility or redirect old visibility route during rollout.
 
-10. **Too many action types overwhelm users.**
+11. **Too many action types overwhelm users.**
    Mitigation: group recommendations by job-to-be-done, not internal type.
 
 ## 16. Product Success Metrics
@@ -748,3 +816,6 @@ These measure whether the IA change works without promising SEO rankings:
 
 7. The first customer path is OAuth-first.
    A user should be able to create a project with a domain, connect their own GSC property, and reach Analysis without operator setup.
+
+8. Default surfaces are collapsed by design.
+   User-facing pages should show what needs attention now. Evidence, diagnostics, completed work, raw records, and generated intermediate content should be available but hidden by default.
