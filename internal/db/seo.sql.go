@@ -1769,10 +1769,10 @@ values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
   encode(digest(
     $1::text || '|' || $2 || '|' || coalesce($7, '') || '|' || coalesce($10, '') || '|' ||
-    coalesce($11->>'intent_type', '') || '|' ||
-    coalesce($11->>'engine', '') || '|' ||
-    coalesce($11->>'evidence_window', '') || '|' ||
-    coalesce($11->>'reason', ''),
+    coalesce(($11::jsonb)->>'intent_type', '') || '|' ||
+    coalesce(($11::jsonb)->>'engine', '') || '|' ||
+    coalesce(($11::jsonb)->>'evidence_window', '') || '|' ||
+    coalesce(($11::jsonb)->>'reason', ''),
     'sha256'
   ), 'hex')
 )
