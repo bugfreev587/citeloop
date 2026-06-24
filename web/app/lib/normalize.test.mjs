@@ -37,6 +37,27 @@ test("normalizeTime converts pgtype timestamp and invalid values", async () => {
   );
 });
 
+test("normalizeRun decodes base64 JSON payloads returned for Go byte slices", async () => {
+  const { normalizeRun } = await loadNormalizeModule();
+
+  const input = Buffer.from(JSON.stringify({ step: "crawl_summary" })).toString("base64");
+  const output = Buffer.from(JSON.stringify({ crawl_summary: { fetched_count: 20, inventory_count: 19 } })).toString(
+    "base64",
+  );
+
+  const run = normalizeRun({
+    id: "run-1",
+    project_id: "project-1",
+    agent: "insight",
+    input,
+    output,
+    status: "ok",
+  });
+
+  assert.deepEqual(run.input, { step: "crawl_summary" });
+  assert.deepEqual(run.output, { crawl_summary: { fetched_count: 20, inventory_count: 19 } });
+});
+
 test("normalizeArticle returns clean scores, time fields, and qa issues", async () => {
   const { normalizeArticle } = await loadNormalizeModule();
 

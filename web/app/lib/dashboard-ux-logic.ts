@@ -113,6 +113,21 @@ export type ContextBuildTrack = {
   target: number;
 };
 
+export type ContextInventoryProgressItem = {
+  source?: string | null;
+  evidence_snippets?: any[] | null;
+};
+
+export function contextInventoryProgress(items: ContextInventoryProgressItem[]) {
+  const sourceItems = items.filter((item) => item.source !== "generated");
+  const evidenceItems = sourceItems.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0);
+  return {
+    sourcePageCount: sourceItems.length,
+    evidencePageCount: evidenceItems.length,
+    evidenceCount: evidenceItems.reduce((total, item) => total + (Array.isArray(item.evidence_snippets) ? item.evidence_snippets.length : 0), 0),
+  };
+}
+
 export type ContextBuildTracks = {
   active: boolean;
   exhausted: boolean;
@@ -339,15 +354,17 @@ export function contextBuildTracks({
   const fetchedCount = numericSummaryValue(summary, "fetched_count");
   const inventoryCount = numericSummaryValue(summary, "inventory_count");
   const crawlErrors = Array.isArray(summary?.errors) ? summary.errors.length : 0;
+  const crawlSummaryReported = Boolean(summary);
   const inventoryRuns = runs.filter((run) => runStep(run) === "inventory");
   const inventoryProcessedCount = Math.max(inventoryRuns.length, inventoryCount);
   const inventoryErrorCount = inventoryRuns.filter((run) => run.status === "error" || run.status === "failed").length;
+  const inventorySummaryFinished = crawlSummaryReported && inventoryCount > 0;
+  const inferredInventorySkipCount = fetchedCount > inventoryCount && inventoryCount > 0 ? fetchedCount - inventoryCount : 0;
   const crawlFailed = runs.some((run) => runStep(run) === "crawl" && (run.status === "error" || run.status === "failed"));
   const profileFailed = runs.some((run) => runStep(run) === "profile" && (run.status === "error" || run.status === "failed"));
   const profileStarted = runs.some((run) => runStep(run) === "profile" && runPhase(run) === "started");
   const profileCompletedRun = runs.some((run) => runStep(run) === "profile" && runPhase(run) !== "started" && run.status !== "error");
   const crawlStarted = runs.some((run) => runStep(run) === "crawl" && runPhase(run) === "started");
-  const crawlSummaryReported = Boolean(summary);
   const noBackendProgressReported =
     runs.length === 0 && !hasProfile && sourcePageCount === 0 && evidencePageCount === 0 && evidenceCount === 0;
   const backendProgressStalled = noBackendProgressReported && pollingExhausted;
@@ -358,6 +375,7 @@ export function contextBuildTracks({
   const evidenceComplete =
     evidencePageCount >= evidenceTarget ||
     (evidencePageCount > 0 && inventoryProcessedCount >= evidenceTarget) ||
+    (evidencePageCount > 0 && inventorySummaryFinished) ||
     (evidencePageCount > 0 && pollingExhausted);
   const active = !(hasProfile && sourceComplete && evidenceComplete);
   const exhausted = active && pollingExhausted;
@@ -379,7 +397,7 @@ export function contextBuildTracks({
           : evidenceNeedsAttention
             ? "attention"
             : "running";
-  const skippedPages = crawlErrors + inventoryErrorCount;
+  const skippedPages = Math.max(crawlErrors + inventoryErrorCount, inferredInventorySkipCount);
   const profileDetail = hasProfile
     ? "Product facts are saved."
     : backendProgressStalled

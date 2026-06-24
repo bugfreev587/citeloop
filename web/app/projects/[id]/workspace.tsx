@@ -17,6 +17,7 @@ import {
 } from "../../lib/api";
 import {
   buildHomeEventStream,
+  contextInventoryProgress,
   contextBuildTracks,
   nextWorkspaceAction,
 } from "../../lib/dashboard-ux-logic";
@@ -41,10 +42,6 @@ function isThisMonth(value: string | null) {
   if (Number.isNaN(date.getTime())) return false;
   const now = new Date();
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-}
-
-function evidenceCount(items: InventoryItem[]) {
-  return items.reduce((total, item) => total + (Array.isArray(item.evidence_snippets) ? item.evidence_snippets.length : 0), 0);
 }
 
 function opportunityTitle(opportunity: SEOOpportunity) {
@@ -181,9 +178,11 @@ export function Workspace({ projectId }: { projectId: string }) {
     };
   }, [refresh]);
 
-  const contextEvidenceCount = evidenceCount(inventory);
-  const contextEvidencePageCount = inventory.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0).length;
-  const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
+  const contextInventory = contextInventoryProgress(inventory);
+  const contextEvidenceCount = contextInventory.evidenceCount;
+  const contextEvidencePageCount = contextInventory.evidencePageCount;
+  const sourcePageCount =
+    contextInventory.sourcePageCount > 0 ? contextInventory.sourcePageCount : Math.max(inventory.length, profile?.source_urls?.length ?? 0);
   const contextConfirmed = Boolean(profile?.profile?.context_confirmed_at || profile?.profile?.confirmed_at);
   const contextNeedsConfirmation = Boolean(profile) && sourcePageCount > 0 && contextEvidenceCount > 0 && !contextConfirmed;
   const contextBuild = contextBuildTracks({
@@ -217,9 +216,11 @@ export function Workspace({ projectId }: { projectId: string }) {
       try {
         const next = await refresh();
         if (cancelled || !next) return;
-        const nextEvidenceCount = evidenceCount(next.inventory);
-        const nextEvidencePageCount = next.inventory.filter((item) => Array.isArray(item.evidence_snippets) && item.evidence_snippets.length > 0).length;
-        const nextSourcePageCount = Math.max(next.inventory.length, next.profile?.source_urls?.length ?? 0);
+        const nextContextInventory = contextInventoryProgress(next.inventory);
+        const nextEvidenceCount = nextContextInventory.evidenceCount;
+        const nextEvidencePageCount = nextContextInventory.evidencePageCount;
+        const nextSourcePageCount =
+          nextContextInventory.sourcePageCount > 0 ? nextContextInventory.sourcePageCount : Math.max(next.inventory.length, next.profile?.source_urls?.length ?? 0);
         const nextContextBuild = contextBuildTracks({
           hasProfile: Boolean(next.profile),
           sourcePageCount: nextSourcePageCount,
