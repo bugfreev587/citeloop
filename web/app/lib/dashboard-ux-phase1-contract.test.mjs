@@ -310,6 +310,8 @@ test("settings maps raw errors to user copy, confirms a budget pause, and drops 
   assert.match(settings, /function isProjectScopedMissing/);
   assert.match(settings, /if \(isProjectScopedMissing\(e\.message\)\)/);
   assert.doesNotMatch(settings, /Publisher connections unavailable", detail: e\.message/);
+  assert.doesNotMatch(settings, /Search Console connection unavailable", detail: e\.message/);
+  assert.doesNotMatch(settings, /Notifications unavailable", detail: e\.message/);
   // Budget -> $0 pauses automation; it must confirm first.
   assert.match(settings, /pauses all automated generation/);
   // The internal "PUT /config replaces the entire config" notice should be gone.
