@@ -689,6 +689,18 @@ test("settings groups every top-level section behind a tab", () => {
   }
 });
 
+test("settings deep links open the matching configuration tab", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  assert.match(settings, /function settingsTabFromHash/);
+  assert.match(settings, /window\.location\.hash/);
+  assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(window\.location\.hash\)\)/);
+  assert.match(settings, /function activateSettingsTab/);
+  assert.match(settings, /window\.history\.replaceState/);
+  assert.match(settings, /#\$\{tabId\}/);
+  assert.match(settings, /onClick=\{\(\) => activateSettingsTab\(tab\.id\)\}/);
+});
+
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 
