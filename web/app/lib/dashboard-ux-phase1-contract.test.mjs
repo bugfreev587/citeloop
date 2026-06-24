@@ -621,8 +621,6 @@ test("settings groups every top-level section behind a tab", () => {
     "Publisher connection",
     "Crawl config",
     "Notifications",
-    "Notification subscriptions",
-    "Notification deliveries",
   ];
 
   assert.match(settings, /type SettingsTabId =/);
@@ -637,8 +635,15 @@ test("settings groups every top-level section behind a tab", () => {
   assert.match(settings, /activeSettingsTab === "publisher" && \(/);
   assert.match(settings, /activeSettingsTab === "crawl" && \(/);
   assert.match(settings, /activeSettingsTab === "notifications" && \(/);
-  assert.match(settings, /activeSettingsTab === "subscriptions" && \(/);
-  assert.match(settings, /activeSettingsTab === "deliveries" && \(/);
+  assert.doesNotMatch(settings, /activeSettingsTab === "subscriptions" && \(/);
+  assert.doesNotMatch(settings, /activeSettingsTab === "deliveries" && \(/);
+  assert.doesNotMatch(settings, /\| "subscriptions"/);
+  assert.doesNotMatch(settings, /\| "deliveries"/);
+  assert.match(settings, /settings-panel-notifications[\s\S]*Channels[\s\S]*Notification subscriptions[\s\S]*Notification deliveries/);
+
+  const tabModel = settings.slice(settings.indexOf("const settingsTabs:"), settings.indexOf("export function SettingsClient"));
+  assert.doesNotMatch(tabModel, /Notification subscriptions/);
+  assert.doesNotMatch(tabModel, /Notification deliveries/);
 
   for (const tab of expectedTabs) {
     const escapedTab = tab.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

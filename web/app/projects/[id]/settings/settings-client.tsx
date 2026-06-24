@@ -178,9 +178,7 @@ type SettingsTabId =
   | "search-console"
   | "publisher"
   | "crawl"
-  | "notifications"
-  | "subscriptions"
-  | "deliveries";
+  | "notifications";
 
 const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "project", title: "Project config" },
@@ -189,8 +187,6 @@ const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "publisher", title: "Publisher connection" },
   { id: "crawl", title: "Crawl config" },
   { id: "notifications", title: "Notifications" },
-  { id: "subscriptions", title: "Notification subscriptions" },
-  { id: "deliveries", title: "Notification deliveries" },
 ];
 
 export function SettingsClient({ projectId }: { projectId: string }) {
@@ -1116,13 +1112,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-      </section>
-      )}
 
-      {activeSettingsTab === "subscriptions" && (
-      <section id="settings-panel-subscriptions" role="tabpanel" aria-labelledby="settings-tab-subscriptions" tabIndex={0}>
-        <SectionHeader title="Notification subscriptions" />
         <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <SectionHeader title="Notification subscriptions" />
           {channels.length === 0 ? (
             <div className="text-sm font-semibold text-slate-500">No channels</div>
           ) : (
@@ -1160,76 +1152,76 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-      </section>
-      )}
 
-      {activeSettingsTab === "deliveries" && (
-      <section id="settings-panel-deliveries" role="tabpanel" aria-labelledby="settings-tab-deliveries" tabIndex={0}>
-        <SectionHeader
-          title="Notification deliveries"
-          action={
-            <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
-              {deliveryStatuses.map((status) => (
-                <button
-                  type="button"
-                  key={status.value}
-                  onClick={() => setDeliveryStatus(status.value)}
-                  className={cx(
-                    "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
-                    deliveryStatus === status.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
-                  )}
-                >
-                  {status.label}
-                </button>
-              ))}
-            </div>
-          }
-        />
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          {deliveries.length === 0 ? (
-            <div className="px-4 py-5 text-sm font-semibold text-slate-500">No deliveries</div>
-          ) : (
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">Event</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Attempts</th>
-                  <th className="px-3 py-2">Last error</th>
-                  <th className="px-3 py-2">Created</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {deliveries.map((delivery) => (
-                  <tr key={delivery.id}>
-                    <td className="px-3 py-2">
-                      <div className="font-semibold text-slate-900">{eventLabels[delivery.event_type] ?? delivery.event_type}</div>
-                      <div className="max-w-[260px] truncate font-mono text-xs text-slate-500">{delivery.event_id}</div>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge tone={delivery.status === "sent" ? "green" : delivery.status === "dead" ? "red" : "amber"}>
-                        {delivery.status}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{delivery.attempts ?? 0}</td>
-                    <td className="max-w-[360px] truncate px-3 py-2 text-slate-500">{delivery.last_error ?? "-"}</td>
-                    <td className="px-3 py-2 text-slate-500">{formatDate(delivery.created_at)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <Button
-                        size="sm"
-                        onClick={() => retryDelivery(delivery.id)}
-                        disabled={delivery.status === "sent" || notificationBusy === `retry-${delivery.id}`}
-                        title="Retry delivery"
-                      >
-                        <ButtonProgress busy={notificationBusy === `retry-${delivery.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />} />
-                      </Button>
-                    </td>
+        <div className="rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 p-4">
+            <SectionHeader
+              title="Notification deliveries"
+              action={
+                <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                  {deliveryStatuses.map((status) => (
+                    <button
+                      type="button"
+                      key={status.value}
+                      onClick={() => setDeliveryStatus(status.value)}
+                      className={cx(
+                        "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
+                        deliveryStatus === status.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
+                      )}
+                    >
+                      {status.label}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
+          </div>
+          <div className="overflow-x-auto">
+            {deliveries.length === 0 ? (
+              <div className="px-4 py-5 text-sm font-semibold text-slate-500">No deliveries</div>
+            ) : (
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">Event</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Attempts</th>
+                    <th className="px-3 py-2">Last error</th>
+                    <th className="px-3 py-2">Created</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {deliveries.map((delivery) => (
+                    <tr key={delivery.id}>
+                      <td className="px-3 py-2">
+                        <div className="font-semibold text-slate-900">{eventLabels[delivery.event_type] ?? delivery.event_type}</div>
+                        <div className="max-w-[260px] truncate font-mono text-xs text-slate-500">{delivery.event_id}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge tone={delivery.status === "sent" ? "green" : delivery.status === "dead" ? "red" : "amber"}>
+                          {delivery.status}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">{delivery.attempts ?? 0}</td>
+                      <td className="max-w-[360px] truncate px-3 py-2 text-slate-500">{delivery.last_error ?? "-"}</td>
+                      <td className="px-3 py-2 text-slate-500">{formatDate(delivery.created_at)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          size="sm"
+                          onClick={() => retryDelivery(delivery.id)}
+                          disabled={delivery.status === "sent" || notificationBusy === `retry-${delivery.id}`}
+                          title="Retry delivery"
+                        >
+                          <ButtonProgress busy={notificationBusy === `retry-${delivery.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />} />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </section>
       )}
