@@ -52,7 +52,7 @@ const onThisPage = [
   { label: "Install and initialize", href: "#install-and-initialize", icon: Code2 },
   { label: "Review gate", href: "#workflow-model", icon: ShieldCheck },
   { label: "Publish", href: "#dashboard-pages", icon: UploadCloud },
-  { label: "Visibility", href: "#common-states-and-signals", icon: Search },
+  { label: "Results", href: "#common-states-and-signals", icon: Search },
   { label: "Activity Log", href: "#common-states-and-signals", icon: Settings },
 ];
 
@@ -61,14 +61,14 @@ const quickstartBadges = ["Dashboard-first", "Evidence-backed", "One review gate
 const loopSteps = [
   "Read your domain",
   "Build context",
-  "Review opportunities",
+  "Review analysis",
   "Plan content",
   "Generate drafts",
   "Check evidence",
   "Review once",
   "Publish and distribute",
-  "Measure visibility",
-  "Feed opportunities back into the plan",
+  "Measure results",
+  "Feed analysis back into the plan",
 ];
 
 const fourSteps = [
@@ -83,8 +83,8 @@ const fourSteps = [
     href: "/",
   },
   {
-    title: "Review opportunities",
-    detail: "Keep the content and visibility gaps that should enter the plan; ignore the rest.",
+    title: "Review analysis",
+    detail: "Keep the recommendations that should enter the plan; ignore the rest.",
     href: "/",
   },
   {
@@ -98,7 +98,7 @@ const glanceRows = [
   ["Account owner", "You or your team, starting from one product domain."],
   ["Context source", "Public pages, confirmed facts, evidence snippets, and product rules."],
   ["Human gate", "Review is the one approval step before content can move toward publishing."],
-  ["What you get back", "Opportunities, planned topics, evidence-backed drafts, canonical URLs, and variants."],
+  ["What you get back", "Analysis recommendations, planned topics, evidence-backed drafts, canonical URLs, and variants."],
   ["Best for", "Teams that want a steady SEO and GEO content loop without inventing private metrics."],
   ["Need audit detail?", "Use Settings > Activity Log for background events, failures, and degraded checks."],
 ];
@@ -111,7 +111,7 @@ const startPaths = [
   },
   {
     title: "Create a content plan",
-    detail: "Review generated opportunities, then turn the ones you keep into topics, schedules, and content intent.",
+    detail: "Review analysis recommendations, then turn the ones you keep into topics, schedules, and content intent.",
     href: "/",
   },
   {
@@ -124,24 +124,24 @@ const startPaths = [
 const concepts = [
   ["Project", "The domain-level workspace CiteLoop reads, plans, reviews, publishes, and measures."],
   ["Context", "The product profile, evidence library, source pages, voice, and rules used for every draft."],
-  ["Opportunities", "Generated content and visibility gaps that need review before they enter the plan."],
+  ["Analysis", "Decision-ready recommendations that need review before they enter the plan."],
   ["Content Plan", "The backlog of reviewed topics, angles, schedules, and generation intent."],
   ["Canonical", "The primary article published on your main content surface."],
   ["Variant", "A rewritten version prepared for a distribution surface after the canonical URL exists."],
   ["Distribution / Syndication", "The semi-manual channel path for Dev.to, Hashnode, LinkedIn, forums, and other surfaces."],
   ["Review gate", "The only human approval step before publishable content can go live."],
-  ["Visibility", "Measurement and diagnostics for SEO, GEO, crawler access, and AI-answer signals."],
+  ["Results", "Measurement and diagnostics for SEO, GEO, crawler access, and AI-answer signals."],
   ["Settings > Activity Log", "The advanced audit trail for degraded checks, failures, and automation details."],
 ];
 
 const dashboardPages = [
   ["Home", "Shows the current next action, loop momentum, context health, and what needs attention now."],
   ["Context", "Shows what CiteLoop believes about your domain and the evidence behind publishable claims."],
-  ["Opportunities", "Reviews automatically generated opportunities before they become content work."],
-  ["Content Plan", "Turns reviewed opportunities into topics, schedules, and drafting intent."],
+  ["Analysis", "Reviews automatically generated recommendations before they become content work."],
+  ["Content Plan", "Turns accepted analysis into topics, schedules, and drafting intent."],
   ["Review", "Groups drafts that need approval and explains evidence issues in reviewer language."],
   ["Publish", "Tracks canonical publishing, URL verification, and distribution-ready variants."],
-  ["Visibility", "Shows measurement coverage, diagnostics, crawler access, and GEO visibility signals."],
+  ["Results", "Shows measurement coverage, diagnostics, crawler access, and GEO visibility signals."],
   ["Settings", "Controls cadence, budget, automation, crawl boundaries, publisher connections, and notifications."],
   ["Settings > Activity Log", "Keeps run details available for audit without making them a daily navigation item."],
 ];
@@ -165,17 +165,17 @@ const limits = [
 
 const roles = [
   ["Your role", "Provide the domain, confirm context, approve drafts, and handle distribution decisions when needed."],
-  ["CiteLoop role", "Read, plan, write, check evidence, publish canonical content, prepare variants, and measure visibility."],
+  ["CiteLoop role", "Read, analyze, plan, write, check evidence, publish canonical content, prepare variants, and measure results."],
 ];
 
 const structuredHandoff = `project
   -> context profile
-  -> reviewed opportunities
+  -> accepted analysis
   -> content plan
   -> evidence-backed draft
   -> approved canonical article
   -> distribution variants
-  -> visibility signals`;
+  -> result signals`;
 
 function Section({
   id,
@@ -374,7 +374,7 @@ export default function DocsPage() {
           <Section id="prerequisite" title="Prerequisite">
             <p>
               Create a project from a public product domain. CiteLoop needs enough accessible source material to build
-              context, find opportunities, and keep every draft tied to evidence.
+              context, find recommendations, and keep every draft tied to evidence.
             </p>
             <ul className="grid gap-2 text-sm leading-6 text-slate-600">
               <li className="flex gap-2">
@@ -387,7 +387,7 @@ export default function DocsPage() {
               </li>
               <li className="flex gap-2">
                 <CheckCircle2 className="mt-1 shrink-0 text-[#d93820]" size={16} />
-                <span>Review opportunities before they enter the Content Plan.</span>
+                <span>Review analysis before recommendations enter the Content Plan.</span>
               </li>
             </ul>
           </Section>
@@ -425,8 +425,8 @@ export default function DocsPage() {
                 <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r">
                   <h3 className="text-base font-bold text-slate-950">Initialize from the dashboard</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Open CiteLoop, create a project, and move through Context, Opportunities, Content Plan, Review,
-                    Publish, and Visibility in order.
+                    Open CiteLoop, create a project, and move through Context, Analysis, Content Plan, Review,
+                    Publish, and Results in order.
                   </p>
                 </div>
                 <pre className="overflow-x-auto bg-slate-950 p-4 text-sm leading-6 text-slate-100">
@@ -465,7 +465,7 @@ export default function DocsPage() {
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   Docs explains why actions exist. Home decides what you should do now from current context health,
-                  review load, publishing state, and visibility signals.
+                  review load, publishing state, and result signals.
                 </p>
               </div>
               <div className="rounded-lg border border-slate-200 p-4">
@@ -483,7 +483,7 @@ export default function DocsPage() {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="text-sm font-bold text-slate-950">The CiteLoop loop</div>
                 <div className="rounded-md bg-white px-2 py-1 text-xs font-bold text-[#d93820] ring-1 ring-slate-200">
-                  Opportunities feed planning
+                  Analysis feeds planning
                 </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -552,7 +552,7 @@ export default function DocsPage() {
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="text-sm font-bold text-slate-950">After a project exists</div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  Open Context, Opportunities, Content Plan, Review, Publish, Visibility, and Settings from the project sidebar.
+                  Open Context, Analysis, Content Plan, Review, Publish, Results, and Settings from the project sidebar.
                 </p>
               </div>
             </div>

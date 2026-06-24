@@ -122,17 +122,123 @@ function measurementWindowLabel(measurement_window: any) {
   return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
 }
 
-type SEOClientMode = "opportunities" | "visibility";
-
-export function OpportunitiesClient({ projectId }: { projectId: string }) {
-  return <SEOClient projectId={projectId} mode="opportunities" />;
+function analysisSearchDataStatus(overview: SEOOverview | null, gscStatus: string) {
+  const capabilityMode = overview?.capability_mode ?? "public_only";
+  const integration = overview?.integrations.find((item) => item.provider === "google_search_console");
+  if (integration?.status === "connected" || capabilityMode === "customer_site_connected" || capabilityMode === "managed_content_connected") {
+    return {
+      tone: "green" as const,
+      label: "Search Console connected",
+      detail: "CiteLoop can use first-party search data when prioritizing recommendations.",
+      action: null,
+    };
+  }
+  if (gscStatus === "backfilling") {
+    return {
+      tone: "amber" as const,
+      label: "Backfilling Search Console",
+      detail: "CiteLoop is importing the first search data window. Analysis stays public-only until enough rows are ready.",
+      action: null,
+    };
+  }
+  if (gscStatus === "stale") {
+    return {
+      tone: "red" as const,
+      label: "Search data is stale",
+      detail: "Reconnect or sync Search Console before trusting fresh query, CTR, or position signals.",
+      action: "Reconnect Search Console",
+    };
+  }
+  if (gscStatus === "mismatch") {
+    return {
+      tone: "red" as const,
+      label: "Property mismatch",
+      detail: "The selected Search Console property no longer matches this project domain. Select the matching property before using private search data.",
+      action: "Reconnect Search Console",
+    };
+  }
+  if (["error", "expired", "revoked"].includes(gscStatus)) {
+    return {
+      tone: "red" as const,
+      label: "Search Console needs attention",
+      detail: "Reconnect Search Console before trusting fresh query, CTR, or position signals.",
+      action: "Reconnect Search Console",
+    };
+  }
+  if (capabilityMode === "customer_site_pending_verification") {
+    return {
+      tone: "amber" as const,
+      label: "Search Console verification pending",
+      detail: "Finish site verification to unlock first-party query, CTR, position, and decay signals.",
+      action: "Finish setup",
+    };
+  }
+  return {
+    tone: "amber" as const,
+    label: "Search data not connected",
+    detail: "CiteLoop can still review public opportunities. Connect Search Console for query, CTR, position, and content decay evidence.",
+    action: "Connect Search Console",
+  };
 }
 
-export function VisibilityClient({ projectId }: { projectId: string }) {
-  return <SEOClient projectId={projectId} mode="visibility" />;
+function compactEvidenceText(evidence: any) {
+  if (!evidence) return "No structured evidence yet.";
+  if (typeof evidence === "string") return evidence;
+  if (Array.isArray(evidence)) return evidence.slice(0, 3).map(String).join(" / ");
+  if (typeof evidence === "object") {
+    return Object.entries(evidence)
+      .slice(0, 5)
+      .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+      .join(" / ");
+  }
+  return String(evidence);
 }
 
-export function SEOClient({ projectId, mode = "opportunities" }: { projectId: string; mode?: SEOClientMode }) {
+type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive";
+type ActionMeasurementState = {
+  key: ActionMeasurementKey;
+  label: "Waiting" | "Positive" | "Negative" | "Inconclusive";
+  tone: "green" | "amber" | "red" | "neutral";
+  detail: string;
+};
+
+function actionMeasurementState(action: SEOContentAction): ActionMeasurementState {
+  const rawResult = String(action.outcome_summary?.result ?? action.outcome_summary?.state ?? "").toLowerCase();
+  if (["improved", "positive", "won", "up"].includes(rawResult)) {
+    return { key: "positive", label: "Positive", tone: "green", detail: "Measured signals improved after publishing." };
+  }
+  if (["worsened", "negative", "lost", "down"].includes(rawResult) || ["failed", "verification_failed", "recovery_required"].includes(action.status)) {
+    return { key: "negative", label: "Negative", tone: "red", detail: "The result needs follow-up before it can be treated as a win." };
+  }
+  if (["inconclusive", "neutral", "flat"].includes(rawResult) || action.status === "completed") {
+    return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: "The measurement window closed without a clear positive or negative signal." };
+  }
+  return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Published work is still inside the measurement window." };
+}
+
+function compactOutcomeText(outcome: any) {
+  if (!outcome || (typeof outcome === "object" && Object.keys(outcome).length === 0)) return "No outcome summary yet.";
+  if (typeof outcome === "string") return outcome;
+  if (typeof outcome === "object") {
+    return Object.entries(outcome)
+      .slice(0, 5)
+      .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+      .join(" / ");
+  }
+  return String(outcome);
+}
+
+type SEOClientMode = "analysis" | "results";
+
+export function AnalysisClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="analysis" />;
+}
+
+export function ResultsClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="results" />;
+}
+
+export function SEOClient({ projectId, mode = "analysis" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
@@ -218,8 +324,21 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     ...(brief?.blockers ?? []),
     ...(brief?.geo_blockers ?? []),
   ].slice(0, 4);
+  const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
+  const measuredActions = actions.filter((action) =>
+    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
+    Boolean(action.published_at || action.verified_at),
+  );
+  const outcomeCounts = measuredActions.reduce(
+    (counts, action) => {
+      counts[actionMeasurementState(action).key] += 1;
+      return counts;
+    },
+    { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
+  );
+  const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
 
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
@@ -247,6 +366,19 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
     try {
       await refresh();
     } finally {
+      setBusy(null);
+    }
+  }
+
+  async function startSearchConsoleOAuth() {
+    setBusy("gsc-oauth");
+    setMessage(null);
+    try {
+      const redirectURI = new URL(`/projects/${projectId}/settings/gsc/callback`, window.location.origin).toString();
+      const result = await api.startGSCOAuth(projectId, { redirect_uri: redirectURI });
+      window.location.assign(result.authorization_url);
+    } catch (e: any) {
+      setMessage({ title: "Could not connect Search Console", detail: e.message, tone: "red" });
       setBusy(null);
     }
   }
@@ -551,8 +683,8 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
   return (
     <div className="space-y-7">
       <SectionHeader
-        title={mode === "opportunities" ? "Review opportunities" : "Measurement and diagnostics"}
-        eyebrow={mode === "opportunities" ? "Find opportunities" : "Measure visibility"}
+        title={mode === "analysis" ? "Review analysis" : "Results"}
+        eyebrow={mode === "analysis" ? "Analyze opportunities" : "Measurement and diagnostics"}
         action={
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={manualRefresh} disabled={!!busy}>
@@ -571,117 +703,291 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      {mode === "opportunities" && (
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <Badge tone={opportunities.length ? "green" : "neutral"}>
-                  {opportunities.length ? "Ready to review" : "No review needed"}
-                </Badge>
-                <h3 className="mt-3 text-2xl font-bold leading-8 text-slate-950">
-                  {opportunities.length} {opportunities.length === 1 ? "opportunity" : "opportunities"} need review
-                </h3>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  Choose the opportunities worth turning into content work. Add the useful ones to Content Plan and dismiss anything that is not a fit.
+      {mode === "analysis" && (
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Search data status</div>
+                  <h3 className="mt-2 text-xl font-bold leading-7 text-slate-950">{analysisStatus.label}</h3>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{analysisStatus.detail}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                  <Badge tone={analysisStatus.tone}>{analysisStatus.label}</Badge>
+                  {analysisStatus.action && (
+                    <Button size="sm" variant="outline" onClick={startSearchConsoleOAuth} disabled={!!busy}>
+                      <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Settings size={14} />}>
+                        {analysisStatus.action}
+                      </ButtonProgress>
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {analysisStatus.action && (
+                <div className="mt-4 grid gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
+                  <div>
+                    <div className="font-bold text-slate-800">Search Console property</div>
+                    <p className="mt-1 leading-5 text-slate-500">After Google authorization, select the property that matches this project domain.</p>
+                  </div>
+                  <Badge tone="amber">Select property</Badge>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Opportunity queue</div>
+                  <h3 className="mt-2 text-2xl font-bold leading-8 text-slate-950">
+                    {opportunities.length} {opportunities.length === 1 ? "recommendation" : "recommendations"} need review
+                  </h3>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                    Decide which recommendations deserve content work. Add the useful ones to Content Plan and dismiss anything that is not a fit.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 md:justify-end">
+                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
+                  <Badge tone={overview?.cold_start ? "amber" : "green"}>{capabilityLabel(visibilityMode)}</Badge>
+                </div>
+              </div>
+            </div>
+
+            {opportunities.length === 0 ? (
+              <EmptyState
+                title="No analysis to review"
+                detail="Refresh or Sync after Context changes. New recommendations will appear here as decision cards."
+              />
+            ) : (
+              <div className="grid gap-3">
+                {opportunities.map((opp, index) => {
+                  const addingToPlan = createActionBusy(opp);
+                  const dismissingOpportunity = dismissBusy(opp);
+                  const reviewingOpportunity = addingToPlan || dismissingOpportunity;
+                  return (
+                    <article key={opp.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="blue">Recommendation {index + 1}</Badge>
+                            <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
+                            <span className="text-xs font-semibold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
+                          </div>
+                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <p className="mt-2 text-sm leading-6 text-slate-600">
+                            {opp.expected_impact || "Review this recommendation against your confirmed Context before adding it to the content backlog."}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={reviewingOpportunity}>
+                            <ButtonProgress busy={addingToPlan} busyLabel="Adding to plan" idleIcon={<FileText size={14} />}>
+                              Add to Content Plan
+                            </ButtonProgress>
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={reviewingOpportunity}>
+                            <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
+                              Dismiss
+                            </ButtonProgress>
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-sm md:grid-cols-[1fr_auto] md:items-center">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Source page</div>
+                          <div className="mt-1 truncate font-medium text-slate-700">{opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone="neutral">{opp.type}</Badge>
+                          <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
+                        </div>
+                      </div>
+
+                      <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                        <summary className="cursor-pointer text-sm font-semibold text-slate-700">View evidence</summary>
+                        <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
+                          <div>
+                            <span className="font-semibold text-slate-800">Evidence</span>
+                            <br />
+                            {compactEvidenceText(opp.evidence)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Confidence</span>
+                            <br />
+                            {metric(opp.confidence, 2)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Query</span>
+                            <br />
+                            {opp.query ?? "Not query-specific"}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Effort</span>
+                            <br />
+                            {opp.effort ?? "Unknown"}
+                          </div>
+                        </div>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <aside className="space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-bold text-slate-900">What to decide</div>
+              <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+                <p>Does the recommendation match the confirmed Context?</p>
+                <p>Is the source page or evidence strong enough to support the claim?</p>
+                <p>Would this create a useful topic for the next content backlog?</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-bold text-slate-900">Decision result</div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-2xl font-bold text-slate-950">{opportunities.length}</div>
+                  <div className="mt-1 text-slate-500">open</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-slate-950">{actions.length}</div>
+                  <div className="mt-1 text-slate-500">in plan</div>
+                </div>
+              </div>
+            </div>
+            {visibilityBlockers.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <div className="font-bold">Data note</div>
+                <p className="mt-2 leading-6">
+                  Measurement signals are limited, but review can continue with context-backed opportunities.
                 </p>
               </div>
-              <Badge tone={overview?.cold_start ? "amber" : "green"}>{capabilityLabel(visibilityMode)}</Badge>
-            </div>
-          </div>
-
-          {opportunities.length === 0 ? (
-            <EmptyState
-              title="No opportunities to review"
-              detail="Refresh or Sync after Context changes. New opportunities will appear here as review cards."
-            />
-          ) : (
-            <div className="grid gap-3">
-              {opportunities.map((opp, index) => {
-                const addingToPlan = createActionBusy(opp);
-                const dismissingOpportunity = dismissBusy(opp);
-                const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-                return (
-                <article key={opp.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone="blue">Opportunity {index + 1}</Badge>
-                        <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
-                        <span className="text-xs font-semibold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
-                      </div>
-                      <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">
-                        {opp.expected_impact || "Review this opportunity against your confirmed Context before adding it to the content backlog."}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={reviewingOpportunity}>
-                        <ButtonProgress busy={addingToPlan} busyLabel="Adding to plan" idleIcon={<FileText size={14} />}>
-                          Add to Content Plan
-                        </ButtonProgress>
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={reviewingOpportunity}>
-                        <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
-                          Dismiss
-                        </ButtonProgress>
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-sm md:grid-cols-[1fr_auto] md:items-center">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold uppercase text-slate-400">Source page</div>
-                      <div className="mt-1 truncate font-medium text-slate-700">{opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge tone="neutral">{opp.type}</Badge>
-                      <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
-                    </div>
-                  </div>
-                </article>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <aside className="space-y-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">What to review</div>
-            <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-              <p>Does the recommendation match the confirmed Context?</p>
-              <p>Is the source page or evidence strong enough to support the claim?</p>
-              <p>Would this create a useful topic for the next content backlog?</p>
-            </div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">Review result</div>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <div className="text-2xl font-bold text-slate-950">{opportunities.length}</div>
-                <div className="mt-1 text-slate-500">open</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-slate-950">{actions.length}</div>
-                <div className="mt-1 text-slate-500">in plan</div>
-              </div>
-            </div>
-          </div>
-          {visibilityBlockers.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <div className="font-bold">Data note</div>
-              <p className="mt-2 leading-6">
-                Measurement signals are limited, but review can continue with context-backed opportunities.
-              </p>
-            </div>
-          )}
-        </aside>
-      </section>
+            )}
+          </aside>
+        </section>
       )}
 
-      {mode === "visibility" && (
+      {mode === "results" && (
         <div className="space-y-7">
+          <section>
+            <SectionHeader
+              title="Outcome summary"
+              eyebrow="Published work"
+              action={
+                <Badge tone={measurementExceptions.length ? "amber" : measuredActions.length ? "green" : "neutral"}>
+                  {measuredActions.length}
+                </Badge>
+              }
+            />
+            <div className="grid gap-3 md:grid-cols-4">
+              {[
+                { label: "Waiting", value: outcomeCounts.waiting, tone: "neutral" as const, detail: "Inside measurement window" },
+                { label: "Positive", value: outcomeCounts.positive, tone: "green" as const, detail: "Signals improved" },
+                { label: "Negative", value: outcomeCounts.negative, tone: "red" as const, detail: "Needs follow-up" },
+                { label: "Inconclusive", value: outcomeCounts.inconclusive, tone: "amber" as const, detail: "No clear signal yet" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <Badge tone={item.tone}>{item.label}</Badge>
+                  <div className="mt-3 text-2xl font-bold text-slate-950">{item.value}</div>
+                  <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader title="Measurement queue" action={<Badge tone="neutral">{measuredActions.length}</Badge>} />
+            {measuredActions.length === 0 ? (
+              <EmptyState title="No published work is measuring yet" detail="Published or URL-verified actions will appear here once the Publish step finishes." />
+            ) : (
+              <div className="grid gap-3">
+                {measuredActions.slice(0, 12).map((action) => {
+                  const state = actionMeasurementState(action);
+                  return (
+                    <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={state.tone}>{state.label}</Badge>
+                            <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
+                          </div>
+                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{action.action_type}</h3>
+                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
+                        </div>
+                        <div className="shrink-0 text-sm text-slate-500">
+                          <div className="font-semibold text-slate-700">Published</div>
+                          <div>{formatDate(action.published_at ?? null)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
+                          <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Result</div>
+                          <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                        </div>
+                      </div>
+                      <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Measurement details</summary>
+                        <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
+                          <div>
+                            <span className="font-semibold text-slate-800">Outcome</span>
+                            <br />
+                            {compactOutcomeText(action.outcome_summary)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Measurement window</span>
+                            <br />
+                            {measurementWindowLabel(action.measurement_window)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Verification</span>
+                            <br />
+                            {action.verified_at ? formatDate(action.verified_at) : compactOutcomeText(action.verification_snapshot)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Target URL</span>
+                            <br />
+                            {action.target_url ?? action.normalized_target_url ?? "No target URL yet."}
+                          </div>
+                        </div>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="AI citation signals" action={<Badge tone={showGeoScore ? "green" : "neutral"}>{geoOverview?.score?.confidence ?? "insufficient_data"}</Badge>} />
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "Insufficient data"}</div>
+                <p className="mt-1 text-sm text-slate-500">Visibility score</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{percent(geoCoverage)}</div>
+                <p className="mt-1 text-sm text-slate-500">Coverage</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{geoOverview?.prompts.length ?? 0}</div>
+                <p className="mt-1 text-sm text-slate-500">Prompts</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{assetBriefs.length}</div>
+                <p className="mt-1 text-sm text-slate-500">Asset briefs</p>
+              </div>
+            </div>
+          </section>
+
+          <details className="rounded-xl border border-slate-200 bg-white p-4">
+            <summary className="cursor-pointer text-sm font-bold text-slate-900">Advanced diagnostics</summary>
+            <div className="mt-4 space-y-7">
       <section>
         <SectionHeader
           title="Setup"
@@ -1258,13 +1564,15 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
           </div>
         )}
       </section>
+            </div>
+          </details>
         </div>
       )}
 
-      {mode === "opportunities" && (
+      {mode === "analysis" && (
       <details className="rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm font-bold text-slate-900">
-          <span>{brief?.title ?? "Visibility brief"}</span>
+          <span>{brief?.title ?? "Weekly analysis brief"}</span>
           <Badge tone={brief?.mode === "cold_start" ? "amber" : "green"}>{brief?.mode ?? "loading"}</Badge>
         </summary>
         <div className="mt-4">
@@ -1323,7 +1631,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
       </details>
       )}
 
-      {mode === "opportunities" && actions.length > 0 && (
+      {mode === "analysis" && actions.length > 0 && (
       <section>
         <SectionHeader title="Content actions" action={<Badge tone="neutral">{actions.length}</Badge>} />
           <div className="grid gap-2">

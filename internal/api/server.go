@@ -139,6 +139,11 @@ func (s *Server) Router() http.Handler {
 				r.Get("/briefs/latest", s.getSEOBrief)
 				r.Get("/settings", s.getSEOSettings)
 				r.Put("/settings", s.updateSEOSettings)
+				r.Get("/gsc/connection", s.getGSCConnection)
+				r.Post("/gsc/oauth/start", s.startGSCOAuth)
+				r.Post("/gsc/oauth/complete", s.completeGSCOAuth)
+				r.Post("/gsc/property", s.selectGSCProperty)
+				r.Post("/gsc/revoke", s.revokeGSCConnection)
 				r.Route("/autopilot", func(r chi.Router) {
 					r.Get("/objectives", s.listSEOObjectives)
 					r.Post("/objectives", s.createSEOObjective)

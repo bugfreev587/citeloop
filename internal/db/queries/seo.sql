@@ -34,6 +34,58 @@ select * from seo_integrations
 where project_id = $1
 order by provider asc;
 
+-- name: UpsertSEOOAuthToken :one
+insert into seo_oauth_tokens
+  (project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at,
+   account_email, authorized_properties, last_error)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(provider),
+  sqlc.arg(encrypted_refresh_token),
+  sqlc.arg(token_type),
+  sqlc.arg(scope),
+  sqlc.narg(access_token_expires_at),
+  sqlc.narg(account_email),
+  sqlc.arg(authorized_properties)::jsonb,
+  sqlc.narg(last_error)
+)
+on conflict (project_id, provider) do update set
+  encrypted_refresh_token = excluded.encrypted_refresh_token,
+  token_type = excluded.token_type,
+  scope = excluded.scope,
+  access_token_expires_at = excluded.access_token_expires_at,
+  account_email = excluded.account_email,
+  authorized_properties = excluded.authorized_properties,
+  last_error = excluded.last_error,
+  revoked_at = null,
+  updated_at = now()
+returning *;
+
+-- name: GetActiveSEOOAuthToken :one
+select * from seo_oauth_tokens
+where project_id = $1
+  and provider = $2
+  and revoked_at is null;
+
+-- name: UpdateSEOOAuthSelectedProperty :one
+update seo_oauth_tokens set
+  selected_property = $3,
+  last_error = null,
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning *;
+
+-- name: RevokeSEOOAuthToken :one
+update seo_oauth_tokens set
+  revoked_at = now(),
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning *;
+
 -- name: InsertSEORun :one
 insert into seo_runs
   (project_id, agent, status, started_at, finished_at, cost_usd, input, output, error)
@@ -124,6 +176,53 @@ where project_id = $1
   and property_id = $2
   and (clicks is not null or impressions is not null);
 
+-- name: ListSearchQueryOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  query,
+  coalesce(sum(clicks), 0)::numeric as clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as impressions_28d,
+  case
+    when coalesce(sum(impressions), 0) > 0 then coalesce(sum(clicks), 0) / nullif(sum(impressions), 0)
+    else 0
+  end::numeric as ctr_28d,
+  coalesce(avg(position), 0)::numeric as position_28d,
+  min(date)::date as window_start,
+  max(date)::date as window_end
+from search_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 28
+group by normalized_page_url, query
+having coalesce(sum(impressions), 0) >= 100
+order by impressions_28d desc
+limit $3;
+
+-- name: ListPageDecayOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0)::numeric as current_clicks_28d,
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_clicks_28d,
+  coalesce(sum(impressions) filter (where date >= current_date - 28), 0)::numeric as current_impressions_28d,
+  coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_impressions_28d,
+  (current_date - 28)::date as window_start,
+  (current_date - 1)::date as window_end
+from page_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 56
+  and clicks is not null
+group by normalized_page_url
+having coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) >= 10
+   and coalesce(sum(clicks) filter (where date >= current_date - 28), 0) <
+     coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) * 0.7
+order by
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) -
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0) desc
+limit $3;
+
 -- name: UpsertTechnicalCheck :one
 insert into technical_checks
   (project_id, run_id, page_url, normalized_page_url, article_id, http_status, canonical_status,
@@ -153,10 +252,23 @@ returning *;
 insert into seo_opportunities
   (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
    article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
-   risk_level, created_by_run_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-on conflict (project_id, type, normalized_page_url, query, created_by_run_id) do update set
-  status = excluded.status,
+   risk_level, created_by_run_id, opportunity_key)
+values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+  encode(digest(
+    $1::text || '|' || $2 || '|' || coalesce($7, '') || '|' || coalesce($10, '') || '|' ||
+    coalesce($11->>'intent_type', '') || '|' ||
+    coalesce($11->>'engine', '') || '|' ||
+    coalesce($11->>'evidence_window', '') || '|' ||
+    coalesce($11->>'reason', ''),
+    'sha256'
+  ), 'hex')
+)
+on conflict (project_id, opportunity_key) where status in ('open','accepted','converted') do update set
+  status = case
+    when seo_opportunities.status in ('accepted','converted') then seo_opportunities.status
+    else excluded.status
+  end,
   priority_score = excluded.priority_score,
   confidence = excluded.confidence,
   page_url = excluded.page_url,

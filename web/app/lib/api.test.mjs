@@ -687,6 +687,87 @@ test("SEO APIs call project scoped endpoints", async () => {
   }
 });
 
+test("GSC OAuth APIs call project scoped endpoints without exposing tokens", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (url.endsWith("/seo/gsc/connection")) {
+          return {
+            configured: true,
+            status: "property_selection_required",
+            selected_property: null,
+            recommended_property: "sc-domain:unipost.dev",
+            properties: [
+              { site_url: "sc-domain:unipost.dev", permission_level: "siteOwner", recommended: true },
+            ],
+          };
+        }
+        if (url.endsWith("/seo/gsc/oauth/start")) {
+          return { authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?state=state-1" };
+        }
+        if (url.endsWith("/seo/gsc/oauth/complete")) {
+          return {
+            configured: true,
+            status: "property_selection_required",
+            selected_property: null,
+            properties: [
+              { site_url: "sc-domain:unipost.dev", permission_level: "siteOwner", recommended: true },
+            ],
+          };
+        }
+        if (url.endsWith("/seo/gsc/property")) {
+          return { configured: true, status: "connected", selected_property: "sc-domain:unipost.dev", properties: [] };
+        }
+        if (url.endsWith("/seo/gsc/revoke")) {
+          return { configured: true, status: "revoked", selected_property: null, properties: [] };
+        }
+        return {};
+      },
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const connection = await client.getGSCConnection("project-1");
+    const start = await client.startGSCOAuth("project-1", {
+      redirect_uri: "https://app.example.test/projects/project-1/settings/gsc/callback",
+    });
+    const completed = await client.completeGSCOAuth("project-1", { code: "code-1", state: "state-1" });
+    const selected = await client.selectGSCProperty("project-1", { site_url: "sc-domain:unipost.dev" });
+    const revoked = await client.revokeGSCConnection("project-1");
+
+    assert.equal(connection.recommended_property, "sc-domain:unipost.dev");
+    assert.equal(Object.hasOwn(connection, "refresh_token"), false);
+    assert.match(start.authorization_url, /^https:\/\/accounts\.google\.com/);
+    assert.equal(completed.properties[0].site_url, "sc-domain:unipost.dev");
+    assert.equal(selected.status, "connected");
+    assert.equal(revoked.status, "revoked");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/gsc/connection");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/gsc/oauth/start");
+    assert.equal(calls[1].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[1].init.body), {
+      redirect_uri: "https://app.example.test/projects/project-1/settings/gsc/callback",
+    });
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/seo/gsc/oauth/complete");
+    assert.equal(calls[2].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[2].init.body), { code: "code-1", state: "state-1" });
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/seo/gsc/property");
+    assert.equal(calls[3].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[3].init.body), { site_url: "sc-domain:unipost.dev" });
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/seo/gsc/revoke");
+    assert.equal(calls[4].init.method, "POST");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GEO crawler APIs call project scoped endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

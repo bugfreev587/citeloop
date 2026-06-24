@@ -184,6 +184,40 @@ func (q *Queries) FinishSEORun(ctx context.Context, arg FinishSEORunParams) (Seo
 	return i, err
 }
 
+const getActiveSEOOAuthToken = `-- name: GetActiveSEOOAuthToken :one
+select id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at from seo_oauth_tokens
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+`
+
+type GetActiveSEOOAuthTokenParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Provider  string    `json:"provider"`
+}
+
+func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, getActiveSEOOAuthToken, arg.ProjectID, arg.Provider)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getContentAction = `-- name: GetContentAction :one
 select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot from content_actions
 where id = $1 and project_id = $2
@@ -401,6 +435,77 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 			&i.ApprovedAt,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPageDecayOpportunityRollups = `-- name: ListPageDecayOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0)::numeric as current_clicks_28d,
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_clicks_28d,
+  coalesce(sum(impressions) filter (where date >= current_date - 28), 0)::numeric as current_impressions_28d,
+  coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_impressions_28d,
+  (current_date - 28)::date as window_start,
+  (current_date - 1)::date as window_end
+from page_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 56
+  and clicks is not null
+group by normalized_page_url
+having coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) >= 10
+   and coalesce(sum(clicks) filter (where date >= current_date - 28), 0) <
+     coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) * 0.7
+order by
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) -
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0) desc
+limit $3
+`
+
+type ListPageDecayOpportunityRollupsParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PropertyID uuid.UUID `json:"property_id"`
+	Limit      int32     `json:"limit"`
+}
+
+type ListPageDecayOpportunityRollupsRow struct {
+	PageUrl                string         `json:"page_url"`
+	NormalizedPageUrl      string         `json:"normalized_page_url"`
+	CurrentClicks28d       pgtype.Numeric `json:"current_clicks_28d"`
+	PreviousClicks28d      pgtype.Numeric `json:"previous_clicks_28d"`
+	CurrentImpressions28d  pgtype.Numeric `json:"current_impressions_28d"`
+	PreviousImpressions28d pgtype.Numeric `json:"previous_impressions_28d"`
+	WindowStart            pgtype.Date    `json:"window_start"`
+	WindowEnd              pgtype.Date    `json:"window_end"`
+}
+
+func (q *Queries) ListPageDecayOpportunityRollups(ctx context.Context, arg ListPageDecayOpportunityRollupsParams) ([]ListPageDecayOpportunityRollupsRow, error) {
+	rows, err := q.db.Query(ctx, listPageDecayOpportunityRollups, arg.ProjectID, arg.PropertyID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPageDecayOpportunityRollupsRow
+	for rows.Next() {
+		var i ListPageDecayOpportunityRollupsRow
+		if err := rows.Scan(
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.CurrentClicks28d,
+			&i.PreviousClicks28d,
+			&i.CurrentImpressions28d,
+			&i.PreviousImpressions28d,
+			&i.WindowStart,
+			&i.WindowEnd,
 		); err != nil {
 			return nil, err
 		}
@@ -677,6 +782,78 @@ func (q *Queries) ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]Seo
 	return items, nil
 }
 
+const listSearchQueryOpportunityRollups = `-- name: ListSearchQueryOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  query,
+  coalesce(sum(clicks), 0)::numeric as clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as impressions_28d,
+  case
+    when coalesce(sum(impressions), 0) > 0 then coalesce(sum(clicks), 0) / nullif(sum(impressions), 0)
+    else 0
+  end::numeric as ctr_28d,
+  coalesce(avg(position), 0)::numeric as position_28d,
+  min(date)::date as window_start,
+  max(date)::date as window_end
+from search_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 28
+group by normalized_page_url, query
+having coalesce(sum(impressions), 0) >= 100
+order by impressions_28d desc
+limit $3
+`
+
+type ListSearchQueryOpportunityRollupsParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PropertyID uuid.UUID `json:"property_id"`
+	Limit      int32     `json:"limit"`
+}
+
+type ListSearchQueryOpportunityRollupsRow struct {
+	PageUrl           string         `json:"page_url"`
+	NormalizedPageUrl string         `json:"normalized_page_url"`
+	Query             string         `json:"query"`
+	Clicks28d         pgtype.Numeric `json:"clicks_28d"`
+	Impressions28d    pgtype.Numeric `json:"impressions_28d"`
+	Ctr28d            pgtype.Numeric `json:"ctr_28d"`
+	Position28d       pgtype.Numeric `json:"position_28d"`
+	WindowStart       pgtype.Date    `json:"window_start"`
+	WindowEnd         pgtype.Date    `json:"window_end"`
+}
+
+func (q *Queries) ListSearchQueryOpportunityRollups(ctx context.Context, arg ListSearchQueryOpportunityRollupsParams) ([]ListSearchQueryOpportunityRollupsRow, error) {
+	rows, err := q.db.Query(ctx, listSearchQueryOpportunityRollups, arg.ProjectID, arg.PropertyID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSearchQueryOpportunityRollupsRow
+	for rows.Next() {
+		var i ListSearchQueryOpportunityRollupsRow
+		if err := rows.Scan(
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.Query,
+			&i.Clicks28d,
+			&i.Impressions28d,
+			&i.Ctr28d,
+			&i.Position28d,
+			&i.WindowStart,
+			&i.WindowEnd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnplannedContentActions = `-- name: ListUnplannedContentActions :many
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot from content_actions ca
 left join topics t
@@ -904,6 +1081,43 @@ func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkCon
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+	)
+	return i, err
+}
+
+const revokeSEOOAuthToken = `-- name: RevokeSEOOAuthToken :one
+update seo_oauth_tokens set
+  revoked_at = now(),
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type RevokeSEOOAuthTokenParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Provider  string    `json:"provider"`
+}
+
+func (q *Queries) RevokeSEOOAuthToken(ctx context.Context, arg RevokeSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, revokeSEOOAuthToken, arg.ProjectID, arg.Provider)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1199,6 +1413,45 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 	return i, err
 }
 
+const updateSEOOAuthSelectedProperty = `-- name: UpdateSEOOAuthSelectedProperty :one
+update seo_oauth_tokens set
+  selected_property = $3,
+  last_error = null,
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type UpdateSEOOAuthSelectedPropertyParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	Provider         string    `json:"provider"`
+	SelectedProperty *string   `json:"selected_property"`
+}
+
+func (q *Queries) UpdateSEOOAuthSelectedProperty(ctx context.Context, arg UpdateSEOOAuthSelectedPropertyParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, updateSEOOAuthSelectedProperty, arg.ProjectID, arg.Provider, arg.SelectedProperty)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateSEOOpportunityStatus = `-- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set
   status = $3,
@@ -1435,14 +1688,99 @@ func (q *Queries) UpsertSEOIntegration(ctx context.Context, arg UpsertSEOIntegra
 	return i, err
 }
 
+const upsertSEOOAuthToken = `-- name: UpsertSEOOAuthToken :one
+insert into seo_oauth_tokens
+  (project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at,
+   account_email, authorized_properties, last_error)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8::jsonb,
+  $9
+)
+on conflict (project_id, provider) do update set
+  encrypted_refresh_token = excluded.encrypted_refresh_token,
+  token_type = excluded.token_type,
+  scope = excluded.scope,
+  access_token_expires_at = excluded.access_token_expires_at,
+  account_email = excluded.account_email,
+  authorized_properties = excluded.authorized_properties,
+  last_error = excluded.last_error,
+  revoked_at = null,
+  updated_at = now()
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type UpsertSEOOAuthTokenParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	Provider              string             `json:"provider"`
+	EncryptedRefreshToken string             `json:"encrypted_refresh_token"`
+	TokenType             string             `json:"token_type"`
+	Scope                 string             `json:"scope"`
+	AccessTokenExpiresAt  pgtype.Timestamptz `json:"access_token_expires_at"`
+	AccountEmail          *string            `json:"account_email"`
+	AuthorizedProperties  json.RawMessage    `json:"authorized_properties"`
+	LastError             *string            `json:"last_error"`
+}
+
+func (q *Queries) UpsertSEOOAuthToken(ctx context.Context, arg UpsertSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, upsertSEOOAuthToken,
+		arg.ProjectID,
+		arg.Provider,
+		arg.EncryptedRefreshToken,
+		arg.TokenType,
+		arg.Scope,
+		arg.AccessTokenExpiresAt,
+		arg.AccountEmail,
+		arg.AuthorizedProperties,
+		arg.LastError,
+	)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertSEOOpportunity = `-- name: UpsertSEOOpportunity :one
 insert into seo_opportunities
   (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
    article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
-   risk_level, created_by_run_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-on conflict (project_id, type, normalized_page_url, query, created_by_run_id) do update set
-  status = excluded.status,
+   risk_level, created_by_run_id, opportunity_key)
+values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+  encode(digest(
+    $1::text || '|' || $2 || '|' || coalesce($7, '') || '|' || coalesce($10, '') || '|' ||
+    coalesce($11->>'intent_type', '') || '|' ||
+    coalesce($11->>'engine', '') || '|' ||
+    coalesce($11->>'evidence_window', '') || '|' ||
+    coalesce($11->>'reason', ''),
+    'sha256'
+  ), 'hex')
+)
+on conflict (project_id, opportunity_key) where status in ('open','accepted','converted') do update set
+  status = case
+    when seo_opportunities.status in ('accepted','converted') then seo_opportunities.status
+    else excluded.status
+  end,
   priority_score = excluded.priority_score,
   confidence = excluded.confidence,
   page_url = excluded.page_url,

@@ -29,6 +29,9 @@ type Env struct {
 	UniPostDeployHookURL     string // Vercel deploy hook for UniPost build-time content fetch
 	NotificationSecretKey    string // AEAD key material for webhook URL encryption
 	GoogleServiceAccountJSON string // service account JSON for GSC/GA4 read-only ingestion
+	GoogleOAuthClientID      string // Google OAuth client ID for customer-owned GSC connections
+	GoogleOAuthClientSecret  string // Google OAuth client secret for customer-owned GSC connections
+	PublicAppURL             string // public web app URL used for OAuth redirect validation
 	PerplexityAPIKey         string // Perplexity Sonar API key for legal answer-engine observation
 	PerplexityBaseURL        string // Perplexity API base URL
 	PerplexityModel          string // Perplexity Sonar model
@@ -61,6 +64,9 @@ func FromEnv() Env {
 		UniPostDeployHookURL:     os.Getenv("UNIPOST_DEPLOY_HOOK_URL"),
 		NotificationSecretKey:    os.Getenv("NOTIFICATION_SECRET_KEY"),
 		GoogleServiceAccountJSON: os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON"),
+		GoogleOAuthClientID:      os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		GoogleOAuthClientSecret:  os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		PublicAppURL:             os.Getenv("PUBLIC_APP_URL"),
 		PerplexityAPIKey:         os.Getenv("PERPLEXITY_API_KEY"),
 		PerplexityBaseURL:        getenv("PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
 		PerplexityModel:          getenv("PERPLEXITY_MODEL", "sonar-pro"),

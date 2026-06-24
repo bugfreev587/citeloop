@@ -1,10 +1,15 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/google/uuid"
 )
 
@@ -30,6 +35,11 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "brief", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/briefs/latest"},
 		{name: "settings", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/settings"},
 		{name: "update settings", method: http.MethodPut, path: "/api/projects/not-a-uuid/seo/settings"},
+		{name: "gsc connection", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/gsc/connection"},
+		{name: "gsc oauth start", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/gsc/oauth/start"},
+		{name: "gsc oauth complete", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/gsc/oauth/complete"},
+		{name: "gsc property select", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/gsc/property"},
+		{name: "gsc revoke", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/gsc/revoke"},
 		{name: "autopilot objectives", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/autopilot/objectives"},
 		{name: "autopilot create objective", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/autopilot/objectives"},
 		{name: "autopilot policy", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/autopilot/policy"},
@@ -55,6 +65,47 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestStartGSCOAuthReturnsGoogleAuthorizationURL(t *testing.T) {
+	projectID := uuid.New()
+	srv := &Server{Env: config.Env{
+		GoogleOAuthClientID:     "google-client-id",
+		GoogleOAuthClientSecret: "google-client-secret",
+		PublicAppURL:            "https://app.citeloop.test",
+		NotificationSecretKey:   "state-secret",
+	}}
+	body := strings.NewReader(`{"redirect_uri":"https://app.citeloop.test/projects/` + projectID.String() + `/settings/gsc/callback"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/seo/gsc/oauth/start", body)
+	res := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	var out struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.AuthorizationURL, "accounts.google.com") {
+		t.Fatalf("authorization_url = %q", out.AuthorizationURL)
+	}
+	parsed, err := url.Parse(out.AuthorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("scope") != googledata.ScopeSearchConsoleReadonly {
+		t.Fatalf("scope = %q, want %q", parsed.Query().Get("scope"), googledata.ScopeSearchConsoleReadonly)
+	}
+	if parsed.Query().Get("state") == "" {
+		t.Fatalf("authorization_url missing state: %q", out.AuthorizationURL)
+	}
+	if strings.Contains(out.AuthorizationURL, "client_secret") {
+		t.Fatalf("authorization_url leaked client_secret: %q", out.AuthorizationURL)
 	}
 }
 

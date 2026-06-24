@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,6 +20,14 @@ import (
 
 func (s *Server) seoService() seopkg.Service {
 	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData}
+}
+
+func (s *Server) seoServiceForProject(ctx context.Context, projectID uuid.UUID) seopkg.Service {
+	svc := s.seoService()
+	if provider, override := s.googleDataProviderForProject(ctx, projectID); override {
+		svc.GoogleData = provider
+	}
+	return svc
 }
 
 func (s *Server) getSEOOverview(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +56,7 @@ func (s *Server) syncSEO(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 	}
-	svc := s.seoService()
+	svc := s.seoServiceForProject(r.Context(), projectID)
 	syncResult, err := svc.Sync(r.Context(), projectID, in.SiteURL)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
