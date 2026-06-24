@@ -60,14 +60,14 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 - `seo_opportunities` 已包含 `type`、`status`、`priority_score`、`confidence`、`evidence`、`recommended_action`、`expected_impact`、`effort`、`risk_level`、`opportunity_key` 等 Analysis 需要的核心字段。
 - `content_actions` 已经承担 opportunity -> action -> article/result 的桥接，包含 `baseline_window`、`measurement_window`、`outcome_summary`。
 - `web/app/projects/[id]/opportunities/page.tsx` 和 `web/app/projects/[id]/visibility/page.tsx` 已经分别渲染 `OpportunitiesClient` 与 `VisibilityClient`，两者共享 `web/app/projects/[id]/seo/seo-client.tsx` 中的 `SEOClient`。
-- 当前 Google 数据连接由 `internal/googledata/auth.go` 的 service-account JWT 实现，scope 为 `webmasters.readonly` 和 `analytics.readonly`。当前代码没有 end-user Google OAuth consent、用户可访问 property 列表、GSC refresh token 捕获。
+- 当前 Google 数据连接由 `internal/googledata/auth.go` 的 service-account JWT 实现，scope 为 `webmasters.readonly` 和 `analytics.readonly`。当前代码没有 end-user Google OAuth consent、用户可访问 property 列表、GSC refresh token 捕获。本 PRD 将 self-serve GSC OAuth 明确列为需要新增的 connection layer。
 
 因此 Phase 1-3 应被视为 IA 重构和页面职责拆分: `Opportunities` 重命名/迁移到 `Analysis`，`Visibility` 收敛为 `Results`，并把共享 `SEOClient` 拆成更清楚的 Analysis / Results surfaces。
 
 ## 2. 产品目标
 
 1. 在 Dashboard 中将现有 Opportunities / Visibility 能力重组为独立的 Analysis workflow，并与 Content Generation 隔离。
-2. 让用户通过 domain-first onboarding 开始项目，再通过 Search data 连接状态解锁真实搜索分析。当前落地模型是 admin/service-account 连接，未来可升级为 end-user OAuth。
+2. 让用户通过 domain-first onboarding 开始项目，再通过 self-serve Google Search Console OAuth 解锁真实搜索分析。service account 保留为 internal/admin fallback，不作为默认客户路径。
 3. 把 GSC/GA4 信号转化为可解释、可接受、可路由的 SEO/GEO actions。
 4. 让 Content Plan 只展示已接受的生产工作，不展示未筛选的原始机会。
 5. 让 Measure 页面专注发布后的结果和闭环反馈，不再混入原始机会发现。
@@ -76,7 +76,7 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 
 ## 3. 非目标
 
-- 不在本 PRD 的 Phase 1-3 中实现 end-user Google OAuth、GSC ingestion 或 GA4 ingestion 的完整后端方案。
+- 不在本 PRD 的 Phase 1-3 中实现 end-user Google OAuth、GSC ingestion 或 GA4 ingestion 的完整后端方案。Self-serve GSC OAuth 从 Phase 4 开始进入本 PRD 范围。
 - 不把当前 service-account 连接模型伪装成用户 OAuth。两者必须在 UI、权限和文档中明确区分。
 - 不在本 PRD 中重写现有 Review、Publish、Publisher 或 Article detail 页面。
 - 不把 Analysis 做成全量 SEO dashboard 或 Semrush/Ahrefs 替代品。
@@ -205,64 +205,59 @@ Account / Workspace switcher
 
 ### 6.1 用户路径
 
-当前可落地路径基于 admin/service-account connection:
+目标客户路径基于 self-serve Google Search Console OAuth:
 
 ```text
 1. 用户输入 product domain
 2. CiteLoop 完成 public discovery
 3. Home 和 Analysis 显示 Search data gate
-4. 有权限的用户点击 Configure Search Data
-5. Settings / admin-managed flow 配置 site_url、gsc_site_url、credential_ref / service account access
-6. 系统用 service-account JWT 读取 GSC / GA4 数据
-7. 系统 backfill 最近 90 天搜索数据
-8. Analysis 生成 opportunity queue
-9. 用户接受、暂缓或 dismiss opportunity
-10. 被接受的 action 进入 Content Plan / Review / Publish / Content Plan technical_task
-11. 发布或执行后进入 Results measurement
+4. 项目 owner/admin 点击 Connect Google Search Console
+5. Google OAuth consent 返回该用户可访问的 GSC properties
+6. CiteLoop 自动推荐与 product domain 匹配的 property
+7. 用户确认 property，或手动选择正确 property
+8. CiteLoop 安全存储 OAuth refresh token 和 selected property
+9. 系统 backfill 最近 90 天搜索数据
+10. Analysis 生成 opportunity queue
+11. 用户接受、暂缓或 dismiss opportunity
+12. 被接受的 action 进入 Content Plan / Review / Publish / Content Plan technical_task
+13. 发布或执行后进入 Results measurement
 ```
 
-未来 self-serve OAuth 路径需要单独 PRD 或 Phase 6 设计，不能默认塞进 IA 实施:
+Internal/admin fallback 路径继续支持 service account，但不作为默认客户 onboarding:
 
 ```text
-1. 用户点击 Connect Google Search Console
-2. Google OAuth 返回用户可访问 properties
-3. CiteLoop 自动推荐匹配 property
-4. 用户确认 property
-5. CiteLoop 存储用户授权 token / refresh token
-6. 后续 sync 使用用户授权读取该 property
+1. Operator 在 Settings / Admin 中配置 `site_url`、`gsc_site_url`、`credential_ref`
+2. 系统用 service-account JWT 读取 GSC / GA4 数据
+3. UI 明确显示为 internal/admin-managed connection
+4. 用户仍然在 Analysis 中查看机会、接受 action 和进入 Results measurement
 ```
 
-当前 PRD 只要求 Analysis gate 的文案和状态不要阻塞未来 OAuth，但 Phase 1-3 不实现该 OAuth path。
+Self-serve OAuth 是本 PRD 的正式目标。Phase 1-3 先完成 IA 和页面职责隔离，Phase 4 开始交付 OAuth connection system，Phase 5 将 OAuth 数据接入 GSC analysis。
 
 ### 6.2 Search data 状态
 
 | 状态 | 含义 | UI 行为 |
 |---|---|---|
 | `public_only` | 只有公开 crawl / sitemap / robots / SERP 数据 | 显示 public opportunities，不展示 CTR/position 事实 |
-| `search_admin_required` | 当前用户无权配置 Search data | 显示 "Ask an admin to connect Search Console"，不能跳到无权限 Settings 死路 |
-| `service_account_missing` | 项目尚未配置可用 first-party search data credential | 对 admin 显示配置入口，对普通用户显示只读 explanation |
-| `gsc_property_configured` | `seo_properties.gsc_site_url` 和 integration 已配置，等待首次同步 | 显示 backfill 状态 |
+| `oauth_not_connected` | 项目尚未连接用户授权的 GSC property | 对项目 owner/admin 显示 Connect Search Console；对无权限成员显示 ask admin |
+| `oauth_authorizing` | 用户正在 Google OAuth consent / callback 流程中 | 显示连接中状态，失败后回到可重试状态 |
+| `oauth_authorized_property_missing` | 用户授权了 Google，但没有匹配 product domain 的 property | 显示创建/验证 GSC property 指引，允许选择其他 property |
+| `oauth_property_selected` | 用户选择了 GSC property，等待首次同步 | 显示 backfill 状态 |
 | `gsc_backfilling` | 正在拉取历史数据 | 显示 skeleton 和预计可用时间 |
 | `gsc_connected` | Search data 可用 | 展示真实 opportunity queue |
-| `gsc_stale` | 数据过期或同步失败 | 降级展示最后可用数据，并提示有权限用户重新连接或检查 credential |
+| `gsc_stale` | 数据过期或同步失败 | 降级展示最后可用数据，并提示有权限用户 reconnect |
 | `gsc_property_mismatch` | 配置的 GSC property 与 discovered domain/canonical host 不匹配 | 显示 mismatch warning，阻止使用错误数据做高置信 recommendation |
+| `gsc_permission_revoked` | Google token 失效、用户撤销授权或 scope 不足 | 显示 reconnect CTA，不删除历史 measurement |
+| `service_account_configured` | internal/admin 使用 service account 配置了 first-party search data | 普通用户看到 connected 状态；Settings/Admin 中显示 internal-managed diagnostics |
 | `ga4_connected` | GA4 engagement/conversion 可用 | 在 opportunity priority 中加入 business value |
-
-Future OAuth-only states, if a later PRD chooses true end-user OAuth:
-
-| 状态 | 含义 | UI 行为 |
-|---|---|---|
-| `oauth_not_connected` | 用户尚未授权 Google | 显示 end-user OAuth connect CTA |
-| `oauth_authorized_property_missing` | 用户授权了 Google，但没有匹配 property | 引导创建/验证 property 或选择其他 domain |
-| `oauth_property_selected` | 用户选择了 property，等待首次同步 | 显示 backfill 状态 |
 
 ### 6.3 Analysis 页面结构
 
 ```text
 Analysis
 ├─ Search data status
-│  ├─ public-only / admin-required / configured / connected / stale / mismatch / backfilling
-│  └─ Configure, reconnect, or admin handoff action
+│  ├─ public-only / OAuth not connected / authorizing / property selected / connected / stale / mismatch / revoked / backfilling
+│  └─ Connect, select property, reconnect, or admin handoff action
 ├─ Weekly analysis brief
 │  └─ 本周推荐 action portfolio
 ├─ Opportunity queue
@@ -353,10 +348,10 @@ Home should show:
 ```text
 Search data is not connected
 Connect Search Console to unlock query, CTR, position, and content decay opportunities.
-[Configure Search Data]
+[Connect Search Console]
 ```
 
-If the current user cannot access Settings/internal tools, the action label becomes:
+If the current user cannot manage project integrations, the action label becomes:
 
 ```text
 Ask an admin to connect Search Console
@@ -451,7 +446,7 @@ Settings owns:
 
 - project configuration
 - publisher connections
-- Search Console connection management
+- Search Console OAuth connection management
 - GA4 connection management
 - notification channels
 - crawl settings
@@ -459,7 +454,7 @@ Settings owns:
 
 Settings should not be a primary workflow step.
 
-Search data connection management currently depends on internal/admin access because the codebase uses service-account credentials and `credential_ref` rather than end-user OAuth. Analysis may show the CTA to everyone, but only users with Settings/internal access can configure or reconnect first-party search data. Non-admin users receive an explanation and a safe handoff path.
+Search data connection management should be available to project owners/admins through a self-serve Google OAuth flow. Analysis may show the CTA to everyone, but members without integration-management permission should receive an explanation and an admin handoff path. Internal operators may still configure service-account access through Admin/diagnostics, but that path should be labeled as internal-managed and should not replace the default OAuth onboarding.
 
 ### 10.2 Admin
 
@@ -484,13 +479,13 @@ Primary message:
 
 ```text
 Connect real search data
-CiteLoop can already inspect your public site. Configure Search Console to find pages with impressions, low CTR, ranking drops, and near page-one keywords.
+CiteLoop can already inspect your public site. Connect Search Console to find pages with impressions, low CTR, ranking drops, and near page-one keywords.
 ```
 
 Primary action:
 
 ```text
-Configure Search Data
+Connect Search Console
 ```
 
 Secondary action:
@@ -543,14 +538,34 @@ This PRD does not require final schema design, but implementation should preserv
 
 Implementation must not create replacement tables for these concepts during Phase 1-3. If Analysis needs a new UI shape, adapt API serializers or view models over the existing tables first.
 
-### 12.2 Required product states
+### 12.2 OAuth connection model
+
+Self-serve GSC OAuth requires a new connection layer around the existing SEO data model:
+
+- Google OAuth app configuration with the minimum required Search Console scope: `https://www.googleapis.com/auth/webmasters.readonly`.
+- OAuth start and callback endpoints with CSRF/state protection.
+- Encrypted storage for refresh tokens and token metadata.
+- Token refresh, revocation, expired-token handling, and reconnect flows.
+- Property listing from the authorized Google account.
+- Domain-to-property matching for `sc-domain:example.com`, `https://example.com/`, `https://www.example.com/`, and subdomain variants.
+- User confirmation of the selected property before any data is treated as first-party evidence.
+- Persistence of the selected property into existing `seo_properties` / `seo_integrations` concepts where possible.
+- Audit metadata for who connected, when it was connected, and when it last synced.
+- Internal service-account fallback that can reuse the same downstream sync and opportunity-generation pipeline.
+
+The default customer path must not require the user to manually create credentials or share service-account access. The only expected customer-side prerequisite is that they have access to the relevant GSC property in their Google account.
+
+### 12.3 Required product states
 
 Analysis needs enough API surface to express:
 
 - search data connection status
+- connected Google account display label
+- available / selected GSC property display labels
 - active GSC property display label
 - last sync time
 - backfill status
+- token health and reconnect need
 - opportunity type
 - opportunity evidence
 - recommended action
@@ -558,9 +573,9 @@ Analysis needs enough API surface to express:
 - downstream destination
 - measurement window
 
-Connection states should be derived from `seo_properties`, `seo_integrations`, run recency, sync errors, and user access level. They should not assume an OAuth token exists until a future OAuth PRD introduces one.
+Connection states should be derived from OAuth token health, selected property, `seo_properties`, `seo_integrations`, run recency, sync errors, and user access level. Service-account projects should still resolve to the same downstream readiness states, with admin-only diagnostics exposing `credential_ref`.
 
-### 12.3 Downstream contract
+### 12.4 Downstream contract
 
 When Analysis routes work downstream, it must create or update a durable action record with:
 
@@ -603,25 +618,28 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Show published action outcomes and measurement windows.
 - Keep GEO/AI citation tracking as a Results signal.
 
-### Phase 4: Service-account-powered GSC Analysis
+### Phase 4: Self-serve GSC OAuth onboarding
 
-- Use the existing service-account Google client as the connection model.
-- Productize configured / missing / stale / mismatch states.
+- Implement Google OAuth start / callback flow for Search Console.
+- Request `https://www.googleapis.com/auth/webmasters.readonly` for query and page performance.
+- Store refresh tokens and token metadata securely.
+- List authorized GSC properties and recommend the property matching the project domain.
+- Persist the selected property and connected account metadata.
+- Add reconnect, revoke, expired-token, denied-consent, and no-matching-property states.
+- Keep service-account configuration as internal/admin fallback only.
+
+### Phase 5: OAuth-powered GSC Analysis
+
+- Use the selected OAuth-backed GSC property as the default source for first-party search data.
 - Backfill and sync GSC search performance.
 - Generate opportunity types from real query/page metrics.
 - Add stale, backfilling, and error states.
 
-### Phase 5: GA4 and business-value prioritization
+### Phase 6: GA4 and business-value prioritization
 
 - Use existing GA4 storage fields in `page_performance_daily` and add missing ingestion/UI only as needed.
 - Use engagement/conversion as prioritization signal.
 - Mark recommendations without GA4 as missing business-value signal, not as failed.
-
-### Phase 6: Optional end-user OAuth
-
-- Decide whether CiteLoop should support true end-user Google OAuth.
-- If yes, write a separate connection-model PRD covering OAuth consent, property listing, token storage, revocation, permission scope, admin/non-admin behavior, and migration from service-account projects.
-- Do not make Phase 1-5 depend on this path.
 
 ## 14. Acceptance Criteria
 
@@ -640,7 +658,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 2. Analysis owns opportunity acceptance and dismissal.
 3. Accepted opportunities carry evidence and reason into downstream production work.
 4. Empty states route users to one next action, not a grid of future modules.
-5. Analysis can explain public-only, service-account missing, connected, stale, mismatch, and no-opportunity states.
+5. Analysis can explain public-only, OAuth not connected, property missing, property selected, connected, stale, revoked, mismatch, and no-opportunity states.
 
 ### Phase 3 Results surface
 
@@ -648,12 +666,22 @@ When Analysis routes work downstream, it must create or update a durable action 
 2. Results shows published action outcomes, measurement windows, and waiting/inconclusive/positive/negative states.
 3. Home does not become a full analytics page after GSC is connected.
 
-### Phase 4 Search data activation
+### Phase 4 Self-serve GSC OAuth onboarding
 
-1. Home displays a clear Search Console gate when first-party search data is missing.
-2. Non-admin users do not hit an admin-only dead end when clicking the Analysis search-data CTA.
-3. Admin users can navigate from Analysis to detailed Search data configuration.
-4. Backfilling, stale, connected, and mismatch states are derived from real integration/run state.
+1. Home displays a clear Connect Search Console gate when first-party search data is missing.
+2. Project owners/admins can start Google OAuth from Home, Analysis, or Settings.
+3. Users who deny consent, lack a matching property, or lose token access receive a recoverable state.
+4. CiteLoop lists authorized GSC properties and recommends the best match for the project domain.
+5. Users must confirm the selected property before the first backfill begins.
+6. Non-admin users do not hit an admin-only dead end when clicking the Analysis search-data CTA.
+7. Service-account connection remains available only as internal/admin fallback.
+
+### Phase 5 GSC search data activation
+
+1. Backfilling, stale, connected, revoked, and mismatch states are derived from real OAuth/integration/run state.
+2. OAuth-backed GSC data writes into the existing SEO operations data model or an explicitly compatible extension.
+3. Analysis can generate low CTR, near page-one, content decay, and indexing opportunities from real query/page metrics.
+4. Accepted OAuth-backed opportunities carry property, query/page evidence, baseline window, and measurement window downstream.
 
 ## 15. Risks
 
@@ -669,13 +697,22 @@ When Analysis routes work downstream, it must create or update a durable action 
 4. **GSC property mismatch creates wrong recommendations.**
    Mitigation: show selected property label, canonical domain match confidence, and mismatch warnings.
 
-5. **Connection model is under-scoped.**
-   Mitigation: Phase 1-5 use the existing service-account model. End-user OAuth requires Phase 6 / separate PRD.
+5. **OAuth implementation expands scope beyond IA.**
+   Mitigation: split IA, OAuth onboarding, and OAuth-powered analysis into separate rollout phases. Phase 1-3 can ship before OAuth, but Phase 4 makes self-serve onboarding first-class.
 
-6. **Visibility to Results rename causes migration confusion.**
+6. **Google OAuth verification or consent setup delays launch.**
+   Mitigation: start with the minimum read-only Search Console scope, prepare clear consent-screen copy, and keep internal service-account fallback for controlled pilots.
+
+7. **Token storage or revocation handling creates security risk.**
+   Mitigation: encrypt refresh tokens, store only required metadata, support explicit disconnect, and treat revoked/expired tokens as recoverable connection states.
+
+8. **Permission model is unclear for team projects.**
+   Mitigation: project owners/admins can connect and disconnect GSC; other members can view status and ask an admin to connect.
+
+9. **Visibility to Results rename causes migration confusion.**
    Mitigation: keep route compatibility or redirect old visibility route during rollout.
 
-7. **Too many action types overwhelm users.**
+10. **Too many action types overwhelm users.**
    Mitigation: group recommendations by job-to-be-done, not internal type.
 
 ## 16. Product Success Metrics
@@ -684,9 +721,10 @@ These measure whether the IA change works without promising SEO rankings:
 
 1. Opportunity acceptance rate: percentage of open Analysis opportunities accepted or dismissed within 7 days.
 2. Time from signal to action: median time from opportunity creation to accepted `content_actions` record.
-3. Search data connection readiness: percentage of active projects in `gsc_connected` or an explicitly understood public-only state.
-4. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
-5. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
+3. Self-serve connection completion: percentage of eligible projects that complete OAuth, select a property, and start first backfill.
+4. Search data connection readiness: percentage of active projects in `gsc_connected`, `gsc_backfilling`, or an explicitly understood public-only state.
+5. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
+6. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
 
 ## 17. Product Decisions
 
@@ -705,5 +743,8 @@ These measure whether the IA change works without promising SEO rankings:
 5. Technical SEO tasks stay inside Content Plan as `technical_task`.
    A separate Tasks page is out of scope until task volume proves Content Plan cannot carry these actions cleanly.
 
-6. Current Search data connection model is service-account/admin-managed.
-   True end-user Google OAuth is a future product decision, not required by the IA rollout.
+6. Default Search data connection model is self-serve end-user Google OAuth.
+   Service account remains supported only as internal/admin fallback or migration bridge.
+
+7. The first customer path is OAuth-first.
+   A user should be able to create a project with a domain, connect their own GSC property, and reach Analysis without operator setup.
