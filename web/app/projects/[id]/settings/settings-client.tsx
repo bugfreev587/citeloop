@@ -996,17 +996,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       )}
 
       {activeSettingsTab === "notifications" && (
-      <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0}>
-        <SectionHeader
-          title="Notifications"
-          eyebrow="Operations"
-          action={
-            <Button size="sm" onClick={refreshNotifications} disabled={!!notificationBusy}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
-          }
-        />
+      <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0} className="space-y-7">
+        <div>
+          <SectionHeader
+            title="Notifications"
+            eyebrow="Operations"
+            action={
+              <Button size="sm" onClick={refreshNotifications} disabled={!!notificationBusy}>
+                <RefreshCw size={14} />
+                Refresh
+              </Button>
+            }
+          />
 
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -1112,71 +1113,72 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <SectionHeader title="Notification subscriptions" />
-          {channels.length === 0 ? (
-            <div className="text-sm font-semibold text-slate-500">No channels</div>
-          ) : (
-            <div className="grid gap-3">
-              {events.map((event) => (
-                <div key={event.type} className="grid gap-3 rounded-lg border border-slate-200 p-3 lg:grid-cols-[220px_1fr]">
-                  <div>
-                    <div className="text-sm font-bold text-slate-900">{eventLabels[event.type] ?? event.type}</div>
-                    <div className="mt-1 font-mono text-xs text-slate-500">{event.type}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {channels.map((channel) => {
-                      const checked = subscriptionEnabled(event.type, channel.id);
-                      return (
-                        <label
-                          key={`${event.type}-${channel.id}`}
-                          className={cx(
-                            "flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
-                            checked ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 text-slate-600",
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={notificationBusy === `sub-${event.type}-${channel.id}`}
-                            onChange={(changeEvent) => toggleSubscription(event.type, channel.id, changeEvent.target.checked)}
-                          />
-                          {channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord")}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 p-4">
-            <SectionHeader
-              title="Notification deliveries"
-              action={
-                <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
-                  {deliveryStatuses.map((status) => (
-                    <button
-                      type="button"
-                      key={status.value}
-                      onClick={() => setDeliveryStatus(status.value)}
-                      className={cx(
-                        "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
-                        deliveryStatus === status.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
-                      )}
-                    >
-                      {status.label}
-                    </button>
-                  ))}
-                </div>
-              }
-            />
+        <div>
+          <SectionHeader title="Subscriptions" />
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            {channels.length === 0 ? (
+              <div className="text-sm font-semibold text-slate-500">No channels</div>
+            ) : (
+              <div className="grid gap-3">
+                {events.map((event) => (
+                  <div key={event.type} className="grid gap-3 rounded-lg border border-slate-200 p-3 lg:grid-cols-[220px_1fr]">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900">{eventLabels[event.type] ?? event.type}</div>
+                      <div className="mt-1 font-mono text-xs text-slate-500">{event.type}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {channels.map((channel) => {
+                        const checked = subscriptionEnabled(event.type, channel.id);
+                        return (
+                          <label
+                            key={`${event.type}-${channel.id}`}
+                            className={cx(
+                              "flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
+                              checked ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 text-slate-600",
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={notificationBusy === `sub-${event.type}-${channel.id}`}
+                              onChange={(changeEvent) => toggleSubscription(event.type, channel.id, changeEvent.target.checked)}
+                            />
+                            {channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord")}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="overflow-x-auto">
+        </div>
+
+        <div>
+          <SectionHeader
+            title="Deliveries"
+            action={
+              <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                {deliveryStatuses.map((status) => (
+                  <button
+                    type="button"
+                    key={status.value}
+                    onClick={() => setDeliveryStatus(status.value)}
+                    className={cx(
+                      "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
+                      deliveryStatus === status.value ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
+                    )}
+                  >
+                    {status.label}
+                  </button>
+                ))}
+              </div>
+            }
+          />
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
             {deliveries.length === 0 ? (
               <div className="px-4 py-5 text-sm font-semibold text-slate-500">No deliveries</div>
             ) : (
