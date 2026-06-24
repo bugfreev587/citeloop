@@ -499,18 +499,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
-  const measuredActions = actions.filter((action) =>
-    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
-    Boolean(action.published_at || action.verified_at),
-  );
-  const outcomeCounts = measuredActions.reduce(
-    (counts, action) => {
-      counts[actionMeasurementState(action).key] += 1;
-      return counts;
-    },
-    { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
-  );
-  const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
   const summaryLoopActions = visibilitySummary?.actions_in_loop ?? [];
   const summaryLoopActionIds = new Set(summaryLoopActions.map((action) => action.id));
   const loopActions = [
@@ -526,6 +514,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         opportunity_recommended_action: action.action_type,
       })),
   ];
+  const measuredActions = loopActions.filter((action) =>
+    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
+    Boolean(action.published_at || action.verified_at),
+  );
+  const outcomeCounts = measuredActions.reduce(
+    (counts, action) => {
+      counts[actionMeasurementState(action).key] += 1;
+      return counts;
+    },
+    { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
+  );
+  const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
   loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;

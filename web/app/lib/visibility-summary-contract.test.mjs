@@ -68,3 +68,11 @@ test("analysis page renders loop in motion from lifecycle summary", () => {
 
   assert.doesNotMatch(seo, /active tasks<\/Badge>/);
 });
+
+test("results measurement queue consumes visibility summary loop actions", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+
+  assert.match(seo, /const measuredActions = loopActions\.filter/);
+  assert.match(seo, /Measurement queue/);
+  assert.doesNotMatch(seo, /const measuredActions = actions\.filter/);
+});
