@@ -908,7 +908,109 @@ When Analysis routes work downstream, it must create or update a durable action 
 2. Each connector uses the same Publisher contract and user-facing states as WordPress where possible.
 3. Connector-specific limitations are shown as unavailable capabilities, not as generic failure states.
 
-## 16. Risks
+## 16. Verification Protocol
+
+Acceptance requires product verification, not only code review. Every implemented phase must have:
+
+- automated checks for the changed backend/frontend contract
+- Chrome verification against the deployed web app
+- evidence recorded with URL, project, user role, timestamp, and pass/fail result
+- screenshots or short notes for key UI states
+- explicit blocked status if an external provider, OAuth verification, or permission issue prevents completion
+
+For PRD-only changes, local document validation is enough. For product implementation, the default expectation is real browser verification in Chrome.
+
+### 16.1 Chrome verification rules
+
+Chrome verification should use the real deployed app, not mocked local screenshots, for release acceptance.
+
+The verifier should:
+
+1. Open the deployed CiteLoop URL in Chrome.
+2. Sign in with the intended test/customer account.
+3. Select or create the test project.
+4. Exercise the feature through the user-facing UI.
+5. Confirm that default pages are action-first and do not expose raw provider details.
+6. Confirm downstream state changes in the UI.
+7. Inspect backend/API state only as supporting evidence, not as a substitute for the user flow.
+
+If a feature is behind a preview deployment, the same Chrome flow should run on preview before merge and on production after release.
+
+### 16.2 OAuth-assisted verification
+
+When verification requires Google Search Console, Google Analytics, WordPress, or another external account:
+
+- CiteLoop should navigate to the connect flow.
+- The assistant can drive Chrome up to the external OAuth or login screen.
+- The user completes provider login, consent, MFA, or account selection.
+- The assistant resumes after the OAuth callback returns to CiteLoop.
+- The user should never paste tokens, secrets, cookies, or credentials into chat.
+- The verification record should mention that the user completed OAuth manually and that CiteLoop received the expected connected state.
+
+For GSC, the expected test path is:
+
+```text
+Create/select project -> input domain -> Connect Search Console -> user completes Google OAuth -> select matching property -> first backfill starts -> Analysis shows connected/backfilling state
+```
+
+### 16.3 Phase verification matrix
+
+| Phase | Feature area | Chrome verification | Supporting checks |
+|---|---|---|---|
+| Phase 1 | IA / sidebar | Verify sidebar has Home, Context, Analysis, Content Plan, Review, Publish, Results; Settings is bottom utility; no primary SYSTEM group. | Route redirects for old `/opportunities`; navigation tests. |
+| Phase 2 | Analysis surface | Verify Analysis shows search data status, prioritized recommendation cards, accept/dismiss/snooze actions, collapsed evidence. | API returns connection state, opportunities, evidence summaries; raw tables hidden by default. |
+| Phase 3 | Results surface | Verify Results shows published action outcomes and measurement states, not raw opportunity acceptance. | Measurement API returns waiting/inconclusive/positive/negative states. |
+| Phase 4 | GSC OAuth onboarding | Verify Connect Search Console from Home/Analysis/Settings, user OAuth, property list, property selection, denied/revoked/missing-property states. | OAuth state/CSRF tests, encrypted token storage, integration records, no token leakage in logs. |
+| Phase 5 | GSC-backed Analysis | Verify connected project backfills data, shows real query/page opportunity cards, carries evidence downstream after acceptance. | GSC sync tests, opportunity generator tests, `seo_opportunities` / `content_actions` records. |
+| Phase 6 | WordPress gated publish/update | Verify WordPress connect, capability readiness, create draft, stage update, approval gate, publish/update, URL verification, Results measurement. | Publisher contract tests, credential health tests, WordPress API client tests, publish failure recovery tests. |
+| Phase 7 | GA4 prioritization | Verify GA4-connected project shows engagement/conversion influence; non-GA4 project shows missing business-value signal without failing. | GA4 ingestion/storage tests using `page_performance_daily` fields. |
+| Phase 8 | Additional CMS connectors | Verify unimplemented connectors are not selectable as available destinations; implemented connectors expose capability readiness. | Connector capability tests and provider-specific integration tests. |
+
+### 16.4 Feature-level verification requirements
+
+Search data connection:
+
+- Connect CTA appears in onboarding, Home, Analysis, and Settings when missing.
+- Non-admin users see an admin handoff instead of a dead-end Settings page.
+- OAuth success, cancel, denied consent, revoked token, stale sync, and property mismatch states are visible and recoverable.
+
+Analysis recommendations:
+
+- Default view shows only decision-ready cards.
+- Each recommendation has reason, expected impact, confidence/risk, and accept/dismiss/snooze.
+- `View evidence` reveals raw supporting details only after user action.
+
+Content Plan:
+
+- Only accepted work appears by default.
+- Raw unaccepted opportunities, generated intermediates, and completed history remain hidden unless explicitly opened.
+- Accepted work retains source opportunity, evidence summary, target URL/asset, risk, and measurement window.
+
+Publish / CMS:
+
+- Publisher readiness is capability-based.
+- WordPress creates drafts before live publishing.
+- Live publish/update requires explicit user approval in MVP.
+- Provider errors show one recovery action by default.
+- Raw provider responses are hidden behind publish details.
+
+Results:
+
+- Published or updated URLs move into measurement.
+- Waiting, inconclusive, positive, and negative states are visible.
+- Long per-query/per-URL detail is collapsed by default.
+
+### 16.5 Release acceptance rule
+
+A phase is not done until the responsible implementer can provide:
+
+- passing automated checks
+- Chrome verification notes for the relevant user flow
+- provider/OAuth verification result when the feature depends on GSC, GA4, or CMS
+- known gaps or blocked external-provider issues
+- screenshots or URLs for the key accepted states
+
+## 17. Risks
 
 1. **Analysis becomes another overloaded dashboard.**
    Mitigation: keep default view to status, weekly brief, opportunity queue, evidence inspector.
@@ -949,7 +1051,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 13. **CMS provider details leak into the user workflow.**
    Mitigation: expose capability readiness and simple recovery actions by default. Hide post IDs, API responses, credential refs, and sync logs behind publish details or admin diagnostics.
 
-## 17. Product Success Metrics
+## 18. Product Success Metrics
 
 These measure whether the IA change works without promising SEO rankings:
 
@@ -962,7 +1064,7 @@ These measure whether the IA change works without promising SEO rankings:
 7. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
 8. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
 
-## 18. Product Decisions
+## 19. Product Decisions
 
 1. Sidebar label is `Analysis`.
    The page title may use `Search Intelligence` to describe the specific job, but the workflow label remains `Analysis`.
