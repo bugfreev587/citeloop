@@ -28,6 +28,7 @@ import {
 } from "../../../lib/api";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
+import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -209,7 +210,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [connections, setConnections] = useState<PublisherConnection[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [credentialDraft, setCredentialDraft] = useState("");
@@ -539,7 +543,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           </div>
         }
       />
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
         {/* Left column — Ready then Scheduled. */}

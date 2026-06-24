@@ -41,6 +41,113 @@ body {
   }
 }
 
+@keyframes toast-card-enter {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toast-progress-top {
+  0% {
+    transform: scaleX(0);
+  }
+  25%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes toast-progress-right {
+  0%,
+  25% {
+    transform: scaleY(0);
+  }
+  50%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes toast-progress-bottom {
+  0%,
+  50% {
+    transform: scaleX(0);
+  }
+  75%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes toast-progress-left {
+  0%,
+  75% {
+    transform: scaleY(0);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+.toast-card-shell {
+  animation: toast-card-enter 180ms ease-out;
+}
+
+.toast-progress-edge {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--toast-accent);
+  animation-duration: var(--toast-duration);
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.toast-progress-top,
+.toast-progress-bottom {
+  left: 0;
+  right: 0;
+  height: 2px;
+  transform: scaleX(0);
+}
+
+.toast-progress-right,
+.toast-progress-left {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: scaleY(0);
+}
+
+.toast-progress-top {
+  top: 0;
+  transform-origin: left center;
+  animation-name: toast-progress-top;
+}
+
+.toast-progress-right {
+  right: 0;
+  transform-origin: center top;
+  animation-name: toast-progress-right;
+}
+
+.toast-progress-bottom {
+  bottom: 0;
+  transform-origin: right center;
+  animation-name: toast-progress-bottom;
+}
+
+.toast-progress-left {
+  left: 0;
+  transform-origin: center bottom;
+  animation-name: toast-progress-left;
+}
+
 button,
 a,
 input,

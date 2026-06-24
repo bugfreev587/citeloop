@@ -21,6 +21,7 @@ import {
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { useApi } from "../../../lib/use-api";
+import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -388,7 +389,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
 
   const refresh = useCallback(async () => {
     setMessage(null);
@@ -844,8 +848,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           </div>
         }
       />
-
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       {mode === "analysis" && (
         <div className="space-y-5">

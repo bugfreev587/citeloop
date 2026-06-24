@@ -14,7 +14,8 @@ import {
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
+import { useToast } from "../../../components/toast-provider";
+import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TopicDraft = {
@@ -63,7 +64,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [openOpportunities, setOpenOpportunities] = useState(0);
   const [contentActions, setContentActions] = useState(0);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
@@ -358,7 +362,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     <div className="space-y-7">
       <section className="space-y-3">
         <SectionHeader title="Content Plan" eyebrow="Planned automatically from accepted analysis" />
-        {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
             <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>
