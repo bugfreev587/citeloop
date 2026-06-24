@@ -22,6 +22,7 @@ import {
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
+import { useToast } from "../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
@@ -110,7 +111,10 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
   const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [apiError, setApiError] = useState<string | null>(null);
   const [onboardingPollCount, setOnboardingPollCount] = useState(0);
 
@@ -471,7 +475,6 @@ export function Workspace({ projectId }: { projectId: string }) {
           tone="amber"
         />
       )}
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       {/* Hero + the single thing that needs you */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 md:p-6">

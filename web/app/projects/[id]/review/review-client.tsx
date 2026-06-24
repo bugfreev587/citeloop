@@ -16,7 +16,8 @@ import {
   type SEOContribution,
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
-import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
+import { useToast } from "../../../components/toast-provider";
+import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -34,7 +35,10 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [content, setContent] = useState("");
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -172,7 +176,6 @@ export function ReviewClient({ projectId }: { projectId: string }) {
           </div>
         }
       />
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       {summary.total === 0 ? (
         <EmptyState

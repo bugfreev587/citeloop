@@ -908,3 +908,45 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /Test connection/);
   assert.match(admin, /Delete key/);
 });
+
+test("temporary page feedback uses the global auto-dismissing toast system", () => {
+  const layout = read("layout.tsx");
+  const toastProvider = read("components/toast-provider.tsx");
+  const globals = read("globals.css");
+  const feedbackFiles = [
+    "admin/page.tsx",
+    "projects/project-management-client.tsx",
+    "projects/[id]/admin/admin-client.tsx",
+    "projects/[id]/workspace.tsx",
+    "projects/[id]/topics/topics-client.tsx",
+    "projects/[id]/review/review-client.tsx",
+    "projects/[id]/knowledge/knowledge-client.tsx",
+    "projects/[id]/seo/seo-client.tsx",
+    "projects/[id]/publishing/publishing-client.tsx",
+    "projects/[id]/settings/settings-client.tsx",
+  ];
+
+  assert.match(layout, /import \{ ToastProvider \} from "\.\/components\/toast-provider";/);
+  assert.match(layout, /<ToastProvider>\{children\}<\/ToastProvider>/);
+
+  assert.match(toastProvider, /export function ToastProvider/);
+  assert.match(toastProvider, /export function useToast/);
+  assert.match(toastProvider, /setTimeout/);
+  assert.match(toastProvider, /fixed right-4 top-4/);
+  assert.match(toastProvider, /role=\{toast\.tone === "red" \? "alert" : "status"\}/);
+  assert.match(toastProvider, /toast-progress-edge toast-progress-top/);
+  assert.match(toastProvider, /toast-progress-edge toast-progress-right/);
+  assert.match(toastProvider, /toast-progress-edge toast-progress-bottom/);
+  assert.match(toastProvider, /toast-progress-edge toast-progress-left/);
+
+  for (const keyframe of ["toast-progress-top", "toast-progress-right", "toast-progress-bottom", "toast-progress-left"]) {
+    assert.match(globals, new RegExp(`@keyframes ${keyframe}`));
+  }
+
+  for (const relativePath of feedbackFiles) {
+    const source = read(relativePath);
+    assert.match(source, /useToast\(\)/, `${relativePath} should publish temporary feedback through toast context`);
+    assert.doesNotMatch(source, /const \[message, setMessage\] = useState<Message>\(null\);/, `${relativePath} should not keep inline message state`);
+    assert.doesNotMatch(source, /\{message && <Notice/, `${relativePath} should not render temporary page feedback inline`);
+  }
+});

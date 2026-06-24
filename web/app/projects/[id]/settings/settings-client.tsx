@@ -16,6 +16,7 @@ import {
   ProjectConfig,
 } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
+import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -216,7 +217,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>(() => {
     if (typeof window === "undefined") return "project";
     return settingsTabFromHash(window.location.hash);
@@ -619,7 +623,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <SectionHeader title="Settings" eyebrow="Project config" />
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       <div className="overflow-x-auto border-b border-slate-200">
         <div role="tablist" aria-label="Settings sections" className="flex min-w-max gap-6">

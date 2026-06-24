@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { LLMCredentialsStatus, LLMProvider } from "../lib/api";
 import { useApi } from "../lib/use-api";
+import { useToast } from "../components/toast-provider";
 import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -45,7 +46,10 @@ function AdminPageInner() {
   const [apiKey, setAPIKey] = useState("");
   const [baseURL, setBaseURL] = useState(defaultBaseURLs.tokengate);
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [testResult, setTestResult] = useState<TestResult>(null);
 
   const refresh = useCallback(async () => {
@@ -189,7 +193,6 @@ function AdminPageInner() {
 
         <div className="space-y-6">
           <SectionHeader title="AI Provider" eyebrow="Platform LLM used for writing, QA, and analysis" />
-          {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
           <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">

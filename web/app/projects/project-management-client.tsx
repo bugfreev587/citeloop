@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, FolderKanban, Loader2, Trash2, X } from "lucide-react";
-import { Button, EmptyState, Notice, TextInput, cx } from "../components/ui";
+import { useToast } from "../components/toast-provider";
+import { Button, EmptyState, TextInput, cx } from "../components/ui";
 import type { Project } from "../lib/api";
 import { LAST_PROJECT_STORAGE_KEY } from "../lib/dashboard-routing";
 import { useApi } from "../lib/use-api";
@@ -21,12 +22,11 @@ export function ProjectManagementClient({ initialProjects }: { initialProjects: 
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
   const [confirmSlug, setConfirmSlug] = useState("");
   const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { notify } = useToast();
 
   const canDelete = Boolean(pendingDelete && confirmSlug === pendingDelete.slug && !deleting);
 
   function openDelete(project: Project) {
-    setError(null);
     setConfirmSlug("");
     setPendingDelete(project);
   }
@@ -35,13 +35,11 @@ export function ProjectManagementClient({ initialProjects }: { initialProjects: 
     if (deleting) return;
     setPendingDelete(null);
     setConfirmSlug("");
-    setError(null);
   }
 
   async function hardDeleteProject() {
     if (!pendingDelete || !canDelete) return;
     setDeleting(true);
-    setError(null);
     try {
       await api.deleteProject(pendingDelete.id);
       if (window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY) === pendingDelete.id) {
@@ -52,7 +50,7 @@ export function ProjectManagementClient({ initialProjects }: { initialProjects: 
       setConfirmSlug("");
       router.refresh();
     } catch (e: any) {
-      setError(e.message);
+      notify({ title: "Project was not deleted", detail: e.message, tone: "red" });
     } finally {
       setDeleting(false);
     }
@@ -60,8 +58,6 @@ export function ProjectManagementClient({ initialProjects }: { initialProjects: 
 
   return (
     <div className="grid gap-4">
-      {error && <Notice title="Project was not deleted" detail={error} tone="red" />}
-
       {projects.length === 0 ? (
         <EmptyState title="No projects yet" detail="Connect a product domain to create this account's first project." />
       ) : (

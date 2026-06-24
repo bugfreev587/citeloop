@@ -5,6 +5,7 @@ import { Check, ExternalLink, Loader2, Pencil, RefreshCw, Save, ShieldCheck, Wan
 import { CrawlSummary, GenerationRun, InventoryItem, ProductProfile } from "../../../lib/api";
 import { ProfileDraft, lines, profilePayloadFromAdvancedJSON, profilePayloadFromDraft } from "../../../lib/dashboard-ux-logic";
 import { useApi } from "../../../lib/use-api";
+import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -254,7 +255,10 @@ export function ContextClient({ projectId }: { projectId: string }) {
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => profileDraftFrom(null));
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<Message>(null);
+  const { notify } = useToast();
+  const setMessage = (next: Message) => {
+    if (next) notify(next);
+  };
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [voiceEditorOpen, setVoiceEditorOpen] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerMode | null>(null);
@@ -560,8 +564,6 @@ export function ContextClient({ projectId }: { projectId: string }) {
           <Notice title={contextStatus.label} detail={contextStatus.detail} tone={contextStatus.tone === "green" ? "green" : "amber"} />
         </div>
       </section>
-
-      {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
       {backgroundCrawl && (
         <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
