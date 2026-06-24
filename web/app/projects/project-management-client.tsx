@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AlertTriangle, ArrowRight, FolderKanban, Loader2, Trash2, X } from "lucide-react";
 import { Button, EmptyState, Notice, TextInput, cx } from "../components/ui";
 import type { Project } from "../lib/api";
+import { LAST_PROJECT_STORAGE_KEY } from "../lib/dashboard-routing";
 import { useApi } from "../lib/use-api";
 
 function initials(project: Project) {
@@ -43,6 +44,9 @@ export function ProjectManagementClient({ initialProjects }: { initialProjects: 
     setError(null);
     try {
       await api.deleteProject(pendingDelete.id);
+      if (window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY) === pendingDelete.id) {
+        window.localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+      }
       setProjects((current) => current.filter((project) => project.id !== pendingDelete.id));
       setPendingDelete(null);
       setConfirmSlug("");
