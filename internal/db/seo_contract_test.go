@@ -17,3 +17,13 @@ func TestUpsertSEOOpportunityCastsEvidenceForJSONOperators(t *testing.T) {
 		}
 	}
 }
+
+func TestUpsertSEOOpportunityUsesConsistentProjectIDParameterType(t *testing.T) {
+	query := strings.ToLower(upsertSEOOpportunity)
+	if strings.Contains(query, "$1::text") {
+		t.Fatal("UpsertSEOOpportunity must not type project_id as text when the insert target is uuid")
+	}
+	if !strings.Contains(query, "$1::uuid::text") {
+		t.Fatal("UpsertSEOOpportunity must derive the opportunity hash from project_id as uuid text")
+	}
+}
