@@ -522,6 +522,14 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		}
 		result.GeneratedAnomalies++
 	}
+	metricGenerated, err := s.generateSearchMetricOpportunities(ctx, projectID, run.ID, prop)
+	if err != nil {
+		return finish("error", result, err)
+	}
+	if metricGenerated > 0 {
+		result.GeneratedAnomalies += metricGenerated
+		result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("gsc_metric_opportunities:%d", metricGenerated))
+	}
 	overview, err := s.Overview(ctx, projectID)
 	if err != nil {
 		return finish("error", result, err)
@@ -542,6 +550,107 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		status = "degraded"
 	}
 	return finish(status, result, nil)
+}
+
+func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectID uuid.UUID, runID uuid.UUID, prop db.SeoProperty) (int, error) {
+	if prop.ID == uuid.Nil {
+		return 0, nil
+	}
+	queryRows, err := s.Q.ListSearchQueryOpportunityRollups(ctx, db.ListSearchQueryOpportunityRollupsParams{
+		ProjectID:  projectID,
+		PropertyID: prop.ID,
+		Limit:      30,
+	})
+	if err != nil {
+		return 0, err
+	}
+	decayRows, err := s.Q.ListPageDecayOpportunityRollups(ctx, db.ListPageDecayOpportunityRollupsParams{
+		ProjectID:  projectID,
+		PropertyID: prop.ID,
+		Limit:      20,
+	})
+	if err != nil {
+		return 0, err
+	}
+	candidates := searchMetricOpportunityCandidates(toSearchQueryRollups(queryRows), toPageDecayRollups(decayRows))
+	generated := 0
+	for _, candidate := range candidates {
+		query := strings.TrimSpace(candidate.Query)
+		var queryPtr *string
+		if query != "" {
+			queryPtr = &query
+		}
+		pageURL := strings.TrimSpace(candidate.PageURL)
+		var pageURLPtr *string
+		if pageURL != "" {
+			pageURLPtr = &pageURL
+		}
+		action := candidate.RecommendedAction
+		impact := candidate.ExpectedImpact
+		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+			ProjectID:         projectID,
+			Type:              candidate.Type,
+			Status:            "open",
+			PriorityScore:     pgutil.Numeric(candidate.PriorityScore),
+			Confidence:        pgutil.Numeric(candidate.Confidence),
+			PageUrl:           pageURLPtr,
+			NormalizedPageUrl: candidate.NormalizedPageURL,
+			Query:             queryPtr,
+			Evidence:          mustJSON(candidate.Evidence),
+			RecommendedAction: &action,
+			ExpectedImpact:    &impact,
+			Effort:            candidate.Effort,
+			RiskLevel:         candidate.RiskLevel,
+			CreatedByRunID:    uuidToPG(runID),
+		})
+		if err != nil {
+			return generated, err
+		}
+		generated++
+	}
+	return generated, nil
+}
+
+func toSearchQueryRollups(rows []db.ListSearchQueryOpportunityRollupsRow) []searchQueryRollup {
+	out := make([]searchQueryRollup, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, searchQueryRollup{
+			PageURL:           row.PageUrl,
+			NormalizedPageURL: row.NormalizedPageUrl,
+			Query:             row.Query,
+			Clicks:            pgutil.Float(row.Clicks28d),
+			Impressions:       pgutil.Float(row.Impressions28d),
+			CTR:               pgutil.Float(row.Ctr28d),
+			Position:          pgutil.Float(row.Position28d),
+			WindowStart:       dateFromPG(row.WindowStart),
+			WindowEnd:         dateFromPG(row.WindowEnd),
+		})
+	}
+	return out
+}
+
+func toPageDecayRollups(rows []db.ListPageDecayOpportunityRollupsRow) []pageDecayRollup {
+	out := make([]pageDecayRollup, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, pageDecayRollup{
+			PageURL:             row.PageUrl,
+			NormalizedPageURL:   row.NormalizedPageUrl,
+			CurrentClicks:       pgutil.Float(row.CurrentClicks28d),
+			PreviousClicks:      pgutil.Float(row.PreviousClicks28d),
+			CurrentImpressions:  pgutil.Float(row.CurrentImpressions28d),
+			PreviousImpressions: pgutil.Float(row.PreviousImpressions28d),
+			WindowStart:         dateFromPG(row.WindowStart),
+			WindowEnd:           dateFromPG(row.WindowEnd),
+		})
+	}
+	return out
+}
+
+func dateFromPG(value pgtype.Date) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time
 }
 
 type coldStartOpportunityCandidate struct {

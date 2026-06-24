@@ -446,6 +446,77 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 	return items, nil
 }
 
+const listPageDecayOpportunityRollups = `-- name: ListPageDecayOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0)::numeric as current_clicks_28d,
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_clicks_28d,
+  coalesce(sum(impressions) filter (where date >= current_date - 28), 0)::numeric as current_impressions_28d,
+  coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::numeric as previous_impressions_28d,
+  (current_date - 28)::date as window_start,
+  (current_date - 1)::date as window_end
+from page_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 56
+  and clicks is not null
+group by normalized_page_url
+having coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) >= 10
+   and coalesce(sum(clicks) filter (where date >= current_date - 28), 0) <
+     coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) * 0.7
+order by
+  coalesce(sum(clicks) filter (where date < current_date - 28 and date >= current_date - 56), 0) -
+  coalesce(sum(clicks) filter (where date >= current_date - 28), 0) desc
+limit $3
+`
+
+type ListPageDecayOpportunityRollupsParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PropertyID uuid.UUID `json:"property_id"`
+	Limit      int32     `json:"limit"`
+}
+
+type ListPageDecayOpportunityRollupsRow struct {
+	PageUrl                string         `json:"page_url"`
+	NormalizedPageUrl      string         `json:"normalized_page_url"`
+	CurrentClicks28d       pgtype.Numeric `json:"current_clicks_28d"`
+	PreviousClicks28d      pgtype.Numeric `json:"previous_clicks_28d"`
+	CurrentImpressions28d  pgtype.Numeric `json:"current_impressions_28d"`
+	PreviousImpressions28d pgtype.Numeric `json:"previous_impressions_28d"`
+	WindowStart            pgtype.Date    `json:"window_start"`
+	WindowEnd              pgtype.Date    `json:"window_end"`
+}
+
+func (q *Queries) ListPageDecayOpportunityRollups(ctx context.Context, arg ListPageDecayOpportunityRollupsParams) ([]ListPageDecayOpportunityRollupsRow, error) {
+	rows, err := q.db.Query(ctx, listPageDecayOpportunityRollups, arg.ProjectID, arg.PropertyID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPageDecayOpportunityRollupsRow
+	for rows.Next() {
+		var i ListPageDecayOpportunityRollupsRow
+		if err := rows.Scan(
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.CurrentClicks28d,
+			&i.PreviousClicks28d,
+			&i.CurrentImpressions28d,
+			&i.PreviousImpressions28d,
+			&i.WindowStart,
+			&i.WindowEnd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublishedCanonicalArticlesForSEO = `-- name: ListPublishedCanonicalArticlesForSEO :many
 select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
 where project_id = $1
@@ -700,6 +771,78 @@ func (q *Queries) ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]Seo
 			&i.Input,
 			&i.Output,
 			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSearchQueryOpportunityRollups = `-- name: ListSearchQueryOpportunityRollups :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  query,
+  coalesce(sum(clicks), 0)::numeric as clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as impressions_28d,
+  case
+    when coalesce(sum(impressions), 0) > 0 then coalesce(sum(clicks), 0) / nullif(sum(impressions), 0)
+    else 0
+  end::numeric as ctr_28d,
+  coalesce(avg(position), 0)::numeric as position_28d,
+  min(date)::date as window_start,
+  max(date)::date as window_end
+from search_performance_daily
+where project_id = $1
+  and property_id = $2
+  and date >= current_date - 28
+group by normalized_page_url, query
+having coalesce(sum(impressions), 0) >= 100
+order by impressions_28d desc
+limit $3
+`
+
+type ListSearchQueryOpportunityRollupsParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	PropertyID uuid.UUID `json:"property_id"`
+	Limit      int32     `json:"limit"`
+}
+
+type ListSearchQueryOpportunityRollupsRow struct {
+	PageUrl           string         `json:"page_url"`
+	NormalizedPageUrl string         `json:"normalized_page_url"`
+	Query             string         `json:"query"`
+	Clicks28d         pgtype.Numeric `json:"clicks_28d"`
+	Impressions28d    pgtype.Numeric `json:"impressions_28d"`
+	Ctr28d            pgtype.Numeric `json:"ctr_28d"`
+	Position28d       pgtype.Numeric `json:"position_28d"`
+	WindowStart       pgtype.Date    `json:"window_start"`
+	WindowEnd         pgtype.Date    `json:"window_end"`
+}
+
+func (q *Queries) ListSearchQueryOpportunityRollups(ctx context.Context, arg ListSearchQueryOpportunityRollupsParams) ([]ListSearchQueryOpportunityRollupsRow, error) {
+	rows, err := q.db.Query(ctx, listSearchQueryOpportunityRollups, arg.ProjectID, arg.PropertyID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSearchQueryOpportunityRollupsRow
+	for rows.Next() {
+		var i ListSearchQueryOpportunityRollupsRow
+		if err := rows.Scan(
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.Query,
+			&i.Clicks28d,
+			&i.Impressions28d,
+			&i.Ctr28d,
+			&i.Position28d,
+			&i.WindowStart,
+			&i.WindowEnd,
 		); err != nil {
 			return nil, err
 		}
@@ -1621,10 +1764,23 @@ const upsertSEOOpportunity = `-- name: UpsertSEOOpportunity :one
 insert into seo_opportunities
   (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
    article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
-   risk_level, created_by_run_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-on conflict (project_id, type, normalized_page_url, query, created_by_run_id) do update set
-  status = excluded.status,
+   risk_level, created_by_run_id, opportunity_key)
+values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+  encode(digest(
+    $1::text || '|' || $2 || '|' || coalesce($7, '') || '|' || coalesce($10, '') || '|' ||
+    coalesce($11->>'intent_type', '') || '|' ||
+    coalesce($11->>'engine', '') || '|' ||
+    coalesce($11->>'evidence_window', '') || '|' ||
+    coalesce($11->>'reason', ''),
+    'sha256'
+  ), 'hex')
+)
+on conflict (project_id, opportunity_key) where status in ('open','accepted','converted') do update set
+  status = case
+    when seo_opportunities.status in ('accepted','converted') then seo_opportunities.status
+    else excluded.status
+  end,
   priority_score = excluded.priority_score,
   confidence = excluded.confidence,
   page_url = excluded.page_url,
