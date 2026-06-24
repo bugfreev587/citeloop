@@ -146,6 +146,16 @@ export default async function Home() {
             </div>
           </aside>
         </div>
+
+        <footer className="mt-10 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 pt-5 text-sm text-slate-500">
+          <span>CiteLoop</span>
+          <Link href="/privacy" className="font-semibold text-slate-600 hover:text-slate-950">
+            Privacy
+          </Link>
+          <Link href="/terms" className="font-semibold text-slate-600 hover:text-slate-950">
+            Terms
+          </Link>
+        </footer>
       </div>
     </main>
   );
