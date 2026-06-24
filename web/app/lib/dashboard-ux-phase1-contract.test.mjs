@@ -259,7 +259,7 @@ test("results surface defaults to published outcomes with collapsed measurement 
   }
 
   assert.match(seo, /function actionMeasurementState/);
-  assert.match(seo, /const measuredActions = actions\.filter/);
+  assert.match(seo, /const measuredActions = loopActions\.filter/);
   assert.match(resultsBlock, /<details[\s\S]*Measurement details/);
   assert.match(resultsBlock, /<details[\s\S]*Advanced diagnostics/);
   assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
