@@ -62,15 +62,8 @@ func (s *Server) startGSCOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusPreconditionFailed, "google oauth is not configured")
 		return
 	}
-	var in struct {
-		RedirectURI string `json:"redirect_uri"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	redirectURI := strings.TrimSpace(in.RedirectURI)
-	if err := s.validateGSCRedirectURI(projectID, redirectURI); err != nil {
+	redirectURI, err := s.gscOAuthRedirectURI()
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -372,23 +365,15 @@ func (s *Server) gscTokenSecret() string {
 	return "citeloop-local-gsc-token"
 }
 
-func (s *Server) validateGSCRedirectURI(projectID uuid.UUID, redirectURI string) error {
-	parsed, err := url.Parse(strings.TrimSpace(redirectURI))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return errors.New("redirect_uri is invalid")
-	}
+func (s *Server) gscOAuthRedirectURI() (string, error) {
 	publicURL, err := url.Parse(strings.TrimRight(strings.TrimSpace(s.Env.PublicAppURL), "/"))
 	if err != nil || publicURL.Scheme == "" || publicURL.Host == "" {
-		return errors.New("public app url is invalid")
+		return "", errors.New("public app url is invalid")
 	}
-	if parsed.Scheme != publicURL.Scheme || parsed.Host != publicURL.Host {
-		return errors.New("redirect_uri must use the public app origin")
-	}
-	expectedPath := "/projects/" + projectID.String() + "/settings/gsc/callback"
-	if parsed.Path != expectedPath {
-		return errors.New("redirect_uri must use the project search console callback")
-	}
-	return nil
+	publicURL.Path = "/integrations/google/search-console/callback"
+	publicURL.RawQuery = ""
+	publicURL.Fragment = ""
+	return publicURL.String(), nil
 }
 
 func (s *Server) projectSiteURL(ctx context.Context, projectID uuid.UUID) string {
