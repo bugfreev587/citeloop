@@ -666,7 +666,16 @@ test("settings groups every top-level section behind a tab", () => {
   assert.doesNotMatch(settings, /activeSettingsTab === "deliveries" && \(/);
   assert.doesNotMatch(settings, /\| "subscriptions"/);
   assert.doesNotMatch(settings, /\| "deliveries"/);
-  assert.match(settings, /settings-panel-notifications[\s\S]*title="Notifications"[\s\S]*Channels[\s\S]*title="Subscriptions"[\s\S]*title="Deliveries"/);
+  const notificationsPanel = settings.slice(settings.indexOf('id="settings-panel-notifications"'));
+  assert.match(notificationsPanel, /title="Subscriptions"[\s\S]*Channels[\s\S]*Events[\s\S]*title="Deliveries"/);
+  assert.doesNotMatch(notificationsPanel, /title="Notifications"/);
+  assert.doesNotMatch(notificationsPanel, /lg:grid-cols-\[220px_1fr\]/);
+  assert.match(settings, /activeEventsChannel/);
+  assert.match(settings, /openChannelEvents/);
+  assert.match(settings, /saveChannelEvents/);
+  assert.match(settings, /busyLabel="Saving events"/);
+  assert.match(settings, />\s*Save\s*</);
+  assert.match(settings, />\s*Cancel\s*</);
   assert.doesNotMatch(settings, /Notification subscriptions/);
   assert.doesNotMatch(settings, /Notification deliveries/);
 
