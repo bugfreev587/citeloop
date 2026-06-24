@@ -950,6 +950,43 @@ When Analysis routes work downstream, it must create or update a durable action 
 2. Each connector uses the same Publisher contract and user-facing states as WordPress where possible.
 3. Connector-specific limitations are shown as unavailable capabilities, not as generic failure states.
 
+### Cross-phase end-to-end workflow
+
+The complete workflow is not accepted only because each phase passes in isolation. After all implemented phases for a release candidate are complete, CiteLoop must pass an end-to-end user journey from the perspective of a new customer.
+
+Required happy path:
+
+1. User signs up or signs in.
+2. User creates or selects a project.
+3. User enters a product domain.
+4. CiteLoop completes public discovery and shows the project-level next action.
+5. User either connects GSC through OAuth or intentionally continues in public-only mode.
+6. If GSC is connected, user selects or confirms the matching property and sees backfill or connected state.
+7. Analysis presents decision-ready opportunities, not raw signal tables.
+8. User accepts at least one opportunity and dismisses or snoozes at least one other opportunity.
+9. Accepted work appears in Content Plan with reason, evidence summary, target, and measurement window.
+10. User generates or prepares the work, reviews it, and approves or requests changes.
+11. If a CMS connector is in scope for the release, user connects WordPress or the relevant publisher, creates/stages the draft or update, approves the gated publish/update, and verifies the live URL.
+12. Results receives the published action and shows the correct waiting, inconclusive, positive, or negative measurement state.
+
+Required recovery and edge paths:
+
+1. Domain-only project without GSC still has a usable public-only Analysis path and clear Search Console setup CTA.
+2. Missing GSC property opens the setup assistant instead of a dead end.
+3. Non-admin user gets an admin handoff path for GSC and CMS connections.
+4. OAuth denied, revoked, stale, or mismatched property states are visible and recoverable.
+5. Backfill in progress does not show fake precision.
+6. Publisher disconnected or publish failed states show one recovery action by default.
+7. Completed, dismissed, diagnostic, raw evidence, and provider-detail content remains hidden unless the user explicitly opens it.
+
+End-to-end acceptance must also include a UX pass. In every first viewport, the verifier should be able to answer:
+
+```text
+What do I need to do now?
+```
+
+If a real user would need to inspect raw tables, understand provider terminology, hunt through completed automation output, or guess the next action, the release candidate fails the E2E UX check even if the underlying data and APIs work.
+
 ## 16. Verification Protocol
 
 Acceptance requires product verification, not only code review. Every implemented phase must have:
@@ -1064,6 +1101,53 @@ A phase is not done until the responsible implementer can provide:
 - known gaps or blocked external-provider issues
 - screenshots or URLs for the key accepted states
 
+The complete multi-phase release is not done until the cross-phase end-to-end workflow in Section 15 also passes.
+
+### 16.6 End-to-end verification and self-repair loop
+
+End-to-end verification is the final release gate for this PRD. It should be run after all implemented phases in the release candidate have passed their phase-level checks.
+
+The verifier should start from a clean customer perspective:
+
+1. Use a fresh or reset test account where possible.
+2. Create a fresh project or reset the prior test project state.
+3. Enter the product domain through the normal user flow.
+4. Use real deployed Chrome verification, not mocked screenshots.
+5. Complete external OAuth, CMS login, consent, or MFA manually with the user when required.
+6. Record evidence with URLs, project/domain, account role, connected property or publisher label, screenshots or notes, and pass/fail status.
+
+The E2E script must cover the happy path and the recovery paths listed in Section 15. It should verify the full chain:
+
+```text
+Signup / project -> domain -> public discovery -> GSC gate or public-only mode -> GSC OAuth/property selection/backfill -> Analysis decision -> Content Plan -> Review -> Publish/CMS -> URL verification -> Results measurement
+```
+
+Stop-and-fix rule:
+
+- If any step cannot be completed, the verifier stops and records the blocker.
+- The team fixes product behavior, copy, data state, permissions, routing, or implementation before claiming release readiness.
+- After a fix, the verifier reruns the failed step and every downstream step.
+- If the failed step may have contaminated project state, the verifier reruns the journey from a clean account or project.
+- A release cannot pass with "known issue" on the critical path unless the PRD explicitly defers that path from the release scope.
+
+UX self-repair rule:
+
+- After the functional E2E pass, the verifier reviews the experience as a customer, not as an implementer.
+- Every page must lead with the current status and next action.
+- Raw data, diagnostics, generated intermediates, old completed work, and provider details must stay hidden by default.
+- Confusing copy, missing CTAs, duplicated decisions, or overloaded default pages should be fixed and reverified before release acceptance.
+
+The final verification packet should include:
+
+- release candidate URL
+- account role used for the test
+- project/domain used for the test
+- whether GSC was connected, public-only, or missing-property
+- whether CMS publishing was connected, draft-only, or out of scope
+- evidence for Analysis, Content Plan, Review, Publish, and Results handoffs
+- recovery states tested
+- final pass/fail status and any explicitly deferred non-critical gaps
+
 ## 17. Risks
 
 1. **Analysis becomes another overloaded dashboard.**
@@ -1105,6 +1189,9 @@ A phase is not done until the responsible implementer can provide:
 13. **CMS provider details leak into the user workflow.**
    Mitigation: expose capability readiness and simple recovery actions by default. Hide post IDs, API responses, credential refs, and sync logs behind publish details or admin diagnostics.
 
+14. **Phase-level acceptance hides broken cross-phase handoffs.**
+   Mitigation: make the end-to-end user journey the final release gate, and require stop-and-fix behavior when any handoff or recovery path fails.
+
 ## 18. Product Success Metrics
 
 These measure whether the IA change works without promising SEO rankings:
@@ -1117,6 +1204,8 @@ These measure whether the IA change works without promising SEO rankings:
 6. Time from accepted action to staged CMS draft/update.
 7. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
 8. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
+9. End-to-end workflow completion: percentage of release-candidate E2E runs that complete from domain setup to Results measurement without verifier intervention beyond expected OAuth/CMS consent.
+10. Time to first measured action: median time from project creation to the first action entering Results measurement.
 
 ## 19. Product Decisions
 
