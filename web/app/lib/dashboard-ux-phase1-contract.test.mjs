@@ -612,6 +612,40 @@ test("settings exposes activity log as the secondary home for automation audit d
   assert.match(settings, /\/settings\/activity/);
 });
 
+test("settings groups every top-level section behind a tab", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const expectedTabs = [
+    "Project config",
+    "Activity Log",
+    "Search Console connection",
+    "Publisher connection",
+    "Crawl config",
+    "Notifications",
+    "Notification subscriptions",
+    "Notification deliveries",
+  ];
+
+  assert.match(settings, /type SettingsTabId =/);
+  assert.match(settings, /const settingsTabs:/);
+  assert.match(settings, /role="tablist"/);
+  assert.match(settings, /role="tab"/);
+  assert.match(settings, /aria-selected=\{activeSettingsTab === tab\.id\}/);
+  assert.match(settings, /role="tabpanel"/);
+  assert.match(settings, /activeSettingsTab === "project" && \(/);
+  assert.match(settings, /activeSettingsTab === "activity" && \(/);
+  assert.match(settings, /activeSettingsTab === "search-console" && \(/);
+  assert.match(settings, /activeSettingsTab === "publisher" && \(/);
+  assert.match(settings, /activeSettingsTab === "crawl" && \(/);
+  assert.match(settings, /activeSettingsTab === "notifications" && \(/);
+  assert.match(settings, /activeSettingsTab === "subscriptions" && \(/);
+  assert.match(settings, /activeSettingsTab === "deliveries" && \(/);
+
+  for (const tab of expectedTabs) {
+    const escapedTab = tab.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(settings, new RegExp(`title: "${escapedTab}"`));
+  }
+});
+
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 
