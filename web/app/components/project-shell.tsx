@@ -7,7 +7,6 @@ import { useEffect, useState } from "react";
 import {
   BookOpen,
   Database,
-  FolderKanban,
   Home,
   KeyRound,
   ListChecks,
@@ -69,10 +68,6 @@ function isActive(pathname: string, projectId: string, leaf: string) {
 
 function isDocsActive(pathname: string, projectId: string) {
   return pathname === "/docs" || pathname.startsWith("/docs/") || pathname.startsWith(`/projects/${projectId}/docs`);
-}
-
-function isProjectsActive(pathname: string) {
-  return pathname === "/projects";
 }
 
 export function ProjectShell({
@@ -160,16 +155,6 @@ export function ProjectShell({
             </div>
           </div>
           <Link
-            href="/projects"
-            className={cx(
-              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
-              isProjectsActive(pathname) && "bg-slate-50 font-semibold text-[#d93820]",
-            )}
-          >
-            <FolderKanban size={16} />
-            Projects
-          </Link>
-          <Link
             href="/docs"
             className={cx(
               "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
@@ -201,15 +186,21 @@ export function ProjectShell({
               Admin
             </Link>
           )}
-          <div className="flex h-[52px] w-[185px] items-center gap-3 rounded-xl border border-slate-100 bg-white px-2 shadow-sm">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
-              {projectName.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">{projectName}</div>
-              <div className="truncate text-xs text-slate-400">/{project?.slug ?? projectId}</div>
-            </div>
-            <div className="ml-auto">
+          <div className="flex h-[52px] w-[185px] items-center gap-2 rounded-xl border border-slate-100 bg-white px-2 shadow-sm">
+            <Link
+              href="/projects"
+              aria-label={`Open Projects page for ${projectName}`}
+              className="group flex min-w-0 flex-1 items-center gap-3 rounded-lg transition-colors hover:bg-slate-50"
+            >
+              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700 transition-colors group-hover:bg-slate-200">
+                {projectName.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-900 group-hover:text-[#d93820]">{projectName}</div>
+                <div className="truncate text-xs text-slate-400">/{project?.slug ?? projectId}</div>
+              </div>
+            </Link>
+            <div className="ml-auto shrink-0">
               <UserButton />
             </div>
           </div>
@@ -235,15 +226,6 @@ export function ProjectShell({
               {item.label}
             </Link>
           ))}
-          <Link
-            href="/projects"
-            className={cx(
-              "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
-              isProjectsActive(pathname) && "border-[#d93820] text-[#d93820]",
-            )}
-          >
-            Projects
-          </Link>
           {isPlatformAdmin && (
             <Link
               href={`/projects/${projectId}/admin`}

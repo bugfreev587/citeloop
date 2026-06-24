@@ -7,13 +7,15 @@ const appRoot = path.resolve(import.meta.dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath));
 
-test("project shell exposes a bottom projects management entry", () => {
+test("project shell links the footer project identity to the Projects page", () => {
   const shell = read("components/project-shell.tsx");
   const footer = shell.slice(shell.indexOf('className="mt-auto grid gap-2"'));
 
-  assert.match(footer, /href="\/projects"/);
-  assert.match(footer, />\s*Projects\s*</);
-  assert.match(footer, /FolderKanban/);
+  assert.doesNotMatch(shell, /FolderKanban/);
+  assert.doesNotMatch(shell, /function isProjectsActive/);
+  assert.doesNotMatch(footer, />\s*Projects\s*</);
+  assert.match(footer, /href="\/projects"[\s\S]*aria-label=\{`Open Projects page for \$\{projectName\}`\}/);
+  assert.match(footer, /className="[^"]*truncate text-sm font-semibold text-slate-900[^"]*">\{projectName\}/);
 });
 
 test("projects page lists, creates, opens, and hard-deletes projects", () => {
