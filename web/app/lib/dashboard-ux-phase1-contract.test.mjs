@@ -158,7 +158,17 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   assert.match(seo, /mode="analysis"/);
   assert.match(seo, /mode="results"/);
 
-  for (const copy of ["Review analysis", "Analyze opportunities", "Add to Content Plan", "What to decide", "Decision result"]) {
+  for (const copy of [
+    "Review analysis",
+    "Analyze opportunities",
+    "Search performance snapshot",
+    "Growth findings",
+    "Decision queue",
+    "Measurement snapshot",
+    "Create content task",
+    "Create refresh task",
+    "Create technical task",
+  ]) {
     assert.match(seo, new RegExp(copy));
   }
   for (const copy of ["Results", "Measurement and diagnostics", "GEO visibility"]) {
@@ -181,17 +191,23 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   assert.doesNotMatch(context, /Show fewer/);
 });
 
-test("analysis surface is action-first with search-data status and collapsed evidence", () => {
+test("analysis surface uses a compact GSC status control and keeps decisions out of large cards", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
 
   for (const copy of [
-    "Search data status",
-    "Search data not connected",
-    "Search Console connected",
+    "Search performance snapshot",
+    "Growth findings",
+    "Decision queue",
+    "Measurement snapshot",
+    "GSC Connected",
+    "GSC Not connected",
+    "Search Console details",
+    "Manage in Settings",
     "Connect Search Console",
-    "Weekly analysis brief",
-    "Opportunity queue",
-    "Recommendation",
+    "Create content task",
+    "Create refresh task",
+    "Create technical task",
+    "Watch",
     "View evidence",
     "Evidence",
     "Confidence",
@@ -200,8 +216,16 @@ test("analysis surface is action-first with search-data status and collapsed evi
     assert.match(seo, new RegExp(copy));
   }
 
+  assert.match(seo, /function GSCStatusMenu/);
+  assert.match(seo, /function actionCtaForOpportunity/);
+  assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
   assert.match(seo, /<details[\s\S]*View evidence/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(seo, /Search data status/);
+  assert.doesNotMatch(seo, /Opportunity queue/);
+  assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
+  assert.doesNotMatch(seo, /Add to Content Plan/);
+  assert.doesNotMatch(seo, /Decide which recommendations deserve content work/);
   assert.doesNotMatch(seo, /Raw GSC rows/);
   assert.doesNotMatch(seo, /Full signal table/);
 });
@@ -683,12 +707,14 @@ test("analysis page presents decisions and results page presents measurement dia
   for (const copy of [
     "Review analysis",
     "Analyze opportunities",
-    "What to decide",
-    "Decision result",
+    "Search performance snapshot",
+    "Growth findings",
+    "Decision queue",
+    "Measurement snapshot",
     "Results",
     "Measurement and diagnostics",
     "Weekly analysis brief",
-    "Add to Content Plan",
+    "Create content task",
     "Dismiss",
     "Public crawl only",
   ]) {
@@ -822,7 +848,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(visibility, /opportunityBusy/);
   assert.match(visibility, /createActionBusy/);
   assert.match(visibility, /dismissBusy/);
-  assert.match(visibility, /Adding to plan/);
+  assert.match(visibility, /Creating task/);
   assert.match(visibility, /Dismissing/);
 
   const createActionBlock = visibility.slice(visibility.indexOf("async function createAction"), visibility.indexOf("async function dismiss"));
