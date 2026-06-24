@@ -84,6 +84,53 @@ function EmptyGSCProperties() {
   );
 }
 
+function GSCSetupGuide({ siteURL }: { siteURL?: string }) {
+  const target = siteURL?.trim() || "this product domain";
+  const steps = [
+    {
+      title: "Set up Search Console property",
+      detail: `Add a Domain property for ${target}. Domain properties cover all protocols and subdomains.`,
+    },
+    {
+      title: "Verify DNS ownership",
+      detail: "Copy Google's TXT record into your DNS provider and wait for Google to confirm ownership.",
+    },
+    {
+      title: "Connect after verification",
+      detail: "Return here, connect Search Console, and select the verified property for this project.",
+    },
+  ];
+  return (
+    <div className="grid gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-sm font-bold text-amber-950">Set up Search Console property</div>
+          <p className="mt-1 max-w-2xl text-sm leading-5 text-amber-800">
+            If this domain is not in your Google account yet, verify it in Search Console first. CiteLoop can only import properties Google already shows to you.
+          </p>
+        </div>
+        <a
+          href="https://search.google.com/search-console/welcome"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900 transition-colors hover:bg-amber-100"
+        >
+          Open Search Console
+        </a>
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {steps.map((step, index) => (
+          <div key={step.title} className="min-w-0 border-t border-amber-200 pt-2 md:border-l md:border-t-0 md:pl-3 md:pt-0">
+            <div className="text-xs font-semibold uppercase text-amber-700">Step {index + 1}</div>
+            <div className="mt-1 text-sm font-bold text-amber-950">{step.title}</div>
+            <p className="mt-1 text-sm leading-5 text-amber-800">{step.detail}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
   { value: "slack_webhook", label: "Slack" },
   { value: "discord_webhook", label: "Discord" },
@@ -524,6 +571,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
           {gscConnection?.last_error && <Notice title="Search Console needs attention" detail={gscConnection.last_error} tone="red" />}
 
+          {(!gscConnection || gscConnection.status === "missing" || gscConnection.properties.length === 0) && <GSCSetupGuide siteURL={config.site_url} />}
+
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
               <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
@@ -712,7 +761,26 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </Field>
           </div>
 
+          <div className="border-t border-slate-100 pt-4">
+            <div className="text-sm font-bold text-slate-900">CMS connector roadmap</div>
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+              WordPress, Webflow, Shopify, and custom CMS connectors will start as gated drafts and move to OAuth publishing after verification is ready.
+            </p>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {["WordPress", "Webflow", "Shopify", "Custom CMS"].map((name) => (
+                <div key={name} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900">{name}</div>
+                    <div className="mt-0.5 text-xs font-semibold uppercase text-slate-400">Draft-only until OAuth connector is ready</div>
+                  </div>
+                  <Badge tone="neutral">Roadmap</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {githubPublisher?.last_error && <Notice title="Publisher health check failed" detail={githubPublisher.last_error} tone="red" />}
+
 
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={savePublisherConnection} disabled={notificationBusy === "save-publisher"}>

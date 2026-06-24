@@ -247,7 +247,18 @@ test("gsc oauth entry points are self-serve and action-first", () => {
     ["projects/[id]/seo/seo-client.tsx", ["Connect Search Console", "Search Console property", "Select property", "Backfilling Search Console", "Search data is stale", "Property mismatch"]],
     [
       "projects/[id]/settings/settings-client.tsx",
-      ["Search Console connection", "Connect Search Console", "Authorized properties", "backfilling", "stale", "mismatch"],
+      [
+        "Search Console connection",
+        "Connect Search Console",
+        "Authorized properties",
+        "Set up Search Console property",
+        "Open Search Console",
+        "Verify DNS ownership",
+        "Connect after verification",
+        "backfilling",
+        "stale",
+        "mismatch",
+      ],
     ],
     ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings"]],
   ]) {
@@ -255,6 +266,14 @@ test("gsc oauth entry points are self-serve and action-first", () => {
     for (const copy of copies) {
       assert.match(source, new RegExp(copy));
     }
+  }
+});
+
+test("publisher settings show CMS connector next steps without pretending connectors are live", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const copy of ["WordPress", "CMS connector roadmap", "Draft-only until OAuth connector is ready", "GitHub/Next.js"]) {
+    assert.match(settings, new RegExp(copy));
   }
 });
 
