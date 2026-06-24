@@ -184,6 +184,40 @@ func (q *Queries) FinishSEORun(ctx context.Context, arg FinishSEORunParams) (Seo
 	return i, err
 }
 
+const getActiveSEOOAuthToken = `-- name: GetActiveSEOOAuthToken :one
+select id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at from seo_oauth_tokens
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+`
+
+type GetActiveSEOOAuthTokenParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Provider  string    `json:"provider"`
+}
+
+func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, getActiveSEOOAuthToken, arg.ProjectID, arg.Provider)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getContentAction = `-- name: GetContentAction :one
 select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot from content_actions
 where id = $1 and project_id = $2
@@ -908,6 +942,43 @@ func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkCon
 	return i, err
 }
 
+const revokeSEOOAuthToken = `-- name: RevokeSEOOAuthToken :one
+update seo_oauth_tokens set
+  revoked_at = now(),
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type RevokeSEOOAuthTokenParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Provider  string    `json:"provider"`
+}
+
+func (q *Queries) RevokeSEOOAuthToken(ctx context.Context, arg RevokeSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, revokeSEOOAuthToken, arg.ProjectID, arg.Provider)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const sEODataDayCount = `-- name: SEODataDayCount :one
 select count(distinct date)::bigint
 from page_performance_daily
@@ -1199,6 +1270,45 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 	return i, err
 }
 
+const updateSEOOAuthSelectedProperty = `-- name: UpdateSEOOAuthSelectedProperty :one
+update seo_oauth_tokens set
+  selected_property = $3,
+  last_error = null,
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type UpdateSEOOAuthSelectedPropertyParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	Provider         string    `json:"provider"`
+	SelectedProperty *string   `json:"selected_property"`
+}
+
+func (q *Queries) UpdateSEOOAuthSelectedProperty(ctx context.Context, arg UpdateSEOOAuthSelectedPropertyParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, updateSEOOAuthSelectedProperty, arg.ProjectID, arg.Provider, arg.SelectedProperty)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateSEOOpportunityStatus = `-- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set
   status = $3,
@@ -1429,6 +1539,78 @@ func (q *Queries) UpsertSEOIntegration(ctx context.Context, arg UpsertSEOIntegra
 		&i.CredentialRef,
 		&i.LastVerifiedAt,
 		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertSEOOAuthToken = `-- name: UpsertSEOOAuthToken :one
+insert into seo_oauth_tokens
+  (project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at,
+   account_email, authorized_properties, last_error)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8::jsonb,
+  $9
+)
+on conflict (project_id, provider) do update set
+  encrypted_refresh_token = excluded.encrypted_refresh_token,
+  token_type = excluded.token_type,
+  scope = excluded.scope,
+  access_token_expires_at = excluded.access_token_expires_at,
+  account_email = excluded.account_email,
+  authorized_properties = excluded.authorized_properties,
+  last_error = excluded.last_error,
+  revoked_at = null,
+  updated_at = now()
+returning id, project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at, account_email, selected_property, authorized_properties, last_error, revoked_at, created_at, updated_at
+`
+
+type UpsertSEOOAuthTokenParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	Provider              string             `json:"provider"`
+	EncryptedRefreshToken string             `json:"encrypted_refresh_token"`
+	TokenType             string             `json:"token_type"`
+	Scope                 string             `json:"scope"`
+	AccessTokenExpiresAt  pgtype.Timestamptz `json:"access_token_expires_at"`
+	AccountEmail          *string            `json:"account_email"`
+	AuthorizedProperties  json.RawMessage    `json:"authorized_properties"`
+	LastError             *string            `json:"last_error"`
+}
+
+func (q *Queries) UpsertSEOOAuthToken(ctx context.Context, arg UpsertSEOOAuthTokenParams) (SeoOauthToken, error) {
+	row := q.db.QueryRow(ctx, upsertSEOOAuthToken,
+		arg.ProjectID,
+		arg.Provider,
+		arg.EncryptedRefreshToken,
+		arg.TokenType,
+		arg.Scope,
+		arg.AccessTokenExpiresAt,
+		arg.AccountEmail,
+		arg.AuthorizedProperties,
+		arg.LastError,
+	)
+	var i SeoOauthToken
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Provider,
+		&i.EncryptedRefreshToken,
+		&i.TokenType,
+		&i.Scope,
+		&i.AccessTokenExpiresAt,
+		&i.AccountEmail,
+		&i.SelectedProperty,
+		&i.AuthorizedProperties,
+		&i.LastError,
+		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

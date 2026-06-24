@@ -112,6 +112,48 @@ func TestAnalyticsFetchParsesLandingPageRows(t *testing.T) {
 	}
 }
 
+func TestListSearchConsoleSitesParsesAuthorizedProperties(t *testing.T) {
+	var seenMethod string
+	var seenPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenMethod = r.Method
+		seenPath = r.URL.Path
+		w.Write([]byte(`{"siteEntry":[{"siteUrl":"sc-domain:unipost.dev","permissionLevel":"siteOwner"},{"siteUrl":"https://unipost.dev/","permissionLevel":"siteFullUser"}]}`))
+	}))
+	defer srv.Close()
+
+	client := Client{HTTPClient: srv.Client(), SearchConsoleBaseURL: srv.URL + "/webmasters/v3"}
+	sites, err := client.ListSearchConsoleSites(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenMethod != http.MethodGet {
+		t.Fatalf("method = %s, want GET", seenMethod)
+	}
+	if seenPath != "/webmasters/v3/sites" {
+		t.Fatalf("path = %s", seenPath)
+	}
+	if len(sites) != 2 {
+		t.Fatalf("sites = %d, want 2", len(sites))
+	}
+	if sites[0].SiteURL != "sc-domain:unipost.dev" || sites[0].PermissionLevel != "siteOwner" {
+		t.Fatalf("site = %#v", sites[0])
+	}
+}
+
+func TestSearchConsoleOAuthConfigUsesReadonlyScope(t *testing.T) {
+	cfg := SearchConsoleOAuthConfig("client-id", "client-secret", "https://app.citeloop.test/callback")
+	if cfg.ClientID != "client-id" || cfg.ClientSecret != "client-secret" {
+		t.Fatalf("client config = %#v", cfg)
+	}
+	if cfg.RedirectURL != "https://app.citeloop.test/callback" {
+		t.Fatalf("redirect URL = %q", cfg.RedirectURL)
+	}
+	if len(cfg.Scopes) != 1 || cfg.Scopes[0] != ScopeSearchConsoleReadonly {
+		t.Fatalf("scopes = %#v", cfg.Scopes)
+	}
+}
+
 func date(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }

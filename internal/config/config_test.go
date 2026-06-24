@@ -144,6 +144,23 @@ func TestFromEnvReadsNotificationSecretKey(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsGoogleOAuthConfig(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "google-client-id")
+	t.Setenv("GOOGLE_OAUTH_CLIENT_SECRET", "google-client-secret")
+	t.Setenv("PUBLIC_APP_URL", "https://app.citeloop.test")
+
+	env := FromEnv()
+	if env.GoogleOAuthClientID != "google-client-id" {
+		t.Fatalf("GoogleOAuthClientID = %q", env.GoogleOAuthClientID)
+	}
+	if env.GoogleOAuthClientSecret != "google-client-secret" {
+		t.Fatalf("GoogleOAuthClientSecret = %q", env.GoogleOAuthClientSecret)
+	}
+	if env.PublicAppURL != "https://app.citeloop.test" {
+		t.Fatalf("PublicAppURL = %q", env.PublicAppURL)
+	}
+}
+
 func TestFromEnvReadsGEOProviderConfig(t *testing.T) {
 	t.Setenv("PERPLEXITY_API_KEY", "pplx-test")
 	t.Setenv("PERPLEXITY_BASE_URL", "")

@@ -581,6 +581,23 @@ type SeoIntegration struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SeoOauthToken struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	Provider              string             `json:"provider"`
+	EncryptedRefreshToken string             `json:"encrypted_refresh_token"`
+	TokenType             string             `json:"token_type"`
+	Scope                 string             `json:"scope"`
+	AccessTokenExpiresAt  pgtype.Timestamptz `json:"access_token_expires_at"`
+	AccountEmail          *string            `json:"account_email"`
+	SelectedProperty      *string            `json:"selected_property"`
+	AuthorizedProperties  json.RawMessage    `json:"authorized_properties"`
+	LastError             *string            `json:"last_error"`
+	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SeoObjective struct {
 	ID               uuid.UUID          `json:"id"`
 	ProjectID        uuid.UUID          `json:"project_id"`

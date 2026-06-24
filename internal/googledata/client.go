@@ -68,6 +68,11 @@ type SearchConsoleAppearanceRow struct {
 	Position         float64
 }
 
+type SearchConsoleSite struct {
+	SiteURL         string `json:"siteUrl"`
+	PermissionLevel string `json:"permissionLevel"`
+}
+
 type AnalyticsRequest struct {
 	PropertyID string
 	StartDate  time.Time
@@ -93,6 +98,18 @@ type searchAnalyticsRow struct {
 	Impressions float64  `json:"impressions"`
 	CTR         float64  `json:"ctr"`
 	Position    float64  `json:"position"`
+}
+
+type searchConsoleSitesResponse struct {
+	SiteEntry []SearchConsoleSite `json:"siteEntry"`
+}
+
+func (c Client) ListSearchConsoleSites(ctx context.Context) ([]SearchConsoleSite, error) {
+	var out searchConsoleSitesResponse
+	if err := c.getJSON(ctx, c.searchConsoleBaseURL()+"/sites", &out); err != nil {
+		return nil, err
+	}
+	return out.SiteEntry, nil
 }
 
 func (c Client) FetchSearchConsole(ctx context.Context, req SearchConsoleRequest) (SearchConsoleData, error) {
@@ -255,6 +272,30 @@ func (c Client) postJSON(ctx context.Context, endpoint string, payload any, out 
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return fmt.Errorf("google api status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return json.Unmarshal(body, out)
+}
+
+func (c Client) getJSON(ctx context.Context, endpoint string, out any) error {
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
 	response, err := httpClient.Do(request)
 	if err != nil {
 		return err

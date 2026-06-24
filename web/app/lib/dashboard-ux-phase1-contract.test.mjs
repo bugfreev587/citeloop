@@ -234,6 +234,30 @@ test("results surface defaults to published outcomes with collapsed measurement 
   assert.doesNotMatch(resultsBlock, /Opportunity queue/);
 });
 
+test("gsc oauth entry points are self-serve and action-first", () => {
+  assert.equal(exists("projects/[id]/settings/gsc/callback/page.tsx"), true, "GSC callback route should exist");
+  assert.equal(
+    exists("projects/[id]/settings/gsc/callback/gsc-callback-client.tsx"),
+    true,
+    "GSC callback client should exist",
+  );
+
+  for (const [file, copies] of [
+    ["projects/[id]/workspace.tsx", ["Connect Search Console", "first-party search data"]],
+    ["projects/[id]/seo/seo-client.tsx", ["Connect Search Console", "Search Console property", "Select property"]],
+    [
+      "projects/[id]/settings/settings-client.tsx",
+      ["Search Console connection", "Connect Search Console", "Authorized properties"],
+    ],
+    ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings"]],
+  ]) {
+    const source = read(file);
+    for (const copy of copies) {
+      assert.match(source, new RegExp(copy));
+    }
+  }
+});
+
 test("context profile editors collapse after saving", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 

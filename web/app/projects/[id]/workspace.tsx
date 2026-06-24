@@ -22,7 +22,7 @@ import {
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
-import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -109,7 +109,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
   const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
-  const [busy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [onboardingPollCount, setOnboardingPollCount] = useState(0);
@@ -326,6 +326,19 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
   ];
 
+  async function startSearchConsoleOAuth() {
+    setBusy("gsc-oauth");
+    setMessage(null);
+    try {
+      const redirectURI = new URL(`/projects/${projectId}/settings/gsc/callback`, window.location.origin).toString();
+      const result = await api.startGSCOAuth(projectId, { redirect_uri: redirectURI });
+      window.location.assign(result.authorization_url);
+    } catch (e: any) {
+      setMessage({ tone: "red", title: "Could not connect Search Console", detail: e.message });
+      setBusy(null);
+    }
+  }
+
   // Pipeline stages — same honest per-stage status logic, rendered as a compact stepper.
   const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string; highlight?: boolean }> = [
     {
@@ -495,6 +508,23 @@ export function Workspace({ projectId }: { projectId: string }) {
           </a>
         </div>
       </section>
+
+      {!searchDataConnected && (
+        <section className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <Badge tone="amber">Search data</Badge>
+            <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">Connect Search Console</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+              Add first-party search data so CiteLoop can prioritize analysis with query, CTR, position, and decay signals.
+            </p>
+          </div>
+          <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={!!busy}>
+            <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+              Connect Search Console
+            </ButtonProgress>
+          </Button>
+        </section>
+      )}
 
       {/* Context build progress — only while onboarding is running */}
       {contextBuild.active && (

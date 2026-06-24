@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, Bell, GitBranch, Plus, RefreshCw, RotateCcw, Save, Send, Trash2 } from "lucide-react";
+import { Activity, Bell, CheckCircle2, GitBranch, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
 import {
   defaultProjectConfig,
+  GSCConnection,
   GitHubNextJSPublisherInput,
   NotificationChannel,
   NotificationChannelKind,
@@ -59,6 +60,27 @@ function friendlyError(raw: unknown) {
   return message || "Something went wrong. Please try again.";
 }
 
+function gscTone(status?: string): "green" | "amber" | "red" | "neutral" {
+  if (status === "connected") return "green";
+  if (["error", "expired", "revoked"].includes(status ?? "")) return "red";
+  if (status === "property_selection_required" || status === "missing") return "amber";
+  return "neutral";
+}
+
+function gscStatusLabel(status?: string) {
+  if (status === "property_selection_required") return "select property";
+  return status ?? "missing";
+}
+
+function EmptyGSCProperties() {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-4 text-sm">
+      <div className="font-semibold text-slate-800">No authorized properties yet</div>
+      <div className="mt-1 text-slate-500">Connect Search Console, then choose the property that matches this domain.</div>
+    </div>
+  );
+}
+
 const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
   { value: "slack_webhook", label: "Slack" },
   { value: "discord_webhook", label: "Discord" },
@@ -101,6 +123,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
+  const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
@@ -112,6 +135,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     url: "",
   });
   const [busy, setBusy] = useState(false);
+  const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
@@ -152,6 +176,19 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refreshPublisherConnections();
   }, [refreshPublisherConnections]);
+
+  const refreshGSCConnection = useCallback(async () => {
+    try {
+      const connection = await api.getGSCConnection(projectId);
+      setGSCConnection(connection);
+    } catch (e: any) {
+      setMessage({ title: "Search Console connection unavailable", detail: e.message, tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshGSCConnection();
+  }, [refreshGSCConnection]);
 
   const refreshNotifications = useCallback(async () => {
     try {
@@ -329,6 +366,48 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function startSearchConsoleOAuth() {
+    setGSCBusy("connect");
+    setMessage(null);
+    try {
+      const redirectURI = new URL(`/projects/${projectId}/settings/gsc/callback`, window.location.origin).toString();
+      const result = await api.startGSCOAuth(projectId, { redirect_uri: redirectURI });
+      window.location.assign(result.authorization_url);
+    } catch (e: any) {
+      setMessage({ title: "Search Console connect failed", detail: friendlyError(e.message), tone: "red" });
+      setGSCBusy(null);
+    }
+  }
+
+  async function selectGSCProperty(siteURL: string) {
+    setGSCBusy(`select-${siteURL}`);
+    setMessage(null);
+    try {
+      const connection = await api.selectGSCProperty(projectId, { site_url: siteURL });
+      setGSCConnection(connection);
+      setMessage({ title: "Search Console property selected", detail: siteURL, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Property selection failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setGSCBusy(null);
+    }
+  }
+
+  async function revokeGSCConnection() {
+    if (!window.confirm("Disconnect Search Console? CiteLoop will keep working, but analysis will lose first-party search data.")) return;
+    setGSCBusy("revoke");
+    setMessage(null);
+    try {
+      const connection = await api.revokeGSCConnection(projectId);
+      setGSCConnection(connection);
+      setMessage({ title: "Search Console disconnected", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Search Console disconnect failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setGSCBusy(null);
+    }
+  }
+
   async function testPublisherConnection(connectionID: string) {
     setNotificationBusy(`test-publisher-${connectionID}`);
     setMessage(null);
@@ -402,6 +481,99 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           >
             Open Activity Log
           </Link>
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="Search Console connection"
+          eyebrow="Analysis data"
+          action={
+            <Button size="sm" onClick={refreshGSCConnection} disabled={Boolean(gscBusy)}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          }
+        />
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <Search size={18} />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-slate-900">Connect Search Console for first-party search data.</div>
+                <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+                  CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Analysis and Results.
+                </p>
+              </div>
+            </div>
+            <Badge tone={gscTone(gscConnection?.status)}>{gscStatusLabel(gscConnection?.status)}</Badge>
+          </div>
+
+          {gscConnection && !gscConnection.configured && (
+            <Notice
+              title="Google OAuth is not configured"
+              detail="Add GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and PUBLIC_APP_URL before customers can connect Search Console."
+              tone="amber"
+            />
+          )}
+
+          {gscConnection?.last_error && <Notice title="Search Console needs attention" detail={gscConnection.last_error} tone="red" />}
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+              <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                {gscConnection?.status === "connected" ? "Reconnect Search Console" : "Connect Search Console"}
+              </ButtonProgress>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={revokeGSCConnection}
+              disabled={!gscConnection || gscConnection.status === "missing" || gscConnection.status === "revoked" || Boolean(gscBusy)}
+            >
+              <ButtonProgress busy={gscBusy === "revoke"} busyLabel="Disconnecting" idleIcon={<Trash2 size={16} />}>
+                Disconnect
+              </ButtonProgress>
+            </Button>
+          </div>
+
+          <div className="grid gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-bold text-slate-900">Authorized properties</div>
+                <p className="mt-1 text-sm leading-5 text-slate-500">Select property that matches this project domain.</p>
+              </div>
+              {gscConnection?.recommended_property && <Badge tone="green">Recommended: {gscConnection.recommended_property}</Badge>}
+            </div>
+
+            {gscConnection && gscConnection.properties.length > 0 ? (
+              <div className="grid gap-2">
+                {gscConnection.properties.map((property) => {
+                  const selected = gscConnection.selected_property === property.site_url;
+                  return (
+                    <div key={property.site_url} className="flex flex-col gap-2 rounded-lg bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-semibold text-slate-900">{property.site_url}</span>
+                          {property.recommended && <Badge tone="green">Recommended</Badge>}
+                          {selected && <Badge tone="blue">Selected</Badge>}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-slate-400">{property.permission_level || "permission available"}</div>
+                      </div>
+                      <Button size="sm" variant={selected ? "ghost" : "outline"} onClick={() => selectGSCProperty(property.site_url)} disabled={selected || Boolean(gscBusy)}>
+                        <ButtonProgress busy={gscBusy === `select-${property.site_url}`} busyLabel="Selecting" idleIcon={<CheckCircle2 size={14} />}>
+                          Select property
+                        </ButtonProgress>
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyGSCProperties />
+            )}
+          </div>
         </div>
       </section>
 

@@ -34,6 +34,58 @@ select * from seo_integrations
 where project_id = $1
 order by provider asc;
 
+-- name: UpsertSEOOAuthToken :one
+insert into seo_oauth_tokens
+  (project_id, provider, encrypted_refresh_token, token_type, scope, access_token_expires_at,
+   account_email, authorized_properties, last_error)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(provider),
+  sqlc.arg(encrypted_refresh_token),
+  sqlc.arg(token_type),
+  sqlc.arg(scope),
+  sqlc.narg(access_token_expires_at),
+  sqlc.narg(account_email),
+  sqlc.arg(authorized_properties)::jsonb,
+  sqlc.narg(last_error)
+)
+on conflict (project_id, provider) do update set
+  encrypted_refresh_token = excluded.encrypted_refresh_token,
+  token_type = excluded.token_type,
+  scope = excluded.scope,
+  access_token_expires_at = excluded.access_token_expires_at,
+  account_email = excluded.account_email,
+  authorized_properties = excluded.authorized_properties,
+  last_error = excluded.last_error,
+  revoked_at = null,
+  updated_at = now()
+returning *;
+
+-- name: GetActiveSEOOAuthToken :one
+select * from seo_oauth_tokens
+where project_id = $1
+  and provider = $2
+  and revoked_at is null;
+
+-- name: UpdateSEOOAuthSelectedProperty :one
+update seo_oauth_tokens set
+  selected_property = $3,
+  last_error = null,
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning *;
+
+-- name: RevokeSEOOAuthToken :one
+update seo_oauth_tokens set
+  revoked_at = now(),
+  updated_at = now()
+where project_id = $1
+  and provider = $2
+  and revoked_at is null
+returning *;
+
 -- name: InsertSEORun :one
 insert into seo_runs
   (project_id, agent, status, started_at, finished_at, cost_usd, input, output, error)

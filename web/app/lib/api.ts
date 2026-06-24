@@ -215,7 +215,7 @@ export type SEOIntegration = {
   id: string;
   project_id: string;
   provider: string;
-  status: "missing" | "connected" | "expired" | "error";
+  status: "missing" | "connected" | "property_selection_required" | "expired" | "error" | "revoked" | string;
   credential_ref?: string | null;
   last_verified_at?: any;
   last_error?: string | null;
@@ -318,6 +318,22 @@ export type SEOBrief = {
   geo_blockers: string[];
   geo_opportunities: SEOOpportunity[];
   measurement_updates: string[];
+};
+
+export type GSCProperty = {
+  site_url: string;
+  permission_level: string;
+  recommended?: boolean;
+};
+
+export type GSCConnection = {
+  configured: boolean;
+  status: "missing" | "connected" | "property_selection_required" | "expired" | "error" | "revoked" | string;
+  selected_property?: string | null;
+  recommended_property?: string | null;
+  properties: GSCProperty[];
+  account_email?: string | null;
+  last_error?: string | null;
 };
 
 export type SEOListOptions = {
@@ -752,6 +768,23 @@ function normalizeSEOBrief(raw: any): SEOBrief {
     geo_blockers: arrayFrom<string>(data.geo_blockers).map(String),
     geo_opportunities: arrayFrom<SEOOpportunity>(data.geo_opportunities),
     measurement_updates: arrayFrom<string>(data.measurement_updates).map(String),
+  };
+}
+
+function normalizeGSCConnection(raw: any): GSCConnection {
+  const data = raw ?? {};
+  return {
+    configured: Boolean(data.configured),
+    status: data.status ?? "missing",
+    selected_property: data.selected_property ?? null,
+    recommended_property: data.recommended_property ?? null,
+    properties: arrayFrom(data.properties).map((property: any) => ({
+      site_url: property?.site_url ?? "",
+      permission_level: property?.permission_level ?? "",
+      recommended: Boolean(property?.recommended),
+    })),
+    account_email: data.account_email ?? null,
+    last_error: data.last_error ?? null,
   };
 }
 
@@ -1309,6 +1342,37 @@ export function createApi(auth?: AuthOptions) {
     },
   ) => {
     return req<any>(`/projects/${id}/seo/settings`, { method: "PUT", body: JSON.stringify(body) }, auth);
+  },
+  getGSCConnection: async (id: string): Promise<GSCConnection> => {
+    const raw = await req<any>(`/projects/${id}/seo/gsc/connection`, undefined, auth);
+    return normalizeGSCConnection(raw);
+  },
+  startGSCOAuth: async (id: string, body: { redirect_uri: string }): Promise<{ authorization_url: string }> => {
+    return req<{ authorization_url: string }>(
+      `/projects/${id}/seo/gsc/oauth/start`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  completeGSCOAuth: async (id: string, body: { code: string; state: string }): Promise<GSCConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/seo/gsc/oauth/complete`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+    return normalizeGSCConnection(raw);
+  },
+  selectGSCProperty: async (id: string, body: { site_url: string }): Promise<GSCConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/seo/gsc/property`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+    return normalizeGSCConnection(raw);
+  },
+  revokeGSCConnection: async (id: string): Promise<GSCConnection> => {
+    const raw = await req<any>(`/projects/${id}/seo/gsc/revoke`, { method: "POST" }, auth);
+    return normalizeGSCConnection(raw);
   },
   getSEOBrief: async (id: string): Promise<SEOBrief> => {
     const raw = await req<any>(`/projects/${id}/seo/briefs/latest`, undefined, auth);

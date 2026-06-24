@@ -346,6 +346,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }
 
+  async function startSearchConsoleOAuth() {
+    setBusy("gsc-oauth");
+    setMessage(null);
+    try {
+      const redirectURI = new URL(`/projects/${projectId}/settings/gsc/callback`, window.location.origin).toString();
+      const result = await api.startGSCOAuth(projectId, { redirect_uri: redirectURI });
+      window.location.assign(result.authorization_url);
+    } catch (e: any) {
+      setMessage({ title: "Could not connect Search Console", detail: e.message, tone: "red" });
+      setBusy(null);
+    }
+  }
+
   async function saveSettings() {
     setBusy("settings");
     setMessage(null);
@@ -679,15 +692,23 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <div className="flex flex-wrap items-center gap-2 md:justify-end">
                   <Badge tone={analysisStatus.tone}>{analysisStatus.label}</Badge>
                   {analysisStatus.action && (
-                    <a
-                      href={`/projects/${projectId}/settings`}
-                      className="inline-flex min-h-9 items-center rounded-md border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98]"
-                    >
-                      {analysisStatus.action}
-                    </a>
+                    <Button size="sm" variant="outline" onClick={startSearchConsoleOAuth} disabled={!!busy}>
+                      <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Settings size={14} />}>
+                        {analysisStatus.action}
+                      </ButtonProgress>
+                    </Button>
                   )}
                 </div>
               </div>
+              {analysisStatus.action && (
+                <div className="mt-4 grid gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center">
+                  <div>
+                    <div className="font-bold text-slate-800">Search Console property</div>
+                    <p className="mt-1 leading-5 text-slate-500">After Google authorization, select the property that matches this project domain.</p>
+                  </div>
+                  <Badge tone="amber">Select property</Badge>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-4">
