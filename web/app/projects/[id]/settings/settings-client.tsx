@@ -60,6 +60,11 @@ function friendlyError(raw: unknown) {
   return message || "Something went wrong. Please try again.";
 }
 
+function isProjectScopedMissing(raw: unknown) {
+  const lower = String(raw ?? "").toLowerCase();
+  return lower.includes("404") && lower.includes("project not found");
+}
+
 function gscTone(status?: string): "green" | "amber" | "red" | "neutral" {
   if (status === "connected") return "green";
   if (["error", "expired", "revoked", "stale", "mismatch"].includes(status ?? "")) return "red";
@@ -219,7 +224,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         });
       }
     } catch (e: any) {
-      setMessage({ title: "Publisher connections unavailable", detail: e.message, tone: "amber" });
+      if (isProjectScopedMissing(e.message)) {
+        setPublisherConnections([]);
+        return;
+      }
+      setMessage({ title: "Publisher connections unavailable", detail: friendlyError(e.message), tone: "amber" });
     }
   }, [api, projectId]);
 
