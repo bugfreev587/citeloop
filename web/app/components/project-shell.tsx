@@ -77,12 +77,10 @@ function isProjectsActive(pathname: string) {
 export function ProjectShell({
   project,
   projectId,
-  canAccessSettings = true,
   children,
 }: {
   project: Project | null;
   projectId: string;
-  canAccessSettings?: boolean;
   children: React.ReactNode;
 }) {
   const api = useApi();
@@ -179,18 +177,16 @@ export function ProjectShell({
             <BookOpen size={16} />
             Docs
           </Link>
-          {canAccessSettings && (
-            <Link
-              href={`/projects/${projectId}/settings`}
-              className={cx(
-                "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
-                isActive(pathname, projectId, "settings") && "bg-slate-50 font-semibold text-[#d93820]",
-              )}
-            >
-              <Settings2 size={16} />
-              Settings
-            </Link>
-          )}
+          <Link
+            href={`/projects/${projectId}/settings`}
+            className={cx(
+              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+              isActive(pathname, projectId, "settings") && "bg-slate-50 font-semibold text-[#d93820]",
+            )}
+          >
+            <Settings2 size={16} />
+            Settings
+          </Link>
           {isPlatformAdmin && (
             <Link
               href={`/projects/${projectId}/admin`}
@@ -266,17 +262,15 @@ export function ProjectShell({
           >
             Docs
           </Link>
-          {canAccessSettings && (
-            <Link
-              href={`/projects/${projectId}/settings`}
-              className={cx(
-                "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
-                isActive(pathname, projectId, "settings") && "border-[#d93820] text-[#d93820]",
-              )}
-            >
-              Settings
-            </Link>
-          )}
+          <Link
+            href={`/projects/${projectId}/settings`}
+            className={cx(
+              "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
+              isActive(pathname, projectId, "settings") && "border-[#d93820] text-[#d93820]",
+            )}
+          >
+            Settings
+          </Link>
         </div>
       </div>
 

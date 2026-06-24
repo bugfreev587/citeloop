@@ -98,16 +98,20 @@ test("project shell uses the review-width canvas for every project page", () => 
   assert.doesNotMatch(shell, /max-w-\[960px\]/);
 });
 
-test("internal nav entries are hidden when the user cannot access settings, avoiding a 404 dead-door", () => {
+test("settings is visible to project users while admin remains separate", () => {
   const shell = read("components/project-shell.tsx");
-  // Shell must accept and apply a canAccessSettings gate so non-admin users do not see internal entries that 404.
-  assert.match(shell, /canAccessSettings/);
-  assert.match(shell, /canAccessSettings && \(/);
+  assert.doesNotMatch(shell, /canAccessSettings/);
+  assert.match(shell, /href=\{`\/projects\/\$\{projectId\}\/settings`\}/);
+  assert.match(shell, /isPlatformAdmin && \(/);
   assert.match(shell, /visibleNav\.map/);
 
   const layout = read("projects/[id]/layout.tsx");
-  assert.match(layout, /canUseInternalTools/);
-  assert.match(layout, /canAccessSettings=\{canAccessSettings\}/);
+  assert.doesNotMatch(layout, /canUseInternalTools/);
+  assert.doesNotMatch(layout, /canAccessSettings=/);
+
+  const settingsPage = read("projects/[id]/settings/page.tsx");
+  assert.doesNotMatch(settingsPage, /canUseInternalTools/);
+  assert.doesNotMatch(settingsPage, /notFound\(\)/);
 });
 
 test("context and home surface a background-crawl completion signal instead of stranding the user", () => {
