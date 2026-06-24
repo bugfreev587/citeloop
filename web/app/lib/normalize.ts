@@ -111,7 +111,21 @@ function parseJSONValue(value: any, fallback: any) {
   try {
     return JSON.parse(value);
   } catch {
-    return fallback;
+    const decoded = parseBase64JSONValue(value);
+    return decoded ?? fallback;
+  }
+}
+
+function parseBase64JSONValue(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) return null;
+  try {
+    const decoded = atob(trimmed);
+    const json = decoded.trim();
+    if (!json.startsWith("{") && !json.startsWith("[")) return null;
+    return JSON.parse(json);
+  } catch {
+    return null;
   }
 }
 

@@ -385,3 +385,50 @@ test("contextBuildTracks reports parallel onboarding work from observed outputs"
   assert.equal(ready.active, false);
   assert.equal(ready.tracks.every((track) => track.state === "done"), true);
 });
+
+test("contextBuildTracks completes evidence when crawl summary reports finished inventory with skips", async () => {
+  const { contextBuildTracks } = await loadDashboardUXLogicModule();
+
+  const build = contextBuildTracks({
+    hasProfile: true,
+    sourcePageCount: 20,
+    evidencePageCount: 19,
+    evidenceCount: 231,
+    pollCount: 1,
+    pollLimit: 18,
+    runs: [
+      {
+        input: { step: "crawl_summary" },
+        output: {
+          crawl_summary: {
+            fetched_count: 20,
+            inventory_count: 19,
+            errors: null,
+          },
+        },
+        status: "ok",
+      },
+    ],
+  });
+
+  assert.equal(build.active, false);
+  assert.equal(build.tracks[2].state, "done");
+  assert.equal(build.tracks[2].progress, 100);
+  assert.match(build.tracks[2].detail, /19 source pages/);
+});
+
+test("contextInventoryProgress ignores generated empty evidence rows during onboarding", async () => {
+  const { contextInventoryProgress } = await loadDashboardUXLogicModule();
+
+  const stats = contextInventoryProgress([
+    { source: "existing", evidence_snippets: ["Existing source evidence"] },
+    { source: "existing", evidence_snippets: ["More source evidence"] },
+    { source: "generated", evidence_snippets: [] },
+  ]);
+
+  assert.deepEqual(stats, {
+    sourcePageCount: 2,
+    evidencePageCount: 2,
+    evidenceCount: 2,
+  });
+});
