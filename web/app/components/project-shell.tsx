@@ -18,6 +18,7 @@ import {
   Target,
 } from "lucide-react";
 import { Project } from "../lib/api";
+import { ProjectVisitRecorder } from "../project-visit-recorder";
 import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
 
@@ -71,7 +72,7 @@ function isDocsActive(pathname: string, projectId: string) {
 }
 
 function isProjectsActive(pathname: string) {
-  return pathname === "/";
+  return pathname === "/projects";
 }
 
 export function ProjectShell({
@@ -110,6 +111,7 @@ export function ProjectShell({
 
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950">
+      <ProjectVisitRecorder projectId={projectId} />
       <aside className="fixed left-0 top-0 z-20 hidden h-[100dvh] w-[210px] flex-col border-r border-gray-200 bg-white px-3 py-4 md:flex">
         <Link href="/" className="mb-4 flex h-9 items-center gap-2 px-2 text-sm font-bold text-slate-900">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-950 text-xs text-white">CL</span>
@@ -158,7 +160,7 @@ export function ProjectShell({
             </div>
           </div>
           <Link
-            href="/"
+            href="/projects"
             className={cx(
               "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
               isProjectsActive(pathname) && "bg-slate-50 font-semibold text-[#d93820]",
@@ -234,7 +236,7 @@ export function ProjectShell({
             </Link>
           ))}
           <Link
-            href="/"
+            href="/projects"
             className={cx(
               "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
               isProjectsActive(pathname) && "border-[#d93820] text-[#d93820]",

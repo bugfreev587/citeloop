@@ -45,13 +45,13 @@ test("global docs route exists and explains the CiteLoop loop with Phase 1 IA la
   }
 });
 
-test("root page exposes docs before a zero-project user creates a project", () => {
+test("root page is a landing page before a zero-project user creates a project", () => {
   const home = read("page.tsx");
 
-  assert.match(home, /href="\/docs"/);
-  assert.match(home, /Read the docs/);
-  assert.match(home, /CiteLoop control center/);
-  assert.match(home, /status, action, and timeline/);
+  assert.match(home, /The content engine that already knows your site\./);
+  assert.match(home, /From signal to shipped content/);
+  assert.match(home, /JoinWithGoogleButton/);
+  assert.doesNotMatch(home, />\s*Docs\s*</);
   assert.doesNotMatch(home, /CiteLoop service console/);
   assert.doesNotMatch(home, /onboarding workflow/);
 });
