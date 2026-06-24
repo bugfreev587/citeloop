@@ -1,0 +1,70 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { join } from "node:path";
+
+const root = join(process.cwd(), "app");
+const read = (path) => readFileSync(join(root, path), "utf8");
+
+test("web API exposes visibility summary and lifecycle contract", () => {
+  const api = read("lib/api.ts");
+
+  for (const marker of [
+    "export type VisibilityLifecycleStage",
+    "export type VisibilityLifecycleCounts",
+    "export type VisibilityActionInLoop",
+    "export type VisibilitySummary",
+    "getVisibilitySummary",
+    "`/projects/${id}/seo/visibility/summary`",
+    "lifecycle_counts",
+    "actions_in_loop",
+    "top_measurement_updates",
+    "diagnostics_health",
+  ]) {
+    assert.match(api, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("shared visibility lifecycle helper derives PRD presentation stages", () => {
+  const lifecycle = read("lib/visibility-lifecycle.ts");
+
+  for (const marker of [
+    "export function deriveVisibilityLifecycleStage",
+    "export function visibilityLifecycleCounts",
+    "detected",
+    "added_to_plan",
+    "planned",
+    "drafting",
+    "ready_for_review",
+    "approved",
+    "published_or_applied",
+    "measuring",
+    "learned",
+    "blocked",
+    "topic_status",
+    "draft_article_status",
+    "outcome_summary",
+  ]) {
+    assert.match(lifecycle, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("analysis page renders loop in motion from lifecycle summary", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+
+  for (const marker of [
+    "getVisibilitySummary",
+    "visibilitySummary",
+    "Loop in motion",
+    "lifecycle_counts",
+    "added_to_plan",
+    "ready_for_review",
+    "published_or_applied",
+    "View measurement",
+    "deriveVisibilityLifecycleStage",
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(seo, /active tasks<\/Badge>/);
+});

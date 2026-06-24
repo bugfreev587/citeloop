@@ -446,6 +446,81 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 	return items, nil
 }
 
+const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions :many
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot from content_actions ca
+where ca.project_id = $1
+  and ca.status = 'measuring'
+  and (
+    ca.published_at is null
+    or ca.measurement_window = '{}'::jsonb
+    or exists (
+      select 1
+      from jsonb_array_elements(coalesce(ca.measurement_window->'checkpoints', '[]'::jsonb)) checkpoint
+      where coalesce(checkpoint->>'status', 'scheduled') = 'scheduled'
+        and ca.published_at + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= $2::timestamptz
+    )
+  )
+order by ca.published_at asc nulls first, ca.updated_at asc
+limit $3
+for update of ca skip locked
+`
+
+type ListDueMeasuringContentActionsParams struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	NowAt     pgtype.Timestamptz `json:"now_at"`
+	LimitRows int32              `json:"limit_rows"`
+}
+
+func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDueMeasuringContentActionsParams) ([]ContentAction, error) {
+	rows, err := q.db.Query(ctx, listDueMeasuringContentActions, arg.ProjectID, arg.NowAt, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContentAction
+	for rows.Next() {
+		var i ContentAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.ActionType,
+			&i.Status,
+			&i.TargetArticleID,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.TargetContentHashBefore,
+			&i.TargetContentHashAfter,
+			&i.DraftArticleID,
+			&i.BaselineWindow,
+			&i.MeasurementWindow,
+			&i.PublishedAt,
+			&i.OutcomeSummary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AssetType,
+			&i.TargetSurfaceID,
+			&i.RiskReasons,
+			&i.EvidenceSnapshot,
+			&i.InputSnapshot,
+			&i.OutputSnapshot,
+			&i.DiffSnapshot,
+			&i.ReviewRequired,
+			&i.ApprovedBy,
+			&i.ApprovedAt,
+			&i.VerifiedAt,
+			&i.VerificationSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPageDecayOpportunityRollups = `-- name: ListPageDecayOpportunityRollups :many
 select
   max(page_url)::text as page_url,
@@ -921,6 +996,166 @@ func (q *Queries) ListUnplannedContentActions(ctx context.Context, arg ListUnpla
 	return items, nil
 }
 
+const listVisibilityActionRows = `-- name: ListVisibilityActionRows :many
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.status, '')::text as opportunity_status,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.query as opportunity_query,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  coalesce(so.risk_level, '')::text as opportunity_risk_level,
+  so.priority_score as opportunity_priority_score,
+  t.id as topic_id,
+  t.status as topic_status,
+  t.title as topic_title,
+  a.id as draft_article_joined_id,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.project_id = $1
+order by ca.updated_at desc, ca.created_at desc
+limit $2
+`
+
+type ListVisibilityActionRowsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Limit     int32     `json:"limit"`
+}
+
+type ListVisibilityActionRowsRow struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	OpportunityID                uuid.UUID          `json:"opportunity_id"`
+	ActionType                   string             `json:"action_type"`
+	Status                       string             `json:"status"`
+	TargetArticleID              pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                    *string            `json:"target_url"`
+	NormalizedTargetUrl          *string            `json:"normalized_target_url"`
+	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow               json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	AssetType                    *string            `json:"asset_type"`
+	RiskReasons                  json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot             json.RawMessage    `json:"evidence_snapshot"`
+	OutputSnapshot               json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot                 json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired               bool               `json:"review_required"`
+	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	OpportunityStatus            string             `json:"opportunity_status"`
+	OpportunityType              string             `json:"opportunity_type"`
+	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
+	OpportunityNormalizedPageUrl *string            `json:"opportunity_normalized_page_url"`
+	OpportunityQuery             *string            `json:"opportunity_query"`
+	OpportunityRecommendedAction *string            `json:"opportunity_recommended_action"`
+	OpportunityExpectedImpact    *string            `json:"opportunity_expected_impact"`
+	OpportunityRiskLevel         string             `json:"opportunity_risk_level"`
+	OpportunityPriorityScore     pgtype.Numeric     `json:"opportunity_priority_score"`
+	TopicID                      pgtype.UUID        `json:"topic_id"`
+	TopicStatus                  *string            `json:"topic_status"`
+	TopicTitle                   *string            `json:"topic_title"`
+	DraftArticleJoinedID         pgtype.UUID        `json:"draft_article_joined_id"`
+	DraftArticleStatus           *string            `json:"draft_article_status"`
+	DraftArticleCanonicalUrl     *string            `json:"draft_article_canonical_url"`
+}
+
+func (q *Queries) ListVisibilityActionRows(ctx context.Context, arg ListVisibilityActionRowsParams) ([]ListVisibilityActionRowsRow, error) {
+	rows, err := q.db.Query(ctx, listVisibilityActionRows, arg.ProjectID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVisibilityActionRowsRow
+	for rows.Next() {
+		var i ListVisibilityActionRowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.ActionType,
+			&i.Status,
+			&i.TargetArticleID,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.DraftArticleID,
+			&i.BaselineWindow,
+			&i.MeasurementWindow,
+			&i.PublishedAt,
+			&i.OutcomeSummary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AssetType,
+			&i.RiskReasons,
+			&i.EvidenceSnapshot,
+			&i.OutputSnapshot,
+			&i.DiffSnapshot,
+			&i.ReviewRequired,
+			&i.VerifiedAt,
+			&i.VerificationSnapshot,
+			&i.OpportunityStatus,
+			&i.OpportunityType,
+			&i.OpportunityPageUrl,
+			&i.OpportunityNormalizedPageUrl,
+			&i.OpportunityQuery,
+			&i.OpportunityRecommendedAction,
+			&i.OpportunityExpectedImpact,
+			&i.OpportunityRiskLevel,
+			&i.OpportunityPriorityScore,
+			&i.TopicID,
+			&i.TopicStatus,
+			&i.TopicTitle,
+			&i.DraftArticleJoinedID,
+			&i.DraftArticleStatus,
+			&i.DraftArticleCanonicalUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markContentActionDraftReady = `-- name: MarkContentActionDraftReady :one
 update content_actions set
   status = 'ready_for_review',
@@ -1324,6 +1559,67 @@ func (q *Queries) UpdateContentActionExecutionMetadata(ctx context.Context, arg 
 		arg.ApprovedAt,
 		arg.VerifiedAt,
 		arg.VerificationSnapshot,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+	)
+	return i, err
+}
+
+const updateContentActionOutcomeSummary = `-- name: UpdateContentActionOutcomeSummary :one
+update content_actions set
+  status = $1::text,
+  outcome_summary = $2::jsonb,
+  measurement_window = $3::jsonb,
+  updated_at = now()
+where id = $4 and project_id = $5
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+`
+
+type UpdateContentActionOutcomeSummaryParams struct {
+	Status            string          `json:"status"`
+	OutcomeSummary    json.RawMessage `json:"outcome_summary"`
+	MeasurementWindow json.RawMessage `json:"measurement_window"`
+	ID                uuid.UUID       `json:"id"`
+	ProjectID         uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateContentActionOutcomeSummary(ctx context.Context, arg UpdateContentActionOutcomeSummaryParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, updateContentActionOutcomeSummary,
+		arg.Status,
+		arg.OutcomeSummary,
+		arg.MeasurementWindow,
 		arg.ID,
 		arg.ProjectID,
 	)

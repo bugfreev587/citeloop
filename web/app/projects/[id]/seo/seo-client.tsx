@@ -17,9 +17,11 @@ import {
   SEOOverview,
   SEOPolicy,
   SafeModeEvent,
+  VisibilitySummary,
 } from "../../../lib/api";
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
+import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
@@ -274,6 +276,44 @@ function actionMeasurementState(action: SEOContentAction): ActionMeasurementStat
   return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Published work is still inside the measurement window." };
 }
 
+function lifecycleStageLabel(stage: string) {
+  switch (stage) {
+    case "detected":
+      return "Detected";
+    case "added_to_plan":
+      return "Added";
+    case "planned":
+      return "Planned";
+    case "drafting":
+      return "Drafting";
+    case "ready_for_review":
+      return "Review";
+    case "approved":
+      return "Approved";
+    case "published_or_applied":
+      return "Published";
+    case "measuring":
+      return "Measuring";
+    case "learned":
+      return "Learned";
+    case "blocked":
+      return "Blocked";
+    default:
+      return visibilityLifecycleLabel(stage);
+  }
+}
+
+function lifecycleStageTone(stage: string): "green" | "amber" | "red" | "neutral" {
+  if (["learned", "published_or_applied", "measuring"].includes(stage)) return "green";
+  if (["added_to_plan", "planned", "drafting", "ready_for_review", "approved"].includes(stage)) return "amber";
+  if (stage === "blocked") return "red";
+  return "neutral";
+}
+
+function loopActionTitle(action: SEOContentAction & { opportunity_recommended_action?: string | null; opportunity_query?: string | null; topic_title?: string | null }) {
+  return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Visibility action";
+}
+
 function compactOutcomeText(outcome: any) {
   if (!outcome || (typeof outcome === "object" && Object.keys(outcome).length === 0)) return "No outcome summary yet.";
   if (typeof outcome === "string") return outcome;
@@ -367,6 +407,7 @@ export function ResultsClient({ projectId }: { projectId: string }) {
 export function SEOClient({ projectId, mode = "analysis" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
+  const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
@@ -397,8 +438,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, settings, briefData, opps, actionRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
+      const [overviewData, summaryData, settings, briefData, opps, actionRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
         api.getSEOOverview(projectId),
+        api.getVisibilitySummary(projectId),
         api.getSEOSettings(projectId),
         api.getSEOBrief(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }),
@@ -412,6 +454,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.listGEOAssetBriefs(projectId, { limit: 50 }),
       ]);
       setOverview(overviewData);
+      setVisibilitySummary(summaryData);
       setBrief(briefData);
       setOpportunities(opps);
       setActions(actionRows);
@@ -468,7 +511,45 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
   );
   const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
-  const activeActions = actions.filter((action) => !measuredActions.some((measured) => measured.id === action.id));
+  const summaryLoopActions = visibilitySummary?.actions_in_loop ?? [];
+  const summaryLoopActionIds = new Set(summaryLoopActions.map((action) => action.id));
+  const loopActions = [
+    ...summaryLoopActions,
+    ...actions
+      .filter((action) => !summaryLoopActionIds.has(action.id))
+      .map((action) => ({
+        ...action,
+        lifecycle_stage: deriveVisibilityLifecycleStage(action),
+        opportunity_page_url: action.target_url ?? action.normalized_target_url ?? null,
+        opportunity_normalized_page_url: action.normalized_target_url ?? null,
+        opportunity_query: null,
+        opportunity_recommended_action: action.action_type,
+      })),
+  ];
+  const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
+  const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
+  loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;
+  const loopActiveCount =
+    loopLifecycleCounts.added_to_plan +
+    loopLifecycleCounts.planned +
+    loopLifecycleCounts.drafting +
+    loopLifecycleCounts.ready_for_review +
+    loopLifecycleCounts.approved +
+    loopLifecycleCounts.published_or_applied +
+    loopLifecycleCounts.measuring;
+  const loopSummaryItems = [
+    { key: "added_to_plan", label: "Added", value: loopLifecycleCounts.added_to_plan },
+    { key: "planned", label: "Planned", value: loopLifecycleCounts.planned },
+    { key: "drafting", label: "Drafting", value: loopLifecycleCounts.drafting },
+    { key: "ready_for_review", label: "Review", value: loopLifecycleCounts.ready_for_review },
+    { key: "published_or_applied", label: "Published", value: loopLifecycleCounts.published_or_applied },
+    { key: "measuring", label: "Measuring", value: loopLifecycleCounts.measuring },
+    { key: "learned", label: "Learned", value: loopLifecycleCounts.learned },
+    { key: "blocked", label: "Blocked", value: loopLifecycleCounts.blocked },
+  ];
+  const loopPreviewActions = loopActions
+    .filter((action) => !["learned"].includes(deriveVisibilityLifecycleStage(action)))
+    .slice(0, 3);
   const analysisDataMode = searchDataModeLabel(overview, analysisStatus);
   const analysisCapabilityMode = analysisCapabilityBadgeLabel(overview, analysisStatus, visibilityMode);
   const searchSnapshotCards = [
@@ -889,12 +970,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
                     Review the search or public-site signal first. Open evidence only when you need the supporting rows.
                   </p>
-                </div>
-                <div className="flex flex-wrap gap-2 md:justify-end">
-                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
-                  <Badge tone="neutral">{activeActions.length} active tasks</Badge>
-                </div>
-              </div>
+	                </div>
+	                <div className="flex flex-wrap gap-2 md:justify-end">
+	                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
+	                  <Badge tone="neutral">{loopActiveCount} in loop</Badge>
+	                </div>
+	              </div>
 
               {opportunities.length === 0 ? (
                 <div className="p-4">
@@ -1016,30 +1097,52 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 )}
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Measurement snapshot</div>
-                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <div className="font-mono text-2xl font-bold text-slate-950">{activeActions.length}</div>
-                    <div className="mt-1 text-slate-500">active tasks</div>
-                  </div>
-                  <div>
-                    <div className="font-mono text-2xl font-bold text-slate-950">{measuredActions.length}</div>
-                    <div className="mt-1 text-slate-500">measuring</div>
-                  </div>
-                  <div>
-                    <div className="font-mono text-2xl font-bold text-slate-950">{outcomeCounts.positive}</div>
-                    <div className="mt-1 text-slate-500">positive</div>
-                  </div>
-                  <div>
-                    <div className="font-mono text-2xl font-bold text-slate-950">{measurementExceptions.length}</div>
-                    <div className="mt-1 text-slate-500">needs follow-up</div>
-                  </div>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-slate-500">
-                  Accepted work keeps its baseline and D+7 / D+14 / D+28 measurement window for Results.
-                </p>
-              </div>
+	              <div className="rounded-xl border border-slate-200 bg-white p-4">
+	                <div className="flex items-start justify-between gap-3">
+	                  <div>
+	                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loop in motion</div>
+	                    <div className="mt-1 text-lg font-bold text-slate-950">Analysis already in execution</div>
+	                  </div>
+	                  <Badge tone={loopActiveCount ? "amber" : "neutral"}>{loopActiveCount}</Badge>
+	                </div>
+	                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+	                  {loopSummaryItems.filter((item) => item.value > 0).slice(0, 6).map((item) => (
+	                    <div key={item.key} className="border-t border-slate-100 pt-2">
+	                      <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
+	                      <div className="mt-1 text-xs font-medium text-slate-500">{item.label}</div>
+	                    </div>
+	                  ))}
+	                  {loopSummaryItems.every((item) => item.value === 0) && (
+	                    <div className="col-span-2 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-500">
+	                      Reviewed analysis will appear here after it enters the content loop.
+	                    </div>
+	                  )}
+	                </div>
+	                {loopPreviewActions.length > 0 && (
+	                  <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">
+	                    {loopPreviewActions.map((action) => {
+	                      const stage = deriveVisibilityLifecycleStage(action);
+	                      return (
+	                        <div key={action.id} className="py-2">
+	                          <div className="flex items-start justify-between gap-2">
+	                            <div className="min-w-0">
+	                              <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
+	                              <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
+	                            </div>
+	                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+	                          </div>
+	                        </div>
+	                      );
+	                    })}
+	                  </div>
+	                )}
+	                <Link
+	                  href={`/projects/${projectId}/results`}
+	                  className="mt-3 inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+	                >
+	                  View measurement
+	                </Link>
+	              </div>
 
               {visibilityBlockers.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

@@ -331,6 +331,60 @@ where project_id = sqlc.arg(project_id)
 order by created_at desc
 limit sqlc.arg(limit_rows);
 
+-- name: ListVisibilityActionRows :many
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.status, '')::text as opportunity_status,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.query as opportunity_query,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  coalesce(so.risk_level, '')::text as opportunity_risk_level,
+  so.priority_score as opportunity_priority_score,
+  t.id as topic_id,
+  t.status as topic_status,
+  t.title as topic_title,
+  a.id as draft_article_joined_id,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.project_id = $1
+order by ca.updated_at desc, ca.created_at desc
+limit $2;
+
 -- name: GetContentAction :one
 select * from content_actions
 where id = $1 and project_id = $2;
@@ -365,6 +419,33 @@ update content_actions set
   published_at = now(),
   updated_at = now()
 where project_id = $1 and draft_article_id = $2
+returning *;
+
+-- name: ListDueMeasuringContentActions :many
+select ca.* from content_actions ca
+where ca.project_id = sqlc.arg(project_id)
+  and ca.status = 'measuring'
+  and (
+    ca.published_at is null
+    or ca.measurement_window = '{}'::jsonb
+    or exists (
+      select 1
+      from jsonb_array_elements(coalesce(ca.measurement_window->'checkpoints', '[]'::jsonb)) checkpoint
+      where coalesce(checkpoint->>'status', 'scheduled') = 'scheduled'
+        and ca.published_at + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= sqlc.arg(now_at)::timestamptz
+    )
+  )
+order by ca.published_at asc nulls first, ca.updated_at asc
+limit sqlc.arg(limit_rows)
+for update of ca skip locked;
+
+-- name: UpdateContentActionOutcomeSummary :one
+update content_actions set
+  status = sqlc.arg(status)::text,
+  outcome_summary = sqlc.arg(outcome_summary)::jsonb,
+  measurement_window = sqlc.arg(measurement_window)::jsonb,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
 -- name: UpdateContentActionExecutionMetadata :one

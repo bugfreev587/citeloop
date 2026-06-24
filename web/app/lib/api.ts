@@ -319,6 +319,55 @@ export type SEOContentAction = {
   created_at?: any;
 };
 
+export type VisibilityLifecycleStage =
+  | "detected"
+  | "added_to_plan"
+  | "planned"
+  | "drafting"
+  | "ready_for_review"
+  | "approved"
+  | "published_or_applied"
+  | "measuring"
+  | "learned"
+  | "blocked";
+
+export type VisibilityLifecycleCounts = Record<VisibilityLifecycleStage, number>;
+
+export type VisibilityActionInLoop = SEOContentAction & {
+  lifecycle_stage: VisibilityLifecycleStage;
+  draft_article_id?: string | null;
+  opportunity_status?: string;
+  opportunity_type?: string;
+  opportunity_page_url?: string | null;
+  opportunity_normalized_page_url?: string | null;
+  opportunity_query?: string | null;
+  opportunity_recommended_action?: string | null;
+  opportunity_expected_impact?: string | null;
+  opportunity_risk_level?: string;
+  topic_id?: string | null;
+  topic_status?: string | null;
+  topic_title?: string | null;
+  draft_article_status?: string | null;
+  draft_article_canonical_url?: string | null;
+};
+
+export type VisibilityMeasurementUpdate = {
+  action_id: string;
+  status: VisibilityLifecycleStage | string;
+  summary: string;
+};
+
+export type VisibilitySummary = {
+  capability_mode: string;
+  primary_status: string;
+  setup_blockers: SetupChecklistItem[];
+  open_opportunities: SEOOpportunity[];
+  actions_in_loop: VisibilityActionInLoop[];
+  lifecycle_counts: VisibilityLifecycleCounts;
+  top_measurement_updates: VisibilityMeasurementUpdate[];
+  diagnostics_health: Record<string, any>;
+};
+
 export type SEOBrief = {
   mode: "cold_start" | "opportunities" | string;
   title: string;
@@ -788,6 +837,90 @@ function normalizeSEOBrief(raw: any): SEOBrief {
     geo_blockers: arrayFrom<string>(data.geo_blockers).map(String),
     geo_opportunities: arrayFrom<SEOOpportunity>(data.geo_opportunities),
     measurement_updates: arrayFrom<string>(data.measurement_updates).map(String),
+  };
+}
+
+const visibilityLifecycleStages: VisibilityLifecycleStage[] = [
+  "detected",
+  "added_to_plan",
+  "planned",
+  "drafting",
+  "ready_for_review",
+  "approved",
+  "published_or_applied",
+  "measuring",
+  "learned",
+  "blocked",
+];
+
+function normalizeVisibilityLifecycleCounts(raw: any): VisibilityLifecycleCounts {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  return visibilityLifecycleStages.reduce((counts, stage) => {
+    counts[stage] = Number(source[stage] ?? 0);
+    return counts;
+  }, {} as VisibilityLifecycleCounts);
+}
+
+function normalizeVisibilityActionInLoop(raw: any): VisibilityActionInLoop {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    opportunity_id: data.opportunity_id ?? "",
+    action_type: data.action_type ?? "",
+    status: data.status ?? "",
+    lifecycle_stage: visibilityLifecycleStages.includes(data.lifecycle_stage) ? data.lifecycle_stage : "added_to_plan",
+    asset_type: data.asset_type ?? null,
+    target_surface_id: data.target_surface_id ?? null,
+    target_url: data.target_url ?? null,
+    normalized_target_url: data.normalized_target_url ?? null,
+    target_content_hash_before: data.target_content_hash_before ?? null,
+    risk_reasons: data.risk_reasons ?? [],
+    evidence_snapshot: data.evidence_snapshot ?? {},
+    input_snapshot: data.input_snapshot ?? {},
+    output_snapshot: data.output_snapshot ?? {},
+    diff_snapshot: data.diff_snapshot ?? {},
+    review_required: Boolean(data.review_required),
+    approved_by: data.approved_by ?? null,
+    approved_at: data.approved_at ?? undefined,
+    verified_at: data.verified_at ?? undefined,
+    verification_snapshot: data.verification_snapshot ?? {},
+    baseline_window: data.baseline_window ?? {},
+    measurement_window: data.measurement_window ?? {},
+    published_at: data.published_at ?? undefined,
+    outcome_summary: data.outcome_summary ?? {},
+    created_at: data.created_at ?? undefined,
+    draft_article_id: data.draft_article_id ?? null,
+    opportunity_status: data.opportunity_status ?? "",
+    opportunity_type: data.opportunity_type ?? "",
+    opportunity_page_url: data.opportunity_page_url ?? null,
+    opportunity_normalized_page_url: data.opportunity_normalized_page_url ?? null,
+    opportunity_query: data.opportunity_query ?? null,
+    opportunity_recommended_action: data.opportunity_recommended_action ?? null,
+    opportunity_expected_impact: data.opportunity_expected_impact ?? null,
+    opportunity_risk_level: data.opportunity_risk_level ?? "",
+    topic_id: data.topic_id ?? null,
+    topic_status: data.topic_status ?? null,
+    topic_title: data.topic_title ?? null,
+    draft_article_status: data.draft_article_status ?? null,
+    draft_article_canonical_url: data.draft_article_canonical_url ?? null,
+  };
+}
+
+function normalizeVisibilitySummary(raw: any): VisibilitySummary {
+  const data = raw ?? {};
+  return {
+    capability_mode: data.capability_mode ?? "public_only",
+    primary_status: data.primary_status ?? "steady",
+    setup_blockers: arrayFrom(data.setup_blockers),
+    open_opportunities: arrayFrom(data.open_opportunities),
+    actions_in_loop: arrayFrom(data.actions_in_loop).map(normalizeVisibilityActionInLoop),
+    lifecycle_counts: normalizeVisibilityLifecycleCounts(data.lifecycle_counts),
+    top_measurement_updates: arrayFrom(data.top_measurement_updates).map((item: any) => ({
+      action_id: item?.action_id ?? "",
+      status: item?.status ?? "measuring",
+      summary: item?.summary ?? "",
+    })),
+    diagnostics_health: data.diagnostics_health ?? {},
   };
 }
 
@@ -1339,6 +1472,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/seo/overview`, undefined, auth);
     return normalizeSEOOverview(raw);
   },
+  getVisibilitySummary: async (id: string): Promise<VisibilitySummary> => {
+    const raw = await req<any>(`/projects/${id}/seo/visibility/summary`, undefined, auth);
+    return normalizeVisibilitySummary(raw);
+  },
   syncSEO: async (id: string, siteURL?: string) => {
     return req<any>(`/projects/${id}/seo/sync`, { method: "POST", body: JSON.stringify({ site_url: siteURL ?? "" }) }, auth);
   },
@@ -1529,8 +1666,8 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/seo/opportunities${suffix}`, undefined, auth);
     return arrayFrom(raw);
   },
-  acceptSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
-    return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/accept`, { method: "POST" }, auth);
+  acceptSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(`/projects/${id}/seo/opportunities/${opportunityID}/accept`, { method: "POST" }, auth);
   },
   dismissSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
     return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/dismiss`, { method: "POST" }, auth);
