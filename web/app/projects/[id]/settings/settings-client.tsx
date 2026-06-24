@@ -241,7 +241,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       const connection = await api.getGSCConnection(projectId);
       setGSCConnection(connection);
     } catch (e: any) {
-      setMessage({ title: "Search Console connection unavailable", detail: e.message, tone: "amber" });
+      if (isProjectScopedMissing(e.message)) {
+        setGSCConnection(null);
+        return;
+      }
+      setMessage({ title: "Search Console connection unavailable", detail: friendlyError(e.message), tone: "amber" });
     }
   }, [api, projectId]);
 
@@ -262,7 +266,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setSubscriptions(nextSubscriptions);
       setDeliveries(nextDeliveries);
     } catch (e: any) {
-      setMessage({ title: "Notifications unavailable", detail: e.message, tone: "amber" });
+      if (isProjectScopedMissing(e.message)) {
+        setChannels([]);
+        setEvents([]);
+        setSubscriptions([]);
+        setDeliveries([]);
+        return;
+      }
+      setMessage({ title: "Notifications unavailable", detail: friendlyError(e.message), tone: "amber" });
     }
   }, [api, deliveryStatus, projectId]);
 
