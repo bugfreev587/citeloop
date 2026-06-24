@@ -61,6 +61,7 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 - `content_actions` 已经承担 opportunity -> action -> article/result 的桥接，包含 `baseline_window`、`measurement_window`、`outcome_summary`。
 - `web/app/projects/[id]/opportunities/page.tsx` 和 `web/app/projects/[id]/visibility/page.tsx` 已经分别渲染 `OpportunitiesClient` 与 `VisibilityClient`，两者共享 `web/app/projects/[id]/seo/seo-client.tsx` 中的 `SEOClient`。
 - 当前 Google 数据连接由 `internal/googledata/auth.go` 的 service-account JWT 实现，scope 为 `webmasters.readonly` 和 `analytics.readonly`。当前代码没有 end-user Google OAuth consent、用户可访问 property 列表、GSC refresh token 捕获。本 PRD 将 self-serve GSC OAuth 明确列为需要新增的 connection layer。
+- 当前 Publisher layer 已经包含 `Publisher` interface、GitHub/Next.js blog publisher、semi-manual distribution lane、`publisher_connections` 和 `publisher_credentials`。当前代码没有 WordPress、Webflow、Shopify 或 Wix 真实 CMS connector。
 
 因此 Phase 1-3 应被视为 IA 重构和页面职责拆分: `Opportunities` 重命名/迁移到 `Analysis`，`Visibility` 收敛为 `Results`，并把共享 `SEOClient` 拆成更清楚的 Analysis / Results surfaces。
 
@@ -74,6 +75,7 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 6. 简化 sidebar，把 Settings 移到左下角 Docs 下方，Admin 保持左下角入口，移除主导航中的 SYSTEM 分组。
 7. 保持 Home 作为控制中心，只展示当前最重要的状态、下一步和数据连接 gate。
 8. 降低默认页面的信息负担，只展示用户需要知晓、决策、批准或处理的内容。
+9. 把 Content Generation 闭环扩展到 CMS draft / update / publish，以 WordPress 作为第一个 self-serve CMS integration。
 
 ## 3. 非目标
 
@@ -81,6 +83,8 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 - 不把当前 service-account 连接模型伪装成用户 OAuth。两者必须在 UI、权限和文档中明确区分。
 - 不在本 PRD 中重写现有 Review、Publish、Publisher 或 Article detail 页面。
 - 不把 Analysis 做成全量 SEO dashboard 或 Semrush/Ahrefs 替代品。
+- 不在 WordPress MVP 中默认自动发布未经批准的内容或站点改动。
+- 不在同一阶段同时实现 WordPress、Webflow、Shopify、Wix 的完整 connector。WordPress 是第一优先级，其余平台进入后续 connector roadmap。
 - 不自动执行高风险 SEO 动作，例如 redirect、noindex、delete、merge。
 - 不承诺排名、流量、转化或 AI answer citation 提升。
 - 不引入普通用户必须理解的 GSC property、OAuth scope、credential ref、GA4 property id 等工程概念。
@@ -233,9 +237,9 @@ Account / Workspace switcher
 | Home | 当前状态、下一步、连接 gate、loop health | 全量 analytics、完整机会列表 |
 | Context | domain 理解、产品定位、证据、竞争对手、内容规则 | 搜索表现分析、内容生产排期 |
 | Analysis | GSC/GA4/SERP/GEO 信号、机会队列、action recommendation | 内容草稿编辑、发布状态复盘 |
-| Content Plan | 已接受 action 的生产 backlog、brief、schedule、generation intent | 原始 SEO 数据探索 |
+| Content Plan | 已接受 action 的生产 backlog、brief、schedule、generation intent、CMS draft/update intent | 原始 SEO 数据探索 |
 | Review | 草稿是否可发布、证据是否充分、QA blocking | 机会优先级判断 |
-| Publish | canonical publish、variant unlock、publish failure、URL verification | 数据分析和机会发现 |
+| Publish | CMS draft/update approval、canonical publish、variant unlock、publish failure、URL verification | 数据分析和机会发现 |
 | Results | 已发布 action 的 measurement、traffic/citation/CTR/position outcome | 未接受 opportunity queue |
 
 ## 6. Analysis Workflow
@@ -433,8 +437,9 @@ Home next action priority should become:
 2. Required context confirmation.
 3. Search data connection missing, if project has enough public discovery to benefit.
 4. New Analysis opportunities that need acceptance.
-5. Content Plan / Review / Publish actions.
-6. Results waiting for measurement.
+5. Publisher/CMS connection missing, if accepted work needs CMS draft or publish.
+6. Content Plan / Review / Publish actions.
+7. Results waiting for measurement.
 
 ## 8. Content Plan Isolation
 
@@ -497,9 +502,119 @@ Results should not be the place where users decide whether to accept raw opportu
 
 Results default view should show outcome summaries and exceptions. Long per-URL measurement details, historical rows, and inconclusive low-signal records should be collapsed behind measurement detail views.
 
-## 10. Settings and Admin Placement
+## 10. Publisher and CMS Integration Layer
 
-### 10.1 Settings
+ChatSEO's pricing page makes the Content value layer concrete: AI SEO writer plus CMS publishing, editing, and updating. CiteLoop should borrow that product boundary, but implement it through the existing Publisher / `publisher_connections` layer rather than creating a separate CMS workflow.
+
+### 10.1 Product goal
+
+The Content side of CiteLoop should support three jobs:
+
+- create a new asset from an accepted Analysis opportunity
+- update or optimize an existing CMS page
+- publish or stage the approved change in the user's destination system
+
+Content Generation should not stop at "draft created". The complete loop is:
+
+```text
+Analysis opportunity -> accepted action -> draft/update -> user approval -> CMS publish/update -> URL verification -> Results measurement
+```
+
+### 10.2 CMS priority
+
+CMS integrations should be sequenced by reach and implementation risk:
+
+| Priority | Platform | Product status | Rationale |
+|---|---|---|---|
+| 1 | WordPress | MVP target | Broadest customer fit; supports posts/pages, drafts, updates, slugs, and metadata through mature APIs. |
+| 2 | Webflow | Next connector | Strong fit for SaaS marketing sites, but content model/collection mapping adds setup complexity. |
+| 3 | Shopify | Later connector | Useful for ecommerce SEO, but product/blog/page permissions and templates are more specialized. |
+| 4 | Wix | Later connector | Useful for SMBs, but API and content model constraints should be validated after WordPress/Webflow. |
+
+### 10.3 WordPress MVP scope
+
+WordPress should launch as a gated publish/update flow:
+
+- connect WordPress from Settings or onboarding checklist
+- select site and default content destination
+- create draft post or page
+- update existing post or page
+- set title, slug, excerpt/meta description when supported
+- preserve canonical URL and published URL mapping
+- require user approval before publishing or updating live content
+- verify the published/updated URL after publish
+- route measurement back to Results
+
+WordPress MVP should not include:
+
+- default auto-publish without approval
+- theme/template editing
+- plugin installation
+- bulk publishing
+- destructive delete
+- rollback unless explicitly implemented and tested
+
+### 10.4 CMS capability matrix
+
+The product should show readiness by capability, not by vague "connected" status.
+
+| Capability | WordPress MVP | Webflow later | Shopify later | Wix later |
+|---|---|---|---|---|
+| Create article/post | Yes | Later | Blog only, later | Later |
+| Create page | Yes | Later | Limited, later | Later |
+| Update existing content | Yes | Later | Limited, later | Later |
+| Metadata update | Yes, when supported | Later | Product/blog meta, later | Later |
+| Slug update | Yes | Later | Limited, later | Later |
+| Draft mode | Yes | Later | Later | Later |
+| Gated publish | Yes | Later | Later | Later |
+| Media upload | Later | Later | Later | Later |
+| Delete | Out of scope | Out of scope | Out of scope | Out of scope |
+| Rollback | Later | Later | Later | Later |
+
+### 10.5 User-facing CMS states
+
+Default user-facing states should stay simple:
+
+| State | User-facing copy | Behavior |
+|---|---|---|
+| `publisher_not_connected` | Connect WordPress to publish approved work | Show connect CTA and keep work draft-only |
+| `publisher_connected_draft_only` | WordPress connected for drafts | Create drafts, require manual publish or approval |
+| `publisher_ready_for_gated_publish` | WordPress ready for approved publishing | Allow approved publish/update actions |
+| `publisher_needs_reconnect` | Reconnect WordPress | Keep drafts and measurements; block publish/update |
+| `publisher_publish_failed` | Publish needs attention | Show one recovery action and collapse raw error detail |
+| `publisher_verifying_url` | Verifying published URL | Wait for URL/canonical/indexability checks |
+| `publisher_published_measuring` | Published and measuring | Move default visibility to Results |
+
+Technical details such as WordPress post IDs, REST responses, credential references, API errors, and sync logs should be hidden behind `View publish details`.
+
+### 10.6 Content actions supported by CMS
+
+CMS integration should support more than new article creation:
+
+| Action | WordPress behavior | Default user gate |
+|---|---|---|
+| `create_new_asset` | Create draft post/page | Approval before publish |
+| `refresh_existing_page` | Update existing post/page draft or staged revision | Approval before live update |
+| `draft_title_meta_update` | Update title/excerpt/meta fields when available | Approval before live update |
+| `add_internal_links` | Stage content update with proposed links | Approval before live update |
+| `create_schema_update` | Out of scope for WordPress MVP unless supported safely | Manual task or later |
+| `fix_indexing_issue` | Out of scope for direct CMS write unless it is content/meta-related | Manual task |
+
+### 10.7 Settings ownership
+
+Settings owns CMS connection management:
+
+- connect / reconnect / disconnect WordPress
+- choose default content destination
+- configure draft vs gated publish behavior
+- inspect capability readiness
+- view diagnostics
+
+Content Plan owns accepted work. Publish owns approval, publish/update execution, retry, and URL verification. Results owns measurement after the CMS change is live.
+
+## 11. Settings and Admin Placement
+
+### 11.1 Settings
 
 Settings moves to the left utility area under Docs.
 
@@ -507,6 +622,7 @@ Settings owns:
 
 - project configuration
 - publisher connections
+- WordPress / CMS connection management
 - Search Console OAuth connection management
 - GA4 connection management
 - notification channels
@@ -517,7 +633,7 @@ Settings should not be a primary workflow step.
 
 Search data connection management should be available to project owners/admins through a self-serve Google OAuth flow. Analysis may show the CTA to everyone, but members without integration-management permission should receive an explanation and an admin handoff path. Internal operators may still configure service-account access through Admin/diagnostics, but that path should be labeled as internal-managed and should not replace the default OAuth onboarding.
 
-### 10.2 Admin
+### 11.2 Admin
 
 Admin remains in the left utility area. It should not appear in the main workflow navigation.
 
@@ -528,13 +644,13 @@ Admin owns:
 - raw diagnostics
 - operator utilities
 
-### 10.3 Sidebar grouping
+### 11.3 Sidebar grouping
 
 The `SYSTEM` section is removed from the primary nav. Utility links are visually separated at the bottom and should not compete with daily workflow pages.
 
-## 11. Empty States
+## 12. Empty States
 
-### 11.1 Analysis empty state before GSC
+### 12.1 Analysis empty state before GSC
 
 Primary message:
 
@@ -555,7 +671,7 @@ Secondary action:
 Review public opportunities
 ```
 
-### 11.2 Analysis empty state after GSC but no opportunity
+### 12.2 Analysis empty state after GSC but no opportunity
 
 Primary message:
 
@@ -570,7 +686,7 @@ Secondary content:
 - number of pages observed
 - next scheduled analysis
 
-### 11.3 Content Plan empty state
+### 12.3 Content Plan empty state
 
 Primary message:
 
@@ -585,21 +701,22 @@ Primary action:
 Open Analysis
 ```
 
-## 12. Data and API Implications
+## 13. Data and API Implications
 
 This PRD does not require final schema design, but implementation should preserve these product boundaries.
 
-### 12.1 Existing concepts to preserve
+### 13.1 Existing concepts to preserve
 
 - `content_actions` remains the action lifecycle owner.
 - `articles` remains generated content output.
 - `seo_opportunities` or equivalent remains the raw/accepted opportunity source.
 - `publisher_connections` remains publishing capability state.
+- `publisher_credentials` remains publishing credential storage.
 - `seo_properties` / integration records should express data readiness.
 
 Implementation must not create replacement tables for these concepts during Phase 1-3. If Analysis needs a new UI shape, adapt API serializers or view models over the existing tables first.
 
-### 12.2 OAuth connection model
+### 13.2 OAuth connection model
 
 Self-serve GSC OAuth requires a new connection layer around the existing SEO data model:
 
@@ -616,7 +733,7 @@ Self-serve GSC OAuth requires a new connection layer around the existing SEO dat
 
 The default customer path must not require the user to manually create credentials or share service-account access. The only expected customer-side prerequisite is that they have access to the relevant GSC property in their Google account.
 
-### 12.3 Required product states
+### 13.3 Required product states
 
 Analysis needs enough API surface to express:
 
@@ -636,7 +753,9 @@ Analysis needs enough API surface to express:
 
 Connection states should be derived from OAuth token health, selected property, `seo_properties`, `seo_integrations`, run recency, sync errors, and user access level. Service-account projects should still resolve to the same downstream readiness states, with admin-only diagnostics exposing `credential_ref`.
 
-### 12.4 Downstream contract
+Publisher states should be derived from `publisher_connections`, `publisher_credentials`, capability readiness, credential health, last publish/update error, and URL verification status. They should not require users to understand provider-specific IDs or API responses.
+
+### 13.4 Downstream contract
 
 When Analysis routes work downstream, it must create or update a durable action record with:
 
@@ -649,8 +768,9 @@ When Analysis routes work downstream, it must create or update a durable action 
 - risk level
 - status
 - expected measurement dates
+- publisher destination and capability requirements when the action needs CMS create/update/publish
 
-## 13. Rollout Plan
+## 14. Rollout Plan
 
 ### Phase 1: Information architecture only
 
@@ -696,13 +816,31 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Generate opportunity types from real query/page metrics.
 - Add stale, backfilling, and error states.
 
-### Phase 6: GA4 and business-value prioritization
+### Phase 6: WordPress gated publish and update
+
+- Add WordPress as the first self-serve CMS connector.
+- Support draft creation for accepted new content actions.
+- Support gated updates for existing WordPress posts/pages.
+- Support title, slug, excerpt/meta description updates when available.
+- Add publisher readiness states to Home, Content Plan, Publish, and Settings.
+- Keep raw WordPress IDs, REST responses, and sync logs hidden behind publish details.
+- Verify published/updated URLs and route outcomes to Results.
+- Keep auto-publish disabled by default.
+
+### Phase 7: GA4 and business-value prioritization
 
 - Use existing GA4 storage fields in `page_performance_daily` and add missing ingestion/UI only as needed.
 - Use engagement/conversion as prioritization signal.
 - Mark recommendations without GA4 as missing business-value signal, not as failed.
 
-## 14. Acceptance Criteria
+### Phase 8: Additional CMS connectors
+
+- Add Webflow after WordPress if the target customer segment needs SaaS marketing-site publishing.
+- Add Shopify after Webflow if ecommerce SEO becomes a priority.
+- Add Wix only after validating API constraints and customer demand.
+- Each connector must expose capability readiness before it appears as a publish/update destination.
+
+## 15. Acceptance Criteria
 
 ### Phase 1 IA
 
@@ -748,7 +886,29 @@ When Analysis routes work downstream, it must create or update a durable action 
 3. Analysis can generate low CTR, near page-one, content decay, and indexing opportunities from real query/page metrics.
 4. Accepted OAuth-backed opportunities carry property, query/page evidence, baseline window, and measurement window downstream.
 
-## 15. Risks
+### Phase 6 WordPress gated publish and update
+
+1. Project owners/admins can connect, reconnect, and disconnect WordPress from Settings.
+2. WordPress readiness is shown by capability: draft creation, existing content update, metadata update, gated publish, and URL verification.
+3. Accepted new-asset actions can create WordPress drafts.
+4. Accepted refresh or metadata actions can stage updates to existing WordPress posts/pages.
+5. No WordPress live publish/update happens without explicit user approval in MVP.
+6. Publish failures show one recovery action by default and hide raw provider details behind `View publish details`.
+7. Published/updated WordPress URLs flow into Results measurement.
+
+### Phase 7 GA4 business-value prioritization
+
+1. GA4 engagement/conversion fields in `page_performance_daily` are reused or extended compatibly.
+2. Analysis can mark recommendations as missing business-value signal when GA4 is absent.
+3. GA4 signals influence priority only when the signal is available and fresh enough to trust.
+
+### Phase 8 additional CMS connectors
+
+1. Webflow, Shopify, and Wix are not presented as available destinations until their connector capability readiness is implemented.
+2. Each connector uses the same Publisher contract and user-facing states as WordPress where possible.
+3. Connector-specific limitations are shown as unavailable capabilities, not as generic failure states.
+
+## 16. Risks
 
 1. **Analysis becomes another overloaded dashboard.**
    Mitigation: keep default view to status, weekly brief, opportunity queue, evidence inspector.
@@ -783,7 +943,13 @@ When Analysis routes work downstream, it must create or update a durable action 
 11. **Too many action types overwhelm users.**
    Mitigation: group recommendations by job-to-be-done, not internal type.
 
-## 16. Product Success Metrics
+12. **WordPress connector expands Content scope too quickly.**
+   Mitigation: limit MVP to draft creation, gated updates, metadata updates when supported, URL verification, and measurement. Keep theme editing, plugin installs, bulk publishing, destructive delete, and rollback out of MVP.
+
+13. **CMS provider details leak into the user workflow.**
+   Mitigation: expose capability readiness and simple recovery actions by default. Hide post IDs, API responses, credential refs, and sync logs behind publish details or admin diagnostics.
+
+## 17. Product Success Metrics
 
 These measure whether the IA change works without promising SEO rankings:
 
@@ -791,10 +957,12 @@ These measure whether the IA change works without promising SEO rankings:
 2. Time from signal to action: median time from opportunity creation to accepted `content_actions` record.
 3. Self-serve connection completion: percentage of eligible projects that complete OAuth, select a property, and start first backfill.
 4. Search data connection readiness: percentage of active projects in `gsc_connected`, `gsc_backfilling`, or an explicitly understood public-only state.
-5. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
-6. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
+5. Publisher readiness: percentage of active projects with a connected CMS or an explicitly understood draft-only/manual publishing state.
+6. Time from accepted action to staged CMS draft/update.
+7. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
+8. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
 
-## 17. Product Decisions
+## 18. Product Decisions
 
 1. Sidebar label is `Analysis`.
    The page title may use `Search Intelligence` to describe the specific job, but the workflow label remains `Analysis`.
@@ -819,3 +987,12 @@ These measure whether the IA change works without promising SEO rankings:
 
 8. Default surfaces are collapsed by design.
    User-facing pages should show what needs attention now. Evidence, diagnostics, completed work, raw records, and generated intermediate content should be available but hidden by default.
+
+9. WordPress is the first self-serve CMS integration.
+   Webflow, Shopify, and Wix are connector roadmap items and should not block WordPress MVP.
+
+10. CMS publishing is gated by default.
+   CiteLoop may create drafts and stage updates, but live publish/update requires explicit approval until auto-publish policy, rollback, and recovery paths are proven.
+
+11. Publisher capability readiness is user-facing.
+   The product should show what a connected CMS can safely do instead of treating all publisher connections as equivalent.
