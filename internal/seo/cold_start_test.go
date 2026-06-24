@@ -2,6 +2,7 @@ package seo
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -43,6 +44,12 @@ func TestColdStartOpportunityCandidatesUseConfirmedContextEvidence(t *testing.T)
 	}
 	if got := candidates[0].Evidence["evidence_count"]; got != 3 {
 		t.Fatalf("evidence count = %v, want 3", got)
+	}
+	if strings.Contains(candidates[0].ExpectedImpact, "before Search Console data is available") {
+		t.Fatal("cold-start impact copy must not claim Search Console data is unavailable")
+	}
+	if !strings.Contains(candidates[0].ExpectedImpact, "missing or still too thin") {
+		t.Fatalf("cold-start impact copy should explain low-data mode, got %q", candidates[0].ExpectedImpact)
 	}
 }
 

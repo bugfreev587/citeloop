@@ -778,7 +778,7 @@ func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.C
 			PriorityScore:     72,
 			Confidence:        68,
 			RecommendedAction: "Plan the first context-backed use-case pages from the confirmed positioning",
-			ExpectedImpact:    "Turns confirmed product facts and evidence into high-intent topics before Search Console data is available.",
+			ExpectedImpact:    "Turns confirmed product facts and evidence into high-intent topics while Search Console data is missing or still too thin for confident query-level prioritization.",
 			Effort:            3,
 			RiskLevel:         "low",
 			Evidence:          baseEvidence,
