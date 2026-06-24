@@ -20,7 +20,7 @@ The page should make one promise: CiteLoop connects to a site's SEO and AI-searc
 1. Do not build a long-form marketing site with pricing, testimonials, FAQ, or footer-heavy SEO pages.
 2. Do not add backend tables, API endpoints, or project metadata for visit recency.
 3. Do not redesign the logged-in project workspace.
-4. Do not change Clerk sign-in or sign-up provider configuration.
+4. Do not change Clerk sign-in or sign-up provider configuration; the implementation assumes Google OAuth is already configured in Clerk for environments where the `Join with Google` button is shown.
 5. Do not create a new onboarding wizard.
 
 ## 4. Audience
@@ -45,15 +45,17 @@ Secondary users are returning signed-in users who land on `/` and need a quick p
 The top navigation should be minimal and stable:
 
 - Left: `CiteLoop` brand mark and wordmark.
-- Optional center links: keep to at most two links, such as `Docs` and `Product`, only if they do not crowd mobile.
+- No center navigation links for this release. Do not add `Docs`, `Product`, pricing, FAQ, or other marketing links to the landing page header.
 - Signed-out right actions:
-  - `Join with Google` secondary button, linked to `/sign-in`.
+  - `Join with Google` secondary button that initiates Clerk Google OAuth directly. It must not be a plain link to the generic `/sign-in` page.
   - `Start for free` primary button, linked to `/sign-up`.
 - Signed-in right actions:
   - `Dashboard` button.
   - Clerk `UserButton` avatar to the right of `Dashboard`.
 
 Button labels must match the requested copy exactly: `Join with Google`, `Start for free`, and `Dashboard`.
+
+Because the label says `Join with Google`, its action must match that label. The implementation should use the Clerk-supported Google OAuth redirect flow for the installed `@clerk/nextjs` version. If the exact API surface needs confirmation during implementation, confirm it before writing the production component.
 
 ### 6.2 Hero
 
@@ -100,6 +102,8 @@ The page must use existing Clerk configuration patterns:
 
 Signed-out navigation must not render the Clerk avatar. Signed-in navigation must render the avatar to the right of `Dashboard`.
 
+`Join with Google` requires a client component because it triggers Clerk's browser OAuth flow. The component must use Clerk's Google OAuth redirect API rather than forwarding users to the generic hosted sign-in UI.
+
 ## 8. Dashboard Routing Behavior
 
 ### 8.1 Recent Project Storage
@@ -114,21 +118,27 @@ citeloop:last-project-id
 
 When a user visits a project home route or any route under `/projects/[id]`, store that project id in localStorage.
 
+The storage write must happen only in a client component and only inside `useEffect` or another browser-only event path. Server components, render-time module scope, and hydration-sensitive paths must not access `window` or `localStorage`.
+
+If a user deletes the project currently stored in `citeloop:last-project-id` from this browser, the delete success path should clear the key or replace it with another valid project id when doing so is straightforward. This cleanup is a polish requirement; Dashboard must still validate the stored id on every click so stale storage cannot break routing.
+
 ### 8.2 Dashboard Button Resolution
+
+The landing page should server-prefetch the signed-in user's project list with the existing API and pass that list into the client `Dashboard` button as initial data. This avoids an extra network round trip on click and matches the current server-component pattern already used by the existing home page.
 
 When signed-in users click `Dashboard`:
 
-1. Load the signed-in user's project list from the existing API.
+1. Use the server-prefetched project list passed into the button.
 2. If there are no projects, route to `/projects`.
 3. If localStorage contains `citeloop:last-project-id` and that id exists in the loaded project list, route to `/projects/{id}`.
 4. If the stored id is missing, invalid, or no longer belongs to the user, route to the first project in the loaded list.
-5. If loading projects fails, route to `/projects` so the existing project management page can show its API error state.
+5. If the server prefetch failed, route to `/projects` so the existing project management page can show its API error state.
 
 The first project fallback can use the existing API ordering. The current backend returns owner projects in descending `created_at` order, so this fallback is "most recently created" rather than "most recently visited." That is acceptable only when no valid local recent project exists.
 
 ### 8.3 Loading State
 
-The `Dashboard` button should have a brief disabled or busy state while resolving the destination. It must not trigger duplicate navigation if clicked repeatedly.
+The `Dashboard` button should have a brief disabled or busy state after click while reading browser-local state and pushing the resolved route. It must not trigger duplicate navigation if clicked repeatedly.
 
 ## 9. Visual Design Requirements
 
@@ -157,6 +167,8 @@ Draft copy:
 
 Avoid vague marketing phrases such as "elevate," "unlock," "next-gen," or "seamless."
 
+Rendered landing page copy must not include the banned phrases above. Add a contract assertion or review checklist item for this requirement so it is not enforced only by memory.
+
 ## 11. Accessibility Requirements
 
 1. All buttons and links must have accessible text labels.
@@ -170,12 +182,15 @@ Avoid vague marketing phrases such as "elevate," "unlock," "next-gen," or "seaml
 Suggested file boundaries:
 
 - `web/app/page.tsx`: server component that determines signed-in state, fetches projects when signed in, and renders the landing page.
-- `web/app/landing-dashboard-button.tsx`: client component for localStorage lookup and Dashboard navigation.
-- `web/app/project-visit-recorder.tsx` or a small client leaf inside `ProjectShell`: records the current project id when a project route is visited.
+- `web/app/landing-google-button.tsx` or `web/app/landing-auth-actions.tsx`: client component that initiates Clerk Google OAuth for `Join with Google`.
+- `web/app/landing-dashboard-button.tsx`: client component that receives server-prefetched projects, reads localStorage in a browser-only path, and handles Dashboard navigation.
+- `web/app/project-visit-recorder.tsx` or a small client leaf inside `ProjectShell`: records the current project id when a project route is visited, with all localStorage writes inside `useEffect`.
 - `web/app/lib/dashboard-routing.ts`: pure helpers for selecting the Dashboard destination from projects and a stored id.
 - `web/app/lib/landing-page-contract.test.mjs`: contract tests for requested copy, signed-in/signed-out controls, helper behavior, and localStorage key usage.
 
 The pure routing helper should be tested first. It should accept a project list and a stored id, then return `/projects` or `/projects/{id}`.
+
+No backend schema, SQL, Go API, or generated DB code should be modified for this feature.
 
 ## 13. Testing Requirements
 
@@ -191,26 +206,33 @@ Minimum contract coverage:
 
 1. Home page contains `Join with Google`, `Start for free`, and `Dashboard`.
 2. Home page no longer renders the project management client directly.
-3. The routing helper returns `/projects` when the project list is empty.
-4. The routing helper returns the stored project when it exists in the project list.
-5. The routing helper falls back to the first project when the stored id is invalid.
-6. The project shell or visit recorder writes `citeloop:last-project-id`.
+3. `Join with Google` is implemented through a Clerk Google OAuth client action, not as a plain link to `/sign-in`.
+4. The Dashboard button receives server-prefetched projects rather than fetching the list on click in the normal path.
+5. The routing helper returns `/projects` when the project list is empty.
+6. The routing helper returns the stored project when it exists in the project list.
+7. The routing helper falls back to the first project when the stored id is invalid.
+8. The Dashboard component falls back to `/projects` when the server project prefetch failed.
+9. The project shell or visit recorder writes `citeloop:last-project-id` only from a client effect/browser path.
+10. Rendered landing page copy does not include the banned marketing phrases from Section 10.
 
 Manual verification:
 
 1. Signed-out `/` shows landing page and the two requested buttons.
-2. Signed-in `/` shows `Dashboard` and avatar.
-3. Signed-in with no projects: `Dashboard` routes to `/projects`.
-4. Signed-in with projects and no localStorage key: `Dashboard` routes to a valid project home.
-5. Signed-in after visiting `/projects/{id}`: `Dashboard` routes back to that project home.
-6. Mobile width does not overlap nav buttons, hero copy, or preview panel.
+2. Signed-out `Join with Google` starts the Google OAuth flow rather than landing on the generic sign-in screen.
+3. Signed-in `/` shows `Dashboard` and avatar.
+4. Signed-in with no projects: `Dashboard` routes to `/projects`.
+5. Signed-in with projects and no localStorage key: `Dashboard` routes to a valid project home.
+6. Signed-in after visiting `/projects/{id}`: `Dashboard` routes back to that project home.
+7. Mobile width does not overlap nav buttons, hero copy, or preview panel.
 
 ## 14. Risks and Mitigations
 
 | Risk | Mitigation |
 | --- | --- |
 | Stored project id becomes stale after project deletion | Validate against loaded project list before routing. |
-| API fails while resolving Dashboard | Route to `/projects`, where the existing page can show the API error state. |
+| Stored project id remains after deleting the current project | Clear or replace the key from the delete success path when straightforward, and still validate on Dashboard click. |
+| API fails while prefetching Dashboard projects | Route to `/projects`, where the existing page can show the API error state. |
+| `Join with Google` label does not match behavior | Implement direct Clerk Google OAuth rather than a plain `/sign-in` link. |
 | Landing page becomes too marketing-heavy | Keep only hero, product preview, and one compact supporting section. |
 | Local development breaks when Clerk is not configured | Preserve existing `clerkServerAuthConfigured` and bypass behavior. |
 | Product preview drifts from real app language | Reuse existing labels such as Context, Review, Publish, Visibility, and Next action. |
@@ -218,11 +240,14 @@ Manual verification:
 ## 15. Acceptance Criteria
 
 1. `/` is a concise landing page, not a project management page.
-2. Signed-out users see `Join with Google` and `Start for free` in the top-right navigation.
-3. Signed-in users see `Dashboard` and the profile avatar in the top-right navigation.
-4. `Dashboard` routes signed-in users with no projects to `/projects`.
-5. `Dashboard` routes signed-in users with projects to the most recently visited project home in the current browser when available.
-6. `Dashboard` falls back to a valid project home when no valid recent project exists.
-7. Visiting a project route updates the current browser's recent project id.
-8. The implementation requires no backend schema or API changes.
-9. Contract tests, typecheck, and manual responsive checks pass before release.
+2. The header has no center `Docs`, `Product`, pricing, FAQ, or other marketing links.
+3. Signed-out users see `Join with Google` and `Start for free` in the top-right navigation.
+4. `Join with Google` starts Clerk Google OAuth directly.
+5. Signed-in users see `Dashboard` and the profile avatar in the top-right navigation.
+6. `Dashboard` uses the server-prefetched project list in the normal path.
+7. `Dashboard` routes signed-in users with no projects to `/projects`.
+8. `Dashboard` routes signed-in users with projects to the most recently visited project home in the current browser when available.
+9. `Dashboard` falls back to a valid project home when no valid recent project exists.
+10. Visiting a project route updates the current browser's recent project id from a client effect/browser path.
+11. The implementation requires no backend schema or API changes.
+12. Contract tests, typecheck, and manual responsive checks pass before release.
