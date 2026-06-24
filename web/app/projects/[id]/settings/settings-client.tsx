@@ -524,6 +524,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   const githubPublisher = publisherConnections.find((connection) => connection.kind === "github_nextjs");
+  const gscHasAuthorizedProperties = Boolean(gscConnection && gscConnection.configured !== false && gscConnection.properties.length > 0);
+  const gscHasSelectedProperty = Boolean(gscConnection?.selected_property);
+  const canStartGSCOAuth =
+    !gscHasAuthorizedProperties &&
+    (!gscConnection || gscConnection.status === "missing" || gscConnection.status === "revoked" || gscConnection.properties.length === 0);
+  const canDisconnectGSC = Boolean(gscConnection && gscConnection.status !== "missing" && gscConnection.status !== "revoked");
+  const gscCardTitle = gscHasSelectedProperty
+    ? "Search Console is connected."
+    : gscHasAuthorizedProperties
+      ? "Select a Search Console property."
+      : "Connect Search Console for first-party search data.";
 
   return (
     <div className="space-y-7">
@@ -571,7 +582,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 <Search size={18} />
               </div>
               <div>
-                <div className="text-sm font-bold text-slate-900">Connect Search Console for first-party search data.</div>
+                <div className="text-sm font-bold text-slate-900">{gscCardTitle}</div>
                 <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
                   CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Analysis and Results.
                 </p>
@@ -593,15 +604,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           {(!gscConnection || gscConnection.status === "missing" || gscConnection.properties.length === 0) && <GSCSetupGuide siteURL={config.site_url} />}
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
-              <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
-                {gscConnection?.status === "connected" ? "Reconnect Search Console" : "Connect Search Console"}
-              </ButtonProgress>
-            </Button>
+            {canStartGSCOAuth && (
+              <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                  Connect Search Console
+                </ButtonProgress>
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={revokeGSCConnection}
-              disabled={!gscConnection || gscConnection.status === "missing" || gscConnection.status === "revoked" || Boolean(gscBusy)}
+              disabled={!canDisconnectGSC || Boolean(gscBusy)}
             >
               <ButtonProgress busy={gscBusy === "revoke"} busyLabel="Disconnecting" idleIcon={<Trash2 size={16} />}>
                 Disconnect

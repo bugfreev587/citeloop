@@ -284,6 +284,16 @@ test("gsc oauth entry points are self-serve and action-first", () => {
   }
 });
 
+test("settings hides the connect CTA after Search Console authorization returns properties", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  assert.match(settings, /const gscHasAuthorizedProperties = Boolean/);
+  assert.match(settings, /const canStartGSCOAuth =/);
+  assert.match(settings, /!gscHasAuthorizedProperties/);
+  assert.match(settings, /canStartGSCOAuth && \(/);
+  assert.doesNotMatch(settings, /gscConnection\?\.status === "connected" \? "Reconnect Search Console" : "Connect Search Console"/);
+});
+
 test("publisher settings show CMS connector next steps without pretending connectors are live", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
 
