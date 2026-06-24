@@ -177,6 +177,31 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   assert.doesNotMatch(context, /Show fewer/);
 });
 
+test("analysis surface is action-first with search-data status and collapsed evidence", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+
+  for (const copy of [
+    "Search data status",
+    "Search data not connected",
+    "Search Console connected",
+    "Connect Search Console",
+    "Weekly analysis brief",
+    "Opportunity queue",
+    "Recommendation",
+    "View evidence",
+    "Evidence",
+    "Confidence",
+    "No analysis to review",
+  ]) {
+    assert.match(seo, new RegExp(copy));
+  }
+
+  assert.match(seo, /<details[\s\S]*View evidence/);
+  assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(seo, /Raw GSC rows/);
+  assert.doesNotMatch(seo, /Full signal table/);
+});
+
 test("context profile editors collapse after saving", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 
@@ -518,7 +543,7 @@ test("analysis page presents decisions and results page presents measurement dia
     "Decision result",
     "Results",
     "Measurement and diagnostics",
-    "Visibility brief",
+    "Weekly analysis brief",
     "Add to Content Plan",
     "Dismiss",
     "Public crawl only",
