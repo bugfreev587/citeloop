@@ -218,6 +218,9 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
 
   assert.match(seo, /function GSCStatusMenu/);
   assert.match(seo, /function actionCtaForOpportunity/);
+  assert.match(seo, /function analysisCapabilityBadgeLabel/);
+  assert.match(seo, /Connected, low data/);
+  assert.match(seo, /analysisStatus\.tone === "green"/);
   assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
   assert.match(seo, /<details[\s\S]*View evidence/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);

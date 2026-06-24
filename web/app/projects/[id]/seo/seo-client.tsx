@@ -199,6 +199,12 @@ function searchDataModeLabel(overview: SEOOverview | null, status: ReturnType<ty
   return "Public crawl only";
 }
 
+function analysisCapabilityBadgeLabel(overview: SEOOverview | null, analysisStatus: ReturnType<typeof analysisSearchDataStatus>, visibilityMode: string) {
+  if (analysisStatus.tone === "green" && overview?.cold_start) return "Connected, low data";
+  if (analysisStatus.tone === "green") return "Connected";
+  return capabilityLabel(visibilityMode);
+}
+
 function findingTypeLabel(opportunity: SEOOpportunity) {
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
   if (text.includes("ctr") || text.includes("title") || text.includes("meta")) return "CTR opportunity";
@@ -460,6 +466,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
   const activeActions = actions.filter((action) => !measuredActions.some((measured) => measured.id === action.id));
   const analysisDataMode = searchDataModeLabel(overview, analysisStatus);
+  const analysisCapabilityMode = analysisCapabilityBadgeLabel(overview, analysisStatus, visibilityMode);
   const searchSnapshotCards = [
     { label: "Clicks", value: metric(overview?.last_28_days?.clicks_28d), detail: "Last 28 days" },
     { label: "Impressions", value: metric(overview?.last_28_days?.impressions_28d), detail: "Last 28 days" },
@@ -853,7 +860,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 <Badge tone={analysisStatus.tone}>{analysisDataMode}</Badge>
-                <Badge tone={overview?.cold_start ? "amber" : "green"}>{capabilityLabel(visibilityMode)}</Badge>
+                <Badge tone={analysisStatus.tone === "green" && overview?.cold_start ? "amber" : analysisStatus.tone}>
+                  {analysisCapabilityMode}
+                </Badge>
               </div>
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
