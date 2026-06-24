@@ -47,7 +47,7 @@ function evidenceCount(items: InventoryItem[]) {
 }
 
 function opportunityTitle(opportunity: SEOOpportunity) {
-  return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
+  return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Analysis opportunity";
 }
 
 function metric(value: any, digits = 0) {
@@ -342,7 +342,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       href: `/projects/${projectId}/context`,
     },
     {
-      label: "Opportunities",
+      label: "Analysis",
       metricValue: seoOpportunities.length,
       statusLabel: !contextConfirmed
         ? "Locked until Context"
@@ -352,7 +352,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             ? "Reviewed"
             : "Scanning",
       tone: !contextConfirmed ? "neutral" : seoOpportunities.length > 0 ? "amber" : "green",
-      href: `/projects/${projectId}/opportunities`,
+      href: `/projects/${projectId}/analysis`,
       highlight: contextConfirmed && seoOpportunities.length > 0,
     },
     {
@@ -390,11 +390,11 @@ export function Workspace({ projectId }: { projectId: string }) {
       href: `/projects/${projectId}/publish`,
     },
     {
-      label: "Measure",
+      label: "Results",
       metricValue: searchDataConnected ? metric(clicks28d) : "-",
       statusLabel: searchDataConnected ? "Connected" : "Connect for proof",
       tone: searchDataConnected ? "green" : "amber",
-      href: `/projects/${projectId}/visibility`,
+      href: `/projects/${projectId}/results`,
     },
   ];
 
@@ -415,7 +415,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         id: `published-${article.id}`,
         title: `Published ${articleTitle(article)}`,
         detail: formatDate(article.published_at),
-        href: `/projects/${projectId}/visibility`,
+        href: `/projects/${projectId}/results`,
       })),
       ...approved.slice(0, 1).map((article) => ({
         id: `approved-${article.id}`,
@@ -426,8 +426,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       ...seoOpportunities.slice(0, 1).map((opportunity) => ({
         id: `opportunity-${opportunity.id}`,
         title: opportunityTitle(opportunity),
-        detail: "Visibility opportunity detected",
-        href: `/projects/${projectId}/opportunities`,
+        detail: "Analysis opportunity detected",
+        href: `/projects/${projectId}/analysis`,
       })),
     ],
     nextEvent: nextScheduledRow
@@ -444,7 +444,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     { id: "failed", label: "Publishing failed", count: failedPublish.length, href: `/projects/${projectId}/publish`, tone: "red" as const },
     { id: "blocked", label: "Drafts blocked by QA", count: reviewArticles.filter((a) => a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "red" as const },
     { id: "review", label: "Drafts waiting for review", count: reviewArticles.filter((a) => !a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "amber" as const },
-    { id: "opportunities", label: "Opportunities to review", count: seoOpportunities.length, href: `/projects/${projectId}/opportunities`, tone: "amber" as const },
+    { id: "opportunities", label: "Analysis to review", count: seoOpportunities.length, href: `/projects/${projectId}/analysis`, tone: "amber" as const },
     { id: "distribute", label: "Variants ready to distribute", count: ready.length, href: `/projects/${projectId}/publish`, tone: "green" as const },
     { id: "warnings", label: "Automation warnings", count: automationWarnings.length, href: `/projects/${projectId}/settings/activity`, tone: "amber" as const },
     { id: "waiting-canonical", label: "Variants waiting on canonical", count: waitingVariants.length, href: `/projects/${projectId}/publish`, tone: "neutral" as const },
@@ -622,7 +622,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         {eventStream.items.length === 0 ? (
           <EmptyState
             title="No activity yet"
-            detail="Opportunities, drafts, published pages, and measured results will appear here as the loop moves."
+            detail="Analysis, drafts, published pages, and measured results will appear here as the loop moves."
           />
         ) : (
           <div className="grid gap-2">

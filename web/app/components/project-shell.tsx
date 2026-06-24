@@ -28,34 +28,34 @@ const navSections = [
     items: [
       { label: "Home", href: "", icon: Home },
       { label: "Context", href: "context", icon: Database },
-      { label: "Opportunities", href: "opportunities", icon: Target },
-      { label: "Content Plan", href: "plan", icon: ListChecks },
     ],
+  },
+  {
+    id: "analyze",
+    label: "ANALYZE",
+    items: [{ label: "Analysis", href: "analysis", icon: Target }],
   },
   {
     id: "create",
     label: "CREATE",
     items: [
+      { label: "Content Plan", href: "plan", icon: ListChecks },
       { label: "Review", href: "review", icon: PenLine },
+    ],
+  },
+  {
+    id: "deliver",
+    label: "DELIVER",
+    items: [
       { label: "Publish", href: "publish", icon: Send },
     ],
   },
   {
     id: "measure",
     label: "MEASURE",
-    items: [{ label: "Visibility", href: "visibility", icon: Search }],
-  },
-  {
-    id: "system",
-    label: "SYSTEM",
-    items: [
-      { label: "Settings", href: "settings", icon: Settings2 },
-      { label: "Admin", href: "admin", icon: KeyRound },
-    ],
+    items: [{ label: "Results", href: "results", icon: Search }],
   },
 ];
-
-const adminOnlyNavLeaves = new Set(["settings", "admin"]);
 
 function projectHref(projectId: string, leaf: string) {
   return leaf ? `/projects/${projectId}/${leaf}` : `/projects/${projectId}`;
@@ -102,11 +102,10 @@ export function ProjectShell({
       cancelled = true;
     };
   }, [api]);
-  // Internal routes are admin-gated server-side; hide entries that would only hit a 404.
   const visibleNavSections = navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => !adminOnlyNavLeaves.has(item.href) || canAccessSettings),
+      items: section.items,
     }))
     .filter((section) => section.items.length > 0);
   const visibleNav = visibleNavSections.flatMap((section) => section.items);
@@ -170,6 +169,28 @@ export function ProjectShell({
             <FolderKanban size={16} />
             Projects
           </Link>
+          <Link
+            href="/docs"
+            className={cx(
+              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+              isDocsActive(pathname, projectId) && "bg-slate-50 font-semibold text-[#d93820]",
+            )}
+          >
+            <BookOpen size={16} />
+            Docs
+          </Link>
+          {canAccessSettings && (
+            <Link
+              href={`/projects/${projectId}/settings`}
+              className={cx(
+                "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+                isActive(pathname, projectId, "settings") && "bg-slate-50 font-semibold text-[#d93820]",
+              )}
+            >
+              <Settings2 size={16} />
+              Settings
+            </Link>
+          )}
           {isPlatformAdmin && (
             <Link
               href={`/projects/${projectId}/admin`}
@@ -182,16 +203,6 @@ export function ProjectShell({
               Admin
             </Link>
           )}
-          <Link
-            href="/docs"
-            className={cx(
-              "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
-              isDocsActive(pathname, projectId) && "bg-slate-50 font-semibold text-[#d93820]",
-            )}
-          >
-            <BookOpen size={16} />
-            Docs
-          </Link>
           <div className="flex h-[52px] w-[185px] items-center gap-3 rounded-xl border border-slate-100 bg-white px-2 shadow-sm">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
               {projectName.slice(0, 2).toUpperCase()}
@@ -255,6 +266,17 @@ export function ProjectShell({
           >
             Docs
           </Link>
+          {canAccessSettings && (
+            <Link
+              href={`/projects/${projectId}/settings`}
+              className={cx(
+                "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600",
+                isActive(pathname, projectId, "settings") && "border-[#d93820] text-[#d93820]",
+              )}
+            >
+              Settings
+            </Link>
+          )}
         </div>
       </div>
 

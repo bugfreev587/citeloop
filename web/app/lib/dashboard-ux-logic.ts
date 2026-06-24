@@ -197,9 +197,9 @@ export function nextWorkspaceAction({
   }
   if (openOpportunityCount > 0) {
     return {
-      title: "Review opportunities",
-      detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
-      href: `/projects/${projectId}/opportunities`,
+      title: "Review analysis",
+      detail: `${openOpportunityCount} recommendations are ready to review before CiteLoop advances the content plan.`,
+      href: `/projects/${projectId}/analysis`,
     };
   }
   if (topicsCount === 0) {
@@ -231,17 +231,17 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       id: "published-this-month",
       label: "Published this month",
       value: input.publishedThisMonthCount,
-      detail: "live assets feeding visibility",
-      href: `/projects/${input.projectId}/visibility`,
+      detail: "live assets feeding results",
+      href: `/projects/${input.projectId}/results`,
       actionLabel: "View impact",
       tone: "green",
     },
     {
       id: "opportunities-converted",
-      label: "Opportunities converted",
+      label: "Analysis converted",
       value: input.opportunitiesConvertedCount,
-      detail: "visibility gaps entered the loop",
-      href: `/projects/${input.projectId}/opportunities`,
+      detail: "analysis work entered the loop",
+      href: `/projects/${input.projectId}/analysis`,
       actionLabel: "Review loop",
       tone: "blue",
     },
@@ -286,9 +286,9 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     items: [],
     emptyAction: {
       title: "Context is ready",
-      detail: "Review opportunities when they appear; CiteLoop will advance planning and drafting automatically after the review gate.",
-      href: `/projects/${input.projectId}/opportunities`,
-      actionLabel: "Review opportunities",
+      detail: "Review analysis when recommendations appear; CiteLoop will advance planning and drafting automatically after the review gate.",
+      href: `/projects/${input.projectId}/analysis`,
+      actionLabel: "Review analysis",
     },
   };
 }

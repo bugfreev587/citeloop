@@ -174,7 +174,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
   );
 
-  // The plan is built automatically from reviewed opportunities; this banner explains
+  // The plan is built automatically from accepted analysis recommendations; this banner explains
   // that flow so the manual generate button is a fallback, not the main path.
   const autoPlan: { tone: "green" | "blue" | "amber" | "neutral"; title: string; detail: string; cta: { label: string; href: string } | null } =
     topics.length > 0
@@ -183,28 +183,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title: "Your content plan is running automatically",
           detail: queuedTopics.length > 0
             ? pacingNote
-            : "CiteLoop turns reviewed opportunities into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
+            : "CiteLoop turns accepted analysis recommendations into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
           cta: null,
         }
       : contentActions > 0
         ? {
             tone: "blue",
-            title: "Generating your content plan from reviewed opportunities",
-            detail: "Reviewed opportunities are being turned into topics automatically. Topics will appear here shortly — no action needed.",
+            title: "Generating your content plan from accepted analysis",
+            detail: "Accepted analysis recommendations are being turned into topics automatically. Topics will appear here shortly — no action needed.",
             cta: null,
           }
         : openOpportunities > 0
           ? {
               tone: "amber",
-              title: `${openOpportunities} ${openOpportunities === 1 ? "opportunity is" : "opportunities are"} waiting for review`,
-              detail: "Review opportunities to add them to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/opportunities` },
+              title: `${openOpportunities} analysis ${openOpportunities === 1 ? "recommendation is" : "recommendations are"} waiting for review`,
+              detail: "Review analysis to add useful recommendations to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
+              cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
             }
           : {
               tone: "neutral",
-              title: "No opportunities are waiting",
-              detail: "CiteLoop plans automatically once you review opportunities. You can also seed a starter backlog from your domain (advanced).",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/opportunities` },
+              title: "No analysis is waiting",
+              detail: "CiteLoop plans automatically once you review analysis recommendations. You can also seed a starter backlog from your domain (advanced).",
+              cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
             };
   const autoPlanToneClass = {
     green: "border-emerald-200 bg-emerald-50",
@@ -357,7 +357,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <section className="space-y-3">
-        <SectionHeader title="Content Plan" eyebrow="Planned automatically from reviewed opportunities" />
+        <SectionHeader title="Content Plan" eyebrow="Planned automatically from accepted analysis" />
         {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
@@ -394,7 +394,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               variant="ghost"
               size="sm"
               onClick={runStrategist}
-              title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed opportunities."
+              title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed analysis."
             >
               {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
               {strategistRunning ? "Generating content plan" : "Generate from domain"}

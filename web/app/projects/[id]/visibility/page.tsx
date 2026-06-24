@@ -1,6 +1,6 @@
-import { VisibilityClient } from "../seo/seo-client";
+import { redirect } from "next/navigation";
 
 export default async function VisibilityPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <VisibilityClient projectId={id} />;
+  redirect(`/projects/${id}/results`);
 }

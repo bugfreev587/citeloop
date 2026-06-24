@@ -66,8 +66,8 @@ test("buildActionableMomentum hides zero values and returns the next useful empt
 
   assert.deepEqual(momentum.items, []);
   assert.equal(momentum.emptyAction.title, "Context is ready");
-  assert.equal(momentum.emptyAction.actionLabel, "Review opportunities");
-  assert.equal(momentum.emptyAction.href, "/projects/project_1/opportunities");
+  assert.equal(momentum.emptyAction.actionLabel, "Review analysis");
+  assert.equal(momentum.emptyAction.href, "/projects/project_1/analysis");
 });
 
 test("buildActionableMomentum turns non-zero metrics into actions", async () => {
@@ -85,14 +85,14 @@ test("buildActionableMomentum turns non-zero metrics into actions", async () => 
 
   assert.deepEqual(
     momentum.items.map((item) => item.label),
-    ["Ready to publish", "Published this month", "Opportunities converted", "Active loop items"],
+    ["Ready to publish", "Published this month", "Analysis converted", "Active loop items"],
   );
   assert.deepEqual(
     momentum.items.map((item) => item.href),
     [
       "/projects/project_1/publish",
-      "/projects/project_1/visibility",
-      "/projects/project_1/opportunities",
+      "/projects/project_1/results",
+      "/projects/project_1/analysis",
       "/projects/project_1",
     ],
   );
@@ -123,7 +123,7 @@ test("buildHomeEventStream orders live work, recent events, then the next schedu
         id: "published",
         title: "Published homepage comparison",
         detail: "Delivered 2 hours ago",
-        href: "/projects/project_1/visibility",
+        href: "/projects/project_1/results",
       },
     ],
     nextEvent: {
@@ -211,8 +211,8 @@ test("nextWorkspaceAction sends confirmed projects to opportunity review before 
     openOpportunityCount: 2,
   });
 
-  assert.equal(action.title, "Review opportunities");
-  assert.equal(action.href, "/projects/project_1/opportunities");
+  assert.equal(action.title, "Review analysis");
+  assert.equal(action.href, "/projects/project_1/analysis");
   assert.match(action.detail, /ready to review/i);
 });
 
@@ -229,11 +229,11 @@ test("nextWorkspaceAction follows opportunity review work before creating a firs
     readyCount: 0,
     topicsCount: 0,
     openOpportunityCount: 3,
-    currentPathname: "/projects/project_1/opportunities",
+    currentPathname: "/projects/project_1/analysis",
   });
 
-  assert.equal(action.title, "Review opportunities");
-  assert.equal(action.href, "/projects/project_1/opportunities");
+  assert.equal(action.title, "Review analysis");
+  assert.equal(action.href, "/projects/project_1/analysis");
   assert.match(action.detail, /ready to review/i);
 });
 

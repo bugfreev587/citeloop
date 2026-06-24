@@ -122,17 +122,17 @@ function measurementWindowLabel(measurement_window: any) {
   return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
 }
 
-type SEOClientMode = "opportunities" | "visibility";
+type SEOClientMode = "analysis" | "results";
 
-export function OpportunitiesClient({ projectId }: { projectId: string }) {
-  return <SEOClient projectId={projectId} mode="opportunities" />;
+export function AnalysisClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="analysis" />;
 }
 
-export function VisibilityClient({ projectId }: { projectId: string }) {
-  return <SEOClient projectId={projectId} mode="visibility" />;
+export function ResultsClient({ projectId }: { projectId: string }) {
+  return <SEOClient projectId={projectId} mode="results" />;
 }
 
-export function SEOClient({ projectId, mode = "opportunities" }: { projectId: string; mode?: SEOClientMode }) {
+export function SEOClient({ projectId, mode = "analysis" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
@@ -551,8 +551,8 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
   return (
     <div className="space-y-7">
       <SectionHeader
-        title={mode === "opportunities" ? "Review opportunities" : "Measurement and diagnostics"}
-        eyebrow={mode === "opportunities" ? "Find opportunities" : "Measure visibility"}
+        title={mode === "analysis" ? "Review analysis" : "Results"}
+        eyebrow={mode === "analysis" ? "Analyze opportunities" : "Measurement and diagnostics"}
         action={
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={manualRefresh} disabled={!!busy}>
@@ -571,7 +571,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
 
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      {mode === "opportunities" && (
+      {mode === "analysis" && (
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -584,7 +584,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
                   {opportunities.length} {opportunities.length === 1 ? "opportunity" : "opportunities"} need review
                 </h3>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  Choose the opportunities worth turning into content work. Add the useful ones to Content Plan and dismiss anything that is not a fit.
+                  Choose the recommendations worth turning into content work. Add the useful ones to Content Plan and dismiss anything that is not a fit.
                 </p>
               </div>
               <Badge tone={overview?.cold_start ? "amber" : "green"}>{capabilityLabel(visibilityMode)}</Badge>
@@ -648,7 +648,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
 
         <aside className="space-y-3">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">What to review</div>
+            <div className="text-sm font-bold text-slate-900">What to decide</div>
             <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
               <p>Does the recommendation match the confirmed Context?</p>
               <p>Is the source page or evidence strong enough to support the claim?</p>
@@ -656,7 +656,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
             </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-sm font-bold text-slate-900">Review result</div>
+            <div className="text-sm font-bold text-slate-900">Decision result</div>
             <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <div className="text-2xl font-bold text-slate-950">{opportunities.length}</div>
@@ -680,7 +680,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
       </section>
       )}
 
-      {mode === "visibility" && (
+      {mode === "results" && (
         <div className="space-y-7">
       <section>
         <SectionHeader
@@ -1261,7 +1261,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
         </div>
       )}
 
-      {mode === "opportunities" && (
+      {mode === "analysis" && (
       <details className="rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm font-bold text-slate-900">
           <span>{brief?.title ?? "Visibility brief"}</span>
@@ -1323,7 +1323,7 @@ export function SEOClient({ projectId, mode = "opportunities" }: { projectId: st
       </details>
       )}
 
-      {mode === "opportunities" && actions.length > 0 && (
+      {mode === "analysis" && actions.length > 0 && (
       <section>
         <SectionHeader title="Content actions" action={<Badge tone="neutral">{actions.length}</Badge>} />
           <div className="grid gap-2">
