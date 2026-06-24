@@ -172,6 +172,27 @@ const defaultPublisherDraft: GitHubNextJSPublisherInput = {
   credential_ref: "",
 };
 
+type SettingsTabId =
+  | "project"
+  | "activity"
+  | "search-console"
+  | "publisher"
+  | "crawl"
+  | "notifications"
+  | "subscriptions"
+  | "deliveries";
+
+const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
+  { id: "project", title: "Project config" },
+  { id: "activity", title: "Activity Log" },
+  { id: "search-console", title: "Search Console connection" },
+  { id: "publisher", title: "Publisher connection" },
+  { id: "crawl", title: "Crawl config" },
+  { id: "notifications", title: "Notifications" },
+  { id: "subscriptions", title: "Notification subscriptions" },
+  { id: "deliveries", title: "Notification deliveries" },
+];
+
 export function SettingsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
@@ -193,6 +214,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>("project");
 
   const refresh = useCallback(async () => {
     try {
@@ -541,7 +563,32 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       <SectionHeader title="Settings" eyebrow="Project config" />
       {message && <Notice title={message.title} detail={message.detail} tone={message.tone} />}
 
-      <section>
+      <div className="overflow-x-auto border-b border-slate-200">
+        <div role="tablist" aria-label="Settings sections" className="flex min-w-max gap-6">
+          {settingsTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              id={`settings-tab-${tab.id}`}
+              role="tab"
+              aria-selected={activeSettingsTab === tab.id}
+              aria-controls={`settings-panel-${tab.id}`}
+              onClick={() => setActiveSettingsTab(tab.id)}
+              className={cx(
+                "border-b-2 px-0 pb-3 pt-1 text-sm font-semibold transition-colors",
+                activeSettingsTab === tab.id
+                  ? "border-[#d93820] text-slate-950"
+                  : "border-transparent text-slate-500 hover:text-slate-900",
+              )}
+            >
+              {tab.title}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeSettingsTab === "activity" && (
+      <section id="settings-panel-activity" role="tabpanel" aria-labelledby="settings-tab-activity" tabIndex={0}>
         <SectionHeader title="Activity Log" eyebrow="Automation audit" />
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
           <div className="flex gap-3">
@@ -563,8 +610,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </Link>
         </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "search-console" && (
+      <section id="settings-panel-search-console" role="tabpanel" aria-labelledby="settings-tab-search-console" tabIndex={0}>
         <SectionHeader
           title="Search Console connection"
           eyebrow="Analysis data"
@@ -660,8 +709,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </div>
         </div>
       </section>
+      )}
 
-      <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+      {activeSettingsTab === "project" && (
+      <section id="settings-panel-project" role="tabpanel" aria-labelledby="settings-tab-project" tabIndex={0}>
+        <SectionHeader title="Project config" />
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Cadence per week">
             <TextInput
@@ -717,9 +770,19 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             placeholder="Direct, evidence-backed, pragmatic."
           />
         </Field>
+        <div>
+          <Button disabled={busy} variant="primary" onClick={save}>
+            <ButtonProgress busy={busy} busyLabel="Saving settings" idleIcon={<Save size={16} />}>
+              Save settings
+            </ButtonProgress>
+          </Button>
+        </div>
+        </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "publisher" && (
+      <section id="settings-panel-publisher" role="tabpanel" aria-labelledby="settings-tab-publisher" tabIndex={0}>
         <SectionHeader
           title="Publisher connection"
           eyebrow="Publishing"
@@ -858,8 +921,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </div>
         </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "crawl" && (
+      <section id="settings-panel-crawl" role="tabpanel" aria-labelledby="settings-tab-crawl" tabIndex={0}>
         <SectionHeader title="Crawl config" />
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="grid gap-4 md:grid-cols-3">
@@ -932,8 +997,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </div>
         </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "notifications" && (
+      <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0}>
         <SectionHeader
           title="Notifications"
           eyebrow="Operations"
@@ -1050,8 +1117,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           )}
         </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "subscriptions" && (
+      <section id="settings-panel-subscriptions" role="tabpanel" aria-labelledby="settings-tab-subscriptions" tabIndex={0}>
         <SectionHeader title="Notification subscriptions" />
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           {channels.length === 0 ? (
@@ -1092,8 +1161,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           )}
         </div>
       </section>
+      )}
 
-      <section>
+      {activeSettingsTab === "deliveries" && (
+      <section id="settings-panel-deliveries" role="tabpanel" aria-labelledby="settings-tab-deliveries" tabIndex={0}>
         <SectionHeader
           title="Notification deliveries"
           action={
@@ -1161,12 +1232,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           )}
         </div>
       </section>
-
-      <Button disabled={busy} variant="primary" onClick={save}>
-        <ButtonProgress busy={busy} busyLabel="Saving settings" idleIcon={<Save size={16} />}>
-          Save settings
-        </ButtonProgress>
-      </Button>
+      )}
     </div>
   );
 }
