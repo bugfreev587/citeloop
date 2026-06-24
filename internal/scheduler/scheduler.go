@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,10 +132,150 @@ func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEv
 		return s.handleContentPlanCreated(ctx, event.ProjectID)
 	case workflow.EventDraftApproved:
 		return s.handleDraftApproved(ctx, event.ProjectID)
+	case workflow.EventMeasurementWindowDue:
+		return s.handleMeasurementWindowDue(ctx, event.ProjectID)
 	default:
 		s.Log.Info("workflow event ignored", "type", event.EventType, "project", event.ProjectID)
 		return nil
 	}
+}
+
+func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uuid.UUID) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(projectID)); err != nil {
+		return err
+	}
+	q := db.New(tx)
+	now := s.currentTime().UTC()
+	actions, err := q.ListDueMeasuringContentActions(ctx, db.ListDueMeasuringContentActionsParams{
+		ProjectID: projectID,
+		NowAt:     pgtype.Timestamptz{Time: now, Valid: true},
+		LimitRows: 50,
+	})
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		window, completed, remaining := completeDueMeasurementCheckpoints(action.MeasurementWindow, action.PublishedAt, now)
+		status := "measuring"
+		if remaining == 0 {
+			status = "completed"
+		}
+		outcome := measurementOutcomeSummary(action, status, completed, remaining, now, window)
+		if _, err := q.UpdateContentActionOutcomeSummary(ctx, db.UpdateContentActionOutcomeSummaryParams{
+			ID:                action.ID,
+			ProjectID:         projectID,
+			Status:            status,
+			OutcomeSummary:    outcome,
+			MeasurementWindow: window,
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.Timestamptz, now time.Time) (json.RawMessage, int, int) {
+	window := map[string]any{}
+	if len(raw) > 0 && json.Valid(raw) {
+		_ = json.Unmarshal(raw, &window)
+	}
+	window["last_checked_at"] = now.Format(time.RFC3339)
+
+	checkpoints, _ := window["checkpoints"].([]any)
+	if len(checkpoints) == 0 {
+		window["state"] = "completed"
+		window["latest_outcome"] = "inconclusive"
+		return mustJSON(window), 0, 0
+	}
+
+	completedNow := 0
+	remainingScheduled := 0
+	for _, item := range checkpoints {
+		checkpoint, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		status := strings.TrimSpace(fmt.Sprint(checkpoint["status"]))
+		if status == "" {
+			status = "scheduled"
+		}
+		if status != "scheduled" {
+			continue
+		}
+		day := measurementCheckpointDay(checkpoint["day"])
+		if measurementCheckpointDue(publishedAt, day, now) {
+			checkpoint["status"] = "completed"
+			checkpoint["completed_at"] = now.Format(time.RFC3339)
+			checkpoint["outcome"] = "inconclusive"
+			completedNow++
+			continue
+		}
+		remainingScheduled++
+	}
+
+	state := "measuring"
+	if remainingScheduled == 0 {
+		state = "completed"
+	}
+	window["state"] = state
+	window["latest_outcome"] = "inconclusive"
+	return mustJSON(window), completedNow, remainingScheduled
+}
+
+func measurementCheckpointDay(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+func measurementCheckpointDue(publishedAt pgtype.Timestamptz, day int, now time.Time) bool {
+	if !publishedAt.Valid {
+		return true
+	}
+	dueAt := publishedAt.Time.UTC().AddDate(0, 0, day)
+	return !dueAt.After(now)
+}
+
+func measurementOutcomeSummary(action db.ContentAction, status string, completed, remaining int, now time.Time, window json.RawMessage) json.RawMessage {
+	primaryMetric := ""
+	windowData := map[string]any{}
+	if len(window) > 0 && json.Valid(window) && json.Unmarshal(window, &windowData) == nil {
+		primaryMetric, _ = windowData["primary_metric"].(string)
+	}
+	summary := "Measurement checkpoint processed without enough comparative search data to attribute movement."
+	if status == "completed" {
+		summary = "Measurement window closed; comparative search data remained inconclusive."
+	}
+	return mustJSON(map[string]any{
+		"action_id":             action.ID.String(),
+		"computed_at":           now.Format(time.RFC3339),
+		"completed_checkpoints": completed,
+		"outcome_summary":       "inconclusive",
+		"primary_metric":        primaryMetric,
+		"remaining_checkpoints": remaining,
+		"result":                "inconclusive",
+		"state":                 "inconclusive",
+		"status":                status,
+		"summary":               summary,
+	})
 }
 
 func (s *Scheduler) handleContentPlanCreated(ctx context.Context, projectID uuid.UUID) error {

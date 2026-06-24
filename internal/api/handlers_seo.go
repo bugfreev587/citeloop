@@ -44,6 +44,152 @@ func (s *Server) getSEOOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, overview)
 }
 
+type VisibilityLifecycleStage string
+
+const (
+	VisibilityStageDetected           VisibilityLifecycleStage = "detected"
+	VisibilityStageAddedToPlan        VisibilityLifecycleStage = "added_to_plan"
+	VisibilityStagePlanned            VisibilityLifecycleStage = "planned"
+	VisibilityStageDrafting           VisibilityLifecycleStage = "drafting"
+	VisibilityStageReadyForReview     VisibilityLifecycleStage = "ready_for_review"
+	VisibilityStageApproved           VisibilityLifecycleStage = "approved"
+	VisibilityStagePublishedOrApplied VisibilityLifecycleStage = "published_or_applied"
+	VisibilityStageMeasuring          VisibilityLifecycleStage = "measuring"
+	VisibilityStageLearned            VisibilityLifecycleStage = "learned"
+	VisibilityStageBlocked            VisibilityLifecycleStage = "blocked"
+)
+
+var visibilityLifecycleStages = []VisibilityLifecycleStage{
+	VisibilityStageDetected,
+	VisibilityStageAddedToPlan,
+	VisibilityStagePlanned,
+	VisibilityStageDrafting,
+	VisibilityStageReadyForReview,
+	VisibilityStageApproved,
+	VisibilityStagePublishedOrApplied,
+	VisibilityStageMeasuring,
+	VisibilityStageLearned,
+	VisibilityStageBlocked,
+}
+
+type VisibilitySummary struct {
+	CapabilityMode        string                      `json:"capability_mode"`
+	PrimaryStatus         string                      `json:"primary_status"`
+	SetupBlockers         []seopkg.SetupChecklistItem `json:"setup_blockers"`
+	OpenOpportunities     []db.SeoOpportunity         `json:"open_opportunities"`
+	ActionsInLoop         []VisibilityActionInLoop    `json:"actions_in_loop"`
+	LifecycleCounts       map[string]int              `json:"lifecycle_counts"`
+	TopMeasurementUpdates []VisibilityMeasurement     `json:"top_measurement_updates"`
+	DiagnosticsHealth     map[string]any              `json:"diagnostics_health"`
+}
+
+type VisibilityActionInLoop struct {
+	ID                        uuid.UUID                `json:"id"`
+	OpportunityID             uuid.UUID                `json:"opportunity_id"`
+	ActionType                string                   `json:"action_type"`
+	Status                    string                   `json:"status"`
+	LifecycleStage            VisibilityLifecycleStage `json:"lifecycle_stage"`
+	AssetType                 *string                  `json:"asset_type,omitempty"`
+	TargetURL                 *string                  `json:"target_url,omitempty"`
+	NormalizedTargetURL       *string                  `json:"normalized_target_url,omitempty"`
+	OpportunityStatus         string                   `json:"opportunity_status"`
+	OpportunityType           string                   `json:"opportunity_type"`
+	OpportunityPageURL        *string                  `json:"opportunity_page_url,omitempty"`
+	OpportunityNormalizedURL  *string                  `json:"opportunity_normalized_page_url,omitempty"`
+	OpportunityQuery          *string                  `json:"opportunity_query,omitempty"`
+	OpportunityRecommended    *string                  `json:"opportunity_recommended_action,omitempty"`
+	OpportunityExpectedImpact *string                  `json:"opportunity_expected_impact,omitempty"`
+	OpportunityRiskLevel      string                   `json:"opportunity_risk_level"`
+	TopicID                   *uuid.UUID               `json:"topic_id,omitempty"`
+	TopicStatus               *string                  `json:"topic_status,omitempty"`
+	TopicTitle                *string                  `json:"topic_title,omitempty"`
+	DraftArticleID            *uuid.UUID               `json:"draft_article_id,omitempty"`
+	DraftArticleStatus        *string                  `json:"draft_article_status,omitempty"`
+	DraftArticleCanonicalURL  *string                  `json:"draft_article_canonical_url,omitempty"`
+	ReviewRequired            bool                     `json:"review_required"`
+	PublishedAt               *time.Time               `json:"published_at,omitempty"`
+	VerifiedAt                *time.Time               `json:"verified_at,omitempty"`
+	MeasurementWindow         json.RawMessage          `json:"measurement_window"`
+	OutcomeSummary            json.RawMessage          `json:"outcome_summary"`
+	VerificationSnapshot      json.RawMessage          `json:"verification_snapshot"`
+	CreatedAt                 *time.Time               `json:"created_at,omitempty"`
+	UpdatedAt                 *time.Time               `json:"updated_at,omitempty"`
+}
+
+type VisibilityMeasurement struct {
+	ActionID uuid.UUID `json:"action_id"`
+	Status   string    `json:"status"`
+	Summary  string    `json:"summary"`
+}
+
+func (s *Server) getVisibilitySummary(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	overview, err := s.seoService().Overview(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	openOpps, err := s.Q.ListSEOOpportunities(r.Context(), db.ListSEOOpportunitiesParams{
+		ProjectID: projectID,
+		Status:    "open",
+		LimitRows: 50,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rows, err := s.Q.ListVisibilityActionRows(r.Context(), db.ListVisibilityActionRowsParams{
+		ProjectID: projectID,
+		Limit:     50,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	counts := emptyVisibilityLifecycleCounts()
+	counts[string(VisibilityStageDetected)] = len(openOpps)
+	actions := make([]VisibilityActionInLoop, 0, len(rows))
+	measurements := []VisibilityMeasurement{}
+	for _, row := range rows {
+		stage := deriveVisibilityLifecycleStage(row)
+		counts[string(stage)]++
+		item := visibilityActionInLoop(row, stage)
+		actions = append(actions, item)
+		if measurement := visibilityMeasurementUpdate(item); measurement != nil && len(measurements) < 5 {
+			measurements = append(measurements, *measurement)
+		}
+	}
+
+	setupBlockers := make([]seopkg.SetupChecklistItem, 0)
+	for _, item := range overview.SetupChecklist {
+		if item.Status == "connected" || item.Status == "optional" {
+			continue
+		}
+		setupBlockers = append(setupBlockers, item)
+	}
+	summary := VisibilitySummary{
+		CapabilityMode:        overview.CapabilityMode,
+		PrimaryStatus:         visibilityPrimaryStatus(len(openOpps), len(actions), setupBlockers, counts),
+		SetupBlockers:         setupBlockers,
+		OpenOpportunities:     emptySlice(openOpps),
+		ActionsInLoop:         actions,
+		LifecycleCounts:       counts,
+		TopMeasurementUpdates: measurements,
+		DiagnosticsHealth: map[string]any{
+			"capability_mode":      overview.CapabilityMode,
+			"cold_start":           overview.ColdStart,
+			"data_source_warnings": overview.DataSourceWarnings,
+			"technical":            overview.Technical,
+		},
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
 func (s *Server) syncSEO(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -169,7 +315,7 @@ func (s *Server) getSEOOpportunity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) acceptSEOOpportunity(w http.ResponseWriter, r *http.Request) {
-	s.updateSEOOpportunityStatus(w, r, "accepted")
+	s.createSEOContentActionFromOpportunity(w, r, http.StatusOK)
 }
 
 func (s *Server) dismissSEOOpportunity(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +347,10 @@ func (s *Server) updateSEOOpportunityStatus(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) {
+	s.createSEOContentActionFromOpportunity(w, r, http.StatusCreated)
+}
+
+func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r *http.Request, successStatus int) {
 	projectID, oppID, ok := s.seoIDs(w, r, "opportunityID")
 	if !ok {
 		return
@@ -294,7 +444,7 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, action)
+	writeJSON(w, successStatus, action)
 }
 
 func (s *Server) listSEOContentActions(w http.ResponseWriter, r *http.Request) {
@@ -598,4 +748,182 @@ func checkpointObjects(days []int) []map[string]any {
 		out = append(out, map[string]any{"day": day, "status": "scheduled"})
 	}
 	return out
+}
+
+func emptyVisibilityLifecycleCounts() map[string]int {
+	counts := make(map[string]int, len(visibilityLifecycleStages))
+	for _, stage := range visibilityLifecycleStages {
+		counts[string(stage)] = 0
+	}
+	return counts
+}
+
+func deriveVisibilityLifecycleStage(row db.ListVisibilityActionRowsRow) VisibilityLifecycleStage {
+	status := strings.ToLower(strings.TrimSpace(row.Status))
+	draftStatus := ""
+	if row.DraftArticleStatus != nil {
+		draftStatus = strings.ToLower(strings.TrimSpace(*row.DraftArticleStatus))
+	}
+
+	if status == "failed" || status == "verification_failed" || status == "recovery_required" {
+		return VisibilityStageBlocked
+	}
+	if status == "completed" {
+		return VisibilityStageLearned
+	}
+	if status == "measuring" {
+		return VisibilityStageMeasuring
+	}
+	if status == "published" || row.PublishedAt.Valid || row.VerifiedAt.Valid || draftStatus == "published" {
+		return VisibilityStagePublishedOrApplied
+	}
+	if status == "drafting" {
+		return VisibilityStageDrafting
+	}
+	if row.DraftArticleID.Valid || row.DraftArticleJoinedID.Valid {
+		return VisibilityStageReadyForReview
+	}
+	if status == "approved" {
+		if row.TopicID.Valid {
+			return VisibilityStagePlanned
+		}
+		return VisibilityStageApproved
+	}
+	if status == "ready_for_review" {
+		if rawJSONHasData(row.DiffSnapshot) || rawJSONHasData(row.OutputSnapshot) {
+			return VisibilityStageReadyForReview
+		}
+		if row.TopicID.Valid {
+			return VisibilityStagePlanned
+		}
+		return VisibilityStageAddedToPlan
+	}
+	return VisibilityStageAddedToPlan
+}
+
+func visibilityActionInLoop(row db.ListVisibilityActionRowsRow, stage VisibilityLifecycleStage) VisibilityActionInLoop {
+	draftArticleID := pgUUIDPtr(row.DraftArticleID)
+	if draftArticleID == nil {
+		draftArticleID = pgUUIDPtr(row.DraftArticleJoinedID)
+	}
+	return VisibilityActionInLoop{
+		ID:                        row.ID,
+		OpportunityID:             row.OpportunityID,
+		ActionType:                row.ActionType,
+		Status:                    row.Status,
+		LifecycleStage:            stage,
+		AssetType:                 row.AssetType,
+		TargetURL:                 row.TargetUrl,
+		NormalizedTargetURL:       row.NormalizedTargetUrl,
+		OpportunityStatus:         row.OpportunityStatus,
+		OpportunityType:           row.OpportunityType,
+		OpportunityPageURL:        row.OpportunityPageUrl,
+		OpportunityNormalizedURL:  row.OpportunityNormalizedPageUrl,
+		OpportunityQuery:          row.OpportunityQuery,
+		OpportunityRecommended:    row.OpportunityRecommendedAction,
+		OpportunityExpectedImpact: row.OpportunityExpectedImpact,
+		OpportunityRiskLevel:      row.OpportunityRiskLevel,
+		TopicID:                   pgUUIDPtr(row.TopicID),
+		TopicStatus:               row.TopicStatus,
+		TopicTitle:                row.TopicTitle,
+		DraftArticleID:            draftArticleID,
+		DraftArticleStatus:        row.DraftArticleStatus,
+		DraftArticleCanonicalURL:  row.DraftArticleCanonicalUrl,
+		ReviewRequired:            row.ReviewRequired,
+		PublishedAt:               pgTimePtr(row.PublishedAt),
+		VerifiedAt:                pgTimePtr(row.VerifiedAt),
+		MeasurementWindow:         rawOrDefault(row.MeasurementWindow, `{}`),
+		OutcomeSummary:            rawOrDefault(row.OutcomeSummary, `{}`),
+		VerificationSnapshot:      rawOrDefault(row.VerificationSnapshot, `{}`),
+		CreatedAt:                 pgTimePtr(row.CreatedAt),
+		UpdatedAt:                 pgTimePtr(row.UpdatedAt),
+	}
+}
+
+func visibilityPrimaryStatus(openCount, actionCount int, setupBlockers []seopkg.SetupChecklistItem, counts map[string]int) string {
+	if counts[string(VisibilityStageBlocked)] > 0 {
+		return "blocked"
+	}
+	if openCount > 0 {
+		return "review_needed"
+	}
+	if actionCount > 0 {
+		return "loop_in_motion"
+	}
+	if len(setupBlockers) > 0 {
+		return "limited_setup"
+	}
+	return "steady"
+}
+
+func visibilityMeasurementUpdate(item VisibilityActionInLoop) *VisibilityMeasurement {
+	switch item.LifecycleStage {
+	case VisibilityStageMeasuring, VisibilityStageLearned, VisibilityStagePublishedOrApplied:
+	default:
+		return nil
+	}
+	summary := compactJSONSummary(item.OutcomeSummary)
+	if summary == "" {
+		summary = measurementWindowSummary(item.MeasurementWindow)
+	}
+	if summary == "" {
+		summary = "Measurement window is waiting for enough data."
+	}
+	return &VisibilityMeasurement{ActionID: item.ID, Status: string(item.LifecycleStage), Summary: summary}
+}
+
+func measurementWindowSummary(raw json.RawMessage) string {
+	var data map[string]any
+	if len(raw) == 0 || !json.Valid(raw) || json.Unmarshal(raw, &data) != nil {
+		return ""
+	}
+	primary, _ := data["primary_metric"].(string)
+	checkpoints, _ := data["checkpoints"].([]any)
+	if primary == "" && len(checkpoints) == 0 {
+		return ""
+	}
+	if primary == "" {
+		return fmt.Sprintf("%d measurement checkpoints scheduled.", len(checkpoints))
+	}
+	return fmt.Sprintf("%s measurement scheduled across %d checkpoints.", primary, len(checkpoints))
+}
+
+func compactJSONSummary(raw json.RawMessage) string {
+	if !rawJSONHasData(raw) {
+		return ""
+	}
+	var data map[string]any
+	if json.Unmarshal(raw, &data) != nil {
+		return string(raw)
+	}
+	for _, key := range []string{"summary", "result", "state", "status"} {
+		if value, ok := data[key]; ok {
+			text := strings.TrimSpace(fmt.Sprint(value))
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return "Outcome summary is available."
+}
+
+func rawJSONHasData(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null" && trimmed != "{}" && trimmed != "[]"
+}
+
+func pgUUIDPtr(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
+}
+
+func pgTimePtr(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	t := value.Time
+	return &t
 }
