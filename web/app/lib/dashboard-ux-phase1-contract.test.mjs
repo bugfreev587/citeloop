@@ -202,6 +202,38 @@ test("analysis surface is action-first with search-data status and collapsed evi
   assert.doesNotMatch(seo, /Full signal table/);
 });
 
+test("results surface defaults to published outcomes with collapsed measurement details", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
+  const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
+
+  for (const copy of [
+    "Outcome summary",
+    "Published work",
+    "Measurement queue",
+    "Waiting",
+    "Positive",
+    "Negative",
+    "Inconclusive",
+    "Measurement details",
+    "Measurement window",
+    "AI citation signals",
+    "No published work is measuring yet",
+    "Advanced diagnostics",
+  ]) {
+    assert.match(resultsBlock, new RegExp(copy));
+  }
+
+  assert.match(seo, /function actionMeasurementState/);
+  assert.match(seo, /const measuredActions = actions\.filter/);
+  assert.match(resultsBlock, /<details[\s\S]*Measurement details/);
+  assert.match(resultsBlock, /<details[\s\S]*Advanced diagnostics/);
+  assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
+  assert.doesNotMatch(resultsBlock, /Dismiss/);
+  assert.doesNotMatch(resultsBlock, /Opportunity queue/);
+});
+
 test("context profile editors collapse after saving", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 

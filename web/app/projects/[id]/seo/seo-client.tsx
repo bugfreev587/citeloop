@@ -170,6 +170,40 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
+type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive";
+type ActionMeasurementState = {
+  key: ActionMeasurementKey;
+  label: "Waiting" | "Positive" | "Negative" | "Inconclusive";
+  tone: "green" | "amber" | "red" | "neutral";
+  detail: string;
+};
+
+function actionMeasurementState(action: SEOContentAction): ActionMeasurementState {
+  const rawResult = String(action.outcome_summary?.result ?? action.outcome_summary?.state ?? "").toLowerCase();
+  if (["improved", "positive", "won", "up"].includes(rawResult)) {
+    return { key: "positive", label: "Positive", tone: "green", detail: "Measured signals improved after publishing." };
+  }
+  if (["worsened", "negative", "lost", "down"].includes(rawResult) || ["failed", "verification_failed", "recovery_required"].includes(action.status)) {
+    return { key: "negative", label: "Negative", tone: "red", detail: "The result needs follow-up before it can be treated as a win." };
+  }
+  if (["inconclusive", "neutral", "flat"].includes(rawResult) || action.status === "completed") {
+    return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: "The measurement window closed without a clear positive or negative signal." };
+  }
+  return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Published work is still inside the measurement window." };
+}
+
+function compactOutcomeText(outcome: any) {
+  if (!outcome || (typeof outcome === "object" && Object.keys(outcome).length === 0)) return "No outcome summary yet.";
+  if (typeof outcome === "string") return outcome;
+  if (typeof outcome === "object") {
+    return Object.entries(outcome)
+      .slice(0, 5)
+      .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+      .join(" / ");
+  }
+  return String(outcome);
+}
+
 type SEOClientMode = "analysis" | "results";
 
 export function AnalysisClient({ projectId }: { projectId: string }) {
@@ -269,6 +303,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
+  const measuredActions = actions.filter((action) =>
+    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
+    Boolean(action.published_at || action.verified_at),
+  );
+  const outcomeCounts = measuredActions.reduce(
+    (counts, action) => {
+      counts[actionMeasurementState(action).key] += 1;
+      return counts;
+    },
+    { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
+  );
+  const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
 
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
@@ -780,6 +826,123 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       {mode === "results" && (
         <div className="space-y-7">
+          <section>
+            <SectionHeader
+              title="Outcome summary"
+              eyebrow="Published work"
+              action={
+                <Badge tone={measurementExceptions.length ? "amber" : measuredActions.length ? "green" : "neutral"}>
+                  {measuredActions.length}
+                </Badge>
+              }
+            />
+            <div className="grid gap-3 md:grid-cols-4">
+              {[
+                { label: "Waiting", value: outcomeCounts.waiting, tone: "neutral" as const, detail: "Inside measurement window" },
+                { label: "Positive", value: outcomeCounts.positive, tone: "green" as const, detail: "Signals improved" },
+                { label: "Negative", value: outcomeCounts.negative, tone: "red" as const, detail: "Needs follow-up" },
+                { label: "Inconclusive", value: outcomeCounts.inconclusive, tone: "amber" as const, detail: "No clear signal yet" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <Badge tone={item.tone}>{item.label}</Badge>
+                  <div className="mt-3 text-2xl font-bold text-slate-950">{item.value}</div>
+                  <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader title="Measurement queue" action={<Badge tone="neutral">{measuredActions.length}</Badge>} />
+            {measuredActions.length === 0 ? (
+              <EmptyState title="No published work is measuring yet" detail="Published or URL-verified actions will appear here once the Publish step finishes." />
+            ) : (
+              <div className="grid gap-3">
+                {measuredActions.slice(0, 12).map((action) => {
+                  const state = actionMeasurementState(action);
+                  return (
+                    <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={state.tone}>{state.label}</Badge>
+                            <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
+                          </div>
+                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{action.action_type}</h3>
+                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
+                        </div>
+                        <div className="shrink-0 text-sm text-slate-500">
+                          <div className="font-semibold text-slate-700">Published</div>
+                          <div>{formatDate(action.published_at ?? null)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
+                          <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Result</div>
+                          <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                        </div>
+                      </div>
+                      <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Measurement details</summary>
+                        <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
+                          <div>
+                            <span className="font-semibold text-slate-800">Outcome</span>
+                            <br />
+                            {compactOutcomeText(action.outcome_summary)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Measurement window</span>
+                            <br />
+                            {measurementWindowLabel(action.measurement_window)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Verification</span>
+                            <br />
+                            {action.verified_at ? formatDate(action.verified_at) : compactOutcomeText(action.verification_snapshot)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-800">Target URL</span>
+                            <br />
+                            {action.target_url ?? action.normalized_target_url ?? "No target URL yet."}
+                          </div>
+                        </div>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="AI citation signals" action={<Badge tone={showGeoScore ? "green" : "neutral"}>{geoOverview?.score?.confidence ?? "insufficient_data"}</Badge>} />
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{showGeoScore ? metric(geoScoreValue, 1) : "Insufficient data"}</div>
+                <p className="mt-1 text-sm text-slate-500">Visibility score</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{percent(geoCoverage)}</div>
+                <p className="mt-1 text-sm text-slate-500">Coverage</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{geoOverview?.prompts.length ?? 0}</div>
+                <p className="mt-1 text-sm text-slate-500">Prompts</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{assetBriefs.length}</div>
+                <p className="mt-1 text-sm text-slate-500">Asset briefs</p>
+              </div>
+            </div>
+          </section>
+
+          <details className="rounded-xl border border-slate-200 bg-white p-4">
+            <summary className="cursor-pointer text-sm font-bold text-slate-900">Advanced diagnostics</summary>
+            <div className="mt-4 space-y-7">
       <section>
         <SectionHeader
           title="Setup"
@@ -1356,6 +1519,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           </div>
         )}
       </section>
+            </div>
+          </details>
         </div>
       )}
 
