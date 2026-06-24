@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, Bell, CheckCircle2, GitBranch, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
+import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
 import {
   defaultProjectConfig,
   GSCConnection,
@@ -206,6 +206,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     label: "Ops",
     url: "",
   });
+  const [activeEventsChannel, setActiveEventsChannel] = useState<NotificationChannel | null>(null);
+  const [eventSelection, setEventSelection] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
@@ -510,19 +512,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function toggleSubscription(eventType: string, channelID: string, enabled: boolean) {
-    setNotificationBusy(`sub-${eventType}-${channelID}`);
-    setMessage(null);
-    try {
-      await api.upsertNotificationSubscription(projectId, { event_type: eventType, channel_id: channelID, enabled });
-      await refreshNotifications();
-    } catch (e: any) {
-      setMessage({ title: "Subscription update failed", detail: e.message, tone: "red" });
-    } finally {
-      setNotificationBusy(null);
-    }
-  }
-
   async function retryDelivery(deliveryID: string) {
     setNotificationBusy(`retry-${deliveryID}`);
     setMessage(null);
@@ -541,6 +530,55 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     return subscriptions.some((sub) => sub.event_type === eventType && sub.channel_id === channelID && sub.enabled);
   }
 
+  function channelDisplayLabel(channel: NotificationChannel) {
+    return channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord");
+  }
+
+  function openChannelEvents(channel: NotificationChannel) {
+    setActiveEventsChannel(channel);
+    setMessage(null);
+    setEventSelection(
+      events.reduce<Record<string, boolean>>((selection, event) => {
+        selection[event.type] = subscriptionEnabled(event.type, channel.id);
+        return selection;
+      }, {}),
+    );
+  }
+
+  function closeChannelEvents() {
+    setActiveEventsChannel(null);
+    setEventSelection({});
+  }
+
+  async function saveChannelEvents() {
+    if (!activeEventsChannel) return;
+
+    const channel = activeEventsChannel;
+    const changedEvents = events.filter((event) => Boolean(eventSelection[event.type]) !== subscriptionEnabled(event.type, channel.id));
+    setNotificationBusy(`events-${channel.id}`);
+    setMessage(null);
+    try {
+      if (changedEvents.length > 0) {
+        await Promise.all(
+          changedEvents.map((event) =>
+            api.upsertNotificationSubscription(projectId, {
+              event_type: event.type,
+              channel_id: channel.id,
+              enabled: Boolean(eventSelection[event.type]),
+            }),
+          ),
+        );
+      }
+      setMessage({ title: "Subscriptions saved", detail: `${channelDisplayLabel(channel)} events are updated.`, tone: "green" });
+      closeChannelEvents();
+      await refreshNotifications();
+    } catch (e: any) {
+      setMessage({ title: "Subscription update failed", detail: e.message, tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
   const githubPublisher = publisherConnections.find((connection) => connection.kind === "github_nextjs");
   const gscHasAuthorizedProperties = Boolean(gscConnection && gscConnection.configured !== false && gscConnection.properties.length > 0);
   const gscHasSelectedProperty = Boolean(gscConnection?.selected_property);
@@ -553,6 +591,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     : gscHasAuthorizedProperties
       ? "Select a Search Console property."
       : "Connect Search Console for first-party search data.";
+  const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
 
   return (
     <div className="space-y-7">
@@ -999,7 +1038,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0} className="space-y-7">
         <div>
           <SectionHeader
-            title="Notifications"
+            title="Subscriptions"
             eyebrow="Operations"
             action={
               <Button size="sm" onClick={refreshNotifications} disabled={!!notificationBusy}>
@@ -1072,7 +1111,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 <tbody className="divide-y divide-slate-100">
                   {channels.map((channel) => (
                     <tr key={channel.id}>
-                      <td className="px-3 py-2 font-semibold text-slate-900">{channel.label || "Webhook"}</td>
+                      <td className="px-3 py-2 font-semibold text-slate-900">{channelDisplayLabel(channel)}</td>
                       <td className="px-3 py-2">
                         <Badge tone={channel.kind === "slack_webhook" ? "green" : "blue"}>
                           {channel.kind === "slack_webhook" ? "Slack" : "Discord"}
@@ -1086,6 +1125,16 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openChannelEvents(channel)}
+                            disabled={notificationBusy === `events-${channel.id}`}
+                            title="Choose subscribed events"
+                          >
+                            <ListChecks size={14} />
+                            Events
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
@@ -1113,48 +1162,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           )}
         </div>
-        </div>
-
-        <div>
-          <SectionHeader title="Subscriptions" />
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            {channels.length === 0 ? (
-              <div className="text-sm font-semibold text-slate-500">No channels</div>
-            ) : (
-              <div className="grid gap-3">
-                {events.map((event) => (
-                  <div key={event.type} className="grid gap-3 rounded-lg border border-slate-200 p-3 lg:grid-cols-[220px_1fr]">
-                    <div>
-                      <div className="text-sm font-bold text-slate-900">{eventLabels[event.type] ?? event.type}</div>
-                      <div className="mt-1 font-mono text-xs text-slate-500">{event.type}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {channels.map((channel) => {
-                        const checked = subscriptionEnabled(event.type, channel.id);
-                        return (
-                          <label
-                            key={`${event.type}-${channel.id}`}
-                            className={cx(
-                              "flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors",
-                              checked ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 text-slate-600",
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={notificationBusy === `sub-${event.type}-${channel.id}`}
-                              onChange={(changeEvent) => toggleSubscription(event.type, channel.id, changeEvent.target.checked)}
-                            />
-                            {channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord")}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         <div>
@@ -1225,6 +1232,72 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             )}
           </div>
         </div>
+        {activeEventsChannel && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="notification-events-title"
+              className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            >
+              <div className="border-b border-slate-200 px-5 py-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Subscriptions</div>
+                <h3 id="notification-events-title" className="mt-1 text-lg font-bold text-slate-950">
+                  Events for {channelDisplayLabel(activeEventsChannel)}
+                </h3>
+                <p className="mt-1 text-sm leading-5 text-slate-500">
+                  Choose which eligible events this webhook receives.
+                </p>
+              </div>
+
+              <div className="grid gap-2 overflow-y-auto px-5 py-4">
+                {events.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 px-4 py-5 text-sm font-semibold text-slate-500">
+                    No eligible events
+                  </div>
+                ) : (
+                  events.map((event) => {
+                    const checked = Boolean(eventSelection[event.type]);
+                    return (
+                      <label
+                        key={`${activeEventsChannel.id}-${event.type}`}
+                        className={cx(
+                          "flex items-start gap-3 rounded-lg border px-3 py-3 text-sm transition-colors",
+                          checked ? "border-green-200 bg-green-50" : "border-slate-200 bg-white hover:bg-slate-50",
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={checked}
+                          disabled={activeEventsBusy}
+                          onChange={(changeEvent) =>
+                            setEventSelection((current) => ({ ...current, [event.type]: changeEvent.target.checked }))
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-bold text-slate-900">{eventLabels[event.type] ?? event.type}</span>
+                          <span className="mt-1 block truncate font-mono text-xs text-slate-500">{event.type}</span>
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                <Button variant="ghost" onClick={closeChannelEvents} disabled={activeEventsBusy}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={saveChannelEvents} disabled={activeEventsBusy || events.length === 0}>
+                  <ButtonProgress busy={activeEventsBusy} busyLabel="Saving events" idleIcon={<Save size={16} />}>
+                    Save
+                  </ButtonProgress>
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
       )}
     </div>
