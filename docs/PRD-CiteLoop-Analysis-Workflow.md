@@ -10,15 +10,15 @@
 
 ## 0. 摘要
 
-CiteLoop 当前的核心能力已经覆盖内容生成、审核、发布和部分可见性反馈。但随着 Google Search Console / GA4 驱动的真实 SEO 数据进入产品，Dashboard 需要把 "分析机会" 和 "生产内容" 明确隔离。
+CiteLoop 当前的核心能力已经覆盖内容生成、审核、发布和部分可见性反馈。代码库也已经包含 SEO operations loop 的主要数据模型和一部分页面能力。随着 Google Search Console / GA4 驱动的真实 SEO 数据进入产品，Dashboard 需要把 "分析机会" 和 "生产内容" 明确隔离。
 
-本 PRD 的目标是新增一个独立的 Analysis workflow:
+本 PRD 的目标不是从零新增一套分析系统，而是把现有 Opportunities / Visibility / SEO data layer 产品化为独立的 Analysis workflow:
 
 ```text
 Context -> Analysis -> Content Plan -> Review -> Publish -> Measure
 ```
 
-Analysis 负责读取公开数据、GSC/GA4 私有数据、SERP/GEO 信号，并把这些信号转化为可解释的 opportunity 和 action recommendation。Content Plan 只接收已经被用户或策略接受的工作，不再承担原始分析、数据连接和机会判断职责。
+Analysis 负责呈现公开数据、GSC/GA4 私有数据、SERP/GEO 信号，并把这些信号转化为可解释的 opportunity 和 action recommendation。Content Plan 只接收已经被用户或策略接受的工作，不再承担原始分析、数据连接和机会判断职责。
 
 这让 CiteLoop 从 "content generation dashboard" 升级为 "analysis to action to publishing loop"，同时避免用户把所有 SEO 数据、机会、选题和内容草稿混在一个页面里理解。
 
@@ -51,10 +51,23 @@ Admin
 
 ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，Content 是执行层。CiteLoop 不应只复制 ChatSEO 的分析助手，而应把分析结果接入已有的 content / review / publish / measure loop。
 
+### 1.1 当前代码基线
+
+截至 `main@0001e063951bf06b931811efd33ae7e15d4d605a`，以下能力已经存在，实施本 PRD 时应复用而不是重建:
+
+- `internal/migrations/0007_seo_operations_loop.sql` 已创建 `seo_properties`、`seo_integrations`、`seo_runs`、`search_performance_daily`、`page_performance_daily`、`search_appearance_daily`、`url_index_snapshots`、`technical_checks`、`seo_opportunities`、`content_actions`。
+- `page_performance_daily` 已包含 `ga4_sessions`、`ga4_engaged_sessions`、`ga4_conversions` 字段，GA4 不应被当作完全 greenfield storage。
+- `seo_opportunities` 已包含 `type`、`status`、`priority_score`、`confidence`、`evidence`、`recommended_action`、`expected_impact`、`effort`、`risk_level`、`opportunity_key` 等 Analysis 需要的核心字段。
+- `content_actions` 已经承担 opportunity -> action -> article/result 的桥接，包含 `baseline_window`、`measurement_window`、`outcome_summary`。
+- `web/app/projects/[id]/opportunities/page.tsx` 和 `web/app/projects/[id]/visibility/page.tsx` 已经分别渲染 `OpportunitiesClient` 与 `VisibilityClient`，两者共享 `web/app/projects/[id]/seo/seo-client.tsx` 中的 `SEOClient`。
+- 当前 Google 数据连接由 `internal/googledata/auth.go` 的 service-account JWT 实现，scope 为 `webmasters.readonly` 和 `analytics.readonly`。当前代码没有 end-user Google OAuth consent、用户可访问 property 列表、GSC refresh token 捕获。
+
+因此 Phase 1-3 应被视为 IA 重构和页面职责拆分: `Opportunities` 重命名/迁移到 `Analysis`，`Visibility` 收敛为 `Results`，并把共享 `SEOClient` 拆成更清楚的 Analysis / Results surfaces。
+
 ## 2. 产品目标
 
-1. 在 Dashboard 中新增独立的 Analysis workflow，并与 Content Generation 隔离。
-2. 让用户通过 domain-first onboarding 开始项目，再通过 Google Search Console 授权解锁真实搜索分析。
+1. 在 Dashboard 中将现有 Opportunities / Visibility 能力重组为独立的 Analysis workflow，并与 Content Generation 隔离。
+2. 让用户通过 domain-first onboarding 开始项目，再通过 Search data 连接状态解锁真实搜索分析。当前落地模型是 admin/service-account 连接，未来可升级为 end-user OAuth。
 3. 把 GSC/GA4 信号转化为可解释、可接受、可路由的 SEO/GEO actions。
 4. 让 Content Plan 只展示已接受的生产工作，不展示未筛选的原始机会。
 5. 让 Measure 页面专注发布后的结果和闭环反馈，不再混入原始机会发现。
@@ -63,7 +76,8 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 
 ## 3. 非目标
 
-- 不在本 PRD 中实现 Google OAuth、GSC ingestion 或 GA4 ingestion 的完整后端方案。
+- 不在本 PRD 的 Phase 1-3 中实现 end-user Google OAuth、GSC ingestion 或 GA4 ingestion 的完整后端方案。
+- 不把当前 service-account 连接模型伪装成用户 OAuth。两者必须在 UI、权限和文档中明确区分。
 - 不在本 PRD 中重写现有 Review、Publish、Publisher 或 Article detail 页面。
 - 不把 Analysis 做成全量 SEO dashboard 或 Semrush/Ahrefs 替代品。
 - 不自动执行高风险 SEO 动作，例如 redirect、noindex、delete、merge。
@@ -111,7 +125,7 @@ Home 不展示完整 analytics，不展示所有机会列表。Home 只展示:
 
 ### 4.5 User language beats provider language
 
-默认 UI 不出现:
+默认用户可见 UI 不出现:
 
 - `gsc_site_url`
 - `service account`
@@ -120,6 +134,8 @@ Home 不展示完整 analytics，不展示所有机会列表。Home 只展示:
 - `Run Strategist`
 - `reconcile`
 - `canonical_url missing`
+
+这些字段仍可作为内部 schema、API payload 或 admin diagnostics 存在。本原则只约束面向普通用户的 copy 和默认 workflow，不要求重命名数据库字段。
 
 默认 UI 应表达:
 
@@ -189,41 +205,64 @@ Account / Workspace switcher
 
 ### 6.1 用户路径
 
+当前可落地路径基于 admin/service-account connection:
+
 ```text
 1. 用户输入 product domain
 2. CiteLoop 完成 public discovery
 3. Home 和 Analysis 显示 Search data gate
-4. 用户点击 Connect Google Search Console
-5. Google OAuth 返回用户可访问 properties
-6. CiteLoop 自动推荐匹配 property
-7. 用户确认 property
-8. 系统 backfill 最近 90 天搜索数据
-9. Analysis 生成 opportunity queue
-10. 用户接受、暂缓或 dismiss opportunity
-11. 被接受的 action 进入 Content Plan / Review / Publish / Technical task
-12. 发布或执行后进入 Results measurement
+4. 有权限的用户点击 Configure Search Data
+5. Settings / admin-managed flow 配置 site_url、gsc_site_url、credential_ref / service account access
+6. 系统用 service-account JWT 读取 GSC / GA4 数据
+7. 系统 backfill 最近 90 天搜索数据
+8. Analysis 生成 opportunity queue
+9. 用户接受、暂缓或 dismiss opportunity
+10. 被接受的 action 进入 Content Plan / Review / Publish / Content Plan technical_task
+11. 发布或执行后进入 Results measurement
 ```
+
+未来 self-serve OAuth 路径需要单独 PRD 或 Phase 6 设计，不能默认塞进 IA 实施:
+
+```text
+1. 用户点击 Connect Google Search Console
+2. Google OAuth 返回用户可访问 properties
+3. CiteLoop 自动推荐匹配 property
+4. 用户确认 property
+5. CiteLoop 存储用户授权 token / refresh token
+6. 后续 sync 使用用户授权读取该 property
+```
+
+当前 PRD 只要求 Analysis gate 的文案和状态不要阻塞未来 OAuth，但 Phase 1-3 不实现该 OAuth path。
 
 ### 6.2 Search data 状态
 
 | 状态 | 含义 | UI 行为 |
 |---|---|---|
 | `public_only` | 只有公开 crawl / sitemap / robots / SERP 数据 | 显示 public opportunities，不展示 CTR/position 事实 |
-| `gsc_not_connected` | domain 已发现，但未授权 GSC | 显示连接 gate 和授权收益 |
-| `gsc_authorized_property_missing` | 用户授权了 Google，但没有匹配 property | 引导创建/验证 property 或选择其他 domain |
-| `gsc_property_selected` | property 已选择，等待首次同步 | 显示 backfill 状态 |
+| `search_admin_required` | 当前用户无权配置 Search data | 显示 "Ask an admin to connect Search Console"，不能跳到无权限 Settings 死路 |
+| `service_account_missing` | 项目尚未配置可用 first-party search data credential | 对 admin 显示配置入口，对普通用户显示只读 explanation |
+| `gsc_property_configured` | `seo_properties.gsc_site_url` 和 integration 已配置，等待首次同步 | 显示 backfill 状态 |
 | `gsc_backfilling` | 正在拉取历史数据 | 显示 skeleton 和预计可用时间 |
 | `gsc_connected` | Search data 可用 | 展示真实 opportunity queue |
-| `gsc_stale` | 数据过期或同步失败 | 降级展示最后可用数据，并提示重新连接 |
+| `gsc_stale` | 数据过期或同步失败 | 降级展示最后可用数据，并提示有权限用户重新连接或检查 credential |
+| `gsc_property_mismatch` | 配置的 GSC property 与 discovered domain/canonical host 不匹配 | 显示 mismatch warning，阻止使用错误数据做高置信 recommendation |
 | `ga4_connected` | GA4 engagement/conversion 可用 | 在 opportunity priority 中加入 business value |
+
+Future OAuth-only states, if a later PRD chooses true end-user OAuth:
+
+| 状态 | 含义 | UI 行为 |
+|---|---|---|
+| `oauth_not_connected` | 用户尚未授权 Google | 显示 end-user OAuth connect CTA |
+| `oauth_authorized_property_missing` | 用户授权了 Google，但没有匹配 property | 引导创建/验证 property 或选择其他 domain |
+| `oauth_property_selected` | 用户选择了 property，等待首次同步 | 显示 backfill 状态 |
 
 ### 6.3 Analysis 页面结构
 
 ```text
 Analysis
 ├─ Search data status
-│  ├─ public-only / GSC connected / stale / backfilling
-│  └─ Connect or reconnect action
+│  ├─ public-only / admin-required / configured / connected / stale / mismatch / backfilling
+│  └─ Configure, reconnect, or admin handoff action
 ├─ Weekly analysis brief
 │  └─ 本周推荐 action portfolio
 ├─ Opportunity queue
@@ -251,14 +290,30 @@ Analysis
 
 | Opportunity type | Primary evidence | Recommended action | Destination |
 |---|---|---|---|
-| `low_ctr_page` | impressions high, CTR below expected range | Draft title/meta update | Content Plan or Review |
+| `low_ctr_page` | impressions high, CTR below expected range | Draft title/meta update | Content Plan (`metadata_rewrite`) or Review |
 | `near_page_one_query` | average position 8-20 with meaningful impressions | Create refresh brief or internal link task | Content Plan |
 | `content_decay` | clicks/impressions/position decline over comparison window | Refresh existing page | Content Plan |
 | `missing_content_asset` | query cluster has impressions but no dedicated asset | Create new asset brief | Content Plan |
-| `internal_link_gap` | source pages can support target page | Create internal link task | Content Plan or Technical task |
-| `indexing_issue` | URL absent, excluded, or sitemap mismatch | Create technical SEO task | Technical task |
+| `internal_link_gap` | source pages can support target page | Create internal link task | Content Plan (`technical_task`) |
+| `indexing_issue` | URL absent, excluded, or sitemap mismatch | Create technical SEO task | Content Plan (`technical_task`) |
 | `geo_citation_gap` | competitor cited in AI answer, project absent | Create citation-ready asset | Content Plan |
 | `backlink_or_mention_gap` | public market data or backlink provider signal | Create outreach or evidence asset | Content Plan or Manual task |
+
+### 6.4.1 Existing type mapping
+
+`seo_opportunities.type` is stored as text, not a database enum, but existing analyzers already emit specific names. Implementation should map product taxonomy to existing types where possible and only introduce new type strings with explicit tests and migration notes.
+
+| Product taxonomy | Existing or proposed `seo_opportunities.type` | Migration/API impact |
+|---|---|---|
+| `indexing_issue` | `indexing_anomaly` | Existing type; reuse. |
+| `geo_citation_gap` | `geo_competitor_cited_project_absent`, `geo_project_mentioned_without_citation` | Existing GEO analyzer types; group in UI. |
+| crawler access issue | `geo_crawler_access_blocked` | Existing type; group under technical / GEO blockers. |
+| public cold-start content | `cold_start_context_plan`, `cold_start_competitive_gap`, `cold_start_evidence_page` | Existing types; keep in public-only Analysis. |
+| `low_ctr_page` | `low_ctr_page` | New generator/type if not already emitted. Requires tests and copy mapping. |
+| `near_page_one_query` | `near_page_one_query` | New generator/type if not already emitted. Requires tests and copy mapping. |
+| `content_decay` | `content_decay` | New generator/type if not already emitted. Requires tests and copy mapping. |
+| `internal_link_gap` | `internal_link_gap` | New generator/type if not already emitted. Requires tests and action routing. |
+| `backlink_or_mention_gap` | `backlink_or_mention_gap` | Future provider-dependent type; not Phase 1. |
 
 ### 6.5 Action routing
 
@@ -269,9 +324,9 @@ Analysis must not assume every opportunity creates a new article.
 | `create_new_asset` | Content Plan |
 | `refresh_existing_page` | Content Plan |
 | `draft_title_meta_update` | Content Plan or Review, depending on publisher capability |
-| `add_internal_links` | Content Plan or Technical task |
-| `create_schema_update` | Technical task or Review |
-| `fix_indexing_issue` | Technical task |
+| `add_internal_links` | Content Plan (`technical_task`) |
+| `create_schema_update` | Content Plan (`technical_task`) or Review |
+| `fix_indexing_issue` | Content Plan (`technical_task`) |
 | `wait_and_measure` | Results watchlist |
 | `dismiss` | Analysis archive |
 
@@ -297,8 +352,14 @@ Home should show:
 
 ```text
 Search data is not connected
-Connect Google Search Console to unlock query, CTR, position, and content decay opportunities.
-[Connect Search Console]
+Connect Search Console to unlock query, CTR, position, and content decay opportunities.
+[Configure Search Data]
+```
+
+If the current user cannot access Settings/internal tools, the action label becomes:
+
+```text
+Ask an admin to connect Search Console
 ```
 
 Metric cards should avoid fake precision:
@@ -398,6 +459,8 @@ Settings owns:
 
 Settings should not be a primary workflow step.
 
+Search data connection management currently depends on internal/admin access because the codebase uses service-account credentials and `credential_ref` rather than end-user OAuth. Analysis may show the CTA to everyone, but only users with Settings/internal access can configure or reconnect first-party search data. Non-admin users receive an explanation and a safe handoff path.
+
 ### 10.2 Admin
 
 Admin remains in the left utility area. It should not appear in the main workflow navigation.
@@ -421,13 +484,13 @@ Primary message:
 
 ```text
 Connect real search data
-CiteLoop can already inspect your public site. Connect Search Console to find pages with impressions, low CTR, ranking drops, and near page-one keywords.
+CiteLoop can already inspect your public site. Configure Search Console to find pages with impressions, low CTR, ranking drops, and near page-one keywords.
 ```
 
 Primary action:
 
 ```text
-Connect Search Console
+Configure Search Data
 ```
 
 Secondary action:
@@ -478,6 +541,8 @@ This PRD does not require final schema design, but implementation should preserv
 - `publisher_connections` remains publishing capability state.
 - `seo_properties` / integration records should express data readiness.
 
+Implementation must not create replacement tables for these concepts during Phase 1-3. If Analysis needs a new UI shape, adapt API serializers or view models over the existing tables first.
+
 ### 12.2 Required product states
 
 Analysis needs enough API surface to express:
@@ -492,6 +557,8 @@ Analysis needs enough API surface to express:
 - accepted / dismissed / archived status
 - downstream destination
 - measurement window
+
+Connection states should be derived from `seo_properties`, `seo_integrations`, run recency, sync errors, and user access level. They should not assume an OAuth token exists until a future OAuth PRD introduces one.
 
 ### 12.3 Downstream contract
 
@@ -514,13 +581,15 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Update sidebar grouping.
 - Move Settings to bottom utility area.
 - Keep Admin bottom utility only.
-- Rename or add `Analysis`.
-- Move opportunity review entry points from `Visibility` into `Analysis`.
+- Rename existing `Opportunities` surface to `Analysis`.
+- Add `/projects/[id]/analysis` as the canonical route.
+- Redirect `/projects/[id]/opportunities` to Analysis for bookmarks and old links.
+- Move opportunity review entry points out of `Visibility` and into `Analysis`.
 - Keep existing backend APIs.
 
 ### Phase 2: Analysis page productization
 
-- Add Search data status block.
+- Add Search data status block derived from existing `seo_properties` / `seo_integrations` / SEO run state.
 - Add GSC connection gate.
 - Add weekly analysis brief shell.
 - Add typed opportunity queue.
@@ -534,33 +603,57 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Show published action outcomes and measurement windows.
 - Keep GEO/AI citation tracking as a Results signal.
 
-### Phase 4: GSC-powered Analysis
+### Phase 4: Service-account-powered GSC Analysis
 
-- Implement Google OAuth / property selection if not already complete.
+- Use the existing service-account Google client as the connection model.
+- Productize configured / missing / stale / mismatch states.
 - Backfill and sync GSC search performance.
 - Generate opportunity types from real query/page metrics.
 - Add stale, backfilling, and error states.
 
 ### Phase 5: GA4 and business-value prioritization
 
-- Add optional GA4 connection.
+- Use existing GA4 storage fields in `page_performance_daily` and add missing ingestion/UI only as needed.
 - Use engagement/conversion as prioritization signal.
 - Mark recommendations without GA4 as missing business-value signal, not as failed.
 
+### Phase 6: Optional end-user OAuth
+
+- Decide whether CiteLoop should support true end-user Google OAuth.
+- If yes, write a separate connection-model PRD covering OAuth consent, property listing, token storage, revocation, permission scope, admin/non-admin behavior, and migration from service-account projects.
+- Do not make Phase 1-5 depend on this path.
+
 ## 14. Acceptance Criteria
+
+### Phase 1 IA
 
 1. Sidebar no longer has a primary `SYSTEM` section.
 2. Settings appears in the left bottom utility area under Docs.
 3. Admin remains in the left bottom utility area.
 4. Analysis appears as a distinct workflow area, separate from Content Plan.
-5. Content Plan does not show raw, unaccepted opportunities.
-6. Analysis can explain Search Console disconnected, backfilling, connected, stale, and no-opportunity states.
-7. Home displays a clear Search Console gate when GSC is missing.
-8. Home does not become a full analytics page after GSC is connected.
-9. Results / Visibility no longer owns opportunity acceptance.
-10. Accepted opportunities carry evidence and reason into downstream production work.
-11. Empty states route users to one next action, not a grid of future modules.
-12. UI copy uses user-facing language and avoids provider or internal job terminology.
+5. `/projects/[id]/opportunities` redirects to Analysis or remains as a compatibility alias.
+6. UI copy uses user-facing language and avoids provider or internal job terminology in default user surfaces.
+
+### Phase 2 Analysis surface
+
+1. Content Plan does not show raw, unaccepted opportunities.
+2. Analysis owns opportunity acceptance and dismissal.
+3. Accepted opportunities carry evidence and reason into downstream production work.
+4. Empty states route users to one next action, not a grid of future modules.
+5. Analysis can explain public-only, service-account missing, connected, stale, mismatch, and no-opportunity states.
+
+### Phase 3 Results surface
+
+1. Results / Visibility no longer owns opportunity acceptance.
+2. Results shows published action outcomes, measurement windows, and waiting/inconclusive/positive/negative states.
+3. Home does not become a full analytics page after GSC is connected.
+
+### Phase 4 Search data activation
+
+1. Home displays a clear Search Console gate when first-party search data is missing.
+2. Non-admin users do not hit an admin-only dead end when clicking the Analysis search-data CTA.
+3. Admin users can navigate from Analysis to detailed Search data configuration.
+4. Backfilling, stale, connected, and mismatch states are derived from real integration/run state.
 
 ## 15. Risks
 
@@ -576,13 +669,26 @@ When Analysis routes work downstream, it must create or update a durable action 
 4. **GSC property mismatch creates wrong recommendations.**
    Mitigation: show selected property label, canonical domain match confidence, and mismatch warnings.
 
-5. **Visibility to Results rename causes migration confusion.**
+5. **Connection model is under-scoped.**
+   Mitigation: Phase 1-5 use the existing service-account model. End-user OAuth requires Phase 6 / separate PRD.
+
+6. **Visibility to Results rename causes migration confusion.**
    Mitigation: keep route compatibility or redirect old visibility route during rollout.
 
-6. **Too many action types overwhelm users.**
+7. **Too many action types overwhelm users.**
    Mitigation: group recommendations by job-to-be-done, not internal type.
 
-## 16. Product Decisions
+## 16. Product Success Metrics
+
+These measure whether the IA change works without promising SEO rankings:
+
+1. Opportunity acceptance rate: percentage of open Analysis opportunities accepted or dismissed within 7 days.
+2. Time from signal to action: median time from opportunity creation to accepted `content_actions` record.
+3. Search data connection readiness: percentage of active projects in `gsc_connected` or an explicitly understood public-only state.
+4. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
+5. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
+
+## 17. Product Decisions
 
 1. Sidebar label is `Analysis`.
    The page title may use `Search Intelligence` to describe the specific job, but the workflow label remains `Analysis`.
@@ -598,3 +704,6 @@ When Analysis routes work downstream, it must create or update a durable action 
 
 5. Technical SEO tasks stay inside Content Plan as `technical_task`.
    A separate Tasks page is out of scope until task volume proves Content Plan cannot carry these actions cleanly.
+
+6. Current Search data connection model is service-account/admin-managed.
+   True end-user Google OAuth is a future product decision, not required by the IA rollout.
