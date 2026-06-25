@@ -267,6 +267,17 @@ test("results surface defaults to published outcomes with collapsed measurement 
   assert.doesNotMatch(resultsBlock, /Opportunity queue/);
 });
 
+test("home pipeline keeps workflow counts separate from search performance metrics", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(workspace, /label: "Measurement"/);
+  assert.match(workspace, /metricValue: measuringActions/);
+  assert.match(workspace, /Measuring impact/);
+  assert.match(workspace, /label: "Organic traffic"[\s\S]*value: searchDataConnected \? metric\(clicks28d\) : "Limited"/);
+  assert.doesNotMatch(workspace, /label: "Results"/);
+  assert.doesNotMatch(workspace, /metricValue: searchDataConnected \? metric\(clicks28d\) : "-"/);
+});
+
 test("gsc oauth entry points are self-serve and action-first", () => {
   assert.equal(exists("projects/[id]/settings/gsc/callback/page.tsx"), true, "GSC callback route should exist");
   assert.equal(
@@ -563,7 +574,7 @@ test("home explains growth status and loop stages from existing product data", (
     "Drafts",
     "Review",
     "Publish",
-    "Results",
+    "Measurement",
     "Needs you",
     "Activity",
   ]) {
@@ -617,7 +628,7 @@ test("home renders the loop as a single connected pipeline stepper", () => {
     "Drafts",
     "Review",
     "Publish",
-    "Results",
+    "Measurement",
     "statusLabel",
   ]) {
     assert.match(workspace, new RegExp(copy));

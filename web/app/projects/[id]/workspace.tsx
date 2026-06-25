@@ -407,10 +407,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       href: `/projects/${projectId}/publish`,
     },
     {
-      label: "Results",
-      metricValue: searchDataConnected ? metric(clicks28d) : "-",
-      statusLabel: searchDataConnected ? "Connected" : "Connect for proof",
-      tone: searchDataConnected ? "green" : "amber",
+      label: "Measurement",
+      metricValue: measuringActions,
+      statusLabel: measuringActions > 0 ? "Measuring impact" : searchDataConnected ? "Ready for impact data" : "Connect for proof",
+      tone: measuringActions > 0 || searchDataConnected ? "green" : "amber",
       href: `/projects/${projectId}/results`,
     },
   ];
