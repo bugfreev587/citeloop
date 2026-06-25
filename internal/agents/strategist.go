@@ -145,7 +145,7 @@ SEARCH SIGNALS:
 
 	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are an SEO+GEO content strategist.",
-		Prompt: prompt, Model: llm.ModelClaudeOpus, JSON: true, MaxTokens: 3000,
+		Prompt: prompt, JSON: true, MaxTokens: 3000,
 	})
 	if err != nil {
 		return nil, resp, err

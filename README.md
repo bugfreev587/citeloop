@@ -24,7 +24,7 @@ landing URL
 | `internal/db` | §3 | sqlc-generated queries (pgx/v5) |
 | `internal/config` | §3 | process env + `projects.config` (crawl bounds, budget, cadence) |
 | `internal/crawl` | §5.1 | bounded same-origin crawler (sitemap, robots, normalize, classify) |
-| `internal/llm` | §4 | `LLMProvider`: TokenGate/OpenAI-compatible gateway, Claude fallback, deterministic mock |
+| `internal/llm` | §4 | `LLMProvider`: TokenGate OpenAI-compatible gateway and deterministic mock |
 | `internal/search` | §4/§5.2 | `SearchProvider`: real Brave + mock; quota + degrade |
 | `internal/platform` | §4/§5.3 | platform canonical-capability registry |
 | `internal/agents` | §5.1–5.3 | Insight / Strategist / Writer / QA |
@@ -61,8 +61,9 @@ TOKENGATE_MODEL=claude-sonnet-4-6
 
 `TOKENGATE_BASE_URL` must be the Railway backend `/v1` API base, not the
 TokenGate Vercel dashboard URL.
-Draft-writing requests use Claude Sonnet 4.6, while QA, repair, strategy, and
-profile-analysis requests explicitly route to Claude Opus 4.8.
+Admins can override the global default model plus writer and QA model aliases
+from the Admin TokenGate settings page. CiteLoop always calls TokenGate; any
+provider routing happens inside TokenGate.
 
 ## Deploy frontend to Vercel
 
@@ -101,10 +102,9 @@ Preset to Next.js, Build Command to `npm run build`, and Install Command to
 
 - **LLM/Search:** TokenGate's OpenAI-compatible gateway is preferred when
   `TOKENGATE_API_KEY` is set (`TOKENGATE_BASE_URL` + `TOKENGATE_MODEL` set the
-  default model). CiteLoop uses per-request model hints so drafts run on Sonnet
-  and higher-stakes QA/analysis runs on Opus. Claude remains available through
-  `ANTHROPIC_API_KEY` as a fallback;
-  mock fallback is used when neither LLM key is set. Search defaults to Brave —
+  environment fallback model). Admin TokenGate settings can override the
+  default, writer, and QA model aliases without redeploying;
+  mock fallback is used when no TokenGate key is set. Search defaults to Brave —
   swap the concrete in `internal/search` to use Tavily/Serper/etc. behind the
   same interface.
 - **Publisher:** §8 **option A** — write MDX into the blog repo and auto-commit

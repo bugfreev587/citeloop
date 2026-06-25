@@ -328,7 +328,7 @@ PRODUCT PROFILE:
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are an expert SEO+GEO content writer.",
-		Prompt: prompt, Model: llm.ModelClaudeSonnet, JSON: true, MaxTokens: 4096,
+		Prompt: prompt, Purpose: llm.PurposeWriter, JSON: true, MaxTokens: 4096,
 	})
 	if err != nil {
 		return nil, resp, err
@@ -386,7 +386,7 @@ CURRENT ARTICLE:
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
 		System: "You are an expert SEO+GEO editor. Fix drafts using only supported facts and return valid JSON.",
-		Prompt: prompt, Model: llm.ModelClaudeOpus, JSON: true, MaxTokens: 4096,
+		Prompt: prompt, Purpose: llm.PurposeWriter, JSON: true, MaxTokens: 4096,
 	})
 	if err != nil {
 		return nil, resp, err
@@ -418,7 +418,7 @@ PRODUCT PROFILE:
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
 		System:    "You are an expert SEO+GEO content writer. Return only Markdown/MDX body text.",
 		Prompt:    prompt,
-		Model:     llm.ModelClaudeSonnet,
+		Purpose:   llm.PurposeWriter,
 		MaxTokens: 8192,
 	})
 	if err != nil {

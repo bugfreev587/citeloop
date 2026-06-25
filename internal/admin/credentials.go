@@ -19,32 +19,38 @@ type Provider string
 
 const (
 	ProviderTokenGate Provider = "tokengate"
-	ProviderOpenAI    Provider = "openai"
-	ProviderClaude    Provider = "claude"
 
 	DefaultTokenGateBaseURL = "https://tokengate-production.up.railway.app/v1"
-	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
 )
 
 type Credentials struct {
-	Provider  Provider
-	APIKey    string
-	BaseURL   string
-	UpdatedAt time.Time
+	Provider    Provider
+	APIKey      string
+	BaseURL     string
+	Model       string
+	WriterModel string
+	QAModel     string
+	UpdatedAt   time.Time
 }
 
 type UpdateInput struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key"`
-	BaseURL  string `json:"base_url"`
+	Provider    string `json:"provider"`
+	APIKey      string `json:"api_key"`
+	BaseURL     string `json:"base_url"`
+	Model       string `json:"model"`
+	WriterModel string `json:"writer_model"`
+	QAModel     string `json:"qa_model"`
 }
 
 type Status struct {
-	Provider   string     `json:"provider"`
-	Configured bool       `json:"configured"`
-	KeyTail    string     `json:"key_tail,omitempty"`
-	BaseURL    string     `json:"base_url,omitempty"`
-	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+	Provider    string     `json:"provider"`
+	Configured  bool       `json:"configured"`
+	KeyTail     string     `json:"key_tail,omitempty"`
+	BaseURL     string     `json:"base_url,omitempty"`
+	Model       string     `json:"model,omitempty"`
+	WriterModel string     `json:"writer_model,omitempty"`
+	QAModel     string     `json:"qa_model,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
 func StatusFromCredentials(c *Credentials) Status {
@@ -53,48 +59,46 @@ func StatusFromCredentials(c *Credentials) Status {
 	}
 	updatedAt := c.UpdatedAt
 	return Status{
-		Provider:   string(c.Provider),
-		Configured: c.APIKey != "",
-		KeyTail:    keyTail(c.APIKey),
-		BaseURL:    resolveCredentialBaseURL(c.Provider, c.BaseURL),
-		UpdatedAt:  &updatedAt,
+		Provider:    string(ProviderTokenGate),
+		Configured:  c.APIKey != "",
+		KeyTail:     keyTail(c.APIKey),
+		BaseURL:     resolveCredentialBaseURL(c.BaseURL),
+		Model:       strings.TrimSpace(c.Model),
+		WriterModel: strings.TrimSpace(c.WriterModel),
+		QAModel:     strings.TrimSpace(c.QAModel),
+		UpdatedAt:   &updatedAt,
 	}
 }
 
 func ApplyUpdate(existing *Credentials, in UpdateInput) (Credentials, error) {
-	provider, err := normalizeProvider(in.Provider)
-	if err != nil {
-		return Credentials{}, err
-	}
-
-	next := Credentials{Provider: provider, APIKey: strings.TrimSpace(in.APIKey)}
+	next := Credentials{Provider: ProviderTokenGate, APIKey: strings.TrimSpace(in.APIKey)}
 	if next.APIKey == "" {
 		if existing == nil {
 			return Credentials{}, errors.New("api_key required")
 		}
-		if existing.Provider != provider {
-			return Credentials{}, errors.New("api_key required when changing provider")
-		}
 		next.APIKey = existing.APIKey
 	}
-	baseURL, err := normalizeBaseURL(provider, in.BaseURL)
+	baseURL, err := normalizeBaseURL(in.BaseURL)
 	if err != nil {
 		return Credentials{}, err
 	}
-	if baseURL == "" && existing != nil && existing.Provider == provider {
+	if baseURL == "" && existing != nil {
 		baseURL = strings.TrimSpace(existing.BaseURL)
 	}
-	next.BaseURL = resolveCredentialBaseURL(provider, baseURL)
+	next.BaseURL = resolveCredentialBaseURL(baseURL)
+	next.Model = nextModelValue(in.Model, existingModel(existing, func(c *Credentials) string { return c.Model }))
+	next.WriterModel = nextModelValue(in.WriterModel, existingModel(existing, func(c *Credentials) string { return c.WriterModel }))
+	next.QAModel = nextModelValue(in.QAModel, existingModel(existing, func(c *Credentials) string { return c.QAModel }))
 	return next, nil
 }
 
 func LoadCredentials(ctx context.Context, pool *pgxpool.Pool) (*Credentials, error) {
 	var c Credentials
 	err := pool.QueryRow(ctx, `
-		select provider, api_key, base_url, updated_at
+		select provider, api_key, base_url, model, writer_model, qa_model, updated_at
 		from admin_llm_credentials
 		where singleton = true
-	`).Scan(&c.Provider, &c.APIKey, &c.BaseURL, &c.UpdatedAt)
+	`).Scan(&c.Provider, &c.APIKey, &c.BaseURL, &c.Model, &c.WriterModel, &c.QAModel, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -116,15 +120,19 @@ func SaveCredentials(ctx context.Context, pool *pgxpool.Pool, in UpdateInput) (*
 
 	var saved Credentials
 	err = pool.QueryRow(ctx, `
-		insert into admin_llm_credentials (singleton, provider, api_key, base_url)
-		values (true, $1, $2, $3)
+		insert into admin_llm_credentials (singleton, provider, api_key, base_url, model, writer_model, qa_model)
+		values (true, $1, $2, $3, $4, $5, $6)
 		on conflict (singleton) do update
 		set provider = excluded.provider,
 		    api_key = excluded.api_key,
 		    base_url = excluded.base_url,
+		    model = excluded.model,
+		    writer_model = excluded.writer_model,
+		    qa_model = excluded.qa_model,
 		    updated_at = now()
-		returning provider, api_key, base_url, updated_at
-	`, next.Provider, next.APIKey, next.BaseURL).Scan(&saved.Provider, &saved.APIKey, &saved.BaseURL, &saved.UpdatedAt)
+		returning provider, api_key, base_url, model, writer_model, qa_model, updated_at
+	`, next.Provider, next.APIKey, next.BaseURL, next.Model, next.WriterModel, next.QAModel).
+		Scan(&saved.Provider, &saved.APIKey, &saved.BaseURL, &saved.Model, &saved.WriterModel, &saved.QAModel, &saved.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -159,40 +167,21 @@ func (p *RuntimeProvider) Complete(ctx context.Context, req llm.CompletionReq) (
 	if cred == nil || cred.APIKey == "" {
 		return p.Fallback.Complete(ctx, req)
 	}
+	req.Model = modelForRequest(*cred, p.Env, req)
 	return ProviderFromCredentials(*cred, p.Env).Complete(ctx, req)
 }
 
 func ProviderFromCredentials(c Credentials, env config.Env) llm.Provider {
-	switch c.Provider {
-	case ProviderClaude:
-		return llm.NewClaude(c.APIKey, env.AnthropicModel)
-	case ProviderOpenAI:
-		return llm.NewOpenAIChat(c.APIKey, resolveCredentialBaseURL(ProviderOpenAI, c.BaseURL), env.TokenGateModel)
-	default:
-		baseURL := strings.TrimSpace(c.BaseURL)
-		if baseURL == "" {
-			baseURL = env.TokenGateBaseURL
-		}
-		return llm.NewOpenAIChat(c.APIKey, resolveCredentialBaseURL(ProviderTokenGate, baseURL), env.TokenGateModel)
+	baseURL := strings.TrimSpace(c.BaseURL)
+	if baseURL == "" {
+		baseURL = env.TokenGateBaseURL
 	}
+	return llm.NewOpenAIChat(c.APIKey, resolveCredentialBaseURL(baseURL), firstNonBlank(c.Model, env.TokenGateModel))
 }
 
-func normalizeProvider(value string) (Provider, error) {
-	switch Provider(strings.ToLower(strings.TrimSpace(value))) {
-	case "", ProviderTokenGate:
-		return ProviderTokenGate, nil
-	case ProviderOpenAI:
-		return ProviderOpenAI, nil
-	case ProviderClaude:
-		return ProviderClaude, nil
-	default:
-		return "", errors.New("provider must be tokengate, openai, or claude")
-	}
-}
-
-func normalizeBaseURL(provider Provider, value string) (string, error) {
+func normalizeBaseURL(value string) (string, error) {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
-	if provider == ProviderClaude || value == "" {
+	if value == "" {
 		return "", nil
 	}
 	parsed, err := url.Parse(value)
@@ -205,22 +194,46 @@ func normalizeBaseURL(provider Provider, value string) (string, error) {
 	return value, nil
 }
 
-func resolveCredentialBaseURL(provider Provider, value string) string {
+func resolveCredentialBaseURL(value string) string {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
-	switch provider {
-	case ProviderClaude:
-		return ""
-	case ProviderOpenAI:
-		if value != "" {
-			return value
-		}
-		return DefaultOpenAIBaseURL
-	default:
-		if value != "" {
-			return value
-		}
-		return DefaultTokenGateBaseURL
+	if value != "" {
+		return value
 	}
+	return DefaultTokenGateBaseURL
+}
+
+func modelForRequest(c Credentials, env config.Env, req llm.CompletionReq) string {
+	switch req.Purpose {
+	case llm.PurposeWriter:
+		return firstNonBlank(c.WriterModel, c.Model, env.TokenGateModel)
+	case llm.PurposeQA:
+		return firstNonBlank(c.QAModel, c.Model, env.TokenGateModel)
+	default:
+		return firstNonBlank(c.Model, env.TokenGateModel)
+	}
+}
+
+func existingModel(existing *Credentials, get func(*Credentials) string) string {
+	if existing == nil {
+		return ""
+	}
+	return get(existing)
+}
+
+func nextModelValue(value, fallback string) string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func keyTail(value string) string {

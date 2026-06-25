@@ -14,8 +14,6 @@ func TestSelectLLMProviderPrefersTokenGateWhenConfigured(t *testing.T) {
 		TokenGateAPIKey:  "tg-test-key",
 		TokenGateBaseURL: "https://tokengate-production.up.railway.app/v1",
 		TokenGateModel:   "claude-sonnet-4-6",
-		AnthropicAPIKey:  "anthropic-key",
-		AnthropicModel:   "claude-opus-4-8",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	openai, ok := provider.(*llm.OpenAIChat)
@@ -27,16 +25,8 @@ func TestSelectLLMProviderPrefersTokenGateWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestSelectLLMProviderFallsBackToClaudeThenMock(t *testing.T) {
+func TestSelectLLMProviderFallsBackToMockWithoutTokenGate(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	claudeProvider := selectLLMProvider(config.Env{
-		AnthropicAPIKey: "anthropic-key",
-		AnthropicModel:  "claude-opus-4-8",
-	}, log)
-	if _, ok := claudeProvider.(*llm.Claude); !ok {
-		t.Fatalf("provider = %T, want *llm.Claude", claudeProvider)
-	}
 
 	mockProvider := selectLLMProvider(config.Env{}, log)
 	if _, ok := mockProvider.(*llm.Mock); !ok {

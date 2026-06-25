@@ -13,23 +13,29 @@ import (
 func TestStatusFromCredentialsMasksAPIKey(t *testing.T) {
 	updatedAt := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
 	status := StatusFromCredentials(&Credentials{
-		Provider:  ProviderOpenAI,
-		APIKey:    "sk-live-secret-abcdef",
-		BaseURL:   "https://api.openai.com/v1",
-		UpdatedAt: updatedAt,
+		Provider:    ProviderTokenGate,
+		APIKey:      "sk-live-secret-abcdef",
+		BaseURL:     "https://tokengate.example/v1",
+		Model:       "tg-default",
+		WriterModel: "tg-writer",
+		QAModel:     "tg-qa",
+		UpdatedAt:   updatedAt,
 	})
 
 	if !status.Configured {
 		t.Fatal("status should be configured")
 	}
-	if status.Provider != "openai" {
+	if status.Provider != "tokengate" {
 		t.Fatalf("provider = %q", status.Provider)
 	}
 	if status.KeyTail != "cdef" {
 		t.Fatalf("key tail = %q", status.KeyTail)
 	}
-	if status.BaseURL != "https://api.openai.com/v1" {
+	if status.BaseURL != "https://tokengate.example/v1" {
 		t.Fatalf("base url = %q", status.BaseURL)
+	}
+	if status.Model != "tg-default" || status.WriterModel != "tg-writer" || status.QAModel != "tg-qa" {
+		t.Fatalf("models = default:%q writer:%q qa:%q", status.Model, status.WriterModel, status.QAModel)
 	}
 	raw, err := json.Marshal(status)
 	if err != nil {
@@ -40,31 +46,44 @@ func TestStatusFromCredentialsMasksAPIKey(t *testing.T) {
 	}
 }
 
-func TestApplyUpdatePreservesExistingKeyWhenBlank(t *testing.T) {
+func TestApplyUpdatePreservesExistingKeyAndModelsWhenBlank(t *testing.T) {
 	next, err := ApplyUpdate(&Credentials{
-		Provider: ProviderClaude,
-		APIKey:   "anthropic-existing-key",
+		Provider:    ProviderTokenGate,
+		APIKey:      "tg-existing-key",
+		BaseURL:     "https://tokengate.example/v1",
+		Model:       "tg-default",
+		WriterModel: "tg-writer",
+		QAModel:     "tg-qa",
 	}, UpdateInput{
-		Provider: "claude",
-		APIKey:   "   ",
+		Provider:    "claude",
+		APIKey:      "   ",
+		Model:       "   ",
+		WriterModel: "   ",
+		QAModel:     "   ",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if next.APIKey != "anthropic-existing-key" {
+	if next.APIKey != "tg-existing-key" {
 		t.Fatalf("api key = %q", next.APIKey)
 	}
-	if next.Provider != ProviderClaude {
+	if next.Provider != ProviderTokenGate {
 		t.Fatalf("provider = %q", next.Provider)
+	}
+	if next.Model != "tg-default" || next.WriterModel != "tg-writer" || next.QAModel != "tg-qa" {
+		t.Fatalf("models = default:%q writer:%q qa:%q", next.Model, next.WriterModel, next.QAModel)
 	}
 }
 
-func TestApplyUpdateSupportsTokenGateBaseURL(t *testing.T) {
+func TestApplyUpdateForcesTokenGateProviderAndModels(t *testing.T) {
 	next, err := ApplyUpdate(nil, UpdateInput{
-		Provider: "tokengate",
-		APIKey:   "tg-new-key",
-		BaseURL:  " https://tokengate-production.up.railway.app/v1/ ",
+		Provider:    "openai",
+		APIKey:      "tg-new-key",
+		BaseURL:     " https://tokengate-production.up.railway.app/v1/ ",
+		Model:       " gpt-5.1 ",
+		WriterModel: " gpt-5.1-mini ",
+		QAModel:     " gpt-5.1 ",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +94,15 @@ func TestApplyUpdateSupportsTokenGateBaseURL(t *testing.T) {
 	}
 	if next.BaseURL != "https://tokengate-production.up.railway.app/v1" {
 		t.Fatalf("base url = %q", next.BaseURL)
+	}
+	if next.Model != "gpt-5.1" {
+		t.Fatalf("model = %q", next.Model)
+	}
+	if next.WriterModel != "gpt-5.1-mini" {
+		t.Fatalf("writer model = %q", next.WriterModel)
+	}
+	if next.QAModel != "gpt-5.1" {
+		t.Fatalf("qa model = %q", next.QAModel)
 	}
 }
 
@@ -100,19 +128,6 @@ func TestApplyUpdatePreservesExistingBaseURLWhenBlank(t *testing.T) {
 	}
 }
 
-func TestApplyUpdateRequiresKeyWhenChangingProvider(t *testing.T) {
-	_, err := ApplyUpdate(&Credentials{
-		Provider: ProviderOpenAI,
-		APIKey:   "openai-existing-key",
-	}, UpdateInput{
-		Provider: "claude",
-		APIKey:   "",
-	})
-	if err == nil {
-		t.Fatal("expected error when changing provider without a new key")
-	}
-}
-
 func TestProviderFromCredentialsUsesTokenGateBaseURL(t *testing.T) {
 	provider := ProviderFromCredentials(Credentials{
 		Provider: ProviderTokenGate,
@@ -129,5 +144,35 @@ func TestProviderFromCredentialsUsesTokenGateBaseURL(t *testing.T) {
 	}
 	if openai.BaseURL != "https://tokengate.example/v1" {
 		t.Fatalf("base url = %q", openai.BaseURL)
+	}
+}
+
+func TestModelForRequestRoutesWriterAndQA(t *testing.T) {
+	cred := Credentials{
+		Model:       "gpt-5.1",
+		WriterModel: "gpt-5.1-mini",
+		QAModel:     "gpt-5.1",
+	}
+	env := config.Env{TokenGateModel: "env-default"}
+
+	if got := modelForRequest(cred, env, llm.CompletionReq{}); got != "gpt-5.1" {
+		t.Fatalf("default model = %q", got)
+	}
+	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeWriter}); got != "gpt-5.1-mini" {
+		t.Fatalf("writer model = %q", got)
+	}
+	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeQA}); got != "gpt-5.1" {
+		t.Fatalf("qa model = %q", got)
+	}
+}
+
+func TestModelForRequestFallsBackToDefaultThenEnv(t *testing.T) {
+	env := config.Env{TokenGateModel: "env-default"}
+
+	if got := modelForRequest(Credentials{Model: "gpt-5.1"}, env, llm.CompletionReq{Purpose: llm.PurposeWriter}); got != "gpt-5.1" {
+		t.Fatalf("writer fallback model = %q", got)
+	}
+	if got := modelForRequest(Credentials{}, env, llm.CompletionReq{Purpose: llm.PurposeQA}); got != "env-default" {
+		t.Fatalf("env fallback model = %q", got)
 	}
 }

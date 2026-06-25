@@ -25,7 +25,7 @@ func NewOpenAIChat(apiKey, baseURL, model string) *OpenAIChat {
 		baseURL = "https://tokengate-production.up.railway.app/v1"
 	}
 	if model == "" {
-		model = ModelClaudeSonnet
+		model = DefaultTokenGateModel
 	}
 	return &OpenAIChat{
 		APIKey:  apiKey,

@@ -1,21 +1,28 @@
-// Package llm defines the LLMProvider abstraction (PRD §4) and concrete
-// implementations: a real Anthropic Claude provider and a deterministic mock
-// for tests / no-key runs.
+// Package llm defines the LLMProvider abstraction (PRD §4), the TokenGate
+// OpenAI-compatible client, and a deterministic mock for tests / no-key runs.
 package llm
 
 import "context"
 
 const (
-	// ModelClaudeSonnet is the default draft-writing model.
-	ModelClaudeSonnet = "claude-sonnet-4-6"
-	// ModelClaudeOpus is used for higher-stakes QA, repair, and analysis work.
-	ModelClaudeOpus = "claude-opus-4-8"
+	// DefaultTokenGateModel is the environment fallback when no admin model is
+	// saved. Admin settings can override this without redeploying.
+	DefaultTokenGateModel = "claude-sonnet-4-6"
+)
+
+type CompletionPurpose string
+
+const (
+	PurposeDefault CompletionPurpose = ""
+	PurposeWriter  CompletionPurpose = "writer"
+	PurposeQA      CompletionPurpose = "qa"
 )
 
 // CompletionReq is a provider-agnostic completion request.
 type CompletionReq struct {
-	System string
-	Prompt string
+	System  string
+	Prompt  string
+	Purpose CompletionPurpose
 	// Model optionally overrides the provider's default model for this request.
 	Model       string
 	MaxTokens   int

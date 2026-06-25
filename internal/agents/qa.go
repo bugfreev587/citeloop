@@ -68,7 +68,7 @@ ARTICLE:
 		System: "You are an evidence-aware QA auditor. Unsupported material product claims block publication, but the editor should fix the draft whenever possible.",
 		// Roomy budget: a long article's claims array must fit in one response, or
 		// the JSON truncates and parses as "unexpected EOF" (§5.3 reliability).
-		Prompt: prompt, Model: llm.ModelClaudeOpus, JSON: true, MaxTokens: 10000,
+		Prompt: prompt, Purpose: llm.PurposeQA, JSON: true, MaxTokens: 10000,
 	})
 	if err != nil {
 		// Every attempt failed to call or parse the model — a transient infra
@@ -196,7 +196,7 @@ ARTICLE EXCERPT:
 
 	out, resp, err := qa.completeQAWithRetry(ctx, llm.CompletionReq{
 		System: "You are an evidence-aware QA auditor. Return only compact JSON.",
-		Prompt: prompt, Model: llm.ModelClaudeOpus, JSON: true, MaxTokens: 4096,
+		Prompt: prompt, Purpose: llm.PurposeQA, JSON: true, MaxTokens: 4096,
 	})
 	if err != nil {
 		return nil, resp, err

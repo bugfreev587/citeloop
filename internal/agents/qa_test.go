@@ -147,7 +147,7 @@ func TestCompleteQAWithRetryExhaustsAndReturnsError(t *testing.T) {
 	}
 }
 
-func TestQACompactCheckUsesOpusModel(t *testing.T) {
+func TestQACompactCheckUsesQAPurpose(t *testing.T) {
 	valid := `{"claims":[],"qa_blocking":false,"geo_score":0.9,"seo_score":0.9,"issues":[]}`
 	provider := &sequenceLLM{resps: []string{valid}}
 	qa := NewQA(Deps{LLM: provider}, nil)
@@ -158,8 +158,8 @@ func TestQACompactCheckUsesOpusModel(t *testing.T) {
 	if len(provider.reqs) != 1 {
 		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
 	}
-	if provider.reqs[0].Model != "claude-opus-4-8" {
-		t.Fatalf("compact QA model = %q, want Opus", provider.reqs[0].Model)
+	if provider.reqs[0].Purpose != llm.PurposeQA {
+		t.Fatalf("compact QA purpose = %q, want qa", provider.reqs[0].Purpose)
 	}
 }
 

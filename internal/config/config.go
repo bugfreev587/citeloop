@@ -16,8 +16,6 @@ type Env struct {
 	TokenGateAPIKey          string
 	TokenGateBaseURL         string
 	TokenGateModel           string
-	AnthropicAPIKey          string
-	AnthropicModel           string
 	ClerkSecretKey           string
 	AdminEmails              string // comma-separated admin email addresses (ADMINS env) allowed to manage global admin settings
 	SearchAPIKey             string // Brave Search API key (or swapped provider)
@@ -51,8 +49,6 @@ func FromEnv() Env {
 		TokenGateAPIKey:          os.Getenv("TOKENGATE_API_KEY"),
 		TokenGateBaseURL:         getenv("TOKENGATE_BASE_URL", "https://tokengate-production.up.railway.app/v1"),
 		TokenGateModel:           getenv("TOKENGATE_MODEL", "claude-sonnet-4-6"),
-		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicModel:           getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
 		ClerkSecretKey:           os.Getenv("CLERK_SECRET_KEY"),
 		AdminEmails:              os.Getenv("ADMINS"),
 		SearchAPIKey:             os.Getenv("SEARCH_API_KEY"),
