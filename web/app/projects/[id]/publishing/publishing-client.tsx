@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
   Check,
-  ChevronDown,
   Copy,
   ExternalLink,
-  GitBranch,
   Loader2,
   Plug,
   RefreshCw,
@@ -17,23 +15,14 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import {
-  Article,
-  DistributeItem,
-  GitHubNextJSPublisherInput,
-  GithubIntegrationStatus,
-  ProjectConfig,
-  PublisherConnection,
-  defaultProjectConfig,
-} from "../../../lib/api";
-import { rememberGithubConnectProject } from "../../../lib/github-connect";
+import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type PublishMode = "scheduled" | "auto" | "manual";
-type DrawerKind = "schedule" | "platforms" | null;
+type DrawerKind = "schedule" | null;
 type LaneTone = "neutral" | "blue" | "amber" | "green" | "red";
 
 const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; detail: string }> = {
@@ -41,32 +30,6 @@ const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; det
   auto: { label: "Auto", icon: <Zap size={15} />, detail: "Publish as soon as ready" },
   manual: { label: "Manual", icon: <Send size={15} />, detail: "You publish each one" },
 };
-
-const defaultPublisherDraft: GitHubNextJSPublisherInput = {
-  label: "GitHub / Next.js blog",
-  repo: "",
-  branch: "citeloop-content",
-  content_dir: "content/citeloop/blog",
-  base_url: "",
-  publish_mode: "publish",
-  credential_ref: "",
-};
-
-function friendlyError(raw: unknown) {
-  const message = typeof raw === "string" ? raw : "Something went wrong.";
-  const lower = message.toLowerCase();
-  if (lower.includes("repo") && lower.includes("base_url")) {
-    return "Add both the GitHub repository (owner/repo) and your site's base URL before saving.";
-  }
-  if (lower.includes("repo")) return "Enter the GitHub repository as owner/repo.";
-  if (lower.includes("base_url")) return "Enter your site's base URL (e.g. https://example.com).";
-  if (lower.includes("token") || lower.includes("401")) {
-    return "The token was rejected. Check that it is valid and has write access to the repository.";
-  }
-  if (lower.includes("403")) return "Permission denied. Re-check the connected credentials and their access scope.";
-  if (lower.includes("404")) return "Not found. Check the repository, branch, and content path.";
-  return message;
-}
 
 function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} article`;
@@ -77,19 +40,12 @@ function publishTimeLabel(article: Article) {
 }
 
 function connectionTargetLabel(connection: PublisherConnection | null) {
-  if (!connection) return "No platform connected";
+  if (!connection) return "No enabled account";
   return connection.label || connection.config?.repo || connection.kind.replace(/_/g, " ");
 }
 
 function publishTargetLabel(article: Article, defaultPublishTarget: string) {
   return article.platform || defaultPublishTarget;
-}
-
-function connectionTone(status: string): LaneTone {
-  if (status === "connected") return "green";
-  if (status === "error") return "red";
-  if (status === "revoked") return "amber";
-  return "neutral";
 }
 
 function PublishTargetPill({ target }: { target: string }) {
@@ -101,8 +57,7 @@ function PublishTargetPill({ target }: { target: string }) {
   );
 }
 
-// Slide-out panel from the right. Used for the publish-schedule and platform-binding
-// editors so they stay out of the primary content lanes (which are the real work).
+// Slide-out panel from the right for schedule controls.
 function Drawer({
   open,
   title,
@@ -215,10 +170,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [drawer, setDrawer] = useState<DrawerKind>(null);
-  const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
-  const [credentialDraft, setCredentialDraft] = useState("");
-  const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
-  const [showManualConnect, setShowManualConnect] = useState(false);
+  const [selectedPublisherConnectionID, setSelectedPublisherConnectionID] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -247,25 +199,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     try {
       const next = await api.listPublisherConnections(projectId);
       setConnections(next);
-      const github = next.find((connection) => connection.kind === "github_nextjs");
-      if (github) {
-        setPublisherDraft((current) => ({
-          ...current,
-          label: github.label || current.label,
-          repo: github.config?.repo ?? "",
-          branch: github.config?.branch ?? "citeloop-content",
-          content_dir: github.config?.content_dir ?? "content/citeloop/blog",
-          base_url: github.config?.base_url ?? "",
-          credential_ref: "",
-        }));
-      }
     } catch {
-      // Surface connection errors only inside the drawer; the lanes still work.
-    }
-    try {
-      setGithubIntegration(await api.getGithubIntegration(projectId));
-    } catch {
-      // GitHub App may not be configured on the server; the manual token path stays available.
+      setConnections([]);
     }
   }, [api, projectId]);
 
@@ -279,12 +214,12 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (url.searchParams.get("github") === "connected") {
-      setMessage({ title: "GitHub connected", detail: "Approved articles will publish to your selected repository.", tone: "green" });
-      setDrawer("platforms");
+      setMessage({ title: "GitHub connected", detail: "Enable the connection in settings before publishing.", tone: "green" });
+      loadConnections();
       url.searchParams.delete("github");
       window.history.replaceState({}, "", url.pathname + url.search);
     }
-  }, []);
+  }, [loadConnections]);
 
   // Poll while anything is mid-publish so the page reflects each post going live
   // on its staggered slot without a manual reload.
@@ -311,18 +246,28 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     () => approvedCanonicals.filter((a) => a.scheduled_at && new Date(a.scheduled_at).getTime() > Date.now()),
     [approvedCanonicals],
   );
-  const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "scheduled";
+  const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "manual";
   const publishIntervalDays = config?.publish_interval_days ?? 2;
-  const connectedCount = useMemo(() => connections.filter((c) => c.status === "connected").length, [connections]);
-  const githubPublisher = useMemo(() => connections.find((c) => c.kind === "github_nextjs") ?? null, [connections]);
-  const summaryConnections = useMemo(
-    () => connections.filter((connection) => !(connection.kind === "github_nextjs" && githubIntegration?.connected)),
-    [connections, githubIntegration?.connected],
+  const eligiblePublisherConnections = useMemo(() => connections.filter((c) => c.enabled && c.status === "connected"), [connections]);
+  const selectedPublisherConnection = useMemo(
+    () =>
+      eligiblePublisherConnections.find((connection) => connection.id === selectedPublisherConnectionID) ??
+      eligiblePublisherConnections.find((connection) => connection.is_default) ??
+      eligiblePublisherConnections[0] ??
+      null,
+    [eligiblePublisherConnections, selectedPublisherConnectionID],
   );
   const defaultPublishTarget = useMemo(
-    () => connectionTargetLabel(connections.find((c) => c.status === "connected" && c.is_default) ?? connections.find((c) => c.status === "connected") ?? githubPublisher),
-    [connections, githubPublisher],
+    () => connectionTargetLabel(selectedPublisherConnection),
+    [selectedPublisherConnection],
   );
+
+  useEffect(() => {
+    const selectedStillEligible = eligiblePublisherConnections.some((connection) => connection.id === selectedPublisherConnectionID);
+    if (!selectedStillEligible) {
+      setSelectedPublisherConnectionID(eligiblePublisherConnections[0]?.id ?? "");
+    }
+  }, [eligiblePublisherConnections, selectedPublisherConnectionID]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -340,6 +285,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function publishNow(article: Article) {
+    if (!selectedPublisherConnection) {
+      setMessage({ title: "No enabled publisher connection", detail: "Manage connections in settings before publishing.", tone: "amber" });
+      return;
+    }
     setBusy(`publish-${article.id}`);
     setMessage(null);
     try {
@@ -379,6 +328,10 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function retryPublish(article: Article) {
+    if (!selectedPublisherConnection) {
+      setMessage({ title: "No enabled publisher connection", detail: "Manage connections in settings before retrying.", tone: "amber" });
+      return;
+    }
     setBusy(`retry-${article.id}`);
     setMessage(null);
     try {
@@ -417,89 +370,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function savePublisherConnection() {
-    setBusy("save-publisher");
-    setMessage(null);
-    try {
-      const saved = await api.upsertGitHubNextJSPublisherConnection(projectId, {
-        ...publisherDraft,
-        repo: publisherDraft.repo.trim(),
-        branch: publisherDraft.branch?.trim() || "citeloop-content",
-        content_dir: publisherDraft.content_dir?.trim() || "content/citeloop/blog",
-        base_url: publisherDraft.base_url.trim(),
-        publish_mode: publisherDraft.publish_mode?.trim() || "publish",
-        credential_ref: undefined,
-      });
-      setConnections((current) => {
-        const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
-        return [...rest, saved];
-      });
-      if (credentialDraft.trim()) {
-        const withCredential = await api.upsertPublisherCredential(projectId, saved.id, {
-          kind: "github_token",
-          value: credentialDraft.trim(),
-        });
-        setCredentialDraft("");
-        setConnections((current) => current.map((connection) => (connection.id === withCredential.id ? withCredential : connection)));
-      }
-      setMessage({ title: "Platform connection saved", tone: "green" });
-    } catch (e: any) {
-      setMessage({ title: "Could not save platform", detail: friendlyError(e.message), tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function connectGithub() {
-    // Hand off to GitHub's App install screen; it redirects back to our callback
-    // (carrying installation_id + the project id as state) to finish the link.
-    if (githubIntegration?.install_url) {
-      rememberGithubConnectProject(projectId);
-      window.location.href = githubIntegration.install_url;
-    }
-  }
-
-  function reuseGithub() {
-    // The same owner already installed the App on another project. A GitHub App
-    // installs once per account, so skip GitHub entirely: drive the callback's
-    // repo picker directly with the existing installation id.
-    const reuse = githubIntegration?.reusable_installation_id;
-    if (reuse) {
-      window.location.href = `/integrations/github/callback?installation_id=${encodeURIComponent(reuse)}&state=${encodeURIComponent(projectId)}`;
-    }
-  }
-
-  async function testConnection(connectionID: string) {
-    setBusy(`test-${connectionID}`);
-    setMessage(null);
-    try {
-      const tested = await api.testPublisherConnection(projectId, connectionID);
-      setConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
-      setMessage({ title: "Platform connection verified", tone: "green" });
-    } catch (e: any) {
-      setMessage({ title: "Platform test failed", detail: friendlyError(e.message), tone: "red" });
-      await loadConnections();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function disconnectConnection(connection: PublisherConnection) {
-    setBusy(`disconnect-${connection.id}`);
-    setMessage(null);
-    try {
-      await api.deletePublisherConnection(projectId, connection.id);
-      setConnections((current) => current.filter((item) => item.id !== connection.id));
-      await loadConnections();
-      setMessage({ title: "GitHub disconnected", detail: "This project is no longer linked to that repository.", tone: "green" });
-    } catch (e: any) {
-      setMessage({ title: "Could not disconnect GitHub", detail: friendlyError(e.message), tone: "red" });
-      await loadConnections();
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -519,18 +389,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 {MODE_META[publishMode].label}
               </span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDrawer("platforms");
-                loadConnections();
-              }}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Plug size={14} className="text-slate-400" />
-              Platforms
-              <Badge tone={connectedCount ? "green" : "amber"}>{connectedCount ? `${connectedCount} connected` : "none"}</Badge>
-            </button>
             <Button disabled={!!busy} size="sm" onClick={reconcile}>
               <ButtonProgress busy={busy === "reconcile"} busyLabel="Reconciling" idleIcon={<RotateCcw size={14} />}>
                 Reconcile
@@ -543,6 +401,39 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           </div>
         }
       />
+
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+          <Plug size={14} />
+          Publisher account
+        </div>
+        <select
+          value={selectedPublisherConnection?.id ?? ""}
+          disabled={eligiblePublisherConnections.length === 0}
+          onChange={(event) => setSelectedPublisherConnectionID(event.target.value)}
+          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 disabled:text-slate-400"
+        >
+          {eligiblePublisherConnections.length === 0 ? (
+            <option value="">No enabled connections</option>
+          ) : (
+            eligiblePublisherConnections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connectionTargetLabel(connection)}
+              </option>
+            ))
+          )}
+        </select>
+        <a
+          href={`/projects/${projectId}/settings#publisher`}
+          className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+        >
+          Manage connections
+        </a>
+      </div>
+
+      {eligiblePublisherConnections.length === 0 && (
+        <Notice title="No enabled publisher connection" detail="Enable a connected publisher account in settings before publishing or retrying." tone="amber" />
+      )}
 
       <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
         {/* Left column — Ready then Scheduled. */}
@@ -577,7 +468,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                    <Button disabled={!selectedPublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
                       <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
                         Publish now
                       </ButtonProgress>
@@ -618,7 +509,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                    <Button disabled={!selectedPublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
                       <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
                         Publish now
                       </ButtonProgress>
@@ -711,7 +602,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                    <Button disabled={!selectedPublisherConnection || busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
                       <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
                         Retry
                       </ButtonProgress>
@@ -855,205 +746,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         )}
       </Drawer>
 
-      <Drawer
-        open={drawer === "platforms"}
-        title="Platforms"
-        subtitle="Where canonical articles get published. Connect your blog repository and credentials here."
-        onClose={() => setDrawer(null)}
-      >
-        <div className="grid gap-3">
-          {connections.length === 0 && !githubIntegration?.connected ? (
-            <EmptyState title="No platforms connected" detail="Add your GitHub / Next.js blog below to start publishing." />
-          ) : (
-            summaryConnections.map((connection) => (
-              <div key={connection.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-900">{connection.label || connection.kind}</div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                      {connection.config?.repo || connection.kind}
-                      {connection.is_default ? " · default" : ""}
-                    </div>
-                  </div>
-                  <Badge tone={connectionTone(connection.status)}>{connection.status}</Badge>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button disabled={busy === `test-${connection.id}`} size="sm" onClick={() => testConnection(connection.id)}>
-                    <ButtonProgress busy={busy === `test-${connection.id}`} busyLabel="Testing" idleIcon={<Plug size={14} />}>
-                      Test
-                    </ButtonProgress>
-                  </Button>
-                  {connection.credential_configured ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                      <Check size={12} />
-                      credential set
-                    </span>
-                  ) : (
-                    <span className="text-xs font-semibold text-amber-600">no credential</span>
-                  )}
-                </div>
-                {connection.last_error && <div className="mt-1.5 line-clamp-2 text-xs text-red-700">{connection.last_error}</div>}
-              </div>
-            ))
-          )}
-        </div>
-
-        <div className="mt-5 border-t border-slate-100 pt-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-slate-400">GitHub / Next.js blog</div>
-
-          {githubIntegration?.configured ? (
-            githubIntegration.connected ? (
-              <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-bold text-emerald-900">
-                      <GitBranch size={16} />
-                      Connected via GitHub App
-                    </div>
-                    <div className="mt-1 text-xs text-emerald-800">
-                      {githubIntegration.repo ? (
-                        <>Publishing to <span className="font-semibold">{githubIntegration.repo}</span>{githubIntegration.branch ? ` · ${githubIntegration.branch}` : ""}. No token to manage — CiteLoop mints short-lived access automatically.</>
-                      ) : (
-                        "Installed. Choose a repository to finish."
-                      )}
-                    </div>
-                  </div>
-                  {githubPublisher && (
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={busy === `disconnect-${githubPublisher.id}`}
-                      onClick={() => disconnectConnection(githubPublisher)}
-                    >
-                      <ButtonProgress busy={busy === `disconnect-${githubPublisher.id}`} busyLabel="Disconnecting" idleIcon={<X size={14} />}>
-                        Disconnect
-                      </ButtonProgress>
-                    </Button>
-                  )}
-                </div>
-                <div className="mt-3">
-                  <Button size="sm" onClick={connectGithub}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Settings2 size={14} />
-                      Change repository or access
-                    </span>
-                  </Button>
-                </div>
-              </div>
-            ) : githubIntegration.reusable_installation_id ? (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                  <GitBranch size={16} />
-                  Use your connected GitHub
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  You already authorized the CiteLoop GitHub App on your account. Reuse it for this project and just pick a repository — no second install needed.
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="primary" onClick={reuseGithub}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <GitBranch size={14} />
-                      Pick a repository
-                    </span>
-                  </Button>
-                  <button
-                    type="button"
-                    onClick={connectGithub}
-                    disabled={!githubIntegration.install_url}
-                    className="text-xs font-semibold text-slate-500 hover:text-slate-900 disabled:opacity-50"
-                  >
-                    Connect a different account
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                  <GitBranch size={16} />
-                  Connect with GitHub
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Install the CiteLoop GitHub App, pick a repository, and publishing works with no personal access token to create or rotate.
-                </div>
-                <div className="mt-3">
-                  <Button size="sm" variant="primary" onClick={connectGithub} disabled={!githubIntegration.install_url}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <GitBranch size={14} />
-                      Connect GitHub
-                    </span>
-                  </Button>
-                </div>
-              </div>
-            )
-          ) : (
-            <Notice
-              title="GitHub App not available on this server"
-              detail="Connect manually with a personal access token below, or ask an admin to configure the GitHub App for one-click connect."
-              tone="neutral"
-            />
-          )}
-
-          <button
-            type="button"
-            onClick={() => setShowManualConnect((v) => !v)}
-            className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900"
-          >
-            <ChevronDown size={14} className={cx("transition-transform", showManualConnect ? "rotate-180" : "")} />
-            {githubIntegration?.configured ? "Advanced: connect with a personal access token" : "Connect with a personal access token"}
-          </button>
-
-          <div className={cx("mt-3 grid gap-3", !showManualConnect && "hidden")}>
-            <Field label="Repository (owner/repo)">
-              <TextInput
-                value={publisherDraft.repo}
-                placeholder="acme/blog"
-                onChange={(event) => setPublisherDraft({ ...publisherDraft, repo: event.target.value })}
-              />
-            </Field>
-            <Field label="Site base URL">
-              <TextInput
-                value={publisherDraft.base_url}
-                placeholder="https://example.com"
-                onChange={(event) => setPublisherDraft({ ...publisherDraft, base_url: event.target.value })}
-              />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Branch">
-                <TextInput
-                  value={publisherDraft.branch ?? ""}
-                  onChange={(event) => setPublisherDraft({ ...publisherDraft, branch: event.target.value })}
-                />
-              </Field>
-              <Field label="Content directory">
-                <TextInput
-                  value={publisherDraft.content_dir ?? ""}
-                  onChange={(event) => setPublisherDraft({ ...publisherDraft, content_dir: event.target.value })}
-                />
-              </Field>
-            </div>
-            <Field label={githubPublisher?.credential_configured ? "Replace GitHub token (optional)" : "GitHub token (write access)"}>
-              <TextInput
-                type="password"
-                value={credentialDraft}
-                placeholder="ghp_…"
-                onChange={(event) => setCredentialDraft(event.target.value)}
-              />
-            </Field>
-            <div className="flex justify-end">
-              <Button
-                disabled={busy === "save-publisher" || !publisherDraft.repo.trim() || !publisherDraft.base_url.trim()}
-                size="sm"
-                variant="primary"
-                onClick={savePublisherConnection}
-              >
-                <ButtonProgress busy={busy === "save-publisher"} busyLabel="Saving platform" idleIcon={<Check size={14} />}>
-                  Save platform
-                </ButtonProgress>
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Drawer>
     </div>
   );
 }

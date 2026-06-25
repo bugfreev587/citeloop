@@ -12,11 +12,14 @@ import (
 )
 
 type AdminLlmCredential struct {
-	Singleton bool               `json:"singleton"`
-	Provider  string             `json:"provider"`
-	ApiKey    string             `json:"api_key"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	BaseUrl   string             `json:"base_url"`
+	Singleton   bool               `json:"singleton"`
+	Provider    string             `json:"provider"`
+	ApiKey      string             `json:"api_key"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	BaseUrl     string             `json:"base_url"`
+	Model       string             `json:"model"`
+	WriterModel string             `json:"writer_model"`
+	QaModel     string             `json:"qa_model"`
 }
 
 type AiCrawlerAccessSnapshot struct {
@@ -422,6 +425,7 @@ type PublisherConnection struct {
 	Label                   string             `json:"label"`
 	Status                  string             `json:"status"`
 	IsDefault               bool               `json:"is_default"`
+	Enabled                 bool               `json:"enabled"`
 	Capabilities            json.RawMessage    `json:"capabilities"`
 	CapabilitySchemaVersion int32              `json:"capability_schema_version"`
 	CredentialRef           *string            `json:"credential_ref"`

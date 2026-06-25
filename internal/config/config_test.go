@@ -9,7 +9,8 @@ import (
 func TestNextPublishSlotStaggersAndModes(t *testing.T) {
 	now := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
 
-	scheduled := Default() // scheduled, interval 2
+	scheduled := Default()
+	scheduled.PublishMode = PublishModeScheduled
 	if got, ok := scheduled.NextPublishSlot(time.Time{}, now); !ok || !got.Equal(now) {
 		t.Fatalf("scheduled first = %v ok=%v, want %v", got, ok, now)
 	}
@@ -40,6 +41,24 @@ func TestParseDefaults(t *testing.T) {
 	}
 	if !c.AutoAdvanceEnabled {
 		t.Fatal("auto_advance_enabled should default to true")
+	}
+	if c.PublishMode != PublishModeManual {
+		t.Fatalf("publish_mode default = %q, want manual", c.PublishMode)
+	}
+	if _, ok := c.NextPublishSlot(time.Time{}, time.Now()); ok {
+		t.Fatal("default config must not schedule publishing automatically")
+	}
+}
+
+func TestParseKeepsExplicitPublishModes(t *testing.T) {
+	for _, mode := range []string{PublishModeScheduled, PublishModeAuto, PublishModeManual} {
+		c, err := Parse(json.RawMessage(`{"publish_mode":"` + mode + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.PublishMode != mode {
+			t.Fatalf("publish_mode = %q, want %q", c.PublishMode, mode)
+		}
 	}
 }
 

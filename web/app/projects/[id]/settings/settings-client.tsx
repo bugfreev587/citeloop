@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
+import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
 import {
   defaultProjectConfig,
   GSCConnection,
@@ -539,6 +539,20 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function setPublisherConnectionEnabled(connection: PublisherConnection, enabled: boolean) {
+    setNotificationBusy(`toggle-publisher-${connection.id}`);
+    setMessage(null);
+    try {
+      const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
+      setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+      setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: enabled ? "Enable failed" : "Disable failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
   async function retryDelivery(deliveryID: string) {
     setNotificationBusy(`retry-${deliveryID}`);
     setMessage(null);
@@ -863,6 +877,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <Badge tone={githubPublisher?.status === "connected" ? "green" : githubPublisher?.status === "error" ? "red" : "amber"}>
               {githubPublisher?.status ?? "missing"}
             </Badge>
+            <Badge tone={githubPublisher?.enabled ? "green" : "neutral"}>{githubPublisher?.enabled ? "enabled" : "disabled"}</Badge>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -966,6 +981,35 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 Test
               </ButtonProgress>
             </Button>
+            {githubPublisher?.enabled ? (
+              <Button
+                variant="outline"
+                onClick={() => githubPublisher && setPublisherConnectionEnabled(githubPublisher, false)}
+                disabled={!githubPublisher || notificationBusy === `toggle-publisher-${githubPublisher?.id}`}
+              >
+                <ButtonProgress
+                  busy={notificationBusy === `toggle-publisher-${githubPublisher?.id}`}
+                  busyLabel="Disabling"
+                  idleIcon={<Power size={16} />}
+                >
+                  Disable
+                </ButtonProgress>
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                onClick={() => githubPublisher && setPublisherConnectionEnabled(githubPublisher, true)}
+                disabled={!githubPublisher || notificationBusy === `toggle-publisher-${githubPublisher?.id}`}
+              >
+                <ButtonProgress
+                  busy={notificationBusy === `toggle-publisher-${githubPublisher?.id}`}
+                  busyLabel="Enabling"
+                  idleIcon={<Power size={16} />}
+                >
+                  Enable
+                </ButtonProgress>
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={revokePublisherCredential}

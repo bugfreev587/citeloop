@@ -460,15 +460,20 @@ test("publishing cards constrain long titles, errors, and publish paths inside t
   assert.doesNotMatch(publishing, /canonical_url \|\| article\.publish_path\)[\s\S]{0,160}truncate/);
 });
 
-test("publishing platforms drawer shows one GitHub App connection with disconnect", () => {
+test("publishing platforms are a read-only account selector with settings handoff", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const settings = read("projects/[id]/settings/settings-client.tsx");
 
-  assert.match(publishing, /const summaryConnections = useMemo/);
-  assert.match(publishing, /connection\.kind === "github_nextjs" && githubIntegration\?\.connected/);
-  assert.match(publishing, /summaryConnections\.map\(\(connection\) =>/);
-  assert.match(publishing, /async function disconnectConnection\(connection: PublisherConnection\)/);
-  assert.match(publishing, /api\.deletePublisherConnection\(projectId, connection\.id\)/);
-  assert.match(publishing, />\s*Disconnect\s*</);
+  assert.doesNotMatch(publishing, /drawer === "platforms"/);
+  assert.doesNotMatch(publishing, /async function savePublisherConnection/);
+  assert.doesNotMatch(publishing, /async function disconnectConnection/);
+  assert.match(publishing, /eligiblePublisherConnections/);
+  assert.match(publishing, />\s*Manage connections\s*</);
+  assert.ok(publishing.includes('href={`/projects/${projectId}/settings#publisher`}'));
+
+  assert.match(settings, /setPublisherConnectionEnabled/);
+  assert.match(settings, />\s*Enable\s*</);
+  assert.match(settings, />\s*Disable\s*</);
 });
 
 test("renamed dashboard routes exist and legacy routes redirect", () => {

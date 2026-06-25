@@ -167,6 +167,7 @@ export type PublisherConnection = {
   label: string;
   status: "missing" | "connected" | "error" | "revoked" | string;
   is_default: boolean;
+  enabled: boolean;
   capabilities: Record<string, boolean>;
   capability_schema_version: number;
   credential_configured: boolean;
@@ -738,7 +739,7 @@ export function defaultProjectConfig(): ProjectConfig {
     channel_mix: { blog: 0.6, syndication: 0.4 },
     brand_voice: "",
     monthly_budget_usd: 50,
-    publish_mode: "scheduled",
+    publish_mode: "manual",
     publish_interval_days: 2,
     crawl: {
       same_origin_only: true,
@@ -1219,6 +1220,7 @@ function normalizePublisherConnection(raw: any): PublisherConnection {
     label: data.label ?? "",
     status: data.status ?? "missing",
     is_default: Boolean(data.is_default),
+    enabled: Boolean(data.enabled),
     capabilities: data.capabilities ?? {},
     capability_schema_version: Number(data.capability_schema_version ?? 1),
     credential_configured: Boolean(data.credential_configured),
@@ -1427,6 +1429,14 @@ export function createApi(auth?: AuthOptions) {
   },
   testPublisherConnection: async (id: string, connectionID: string): Promise<PublisherConnection> => {
     const raw = await req<any>(`/projects/${id}/publisher-connections/${connectionID}/test`, { method: "POST" }, auth);
+    return normalizePublisherConnection(raw);
+  },
+  setPublisherConnectionEnabled: async (id: string, connectionID: string, enabled: boolean): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/${connectionID}/enabled`,
+      { method: "PUT", body: JSON.stringify({ enabled }) },
+      auth,
+    );
     return normalizePublisherConnection(raw);
   },
   revokePublisherCredential: async (id: string, connectionID: string): Promise<PublisherConnection> => {

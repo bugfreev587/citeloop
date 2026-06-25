@@ -26,6 +26,7 @@ type publisherConnectionDTO struct {
 	Label                   string          `json:"label"`
 	Status                  string          `json:"status"`
 	IsDefault               bool            `json:"is_default"`
+	Enabled                 bool            `json:"enabled"`
 	Capabilities            json.RawMessage `json:"capabilities"`
 	CapabilitySchemaVersion int32           `json:"capability_schema_version"`
 	CredentialConfigured    bool            `json:"credential_configured"`
@@ -209,6 +210,38 @@ func (s *Server) deletePublisherConnection(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, publisherConnectionResponse(deleted))
 }
 
+func (s *Server) setPublisherConnectionEnabled(w http.ResponseWriter, r *http.Request) {
+	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
+	if !ok {
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := s.Q.SetPublisherConnectionEnabled(r.Context(), db.SetPublisherConnectionEnabledParams{
+		ID:        connectionID,
+		ProjectID: projectID,
+		Enabled:   in.Enabled,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "publisher connection not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
+}
+
 func (s *Server) upsertPublisherCredential(w http.ResponseWriter, r *http.Request) {
 	projectID, connectionID, ok := s.publisherConnectionPathIDs(w, r)
 	if !ok {
@@ -337,6 +370,7 @@ func publisherConnectionResponse(row db.PublisherConnection) publisherConnection
 		Label:                   row.Label,
 		Status:                  row.Status,
 		IsDefault:               row.IsDefault,
+		Enabled:                 row.Enabled,
 		Capabilities:            safeJSON(row.Capabilities, "{}"),
 		CapabilitySchemaVersion: row.CapabilitySchemaVersion,
 		CredentialConfigured:    row.CredentialRef != nil && strings.TrimSpace(*row.CredentialRef) != "",

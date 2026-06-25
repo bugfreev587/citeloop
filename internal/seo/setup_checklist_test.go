@@ -19,6 +19,7 @@ func TestSetupChecklistMarksPublisherWriteFromConnectionHealth(t *testing.T) {
 				ProjectID:     projectID,
 				Kind:          publisher.ConnectionKindGitHubNextJS,
 				Status:        "connected",
+				Enabled:       true,
 				CredentialRef: ptr("publisher_credential:" + uuid.New().String()),
 			},
 		},
@@ -69,12 +70,46 @@ func TestSetupChecklistShowsPendingPublisherWhenCredentialMissing(t *testing.T) 
 	}
 }
 
+func TestSetupChecklistBlocksDisabledPublisher(t *testing.T) {
+	projectID := uuid.New()
+	checklist, mode, ready := buildSetupChecklist(setupChecklistInput{
+		Integrations: []db.SeoIntegration{
+			{ProjectID: projectID, Provider: ProviderGSC, Status: "connected"},
+		},
+		PublisherConnections: []db.PublisherConnection{
+			{
+				ProjectID:     projectID,
+				Kind:          publisher.ConnectionKindGitHubNextJS,
+				Status:        "connected",
+				Enabled:       false,
+				CredentialRef: ptr("publisher_credential:" + uuid.New().String()),
+			},
+		},
+		ColdStart: false,
+	})
+
+	if mode != "customer_site_pending_verification" {
+		t.Fatalf("mode = %q, want customer_site_pending_verification", mode)
+	}
+	if ready {
+		t.Fatal("expected handoff to stay blocked while publisher is disabled")
+	}
+	publisherItem := findChecklistItem(checklist, "publisher_write")
+	if publisherItem == nil {
+		t.Fatal("publisher_write item missing")
+	}
+	if publisherItem.Status != "in_progress" {
+		t.Fatalf("publisher_write status = %q, want in_progress", publisherItem.Status)
+	}
+}
+
 func TestSetupChecklistKeepsPublicOnlyWhenSearchDataMissing(t *testing.T) {
 	checklist, mode, ready := buildSetupChecklist(setupChecklistInput{
 		PublisherConnections: []db.PublisherConnection{
 			{
 				Kind:          publisher.ConnectionKindGitHubNextJS,
 				Status:        "connected",
+				Enabled:       true,
 				CredentialRef: ptr("env:GITHUB_TOKEN"),
 			},
 		},

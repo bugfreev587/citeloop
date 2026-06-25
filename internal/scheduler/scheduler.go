@@ -69,7 +69,7 @@ type Scheduler struct {
 }
 
 type publisherConnectionQuerier interface {
-	GetDefaultPublisherConnectionForProject(context.Context, db.GetDefaultPublisherConnectionForProjectParams) (db.PublisherConnection, error)
+	GetEnabledPublisherConnectionForProject(context.Context, db.GetEnabledPublisherConnectionForProjectParams) (db.PublisherConnection, error)
 	GetActivePublisherCredential(context.Context, db.GetActivePublisherCredentialParams) (db.PublisherCredential, error)
 }
 
@@ -938,6 +938,9 @@ func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 	if err != nil {
 		return err
 	}
+	if len(due) == 0 {
+		return nil
+	}
 	q := db.New(s.Pool)
 	blog, err := s.blogPublisherForProject(ctx, q, p)
 	if err != nil {
@@ -1025,12 +1028,17 @@ func (s *Scheduler) prepareDueCanonicals(ctx context.Context, p db.Project) ([]d
 		return nil, err
 	}
 	q := db.New(tx)
-	blog, err := s.blogPublisherForProject(ctx, q, p)
+	due, err := q.SelectDueCanonical(ctx, p.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	due, err := q.SelectDueCanonical(ctx, p.ID)
+	if len(due) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	blog, err := s.blogPublisherForProject(ctx, q, p)
 	if err != nil {
 		return nil, err
 	}
@@ -1280,13 +1288,13 @@ func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConn
 		return s.Blog, nil
 	}
 	projectTarget := githubNextJSTargetForProject(p)
-	conn, err := q.GetDefaultPublisherConnectionForProject(ctx, db.GetDefaultPublisherConnectionForProjectParams{
+	conn, err := q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
 		ProjectID: p.ID,
 		Kind:      publisher.ConnectionKindGitHubNextJS,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return blogPublisherWithTarget(s.Blog, projectTarget), nil
+			return nil, fmt.Errorf("enabled publisher connection is required for project %s", p.ID)
 		}
 		return nil, err
 	}

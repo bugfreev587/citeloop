@@ -5,6 +5,7 @@ create table if not exists publisher_connections (
   label text not null default '',
   status text not null default 'missing' check (status in ('missing','connected','error','revoked')),
   is_default boolean not null default false,
+  enabled boolean not null default false,
   capabilities jsonb not null default '{}',
   capability_schema_version int not null default 1,
   credential_ref text,
@@ -23,4 +24,4 @@ create unique index if not exists publisher_connections_default_kind_key
   where is_default;
 
 create index if not exists publisher_connections_project_idx
-  on publisher_connections (project_id, kind, status);
+  on publisher_connections (project_id, kind, status, enabled);
