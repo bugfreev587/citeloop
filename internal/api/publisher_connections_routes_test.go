@@ -22,6 +22,7 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 		{http.MethodGet, "/api/projects/not-a-uuid/publisher-connections"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/github-nextjs"},
 		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection"},
+		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/enabled"},
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
 		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
@@ -44,6 +45,7 @@ func TestPublisherCredentialRoutesAreRegistered(t *testing.T) {
 		path   string
 	}{
 		{http.MethodDelete, "/api/projects/" + projectID + "/publisher-connections/not-a-connection"},
+		{http.MethodPut, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/enabled"},
 		{http.MethodPut, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
 		{http.MethodDelete, "/api/projects/" + projectID + "/publisher-connections/not-a-connection/credential"},
 	} {
@@ -82,6 +84,7 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 		Kind:          publisher.ConnectionKindGitHubNextJS,
 		Label:         "GitHub",
 		Status:        "connected",
+		Enabled:       true,
 		IsDefault:     true,
 		Capabilities:  publisher.GitHubNextJSCapabilities().JSON(),
 		CredentialRef: strPtr("env:GITHUB_TOKEN"),
@@ -97,6 +100,9 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 	}
 	if !strings.Contains(string(body), `"create_article":true`) {
 		t.Fatalf("response missing create_article capability: %s", string(body))
+	}
+	if !strings.Contains(string(body), `"enabled":true`) {
+		t.Fatalf("response missing enabled flag: %s", string(body))
 	}
 	if strings.Contains(string(body), "token") {
 		t.Fatalf("response leaked token-like text: %s", string(body))

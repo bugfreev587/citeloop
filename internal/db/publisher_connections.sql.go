@@ -20,7 +20,7 @@ set credential_ref = null,
     last_error = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type ClearPublisherConnectionCredentialRefParams struct {
@@ -38,6 +38,7 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -56,7 +57,7 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 const deletePublisherConnectionForProject = `-- name: DeletePublisherConnectionForProject :one
 delete from publisher_connections
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type DeletePublisherConnectionForProjectParams struct {
@@ -74,6 +75,7 @@ func (q *Queries) DeletePublisherConnectionForProject(ctx context.Context, arg D
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -177,7 +179,7 @@ func (q *Queries) GetActivePublisherCredentialForConnection(ctx context.Context,
 }
 
 const getDefaultPublisherConnectionForProject = `-- name: GetDefaultPublisherConnectionForProject :one
-select id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
 where project_id = $1 and kind = $2 and is_default
 limit 1
 `
@@ -197,6 +199,48 @@ func (q *Queries) GetDefaultPublisherConnectionForProject(ctx context.Context, a
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getEnabledPublisherConnectionForProject = `-- name: GetEnabledPublisherConnectionForProject :one
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+where project_id = $1
+  and kind = $2
+  and is_default
+  and enabled = true
+  and status = 'connected'
+limit 1
+`
+
+type GetEnabledPublisherConnectionForProjectParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Kind      string    `json:"kind"`
+}
+
+func (q *Queries) GetEnabledPublisherConnectionForProject(ctx context.Context, arg GetEnabledPublisherConnectionForProjectParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, getEnabledPublisherConnectionForProject, arg.ProjectID, arg.Kind)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -213,7 +257,7 @@ func (q *Queries) GetDefaultPublisherConnectionForProject(ctx context.Context, a
 }
 
 const getPublisherConnectionForProject = `-- name: GetPublisherConnectionForProject :one
-select id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
 where id = $1 and project_id = $2
 `
 
@@ -232,6 +276,7 @@ func (q *Queries) GetPublisherConnectionForProject(ctx context.Context, arg GetP
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -248,7 +293,7 @@ func (q *Queries) GetPublisherConnectionForProject(ctx context.Context, arg GetP
 }
 
 const listPublisherConnections = `-- name: ListPublisherConnections :many
-select id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
 where project_id = $1
 order by is_default desc, created_at desc
 `
@@ -269,6 +314,7 @@ func (q *Queries) ListPublisherConnections(ctx context.Context, projectID uuid.U
 			&i.Label,
 			&i.Status,
 			&i.IsDefault,
+			&i.Enabled,
 			&i.Capabilities,
 			&i.CapabilitySchemaVersion,
 			&i.CredentialRef,
@@ -297,7 +343,7 @@ set status = 'error',
     last_error = $3,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type MarkPublisherConnectionErrorParams struct {
@@ -316,6 +362,7 @@ func (q *Queries) MarkPublisherConnectionError(ctx context.Context, arg MarkPubl
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -338,7 +385,7 @@ set status = 'connected',
     last_error = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type MarkPublisherConnectionVerifiedParams struct {
@@ -356,6 +403,7 @@ func (q *Queries) MarkPublisherConnectionVerified(ctx context.Context, arg MarkP
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -412,7 +460,7 @@ set credential_ref = $3,
     last_error = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type SetPublisherConnectionCredentialRefParams struct {
@@ -431,6 +479,47 @@ func (q *Queries) SetPublisherConnectionCredentialRef(ctx context.Context, arg S
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setPublisherConnectionEnabled = `-- name: SetPublisherConnectionEnabled :one
+update publisher_connections
+set enabled = $3,
+    updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+`
+
+type SetPublisherConnectionEnabledParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Enabled   bool      `json:"enabled"`
+}
+
+func (q *Queries) SetPublisherConnectionEnabled(ctx context.Context, arg SetPublisherConnectionEnabledParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, setPublisherConnectionEnabled, arg.ID, arg.ProjectID, arg.Enabled)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,
@@ -462,7 +551,7 @@ do update set
   last_verified_at = excluded.last_verified_at,
   last_error = excluded.last_error,
   updated_at = now()
-returning id, project_id, kind, label, status, is_default, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
 `
 
 type UpsertDefaultPublisherConnectionParams struct {
@@ -499,6 +588,7 @@ func (q *Queries) UpsertDefaultPublisherConnection(ctx context.Context, arg Upse
 		&i.Label,
 		&i.Status,
 		&i.IsDefault,
+		&i.Enabled,
 		&i.Capabilities,
 		&i.CapabilitySchemaVersion,
 		&i.CredentialRef,

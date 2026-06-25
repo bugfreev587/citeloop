@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -26,24 +27,18 @@ func TestBlogPublisherForProjectWithoutQueryUsesFallbackPublisher(t *testing.T) 
 	}
 }
 
-func TestBlogPublisherForProjectDerivesUniPostTargetWithoutConnection(t *testing.T) {
+func TestBlogPublisherForProjectRequiresEnabledConnectionWhenStoreIsAvailable(t *testing.T) {
 	projectID := uuid.New()
 	store := &publisherConnectionStoreFake{noConnection: true}
 	fallback := publisher.NewBlog("fallback-token", "bugfreev587/unipost", "citeloop-content", "https://unipost.dev/blog", "content/citeloop/blog", slog.Default())
 	s := &Scheduler{Blog: fallback, Log: slog.Default()}
 
-	blog, err := s.blogPublisherForProject(context.Background(), store, db.Project{
+	_, err := s.blogPublisherForProject(context.Background(), store, db.Project{
 		ID:     projectID,
 		Config: json.RawMessage(`{"site_url":"https://dev.unipost.dev/"}`),
 	})
-	if err != nil {
-		t.Fatalf("blogPublisherForProject returned error: %v", err)
-	}
-	if blog.Repo != "bugfreev587/unipost" || blog.Branch != "dev" || blog.BaseURL != "https://dev.unipost.dev/blog" || blog.ContentDir != "content/citeloop/blog" {
-		t.Fatalf("blog publisher did not use project target: %+v", blog)
-	}
-	if blog.Token != "fallback-token" {
-		t.Fatalf("token = %q, want fallback token", blog.Token)
+	if err == nil || !strings.Contains(err.Error(), "enabled publisher connection") {
+		t.Fatalf("expected enabled publisher connection error, got %v", err)
 	}
 }
 
@@ -53,6 +48,7 @@ func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
 		ProjectID:     uuid.New(),
 		Kind:          publisher.ConnectionKindGitHubNextJS,
 		Status:        "connected",
+		Enabled:       true,
 		CredentialRef: ptr("env:GITHUB_TOKEN"),
 		Config: json.RawMessage(`{
 			"repo":"customer/site",
@@ -86,6 +82,7 @@ func TestBlogPublisherForProjectTargetOverridesConnectionEnvironment(t *testing.
 			ProjectID:     projectID,
 			Kind:          publisher.ConnectionKindGitHubNextJS,
 			Status:        "connected",
+			Enabled:       true,
 			CredentialRef: ptr("env:GITHUB_TOKEN"),
 			Config: json.RawMessage(`{
 				"repo":"bugfreev587/unipost",
@@ -107,6 +104,32 @@ func TestBlogPublisherForProjectTargetOverridesConnectionEnvironment(t *testing.
 	}
 	if blog.Repo != "bugfreev587/unipost" || blog.Branch != "staging" || blog.BaseURL != "https://staging.unipost.dev/blog" {
 		t.Fatalf("blog publisher did not use staging target: %+v", blog)
+	}
+}
+
+func TestBlogPublisherForProjectRejectsDisabledConnection(t *testing.T) {
+	projectID := uuid.New()
+	store := &publisherConnectionStoreFake{
+		disabledConnection: true,
+		conn: db.PublisherConnection{
+			ID:            uuid.New(),
+			ProjectID:     projectID,
+			Kind:          publisher.ConnectionKindGitHubNextJS,
+			Status:        "connected",
+			Enabled:       false,
+			CredentialRef: ptr("env:GITHUB_TOKEN"),
+			Config: json.RawMessage(`{
+				"repo":"customer/site",
+				"base_url":"https://customer.example/blog"
+			}`),
+		},
+	}
+	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
+	s := &Scheduler{Blog: fallback, Log: slog.Default()}
+
+	_, err := s.blogPublisherForProject(context.Background(), store, db.Project{ID: projectID})
+	if err == nil || !strings.Contains(err.Error(), "enabled publisher connection") {
+		t.Fatalf("expected disabled connection to be ineligible, got %v", err)
 	}
 }
 
@@ -154,6 +177,7 @@ func TestBlogPublisherForProjectUsesEncryptedPublisherCredential(t *testing.T) {
 			ProjectID:     projectID,
 			Kind:          publisher.ConnectionKindGitHubNextJS,
 			Status:        "connected",
+			Enabled:       true,
 			CredentialRef: ptr(publisher.PublisherCredentialRef(credentialID)),
 			Config: json.RawMessage(`{
 				"repo":"customer/site",
@@ -184,13 +208,24 @@ func TestBlogPublisherForProjectUsesEncryptedPublisherCredential(t *testing.T) {
 }
 
 type publisherConnectionStoreFake struct {
-	conn         db.PublisherConnection
-	cred         db.PublisherCredential
-	noConnection bool
+	conn               db.PublisherConnection
+	cred               db.PublisherCredential
+	noConnection       bool
+	disabledConnection bool
 }
 
 func (f *publisherConnectionStoreFake) GetDefaultPublisherConnectionForProject(context.Context, db.GetDefaultPublisherConnectionForProjectParams) (db.PublisherConnection, error) {
 	if f.noConnection {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
+	return f.conn, nil
+}
+
+func (f *publisherConnectionStoreFake) GetEnabledPublisherConnectionForProject(context.Context, db.GetEnabledPublisherConnectionForProjectParams) (db.PublisherConnection, error) {
+	if f.noConnection {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
+	if f.disabledConnection || !f.conn.Enabled || f.conn.Status != "connected" {
 		return db.PublisherConnection{}, pgx.ErrNoRows
 	}
 	return f.conn, nil

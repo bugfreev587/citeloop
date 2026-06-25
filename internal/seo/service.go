@@ -1290,10 +1290,23 @@ func hasConnectedPublisher(connections []db.PublisherConnection) bool {
 	for _, connection := range connections {
 		if connection.Kind == publisher.ConnectionKindGitHubNextJS &&
 			connection.Status == "connected" &&
-			connection.CredentialRef != nil &&
-			strings.TrimSpace(*connection.CredentialRef) != "" {
+			connection.Enabled &&
+			hasPublisherWriteCredential(connection) {
 			return true
 		}
+	}
+	return false
+}
+
+func hasPublisherWriteCredential(connection db.PublisherConnection) bool {
+	if connection.CredentialRef != nil && strings.TrimSpace(*connection.CredentialRef) != "" {
+		return true
+	}
+	var cfg struct {
+		InstallationID string `json:"installation_id"`
+	}
+	if len(connection.Config) > 0 && json.Unmarshal(connection.Config, &cfg) == nil {
+		return strings.TrimSpace(cfg.InstallationID) != ""
 	}
 	return false
 }

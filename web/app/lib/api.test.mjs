@@ -538,9 +538,9 @@ test("publisher connection APIs call project scoped endpoints without raw token 
       status: 200,
       json: async () => {
         if (url.endsWith("/publisher-connections")) {
-          return [{ id: "publisher-1", kind: "github_nextjs", capabilities: { create_article: true } }];
+          return [{ id: "publisher-1", kind: "github_nextjs", enabled: true, capabilities: { create_article: true } }];
         }
-        return { id: "publisher-1", kind: "github_nextjs", capabilities: { create_article: true } };
+        return { id: "publisher-1", kind: "github_nextjs", enabled: true, capabilities: { create_article: true } };
       },
     };
   };
@@ -562,10 +562,12 @@ test("publisher connection APIs call project scoped endpoints without raw token 
       value: "ghp_customer_token",
     });
     await client.testPublisherConnection("project-1", "publisher-1");
+    await client.setPublisherConnectionEnabled("project-1", "publisher-1", false);
     await client.revokePublisherCredential("project-1", "publisher-1");
     await client.deletePublisherConnection("project-1", "publisher-1");
 
     assert.equal(connections[0].capabilities.create_article, true);
+    assert.equal(connections[0].enabled, true);
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publisher-connections");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/publisher-connections/github-nextjs");
     assert.equal(calls[1].init.method, "PUT");
@@ -578,10 +580,13 @@ test("publisher connection APIs call project scoped endpoints without raw token 
     assert.deepEqual(JSON.parse(calls[2].init.body), { kind: "github_token", value: "ghp_customer_token" });
     assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/test");
     assert.equal(calls[3].init.method, "POST");
-    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/credential");
-    assert.equal(calls[4].init.method, "DELETE");
-    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1");
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/enabled");
+    assert.equal(calls[4].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[4].init.body), { enabled: false });
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1/credential");
     assert.equal(calls[5].init.method, "DELETE");
+    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/publisher-connections/publisher-1");
+    assert.equal(calls[6].init.method, "DELETE");
   } finally {
     globalThis.fetch = originalFetch;
   }

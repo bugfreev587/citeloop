@@ -12,6 +12,22 @@ select * from publisher_connections
 where project_id = $1 and kind = $2 and is_default
 limit 1;
 
+-- name: GetEnabledPublisherConnectionForProject :one
+select * from publisher_connections
+where project_id = $1
+  and kind = $2
+  and is_default
+  and enabled = true
+  and status = 'connected'
+limit 1;
+
+-- name: SetPublisherConnectionEnabled :one
+update publisher_connections
+set enabled = $3,
+    updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
 -- name: DeletePublisherConnectionForProject :one
 delete from publisher_connections
 where id = $1 and project_id = $2

@@ -112,6 +112,45 @@ func TestUniPostCanonicalURLMigrationRewritesLegacyDevURLs(t *testing.T) {
 	}
 }
 
+func TestPublisherConnectionSchemaHasEnabledEligibility(t *testing.T) {
+	initialRaw, err := os.ReadFile(filepath.Join("..", "migrations", "0011_publisher_connections.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := strings.ToLower(string(initialRaw))
+	if !strings.Contains(initial, "enabled boolean not null default false") {
+		t.Fatal("publisher_connections schema must include disabled-by-default enabled flag")
+	}
+
+	migrationRaw, err := os.ReadFile(filepath.Join("..", "migrations", "0021_publisher_connection_enabled.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := strings.ToLower(string(migrationRaw))
+	for _, want := range []string{
+		"alter table publisher_connections",
+		"add column if not exists enabled boolean not null default false",
+		"publisher_connections_project_idx",
+		"enabled",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("publisher enabled migration missing %q", want)
+		}
+	}
+}
+
+func TestPublisherConnectionQueriesRespectEnabledEligibility(t *testing.T) {
+	if !strings.Contains(getEnabledPublisherConnectionForProject, "enabled = true") {
+		t.Fatal("GetEnabledPublisherConnectionForProject must only return enabled publisher connections")
+	}
+	if !strings.Contains(getEnabledPublisherConnectionForProject, "status = 'connected'") {
+		t.Fatal("GetEnabledPublisherConnectionForProject must only return connected publisher connections")
+	}
+	if !strings.Contains(setPublisherConnectionEnabled, "enabled = $3") {
+		t.Fatal("SetPublisherConnectionEnabled must update the enabled flag from the request")
+	}
+}
+
 func TestPublishingQueriesRequireVerifiedCanonicalURL(t *testing.T) {
 	if !strings.Contains(markPublished, "canonical_url_verified_at = now()") {
 		t.Fatal("MarkPublished must set canonical_url_verified_at")

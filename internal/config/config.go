@@ -119,10 +119,10 @@ type ProjectConfig struct {
 	MonthlyBudgetUSD   float64    `json:"monthly_budget_usd"`
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
 	// PublishMode controls how approved canonicals reach the live blog:
-	//   "scheduled" (default) — staggered one every PublishIntervalDays so a batch
+	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
+	//   "scheduled" — staggered one every PublishIntervalDays so a batch
 	//     of approvals does not publish all at once;
-	//   "auto" — publish as soon as due;
-	//   "manual" — wait on the Publish page until the operator publishes/schedules.
+	//   "auto" — publish as soon as due.
 	PublishMode         string      `json:"publish_mode"`
 	PublishIntervalDays int         `json:"publish_interval_days"`
 	Crawl               CrawlConfig `json:"crawl"`
@@ -143,7 +143,7 @@ func Default() ProjectConfig {
 		ChannelMix:          ChannelMix{Blog: 0.6, Syndication: 0.4},
 		MonthlyBudgetUSD:    50,
 		AutoAdvanceEnabled:  true,
-		PublishMode:         PublishModeScheduled,
+		PublishMode:         PublishModeManual,
 		PublishIntervalDays: 2,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
@@ -173,7 +173,7 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	switch c.PublishMode {
 	case PublishModeScheduled, PublishModeAuto, PublishModeManual:
 	default:
-		c.PublishMode = PublishModeScheduled
+		c.PublishMode = PublishModeManual
 	}
 	if c.PublishIntervalDays <= 0 {
 		c.PublishIntervalDays = 2
@@ -192,8 +192,7 @@ func (c ProjectConfig) JSON() json.RawMessage {
 // manual approve handler so a batch of approvals never publishes all at once.
 //   - manual: no automatic schedule (ok=false) — the operator publishes/schedules;
 //   - auto:   publish now;
-//   - scheduled (default): one every PublishIntervalDays after the last slot,
-//     never in the past.
+//   - scheduled: one every PublishIntervalDays after the last slot, never in the past.
 func (c ProjectConfig) NextPublishSlot(latest, now time.Time) (time.Time, bool) {
 	switch c.PublishMode {
 	case PublishModeManual:
