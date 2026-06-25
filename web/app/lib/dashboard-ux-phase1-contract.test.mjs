@@ -910,6 +910,14 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /api\.deleteLLMCredentials/);
   assert.match(admin, /Test connection/);
   assert.match(admin, /Delete key/);
+  assert.match(admin, /TokenGate API key/);
+  assert.match(admin, /Default model/);
+  assert.match(admin, /Writer model/);
+  assert.match(admin, /QA model/);
+  assert.doesNotMatch(admin, /OpenAI/);
+  assert.doesNotMatch(admin, /Claude/);
+  assert.doesNotMatch(admin, /providers\.map/);
+  assert.doesNotMatch(admin, /selectProvider/);
 });
 
 test("temporary page feedback uses the global auto-dismissing toast system", () => {

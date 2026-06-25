@@ -75,6 +75,9 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
       configured: true,
       key_tail: "abcd",
       base_url: "https://tokengate-production.up.railway.app/v1",
+      model: "gpt-5.1",
+      writer_model: "gpt-5.1-mini",
+      qa_model: "gpt-5.1",
       updated_at: "2026-06-05T12:00:00Z",
     }),
   });
@@ -87,12 +90,15 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
     assert.equal(status.configured, true);
     assert.equal(status.key_tail, "abcd");
     assert.equal(status.base_url, "https://tokengate-production.up.railway.app/v1");
+    assert.equal(status.model, "gpt-5.1");
+    assert.equal(status.writer_model, "gpt-5.1-mini");
+    assert.equal(status.qa_model, "gpt-5.1");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("updateLLMCredentials sends base URL with TokenGate provider", async () => {
+test("updateLLMCredentials sends TokenGate base URL and role models", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -104,6 +110,9 @@ test("updateLLMCredentials sends base URL with TokenGate provider", async () => 
         provider: "tokengate",
         configured: true,
         base_url: "https://tokengate-production.up.railway.app/v1",
+        model: "gpt-5.1",
+        writer_model: "gpt-5.1-mini",
+        qa_model: "gpt-5.1",
       }),
     };
   };
@@ -114,6 +123,9 @@ test("updateLLMCredentials sends base URL with TokenGate provider", async () => 
       provider: "tokengate",
       api_key: "tg-test-key",
       base_url: "https://tokengate-production.up.railway.app/v1",
+      model: "gpt-5.1",
+      writer_model: "gpt-5.1-mini",
+      qa_model: "gpt-5.1",
     });
 
     assert.equal(calls[0].url, "https://api.example.test/api/admin/llm-credentials");
@@ -122,6 +134,9 @@ test("updateLLMCredentials sends base URL with TokenGate provider", async () => 
       provider: "tokengate",
       api_key: "tg-test-key",
       base_url: "https://tokengate-production.up.railway.app/v1",
+      model: "gpt-5.1",
+      writer_model: "gpt-5.1-mini",
+      qa_model: "gpt-5.1",
     });
   } finally {
     globalThis.fetch = originalFetch;

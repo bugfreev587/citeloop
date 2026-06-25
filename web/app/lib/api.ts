@@ -64,7 +64,7 @@ export type DistributeItem = {
   supports_canonical: boolean;
 };
 
-export type LLMProvider = "tokengate" | "openai" | "claude";
+export type LLMProvider = "tokengate";
 
 export type CrawlSummary = {
   landing_url?: string;
@@ -81,6 +81,9 @@ export type LLMCredentialsStatus = {
   configured: boolean;
   key_tail?: string;
   base_url?: string;
+  model?: string;
+  writer_model?: string;
+  qa_model?: string;
   updated_at?: string;
 };
 
@@ -791,13 +794,14 @@ function arrayFrom<T = any>(value: any): T[] {
 }
 
 function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
-  const provider: LLMProvider =
-    raw.provider === "claude" ? "claude" : raw.provider === "openai" ? "openai" : "tokengate";
   return {
-    provider,
+    provider: "tokengate",
     configured: Boolean(raw.configured),
     key_tail: raw.key_tail ?? undefined,
     base_url: raw.base_url ?? undefined,
+    model: raw.model ?? undefined,
+    writer_model: raw.writer_model ?? undefined,
+    qa_model: raw.qa_model ?? undefined,
     updated_at: raw.updated_at ?? undefined,
   };
 }
@@ -1279,7 +1283,7 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", undefined, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
-  updateLLMCredentials: async (body: { provider: LLMProvider; api_key?: string; base_url?: string }) => {
+  updateLLMCredentials: async (body: { provider?: LLMProvider; api_key?: string; base_url?: string; model?: string; writer_model?: string; qa_model?: string }) => {
     const raw = await req<any>("/admin/llm-credentials", { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },

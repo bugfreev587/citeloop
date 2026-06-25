@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
-import { LLMCredentialsStatus, LLMProvider } from "../lib/api";
+import { LLMCredentialsStatus } from "../lib/api";
 import { useApi } from "../lib/use-api";
 import { useToast } from "../components/toast-provider";
 import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../components/ui";
@@ -12,24 +12,7 @@ import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextIn
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TestResult = { ok: boolean; provider?: string; model?: string; latency_ms?: number; sample?: string; error?: string } | null;
 
-const defaultBaseURLs: Record<Exclude<LLMProvider, "claude">, string> = {
-  tokengate: "https://tokengate-production.up.railway.app/v1",
-  openai: "https://api.openai.com/v1",
-};
-
-const providers: Array<{ value: LLMProvider; label: string; helper: string }> = [
-  { value: "tokengate", label: "TokenGate", helper: "OpenAI-compatible gateway" },
-  { value: "openai", label: "OpenAI", helper: "Chat Completions" },
-  { value: "claude", label: "Anthropic Claude API", helper: "Anthropic API" },
-];
-
-function providerLabel(value: LLMProvider) {
-  return providers.find((item) => item.value === value)?.label ?? "TokenGate";
-}
-
-function defaultBaseURL(provider: LLMProvider) {
-  return provider === "claude" ? "" : defaultBaseURLs[provider];
-}
+const defaultBaseURL = "https://tokengate-production.up.railway.app/v1";
 
 function AdminPageInner() {
   const api = useApi();
@@ -42,9 +25,11 @@ function AdminPageInner() {
   const backLabel = fromProject ? "Dashboard" : "Docs";
   const [access, setAccess] = useState<"loading" | "granted" | "denied">("loading");
   const [status, setStatus] = useState<LLMCredentialsStatus | null>(null);
-  const [provider, setProvider] = useState<LLMProvider>("tokengate");
   const [apiKey, setAPIKey] = useState("");
-  const [baseURL, setBaseURL] = useState(defaultBaseURLs.tokengate);
+  const [baseURL, setBaseURL] = useState(defaultBaseURL);
+  const [model, setModel] = useState("");
+  const [writerModel, setWriterModel] = useState("");
+  const [qaModel, setQAModel] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
@@ -62,8 +47,10 @@ function AdminPageInner() {
       setAccess("granted");
       const next = await api.getLLMCredentials();
       setStatus(next);
-      setProvider(next.provider);
-      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+      setBaseURL(next.base_url || defaultBaseURL);
+      setModel(next.model ?? "");
+      setWriterModel(next.writer_model ?? "");
+      setQAModel(next.qa_model ?? "");
     } catch (e: any) {
       // A 403 from an admin endpoint means not an admin; anything else is a real error.
       if (String(e.message).includes("403")) {
@@ -85,15 +72,20 @@ function AdminPageInner() {
     setTestResult(null);
     try {
       const next = await api.updateLLMCredentials({
-        provider,
+        provider: "tokengate",
         api_key: apiKey,
-        base_url: provider === "claude" ? undefined : baseURL,
+        base_url: baseURL,
+        model,
+        writer_model: writerModel,
+        qa_model: qaModel,
       });
       setStatus(next);
-      setProvider(next.provider);
-      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+      setBaseURL(next.base_url || defaultBaseURL);
+      setModel(next.model ?? "");
+      setWriterModel(next.writer_model ?? "");
+      setQAModel(next.qa_model ?? "");
       setAPIKey("");
-      setMessage({ title: "Provider saved", detail: "The key is stored server-side; only the tail is shown. Run Test to confirm connectivity.", tone: "green" });
+      setMessage({ title: "TokenGate saved", detail: "The key is stored server-side; only the tail is shown. Run Test to confirm connectivity.", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Save failed", detail: e.message, tone: "red" });
     } finally {
@@ -115,17 +107,19 @@ function AdminPageInner() {
   }
 
   async function remove() {
-    if (!window.confirm("Remove the saved provider key? CiteLoop falls back to the server-environment provider until you save a new one.")) return;
+    if (!window.confirm("Remove the saved TokenGate key? CiteLoop falls back to server-environment TokenGate settings until you save a new one.")) return;
     setBusy("delete");
     setMessage(null);
     setTestResult(null);
     try {
       const next = await api.deleteLLMCredentials();
       setStatus(next);
-      setProvider(next.provider);
-      setBaseURL(next.base_url || defaultBaseURL(next.provider));
+      setBaseURL(next.base_url || defaultBaseURL);
+      setModel(next.model ?? "");
+      setWriterModel(next.writer_model ?? "");
+      setQAModel(next.qa_model ?? "");
       setAPIKey("");
-      setMessage({ title: "Provider key removed", detail: "CiteLoop now uses the server-environment provider until a key is saved.", tone: "amber" });
+      setMessage({ title: "TokenGate key removed", detail: "CiteLoop now uses server-environment TokenGate settings until a key is saved.", tone: "amber" });
     } catch (e: any) {
       setMessage({ title: "Could not remove key", detail: e.message, tone: "red" });
     } finally {
@@ -160,18 +154,10 @@ function AdminPageInner() {
     );
   }
 
-  const providerChanged = Boolean(status?.configured && status.provider !== provider);
-  const needsKey = !status?.configured || providerChanged;
-  const needsBaseURL = provider !== "claude";
+  const needsKey = !status?.configured;
   const selectedStatusLabel = status?.configured
-    ? `${providerLabel(status.provider)} configured${status.key_tail ? ` ...${status.key_tail}` : ""}`
+    ? `TokenGate configured${status.key_tail ? ` ...${status.key_tail}` : ""}`
     : "Not configured";
-
-  function selectProvider(value: LLMProvider) {
-    setProvider(value);
-    setTestResult(null);
-    setBaseURL(status?.provider === value && status.base_url ? status.base_url : defaultBaseURL(value));
-  }
 
   return (
     <main className="mx-auto max-w-[860px] px-4 py-6 md:px-6 md:py-8">
@@ -187,18 +173,18 @@ function AdminPageInner() {
         <aside className="hidden lg:block">
           <nav className="sticky top-6 grid gap-1 text-sm">
             <div className="mb-2 px-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Admin</div>
-            <span className="rounded-lg bg-white px-2 py-1.5 font-semibold text-slate-950 ring-1 ring-slate-200">AI Provider</span>
+            <span className="rounded-lg bg-white px-2 py-1.5 font-semibold text-slate-950 ring-1 ring-slate-200">TokenGate</span>
           </nav>
         </aside>
 
         <div className="space-y-6">
-          <SectionHeader title="AI Provider" eyebrow="Platform LLM used for writing, QA, and analysis" />
+          <SectionHeader title="TokenGate" eyebrow="Platform LLM used for writing, QA, and analysis" />
 
           <section className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <KeyRound size={16} />
-                API key
+                TokenGate API key
               </div>
               {status?.configured ? (
                 <Badge tone="green">
@@ -210,62 +196,41 @@ function AdminPageInner() {
               )}
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              {providers.map((item) => {
-                const active = provider === item.value;
-                return (
-                  <button
-                    type="button"
-                    key={item.value}
-                    onClick={() => selectProvider(item.value)}
-                    className={cx(
-                      "flex min-h-[68px] items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors",
-                      active ? "border-[#d93820] bg-red-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="block text-sm font-bold">{item.label}</span>
-                      <span className="mt-1 block text-xs font-semibold text-slate-500">{item.helper}</span>
-                      {status?.configured && status.provider === item.value && (
-                        <span className="mt-1.5 inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-bold text-green-700">
-                          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                          Active{status.key_tail ? ` · …${status.key_tail}` : ""}
-                        </span>
-                      )}
-                    </span>
-                    <span className={cx("ml-2 grid h-5 w-5 shrink-0 place-items-center rounded-full border", active ? "border-[#d93820] bg-[#d93820]" : "border-slate-300 bg-white")}>
-                      {active && <span className="h-2 w-2 rounded-full bg-white" />}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
             <Field
-              label={provider === "claude" ? "Anthropic Claude API key" : `${providerLabel(provider)} API key`}
-              helper={needsKey ? "Required for this provider." : "Leave blank to keep the existing key."}
+              label="TokenGate API key"
+              helper={needsKey ? "Required before CiteLoop can use live generation." : "Leave blank to keep the existing key."}
             >
               <TextInput
                 type="password"
                 autoComplete="off"
                 value={apiKey}
-                placeholder={provider === "claude" ? "sk-ant-..." : "sk-..."}
+                placeholder="sk-..."
                 onChange={(event) => setAPIKey(event.target.value)}
               />
             </Field>
 
-            {needsBaseURL && (
-              <Field label="Base URL" helper="Use the API backend URL with /v1, not the dashboard URL.">
-                <div className="relative">
-                  <Globe2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <TextInput value={baseURL} className="w-full pl-9" placeholder={defaultBaseURL(provider)} onChange={(event) => setBaseURL(event.target.value)} />
-                </div>
+            <Field label="Base URL" helper="Use the TokenGate API backend URL with /v1, not the dashboard URL.">
+              <div className="relative">
+                <Globe2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <TextInput value={baseURL} className="w-full pl-9" placeholder={defaultBaseURL} onChange={(event) => setBaseURL(event.target.value)} />
+              </div>
+            </Field>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <Field label="Default model" helper="Used by context extraction and planning. Falls back to TOKENGATE_MODEL when blank.">
+                <TextInput value={model} placeholder="gpt-5.1" onChange={(event) => setModel(event.target.value)} />
               </Field>
-            )}
+              <Field label="Writer model" helper="Used for draft generation and AI repair. Falls back to the default model.">
+                <TextInput value={writerModel} placeholder={model || "gpt-5.1-mini"} onChange={(event) => setWriterModel(event.target.value)} />
+              </Field>
+              <Field label="QA model" helper="Used for evidence checks and review requalification. Falls back to the default model.">
+                <TextInput value={qaModel} placeholder={model || "gpt-5.1"} onChange={(event) => setQAModel(event.target.value)} />
+              </Field>
+            </div>
 
             <div className="flex flex-wrap gap-2">
               <Button
-                disabled={busy !== null || (needsKey && apiKey.trim() === "") || (needsBaseURL && baseURL.trim() === "")}
+                disabled={busy !== null || (needsKey && apiKey.trim() === "") || baseURL.trim() === ""}
                 variant="primary"
                 onClick={save}
               >
@@ -316,11 +281,11 @@ function AdminPageInner() {
             )}
           </section>
 
-          <Notice
-            title="Secrets stay server-side"
-            detail="Only the provider, base URL, and key tail are returned to the browser. Saving takes effect immediately — no redeploy needed."
-            tone="neutral"
-          />
+            <Notice
+              title="Secrets stay server-side"
+              detail="Only the TokenGate base URL, model IDs, and key tail are returned to the browser. Saving takes effect immediately — no redeploy needed."
+              tone="neutral"
+            />
         </div>
       </div>
     </main>

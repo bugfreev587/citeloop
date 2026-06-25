@@ -1,6 +1,6 @@
 // Command api is the CiteLoop service entrypoint: runs migrations, seeds the
-// placeholder project, wires providers (TokenGate/OpenAI or Claude with mock
-// fallback), starts the scheduler cron, and serves the HTTP API.
+// placeholder project, wires TokenGate or mock providers, starts the scheduler
+// cron, and serves the HTTP API.
 package main
 
 import (
@@ -121,11 +121,7 @@ func selectLLMProvider(env config.Env, log *slog.Logger) llm.Provider {
 		log.Info("using TokenGate OpenAI-compatible LLM provider", "base_url", env.TokenGateBaseURL, "model", env.TokenGateModel)
 		return llm.NewOpenAIChat(env.TokenGateAPIKey, env.TokenGateBaseURL, env.TokenGateModel)
 	}
-	if env.AnthropicAPIKey != "" {
-		log.Info("using Claude LLM provider", "model", env.AnthropicModel)
-		return llm.NewClaude(env.AnthropicAPIKey, env.AnthropicModel)
-	}
-	log.Warn("no LLM key in env — using mock as the runtime fallback; an admin-saved provider (Admin → AI Provider) overrides this at request time")
+	log.Warn("TOKENGATE_API_KEY not set — using mock as the runtime fallback; admin-saved TokenGate credentials override this at request time")
 	return llm.NewMock()
 }
 
