@@ -59,11 +59,22 @@ test("root page is a focused landing page with requested auth actions", async ()
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
   assert.match(source, /export const dynamic = "force-dynamic"/);
-  assert.match(source, /The content engine that already knows your site\./);
-  assert.match(source, /SEO \+ GEO AUTOPILOT/);
+  assert.match(source, /Turn your website into a self-improving growth loop\./);
+  assert.match(source, /Connect your domain, Search Console, and publishing target\./);
+  assert.match(source, /SEO\/GEO GROWTH LOOP/);
+  assert.match(source, /Domain \+ GSC/);
+  assert.match(source, /Opportunities/);
+  assert.match(source, /Published assets/);
+  assert.match(source, /Measured outcomes/);
+  assert.match(source, /Discover/);
+  assert.match(source, /Ship/);
+  assert.match(source, /Learn/);
+  assert.match(source, /prefers-reduced-motion/);
   assert.match(source, /JoinWithGoogleButton/);
+  assert.match(source, /Start with your domain/);
   assert.match(source, /Start for free/);
   assert.match(source, /LandingDashboardButton/);
+  assert.doesNotMatch(source, /content engine/i);
   assert.doesNotMatch(source, /ProjectManagementClient/);
   assert.doesNotMatch(source, /ProjectCreateForm/);
   assert.doesNotMatch(source, />\s*Docs\s*</);
