@@ -129,6 +129,77 @@ func TestOpenAIChatCompleteHonorsRequestModelOverride(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatCompleteRetriesUnsupportedClaudeModelWithOpenAIFallback(t *testing.T) {
+	tests := []struct {
+		name         string
+		req          CompletionReq
+		wantFallback string
+	}{
+		{
+			name:         "writer uses gpt-5.1",
+			req:          CompletionReq{Prompt: "write", Purpose: PurposeWriter, Model: "claude-sonnet-4-6"},
+			wantFallback: "gpt-5.1",
+		},
+		{
+			name:         "qa uses gpt-5.5",
+			req:          CompletionReq{Prompt: "check", Purpose: PurposeQA, Model: "claude-opus-4-8"},
+			wantFallback: "gpt-5.5",
+		},
+		{
+			name:         "default uses gpt-5.1",
+			req:          CompletionReq{Prompt: "plan", Model: "claude-sonnet-4-6"},
+			wantFallback: "gpt-5.1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotModels []string
+			transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				model := body["model"].(string)
+				gotModels = append(gotModels, model)
+				if len(gotModels) == 1 {
+					return &http.Response{
+						StatusCode: 400,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"The '` + model + `' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error"}}`)),
+					}, nil
+				}
+				return &http.Response{
+					StatusCode: 200,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"id": "chatcmpl_retry",
+						"model": "` + tc.wantFallback + `",
+						"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+						"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+					}`)),
+				}, nil
+			})
+
+			p := NewOpenAIChat("tg-test-key", "https://tokengate.example/v1", "claude-sonnet-4-6")
+			p.client = &http.Client{Transport: transport}
+			resp, err := p.Complete(context.Background(), tc.req)
+			if err != nil {
+				t.Fatalf("complete: %v", err)
+			}
+			if len(gotModels) != 2 {
+				t.Fatalf("models sent = %#v, want initial and retry", gotModels)
+			}
+			if gotModels[1] != tc.wantFallback {
+				t.Fatalf("fallback model = %q, want %q", gotModels[1], tc.wantFallback)
+			}
+			if resp.Model != tc.wantFallback {
+				t.Fatalf("resp model = %q, want %q", resp.Model, tc.wantFallback)
+			}
+		})
+	}
+}
+
 func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	p := NewOpenAIChat("", "https://example.test/v1", "claude-haiku-4-5-20251001")
 	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "hi"}); err == nil {

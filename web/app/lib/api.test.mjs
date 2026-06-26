@@ -76,8 +76,8 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
       key_tail: "abcd",
       base_url: "https://tokengate-production.up.railway.app/v1",
       model: "gpt-5.1",
-      writer_model: "gpt-5.1-mini",
-      qa_model: "gpt-5.1",
+      writer_model: "gpt-5.1",
+      qa_model: "gpt-5.5",
       updated_at: "2026-06-05T12:00:00Z",
     }),
   });
@@ -91,8 +91,8 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
     assert.equal(status.key_tail, "abcd");
     assert.equal(status.base_url, "https://tokengate-production.up.railway.app/v1");
     assert.equal(status.model, "gpt-5.1");
-    assert.equal(status.writer_model, "gpt-5.1-mini");
-    assert.equal(status.qa_model, "gpt-5.1");
+    assert.equal(status.writer_model, "gpt-5.1");
+    assert.equal(status.qa_model, "gpt-5.5");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -111,8 +111,8 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
         configured: true,
         base_url: "https://tokengate-production.up.railway.app/v1",
         model: "gpt-5.1",
-        writer_model: "gpt-5.1-mini",
-        qa_model: "gpt-5.1",
+        writer_model: "gpt-5.1",
+        qa_model: "gpt-5.5",
       }),
     };
   };
@@ -124,8 +124,8 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
       api_key: "tg-test-key",
       base_url: "https://tokengate-production.up.railway.app/v1",
       model: "gpt-5.1",
-      writer_model: "gpt-5.1-mini",
-      qa_model: "gpt-5.1",
+      writer_model: "gpt-5.1",
+      qa_model: "gpt-5.5",
     });
 
     assert.equal(calls[0].url, "https://api.example.test/api/admin/llm-credentials");
@@ -135,8 +135,8 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
       api_key: "tg-test-key",
       base_url: "https://tokengate-production.up.railway.app/v1",
       model: "gpt-5.1",
-      writer_model: "gpt-5.1-mini",
-      qa_model: "gpt-5.1",
+      writer_model: "gpt-5.1",
+      qa_model: "gpt-5.5",
     });
   } finally {
     globalThis.fetch = originalFetch;

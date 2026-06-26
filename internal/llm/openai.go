@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +79,21 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 		model = c.Model
 	}
 
+	resp, err := c.completeWithModel(ctx, req, model)
+	if err == nil {
+		return resp, nil
+	}
+	var httpErr *openAIChatHTTPError
+	if errors.As(err, &httpErr) && shouldRetryUnsupportedClaudeModel(httpErr.status, model, httpErr.raw) {
+		fallback := fallbackOpenAIModel(req.Purpose)
+		if fallback != "" && fallback != model {
+			return c.completeWithModel(ctx, req, fallback)
+		}
+	}
+	return resp, err
+}
+
+func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, model string) (CompletionResp, error) {
 	prompt := req.Prompt
 	var format *responseFormat
 	if req.JSON {
@@ -113,7 +129,7 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return CompletionResp{}, fmt.Errorf("tokengate chat completions %d: %s", resp.StatusCode, string(raw))
+		return CompletionResp{}, &openAIChatHTTPError{status: resp.StatusCode, raw: raw}
 	}
 	var cr openAIChatResp
 	if err := json.Unmarshal(raw, &cr); err != nil {
@@ -139,6 +155,35 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 		Tokens:  tokens,
 		CostUSD: estimateOpenAIChatCost(respModel, cr.Usage.PromptTokens, cr.Usage.CompletionTokens),
 	}, nil
+}
+
+type openAIChatHTTPError struct {
+	status int
+	raw    []byte
+}
+
+func (e *openAIChatHTTPError) Error() string {
+	return fmt.Sprintf("tokengate chat completions %d: %s", e.status, string(e.raw))
+}
+
+func fallbackOpenAIModel(purpose CompletionPurpose) string {
+	switch purpose {
+	case PurposeQA:
+		return DefaultOpenAIQAModel
+	case PurposeWriter:
+		return DefaultOpenAIWriterModel
+	default:
+		return DefaultOpenAIModel
+	}
+}
+
+func shouldRetryUnsupportedClaudeModel(status int, model string, raw []byte) bool {
+	if status != http.StatusBadRequest || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-") {
+		return false
+	}
+	msg := strings.ToLower(string(raw))
+	return strings.Contains(msg, "not supported") &&
+		(strings.Contains(msg, "chatgpt account") || strings.Contains(msg, "openai") || strings.Contains(msg, "codex"))
 }
 
 func estimateOpenAIChatCost(model string, in, out int) float64 {
