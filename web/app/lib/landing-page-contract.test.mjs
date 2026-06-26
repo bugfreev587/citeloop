@@ -96,12 +96,24 @@ test("flywheel segment labels follow curved paths inside each segment", async ()
 test("colored flywheel segments include directional arrow overlays", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-discover-ship"/);
-  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-ship-learn"/);
-  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-learn-discover"/);
-  assert.match(source, /d="M 499 185 L 482 268 L 406 239 Z"/);
-  assert.match(source, /d="M 300 530 L 238 469 L 300 422 Z"/);
-  assert.match(source, /d="M 101 185 L 184 162 L 194 239 Z"/);
+  const arrowPaths = [
+    ["landing-segment-flow-arrow-discover-ship", "M 499 185 L 482 268 L 406 239 Z", "#f3bd5b"],
+    ["landing-segment-flow-arrow-ship-learn", "M 300 530 L 238 469 L 300 422 Z", "#0fb8a0"],
+    ["landing-segment-flow-arrow-learn-discover", "M 101 185 L 184 162 L 194 239 Z", "#0da2b3"],
+  ];
+
+  for (const [className, path, color] of arrowPaths) {
+    const match = source.match(
+      new RegExp(`<path(?:(?!<path)[\\s\\S])*?className="landing-segment-flow-arrow ${className}"(?:(?!<path)[\\s\\S])*?/>`),
+    );
+    assert.ok(match, `${className} arrow should render`);
+    assert.match(match[0], new RegExp(`d="${path}"`));
+    assert.match(match[0], new RegExp(`fill="${color}"`));
+    assert.match(match[0], new RegExp(`stroke="${color}"`));
+    assert.match(match[0], /strokeLinejoin="round"/);
+    assert.match(match[0], /strokeWidth="8"/);
+    assert.doesNotMatch(match[0], /stroke="#26384b"/);
+  }
 });
 
 test("flywheel motion pauses while the wheel is hovered", async () => {
