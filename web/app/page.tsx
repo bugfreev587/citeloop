@@ -47,12 +47,13 @@ export default async function Home() {
           fill: none;
           stroke: #dbe5ef;
           stroke-linecap: round;
-          stroke-width: 46;
+          stroke-linejoin: round;
+          stroke-width: 38;
         }
 
         .landing-outer-arrow {
           fill: #dbe5ef;
-          opacity: .96;
+          opacity: .98;
         }
 
         .landing-orbit-dot {
@@ -78,6 +79,19 @@ export default async function Home() {
         }
 
         .landing-segment-learn {
+          animation-delay: 6s;
+        }
+
+        .landing-segment-flow-arrow {
+          transform-origin: 300px 300px;
+          animation: landing-segment-focus 9s cubic-bezier(.16,1,.3,1) infinite;
+        }
+
+        .landing-segment-flow-arrow-ship-learn {
+          animation-delay: 3s;
+        }
+
+        .landing-segment-flow-arrow-learn-discover {
           animation-delay: 6s;
         }
 
@@ -113,6 +127,7 @@ export default async function Home() {
         .landing-flywheel:is(:hover, :focus-within) .landing-outer-track,
         .landing-flywheel:is(:hover, :focus-within) .landing-orbit-dot,
         .landing-flywheel:is(:hover, :focus-within) .landing-segment,
+        .landing-flywheel:is(:hover, :focus-within) .landing-segment-flow-arrow,
         .landing-flywheel:is(:hover, :focus-within) .landing-center-pulse {
           animation-play-state: paused;
         }
@@ -121,6 +136,7 @@ export default async function Home() {
           .landing-outer-track,
           .landing-orbit-dot,
           .landing-segment,
+          .landing-segment-flow-arrow,
           .landing-center-pulse {
             animation: none;
           }
@@ -206,40 +222,40 @@ export default async function Home() {
                 Domain and Search Console signals become opportunities, published assets, and measured outcomes.
               </desc>
               <defs>
-                <path id="domain-gsc-label" d="M 165 105 A 230 230 0 0 1 435 105" />
-                <path id="opportunities-label" d="M 515 194 A 245 245 0 0 1 500 415" />
-                <path id="published-assets-label" d="M 170 548 A 265 265 0 0 0 430 548" />
-                <path id="measured-outcomes-label" d="M 72 412 A 245 245 0 0 1 86 195" />
+                <path id="domain-gsc-label" d="M 172 79 A 255 255 0 0 1 428 79" />
+                <path id="opportunities-label" d="M 531 192 A 255 255 0 0 1 531 408" />
+                <path id="published-assets-label" d="M 173 521 A 255 255 0 0 0 428 521" />
+                <path id="measured-outcomes-label" d="M 91 446 A 255 255 0 0 1 91 154" />
                 <path id="discover-segment-label" d="M 187 187 A 160 160 0 0 1 413 187" />
                 <path id="ship-segment-label" d="M 365 483 A 195 195 0 0 0 490 256" />
                 <path id="learn-segment-label" d="M 108 266 A 195 195 0 0 0 233 483" />
               </defs>
 
               <g className="landing-outer-track">
-                <path className="landing-outer-arc" d="M 87 121 A 278 278 0 0 1 541 161" />
-                <path className="landing-outer-arrow" d="M 514 132 L 560 158 L 532 194 Z" />
-                <path className="landing-outer-arc" d="M 574 252 A 278 278 0 0 1 252 574" />
-                <path className="landing-outer-arrow" d="M 261 551 L 220 568 L 253 599 Z" />
-                <path className="landing-outer-arc" d="M 161 541 A 278 278 0 0 1 121 87" />
-                <path className="landing-outer-arrow" d="M 128 112 L 145 67 L 98 76 Z" />
+                <path className="landing-outer-arc" d="M 89 163 A 252 252 0 0 1 525 186" />
+                <path className="landing-outer-arrow landing-outer-arrow-discover-ship" d="M 542 177 L 541 218 L 507 195 Z" />
+                <path className="landing-outer-arc" d="M 525 186 A 252 252 0 0 1 287 552" />
+                <path className="landing-outer-arrow landing-outer-arrow-ship-learn" d="M 286 572 L 251 550 L 288 532 Z" />
+                <path className="landing-outer-arc" d="M 287 552 A 252 252 0 0 1 89 163" />
+                <path className="landing-outer-arrow landing-outer-arrow-learn-discover" d="M 72 152 L 108 133 L 105 174 Z" />
               </g>
 
-              <text className="fill-[#33465a] text-[27px] font-black">
+              <text className="fill-[#33465a] text-[24px] font-black">
                 <textPath href="#domain-gsc-label" startOffset="50%" textAnchor="middle">
                   Domain + GSC
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[27px] font-black">
+              <text className="fill-[#33465a] text-[24px] font-black">
                 <textPath href="#opportunities-label" startOffset="50%" textAnchor="middle">
                   Opportunities
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[27px] font-black">
+              <text className="fill-[#33465a] text-[24px] font-black">
                 <textPath href="#published-assets-label" startOffset="50%" textAnchor="middle">
                   Published assets
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[27px] font-black">
+              <text className="fill-[#33465a] text-[24px] font-black">
                 <textPath href="#measured-outcomes-label" startOffset="50%" textAnchor="middle">
                   Measured outcomes
                 </textPath>
@@ -264,6 +280,30 @@ export default async function Home() {
               <path
                 className="landing-segment landing-segment-learn"
                 d="M 300 530 A 230 230 0 0 1 100.8 185 L 194.3 239 A 122 122 0 0 0 300 422 Z"
+                fill="#0da2b3"
+                stroke="#26384b"
+                strokeLinejoin="round"
+                strokeWidth="5"
+              />
+              <path
+                className="landing-segment-flow-arrow landing-segment-flow-arrow-discover-ship"
+                d="M 499 185 L 482 268 L 406 239 Z"
+                fill="#f3bd5b"
+                stroke="#26384b"
+                strokeLinejoin="round"
+                strokeWidth="5"
+              />
+              <path
+                className="landing-segment-flow-arrow landing-segment-flow-arrow-ship-learn"
+                d="M 300 530 L 238 469 L 300 422 Z"
+                fill="#0fb8a0"
+                stroke="#26384b"
+                strokeLinejoin="round"
+                strokeWidth="5"
+              />
+              <path
+                className="landing-segment-flow-arrow landing-segment-flow-arrow-learn-discover"
+                d="M 101 185 L 184 162 L 194 239 Z"
                 fill="#0da2b3"
                 stroke="#26384b"
                 strokeLinejoin="round"

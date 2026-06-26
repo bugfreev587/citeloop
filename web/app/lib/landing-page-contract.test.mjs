@@ -93,6 +93,17 @@ test("flywheel segment labels follow curved paths inside each segment", async ()
   assert.doesNotMatch(source, /transform="rotate\([^"]+"\s+className="fill-white text-\[48px\] font-black"/);
 });
 
+test("colored flywheel segments include directional arrow overlays", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-discover-ship"/);
+  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-ship-learn"/);
+  assert.match(source, /className="landing-segment-flow-arrow landing-segment-flow-arrow-learn-discover"/);
+  assert.match(source, /d="M 499 185 L 482 268 L 406 239 Z"/);
+  assert.match(source, /d="M 300 530 L 238 469 L 300 422 Z"/);
+  assert.match(source, /d="M 101 185 L 184 162 L 194 239 Z"/);
+});
+
 test("flywheel motion pauses while the wheel is hovered", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
@@ -100,20 +111,28 @@ test("flywheel motion pauses while the wheel is hovered", async () => {
   assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-outer-track/);
   assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-orbit-dot/);
   assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-segment/);
+  assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-segment-flow-arrow/);
   assert.match(source, /animation-play-state: paused/);
 });
 
-test("outer flywheel arrows are attached to curved track ends", async () => {
+test("outer flywheel arrows hug the wheel and follow stage order", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
   assert.match(source, /className="landing-outer-arc"/);
-  assert.match(source, /className="landing-outer-arrow"/);
-  assert.match(source, /d="M 87 121 A 278 278 0 0 1 541 161"/);
-  assert.match(source, /d="M 574 252 A 278 278 0 0 1 252 574"/);
-  assert.match(source, /d="M 161 541 A 278 278 0 0 1 121 87"/);
-  assert.match(source, /d="M 514 132 L 560 158 L 532 194 Z"/);
-  assert.match(source, /d="M 261 551 L 220 568 L 253 599 Z"/);
-  assert.match(source, /d="M 128 112 L 145 67 L 98 76 Z"/);
+  assert.match(source, /className="landing-outer-arrow landing-outer-arrow-discover-ship"/);
+  assert.match(source, /className="landing-outer-arrow landing-outer-arrow-ship-learn"/);
+  assert.match(source, /className="landing-outer-arrow landing-outer-arrow-learn-discover"/);
+  assert.match(source, /stroke-width: 38/);
+  assert.match(source, /d="M 89 163 A 252 252 0 0 1 525 186"/);
+  assert.match(source, /d="M 525 186 A 252 252 0 0 1 287 552"/);
+  assert.match(source, /d="M 287 552 A 252 252 0 0 1 89 163"/);
+  assert.match(source, /d="M 542 177 L 541 218 L 507 195 Z"/);
+  assert.match(source, /d="M 286 572 L 251 550 L 288 532 Z"/);
+  assert.match(source, /d="M 72 152 L 108 133 L 105 174 Z"/);
+  assert.doesNotMatch(source, /stroke-width: 46/);
+  assert.doesNotMatch(source, /d="M 87 121 A 278 278 0 0 1 541 161"/);
+  assert.doesNotMatch(source, /d="M 574 252 A 278 278 0 0 1 252 574"/);
+  assert.doesNotMatch(source, /d="M 161 541 A 278 278 0 0 1 121 87"/);
   assert.doesNotMatch(source, /markerEnd="url\(#landing-outer-arrowhead\)"/);
   assert.doesNotMatch(source, /strokeDasharray="512 68 512 68 512 68"/);
   assert.doesNotMatch(source, /d="M 513 151 L 551 151 L 535 191 Z"/);
@@ -133,7 +152,7 @@ test("ship and learn labels sit near the middle of their colored bands", async (
 test("bottom flywheel output label reads upright from left to right", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /id="published-assets-label" d="M 170 548 A 265 265 0 0 0 430 548"/);
+  assert.match(source, /id="published-assets-label" d="M 173 521 A 255 255 0 0 0 428 521"/);
   assert.doesNotMatch(source, /id="published-assets-label" d="M 430 548 A 265 265 0 0 1 170 548"/);
 });
 
