@@ -60,3 +60,16 @@ test("project account menu uses compact popover sizing aligned with dashboard na
   assert.match(menu, /h-\[34px\]/, "Theme controls should be compact");
   assert.doesNotMatch(menu, /w-\[436px\]|min-h-\[52px\]|h-11/, "Old loose sizing should not return");
 });
+
+test("project account menu renders project initials with clear contrast", () => {
+  const menu = read("components/project-account-menu.tsx");
+
+  assert.match(menu, /project-avatar/, "Project initials should use a named avatar style instead of a low-contrast neutral tile");
+  assert.match(menu, /bg-\[#241f1d\][\s\S]*text-white/, "Project initials should be readable in light mode");
+  assert.match(menu, /dark:bg-slate-100[\s\S]*dark:text-slate-950/, "Project initials should stay readable in dark mode");
+  assert.doesNotMatch(
+    menu,
+    /bg-stone-100 text-\[11px\] font-semibold text-stone-700/,
+    "The popover project icon should not fall back to the pale neutral style",
+  );
+});

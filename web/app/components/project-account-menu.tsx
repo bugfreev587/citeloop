@@ -6,10 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, KeyRound, Loader2, LogOut, Moon, Settings, Sun } from "lucide-react";
 import type { Project } from "../lib/api";
 import { LAST_PROJECT_STORAGE_KEY } from "../lib/dashboard-routing";
+import { applyThemeChoice, readStoredThemeChoice, saveThemeChoice, type ThemeChoice } from "../lib/theme";
 import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
 
-type ThemeChoice = "light" | "dark";
 type ProjectMenuItem = Pick<Project, "id" | "name" | "slug">;
 
 function initials(project: Pick<Project, "name" | "slug"> | null, fallback = "CL") {
@@ -46,11 +46,9 @@ export function ProjectAccountMenu({
   const [theme, setTheme] = useState<ThemeChoice>("light");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("citeloop:theme");
-    if (saved === "dark" || saved === "light") {
-      setTheme(saved);
-      document.documentElement.dataset.theme = saved;
-    }
+    const nextTheme = readStoredThemeChoice();
+    setTheme(nextTheme);
+    applyThemeChoice(nextTheme);
   }, []);
 
   useEffect(() => {
@@ -120,8 +118,7 @@ export function ProjectAccountMenu({
 
   function chooseTheme(nextTheme: ThemeChoice) {
     setTheme(nextTheme);
-    window.localStorage.setItem("citeloop:theme", nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
+    saveThemeChoice(nextTheme);
   }
 
   function openAccountSettings() {
@@ -144,7 +141,7 @@ export function ProjectAccountMenu({
       {open && (
         <div
           aria-label="Account and projects menu"
-          className="absolute bottom-full left-0 z-30 mb-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-[20px] border border-[#dfe5ec] bg-white/[0.98] px-3 py-2 text-slate-950 shadow-[0_28px_72px_rgba(55,49,43,0.18)]"
+          className="absolute bottom-full left-0 z-30 mb-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-[20px] border border-[#dfe5ec] bg-white/[0.98] px-3 py-2 text-slate-950 shadow-[0_28px_72px_rgba(55,49,43,0.18)] dark:border-slate-700 dark:bg-[#111827]/[0.98] dark:text-slate-100 dark:shadow-black/50"
         >
           <div className="pb-2">
             <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">Projects</div>
@@ -157,49 +154,48 @@ export function ProjectAccountMenu({
                     type="button"
                     onClick={() => openProject(item)}
                     className={cx(
-                      "flex min-h-[44px] w-full items-center gap-2.5 rounded-[11px] px-2.5 py-1.5 text-left transition-colors hover:bg-slate-50",
-                      current && "border border-slate-200 bg-[#fff8f6] hover:bg-[#fff8f6]",
+                      "flex min-h-[44px] w-full items-center gap-2.5 rounded-[11px] px-2.5 py-1.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70",
+                      current && "border border-slate-200 bg-[#fff8f6] hover:bg-[#fff8f6] dark:border-slate-700 dark:bg-[#1f2937] dark:hover:bg-[#1f2937]",
                     )}
                   >
                     <span
                       className={cx(
-                        "grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-stone-100 text-[11px] font-semibold text-stone-700",
-                        current && "bg-[#241f1d] text-white",
+                        "project-avatar grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[#241f1d] text-[11px] font-semibold text-white ring-1 ring-black/5 dark:bg-slate-100 dark:text-slate-950 dark:ring-white/10",
                       )}
                     >
                       {initials(item)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-normal leading-4 text-slate-950">{item.name}</span>
-                      <span className="mt-0.5 block truncate text-[11px] font-normal leading-[14px] text-stone-500">/{item.slug}</span>
+                      <span className="block truncate text-[13px] font-normal leading-4 text-slate-950 dark:text-slate-100">{item.name}</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal leading-[14px] text-stone-500 dark:text-slate-400">/{item.slug}</span>
                     </span>
                     {current && (
-                      <span className="rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-normal text-green-700">Current</span>
+                      <span className="rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-normal text-green-700 dark:bg-emerald-950 dark:text-emerald-300">Current</span>
                     )}
                   </button>
                 );
               })}
               {loadingProjects && (
-                <div className="flex h-[38px] items-center gap-2 rounded-[11px] px-2.5 text-[12px] font-normal text-stone-500">
+                <div className="flex h-[38px] items-center gap-2 rounded-[11px] px-2.5 text-[12px] font-normal text-stone-500 dark:text-slate-400">
                   <Loader2 className="animate-spin" size={14} />
                   Loading projects
                 </div>
               )}
               {projectError && (
-                <div className="rounded-[11px] px-2.5 py-1.5 text-[12px] font-normal leading-4 text-amber-800">
+                <div className="rounded-[11px] px-2.5 py-1.5 text-[12px] font-normal leading-4 text-amber-800 dark:text-amber-300">
                   Projects unavailable: {projectError}
                 </div>
               )}
             </div>
           </div>
 
-          <div className="border-t border-slate-200 py-2.5">
+          <div className="border-t border-slate-200 py-2.5 dark:border-slate-700">
             <button
               type="button"
               onClick={openAccountSettings}
-              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-100 dark:hover:bg-slate-800/70 dark:focus-visible:ring-slate-600"
             >
-              <span className="grid h-7 w-7 place-items-center text-slate-950">
+              <span className="grid h-7 w-7 place-items-center text-slate-950 dark:text-slate-100">
                 <Settings size={20} strokeWidth={1.8} />
               </span>
               Account Settings
@@ -208,9 +204,9 @@ export function ProjectAccountMenu({
               <button
                 type="button"
                 onClick={openAdmin}
-                className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+                className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-100 dark:hover:bg-slate-800/70 dark:focus-visible:ring-slate-600"
               >
-                <span className="grid h-7 w-7 place-items-center text-slate-950">
+                <span className="grid h-7 w-7 place-items-center text-slate-950 dark:text-slate-100">
                   <KeyRound size={19} strokeWidth={1.8} />
                 </span>
                 Admin
@@ -218,15 +214,15 @@ export function ProjectAccountMenu({
             )}
           </div>
 
-          <div className="border-t border-slate-200 py-2.5">
+          <div className="border-t border-slate-200 py-2.5 dark:border-slate-700">
             <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">Theme</div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => chooseTheme("light")}
                 className={cx(
-                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
-                  theme === "light" && "bg-stone-100 hover:bg-stone-100",
+                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-100 dark:hover:bg-slate-800/70 dark:focus-visible:ring-slate-600",
+                  theme === "light" && "bg-[#f2f2f2] hover:bg-[#f2f2f2] dark:bg-slate-800 dark:hover:bg-slate-800",
                 )}
               >
                 <Sun size={18} strokeWidth={1.8} />
@@ -236,8 +232,8 @@ export function ProjectAccountMenu({
                 type="button"
                 onClick={() => chooseTheme("dark")}
                 className={cx(
-                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
-                  theme === "dark" && "bg-stone-100 hover:bg-stone-100",
+                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-100 dark:hover:bg-slate-800/70 dark:focus-visible:ring-slate-600",
+                  theme === "dark" && "bg-[#f2f2f2] hover:bg-[#f2f2f2] dark:bg-slate-800 dark:hover:bg-slate-800",
                 )}
               >
                 <Moon size={17} strokeWidth={1.8} />
@@ -246,13 +242,13 @@ export function ProjectAccountMenu({
             </div>
           </div>
 
-          <div className="border-t border-slate-200 pt-2.5">
+          <div className="border-t border-slate-200 pt-2.5 dark:border-slate-700">
             <button
               type="button"
               onClick={logOut}
-              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-100 dark:hover:bg-slate-800/70 dark:focus-visible:ring-slate-600"
             >
-              <span className="grid h-7 w-7 place-items-center text-slate-950">
+              <span className="grid h-7 w-7 place-items-center text-slate-950 dark:text-slate-100">
                 <LogOut size={20} strokeWidth={1.8} />
               </span>
               Log out
@@ -266,20 +262,20 @@ export function ProjectAccountMenu({
         aria-label={`Open account and projects menu for ${projectName}`}
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
-        className="flex h-[58px] w-full items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2 text-left shadow-sm transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+        className="flex h-[58px] w-full items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2 text-left shadow-sm transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:border-slate-800 dark:bg-[#111827] dark:hover:bg-slate-800 dark:focus-visible:ring-slate-600"
       >
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#241f1d] text-xs font-semibold text-white">
+        <span className="project-avatar grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#241f1d] text-xs font-semibold text-white ring-1 ring-black/5 dark:bg-slate-100 dark:text-slate-950 dark:ring-white/10">
           {initials(project)}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-slate-950">Projects</span>
-          <span className="mt-0.5 block truncate text-[11px] font-normal text-stone-500">
+          <span className="block truncate text-sm font-medium text-slate-950 dark:text-slate-100">Projects</span>
+          <span className="mt-0.5 block truncate text-[11px] font-normal text-stone-500 dark:text-slate-400">
             {projectName} / {projectSlug}
           </span>
         </span>
         <ChevronDown
           size={18}
-          className={cx("shrink-0 text-stone-500 transition-transform", open && "rotate-180")}
+          className={cx("shrink-0 text-stone-500 transition-transform dark:text-slate-400", open && "rotate-180")}
         />
       </button>
     </div>
