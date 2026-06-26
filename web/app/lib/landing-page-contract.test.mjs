@@ -158,6 +158,16 @@ test("landing header actions stay out of narrow mobile viewports", async () => {
   assert.doesNotMatch(source, /className="flex flex-wrap items-center justify-end gap-2"/);
 });
 
+test("landing hero actions stack cleanly on narrow mobile viewports", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="mt-7 grid w-full max-w-sm grid-cols-1 gap-3 sm:flex sm:max-w-none"/);
+  assert.match(source, /inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-\[0\.98\] sm:w-auto/);
+  assert.match(source, /<JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" \/>/);
+  assert.match(source, /className="h-11 w-full px-5 sm:w-auto"/);
+  assert.doesNotMatch(source, /className="mt-7 flex flex-wrap gap-3"/);
+});
+
 test("root metadata matches the growth loop positioning", async () => {
   const source = await readFile(new URL("../layout.tsx", import.meta.url), "utf8");
 
