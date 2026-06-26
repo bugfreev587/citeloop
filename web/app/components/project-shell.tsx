@@ -1,6 +1,5 @@
 "use client";
 
-import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -8,7 +7,6 @@ import {
   BookOpen,
   Database,
   Home,
-  KeyRound,
   ListChecks,
   PenLine,
   Search,
@@ -16,6 +14,7 @@ import {
   Settings2,
   Target,
 } from "lucide-react";
+import { ProjectAccountMenu } from "./project-account-menu";
 import { Project } from "../lib/api";
 import { ProjectVisitRecorder } from "../project-visit-recorder";
 import { useApi } from "../lib/use-api";
@@ -81,7 +80,6 @@ export function ProjectShell({
 }) {
   const api = useApi();
   const pathname = usePathname();
-  const projectName = project?.name ?? "CiteLoop project";
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   useEffect(() => {
@@ -174,36 +172,7 @@ export function ProjectShell({
             <Settings2 size={16} />
             Settings
           </Link>
-          {isPlatformAdmin && (
-            <Link
-              href={`/projects/${projectId}/admin`}
-              className={cx(
-                "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900",
-                isActive(pathname, projectId, "admin") && "bg-slate-50 font-semibold text-[#d93820]",
-              )}
-            >
-              <KeyRound size={16} />
-              Admin
-            </Link>
-          )}
-          <div className="flex h-[52px] w-[185px] items-center gap-2 rounded-xl border border-slate-100 bg-white px-2 shadow-sm">
-            <Link
-              href="/projects"
-              aria-label={`Open Projects page for ${projectName}`}
-              className="group flex min-w-0 flex-1 items-center gap-3 rounded-lg transition-colors hover:bg-slate-50"
-            >
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700 transition-colors group-hover:bg-slate-200">
-                {projectName.slice(0, 2).toUpperCase()}
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-slate-900 group-hover:text-[#d93820]">{projectName}</div>
-                <div className="truncate text-xs text-slate-400">/{project?.slug ?? projectId}</div>
-              </div>
-            </Link>
-            <div className="ml-auto shrink-0">
-              <UserButton />
-            </div>
-          </div>
+          <ProjectAccountMenu project={project} projectId={projectId} isPlatformAdmin={isPlatformAdmin} />
         </div>
       </aside>
 
