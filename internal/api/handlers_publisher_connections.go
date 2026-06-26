@@ -392,6 +392,11 @@ func walkPublisherJSON(v any) error {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, child := range x {
+			if strings.EqualFold(strings.TrimSpace(k), "credential_ref") {
+				if ref, ok := child.(string); ok && publisher.IsEnvPublisherCredentialRef(ref) {
+					return errors.New("env:GITHUB_TOKEN publisher credential fallback is disabled")
+				}
+			}
 			if isSecretLikePublisherKey(k) {
 				return fmt.Errorf("publisher connection field %q must be stored as a credential_ref, not raw secret material", k)
 			}
@@ -449,30 +454,28 @@ func (s *Server) publisherCredentialToken(ctx context.Context, projectID uuid.UU
 		return "", nil
 	}
 	ref := strings.TrimSpace(*conn.CredentialRef)
-	switch ref {
-	case "env:GITHUB_TOKEN", "GITHUB_TOKEN":
-		return strings.TrimSpace(s.Env.GitHubToken), nil
-	default:
-		credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
-		if !ok {
-			return "", nil
-		}
-		if s.Q == nil {
-			return "", errors.New("database unavailable")
-		}
-		if s.Env.NotificationSecretKey == "" {
-			return "", errors.New("NOTIFICATION_SECRET_KEY is required")
-		}
-		cred, err := s.Q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
-			ID:           credentialID,
-			ProjectID:    projectID,
-			ConnectionID: conn.ID,
-		})
-		if err != nil {
-			return "", err
-		}
-		return secretbox.DecryptString(cred.EncryptedValue, s.Env.NotificationSecretKey)
+	if publisher.IsEnvPublisherCredentialRef(ref) {
+		return "", errors.New("project-scoped publisher credential is required; env:GITHUB_TOKEN fallback is disabled")
 	}
+	credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
+	if !ok {
+		return "", nil
+	}
+	if s.Q == nil {
+		return "", errors.New("database unavailable")
+	}
+	if s.Env.NotificationSecretKey == "" {
+		return "", errors.New("NOTIFICATION_SECRET_KEY is required")
+	}
+	cred, err := s.Q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
+		ID:           credentialID,
+		ProjectID:    projectID,
+		ConnectionID: conn.ID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return secretbox.DecryptString(cred.EncryptedValue, s.Env.NotificationSecretKey)
 }
 
 func mustPublisherJSON(v any) json.RawMessage {

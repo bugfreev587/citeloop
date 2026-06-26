@@ -173,6 +173,15 @@ func ParsePublisherCredentialRef(ref string) (uuid.UUID, bool) {
 	return id, true
 }
 
+func IsEnvPublisherCredentialRef(ref string) bool {
+	switch strings.ToUpper(strings.TrimSpace(ref)) {
+	case "ENV:GITHUB_TOKEN", "GITHUB_TOKEN":
+		return true
+	default:
+		return false
+	}
+}
+
 func RedactCredentialValue(kind, value string) string {
 	trimmed := strings.TrimSpace(value)
 	if len(trimmed) <= 4 {

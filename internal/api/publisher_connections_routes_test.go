@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
@@ -71,13 +73,36 @@ func TestRejectPublisherConnectionSecretFields(t *testing.T) {
 		}
 	}
 
-	raw := `{"repo":"owner/site","base_url":"https://example.com/blog","credential_ref":"env:GITHUB_TOKEN"}`
+	raw := `{"repo":"owner/site","base_url":"https://example.com/blog","credential_ref":"publisher_credential:1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"}`
 	if err := rejectPublisherConnectionSecrets([]byte(raw)); err != nil {
 		t.Fatalf("credential_ref should be allowed: %v", err)
+	}
+
+	envRef := `{"repo":"owner/site","base_url":"https://example.com/blog","credential_ref":"env:GITHUB_TOKEN"}`
+	if err := rejectPublisherConnectionSecrets([]byte(envRef)); err == nil {
+		t.Fatal("expected env credential_ref fallback to be rejected")
+	}
+}
+
+func TestPublisherCredentialTokenRejectsEnvFallback(t *testing.T) {
+	s := &Server{Env: config.Env{GitHubToken: "fallback-token"}}
+	conn := db.PublisherConnection{
+		ID:            uuid.New(),
+		ProjectID:     uuid.New(),
+		Kind:          publisher.ConnectionKindGitHubNextJS,
+		Status:        "connected",
+		Enabled:       true,
+		CredentialRef: strPtr("env:GITHUB_TOKEN"),
+	}
+
+	token, err := s.publisherCredentialToken(context.Background(), conn.ProjectID, conn)
+	if err == nil || !strings.Contains(err.Error(), "project-scoped publisher credential") {
+		t.Fatalf("expected env fallback rejection, token=%q err=%v", token, err)
 	}
 }
 
 func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *testing.T) {
+	credentialID := uuid.New()
 	connection := db.PublisherConnection{
 		ID:            uuid.New(),
 		ProjectID:     uuid.New(),
@@ -87,7 +112,7 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 		Enabled:       true,
 		IsDefault:     true,
 		Capabilities:  publisher.GitHubNextJSCapabilities().JSON(),
-		CredentialRef: strPtr("env:GITHUB_TOKEN"),
+		CredentialRef: strPtr(publisher.PublisherCredentialRef(credentialID)),
 		Config:        json.RawMessage(`{"repo":"owner/site","base_url":"https://example.com/blog"}`),
 	}
 
@@ -95,7 +120,7 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "env:GITHUB_TOKEN") {
+	if strings.Contains(string(body), credentialID.String()) {
 		t.Fatalf("response leaked credential ref: %s", string(body))
 	}
 	if !strings.Contains(string(body), `"create_article":true`) {

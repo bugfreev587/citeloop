@@ -14,16 +14,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestBlogPublisherForProjectWithoutQueryUsesFallbackPublisher(t *testing.T) {
+func TestBlogPublisherForProjectWithoutConnectionStoreFailsClosed(t *testing.T) {
 	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
 	s := &Scheduler{Blog: fallback}
 
-	blog, err := s.blogPublisherForProject(context.Background(), nil, db.Project{ID: uuid.New()})
-	if err != nil {
-		t.Fatalf("blogPublisherForProject returned error: %v", err)
-	}
-	if blog != fallback {
-		t.Fatal("expected missing query/connection path to use fallback publisher")
+	_, err := s.blogPublisherForProject(context.Background(), nil, db.Project{ID: uuid.New()})
+	if err == nil || !strings.Contains(err.Error(), "publisher connection store") {
+		t.Fatalf("expected publisher connection store error, got %v", err)
 	}
 }
 
@@ -42,7 +39,7 @@ func TestBlogPublisherForProjectRequiresEnabledConnectionWhenStoreIsAvailable(t 
 	}
 }
 
-func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
+func TestPublisherCredentialTokenRejectsEnvFallback(t *testing.T) {
 	conn := db.PublisherConnection{
 		ID:            uuid.New(),
 		ProjectID:     uuid.New(),
@@ -50,6 +47,25 @@ func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
 		Status:        "connected",
 		Enabled:       true,
 		CredentialRef: ptr("env:GITHUB_TOKEN"),
+	}
+	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
+	s := &Scheduler{Blog: fallback, Log: slog.Default()}
+
+	token, err := s.publisherCredentialToken(context.Background(), &publisherConnectionStoreFake{}, conn)
+	if err == nil || !strings.Contains(err.Error(), "project-scoped publisher credential") {
+		t.Fatalf("expected env fallback rejection, token=%q err=%v", token, err)
+	}
+}
+
+func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
+	credentialID := uuid.New()
+	conn := db.PublisherConnection{
+		ID:            uuid.New(),
+		ProjectID:     uuid.New(),
+		Kind:          publisher.ConnectionKindGitHubNextJS,
+		Status:        "connected",
+		Enabled:       true,
+		CredentialRef: ptr(publisher.PublisherCredentialRef(credentialID)),
 		Config: json.RawMessage(`{
 			"repo":"customer/site",
 			"branch":"staging-content",
@@ -76,14 +92,22 @@ func TestBlogPublisherFromConnectionOverridesEnvPublisherConfig(t *testing.T) {
 
 func TestBlogPublisherForProjectTargetOverridesConnectionEnvironment(t *testing.T) {
 	projectID := uuid.New()
+	secret := "test-secret"
+	token := "ghp_customer_token"
+	encrypted, err := secretbox.EncryptString(token, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionID := uuid.New()
+	credentialID := uuid.New()
 	store := &publisherConnectionStoreFake{
 		conn: db.PublisherConnection{
-			ID:            uuid.New(),
+			ID:            connectionID,
 			ProjectID:     projectID,
 			Kind:          publisher.ConnectionKindGitHubNextJS,
 			Status:        "connected",
 			Enabled:       true,
-			CredentialRef: ptr("env:GITHUB_TOKEN"),
+			CredentialRef: ptr(publisher.PublisherCredentialRef(credentialID)),
 			Config: json.RawMessage(`{
 				"repo":"bugfreev587/unipost",
 				"branch":"main",
@@ -91,9 +115,17 @@ func TestBlogPublisherForProjectTargetOverridesConnectionEnvironment(t *testing.
 				"base_url":"https://unipost.dev/blog"
 			}`),
 		},
+		cred: db.PublisherCredential{
+			ID:             credentialID,
+			ProjectID:      projectID,
+			ConnectionID:   connectionID,
+			Kind:           publisher.CredentialKindGitHubToken,
+			EncryptedValue: encrypted,
+			RedactedValue:  "gh_****oken",
+		},
 	}
 	fallback := publisher.NewBlog("fallback-token", "bugfreev587/unipost", "main", "https://unipost.dev/blog", "content/citeloop/blog", slog.Default())
-	s := &Scheduler{Blog: fallback, Log: slog.Default()}
+	s := &Scheduler{Blog: fallback, NotificationSecret: secret, Log: slog.Default()}
 
 	blog, err := s.blogPublisherForProject(context.Background(), store, db.Project{
 		ID:     projectID,
@@ -117,7 +149,7 @@ func TestBlogPublisherForProjectRejectsDisabledConnection(t *testing.T) {
 			Kind:          publisher.ConnectionKindGitHubNextJS,
 			Status:        "connected",
 			Enabled:       false,
-			CredentialRef: ptr("env:GITHUB_TOKEN"),
+			CredentialRef: ptr(publisher.PublisherCredentialRef(uuid.New())),
 			Config: json.RawMessage(`{
 				"repo":"customer/site",
 				"base_url":"https://customer.example/blog"
@@ -133,12 +165,13 @@ func TestBlogPublisherForProjectRejectsDisabledConnection(t *testing.T) {
 	}
 }
 
-func TestBlogPublisherFromConnectionWithoutCredentialDoesNotUseFallbackToken(t *testing.T) {
+func TestBlogPublisherFromConnectionRequiresCredential(t *testing.T) {
 	conn := db.PublisherConnection{
 		ID:        uuid.New(),
 		ProjectID: uuid.New(),
 		Kind:      publisher.ConnectionKindGitHubNextJS,
-		Status:    "missing",
+		Status:    "connected",
+		Enabled:   true,
 		Config: json.RawMessage(`{
 			"repo":"customer/site",
 			"base_url":"https://customer.example/blog"
@@ -147,17 +180,8 @@ func TestBlogPublisherFromConnectionWithoutCredentialDoesNotUseFallbackToken(t *
 	fallback := publisher.NewBlog("fallback-token", "fallback/repo", "fallback-branch", "https://fallback.example/blog", "fallback/content", slog.Default())
 
 	blog, fromConnection, err := blogPublisherFromConnection(fallback, "", conn, slog.Default(), nil)
-	if err != nil {
-		t.Fatalf("blogPublisherFromConnection returned error: %v", err)
-	}
-	if !fromConnection {
-		t.Fatal("expected publisher to come from connection")
-	}
-	if blog.Repo != "customer/site" {
-		t.Fatalf("repo = %q", blog.Repo)
-	}
-	if blogConfiguredWithToken(blog) {
-		t.Fatal("connection publisher without credential must not reuse fallback token")
+	if err == nil || !strings.Contains(err.Error(), "publisher credential") {
+		t.Fatalf("expected missing credential error, blog=%+v fromConnection=%v err=%v", blog, fromConnection, err)
 	}
 }
 

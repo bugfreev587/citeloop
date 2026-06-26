@@ -1285,7 +1285,7 @@ func (s *Scheduler) verifyPublishedPathForProject(ctx context.Context, q *db.Que
 
 func (s *Scheduler) blogPublisherForProject(ctx context.Context, q publisherConnectionQuerier, p db.Project) (*publisher.BlogPublisher, error) {
 	if q == nil {
-		return s.Blog, nil
+		return nil, errors.New("publisher connection store unavailable")
 	}
 	projectTarget := githubNextJSTargetForProject(p)
 	conn, err := q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
@@ -1336,6 +1336,10 @@ func blogPublisherFromConnection(fallback *publisher.BlogPublisher, token string
 	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
 		return fallback, false, fmt.Errorf("unsupported publisher connection kind %q", conn.Kind)
 	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, true, errors.New("publisher credential is required for GitHub/Next.js publishing")
+	}
 	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
 	if err != nil {
 		return fallback, false, err
@@ -1359,45 +1363,33 @@ func githubNextJSTargetForProject(p db.Project) *publisher.GitHubNextJSTarget {
 	return &target
 }
 
-func blogPublisherWithTarget(fallback *publisher.BlogPublisher, target *publisher.GitHubNextJSTarget) *publisher.BlogPublisher {
-	if fallback == nil || target == nil {
-		return fallback
-	}
-	return publisher.NewBlog(fallback.Token, fallback.Repo, target.Branch, target.BaseURL, fallback.ContentDir, fallback.Log)
-}
-
 func (s *Scheduler) publisherCredentialToken(ctx context.Context, q publisherConnectionQuerier, conn db.PublisherConnection) (string, error) {
 	if conn.CredentialRef == nil {
 		return "", nil
 	}
 	ref := strings.TrimSpace(*conn.CredentialRef)
-	switch ref {
-	case "env:GITHUB_TOKEN", "GITHUB_TOKEN":
-		if s.Blog == nil {
-			return "", nil
-		}
-		return strings.TrimSpace(s.Blog.Token), nil
-	default:
-		credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
-		if !ok {
-			return "", nil
-		}
-		if q == nil {
-			return "", errors.New("publisher credential store unavailable")
-		}
-		if strings.TrimSpace(s.NotificationSecret) == "" {
-			return "", errors.New("NOTIFICATION_SECRET_KEY is required")
-		}
-		cred, err := q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
-			ID:           credentialID,
-			ProjectID:    conn.ProjectID,
-			ConnectionID: conn.ID,
-		})
-		if err != nil {
-			return "", err
-		}
-		return secretbox.DecryptString(cred.EncryptedValue, s.NotificationSecret)
+	if publisher.IsEnvPublisherCredentialRef(ref) {
+		return "", errors.New("project-scoped publisher credential is required; env:GITHUB_TOKEN fallback is disabled")
 	}
+	credentialID, ok := publisher.ParsePublisherCredentialRef(ref)
+	if !ok {
+		return "", nil
+	}
+	if q == nil {
+		return "", errors.New("publisher credential store unavailable")
+	}
+	if strings.TrimSpace(s.NotificationSecret) == "" {
+		return "", errors.New("NOTIFICATION_SECRET_KEY is required")
+	}
+	cred, err := q.GetActivePublisherCredential(ctx, db.GetActivePublisherCredentialParams{
+		ID:           credentialID,
+		ProjectID:    conn.ProjectID,
+		ConnectionID: conn.ID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return secretbox.DecryptString(cred.EncryptedValue, s.NotificationSecret)
 }
 
 func nextPublishRetryAt(now time.Time, attempt int32) pgtype.Timestamptz {

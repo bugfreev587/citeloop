@@ -49,6 +49,17 @@ func TestBlogPublisherRejectsUnsafeContentDir(t *testing.T) {
 	}
 }
 
+func TestBlogPublisherRequiresConfiguredGitHubTarget(t *testing.T) {
+	article := testArticle(t)
+	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+
+	_, err := blog.Publish(context.Background(), article)
+
+	if err == nil || !strings.Contains(err.Error(), "publisher credential") {
+		t.Fatalf("expected configured publisher error, got %v", err)
+	}
+}
+
 func TestBlogPublisherUsesContentDirAndUpdateSHA(t *testing.T) {
 	article := testArticle(t)
 	blog := NewBlog("gh-token", "owner/unipost", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
@@ -113,7 +124,8 @@ func TestBlogPublisherReusesResolvedSlugOnRetry(t *testing.T) {
 	article := testArticle(t)
 	article.ResolvedSlug = ptrString("first-slug")
 	article.SeoMeta = json.RawMessage(`{"title":"Changed Post","meta_description":"Meta","slug":"changed-post","h1":"Changed Post"}`)
-	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog := NewBlog("gh-token", "owner/unipost", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog.client = stubGitHubPublishClient(t, "content/citeloop/blog/first-slug.mdx", "citeloop-content")
 
 	result, err := blog.Publish(context.Background(), article)
 	if err != nil {
@@ -132,7 +144,8 @@ func TestBlogPublisherCapsSlugToUniPostRouteContract(t *testing.T) {
 	rawSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integrations"
 	expectedSlug := "white-label-social-publishing-adding-multi-platform-posting-to-your-saas-without-building-integr"
 	article.SeoMeta = json.RawMessage(`{"title":"White Label","meta_description":"Meta","slug":"` + rawSlug + `","h1":"White Label"}`)
-	blog := NewBlog("", "", "dev", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog := NewBlog("gh-token", "owner/unipost", "dev", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog.client = stubGitHubPublishClient(t, "content/citeloop/blog/"+expectedSlug+".mdx", "dev")
 
 	result, err := blog.Publish(context.Background(), article)
 	if err != nil {
@@ -149,7 +162,8 @@ func TestBlogPublisherCapsSlugToUniPostRouteContract(t *testing.T) {
 
 func TestBlogPublisherResultMarksPendingURLVerification(t *testing.T) {
 	article := testArticle(t)
-	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog := NewBlog("gh-token", "owner/unipost", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+	blog.client = stubGitHubPublishClient(t, "content/citeloop/blog/my-post.mdx", "citeloop-content")
 
 	result, err := blog.Publish(context.Background(), article)
 	if err != nil {
@@ -182,6 +196,16 @@ func TestBlogPublisherPublishedPathExistsRejectsMissingFile(t *testing.T) {
 	}
 }
 
+func TestBlogPublisherPublishedPathExistsRequiresConfiguredGitHubTarget(t *testing.T) {
+	blog := NewBlog("", "", "citeloop-content", "https://dev.unipost.dev/blog", "content/citeloop/blog", slog.Default())
+
+	err := blog.PublishedPathExists(context.Background(), "content/citeloop/blog/my-post.mdx")
+
+	if err == nil || !strings.Contains(err.Error(), "publisher credential") {
+		t.Fatalf("expected configured publisher error, got %v", err)
+	}
+}
+
 func testArticle(t *testing.T) *db.Article {
 	t.Helper()
 	seo := json.RawMessage(`{"title":"My Post","meta_description":"Meta","slug":"my-post","h1":"My Post"}`)
@@ -203,4 +227,25 @@ func jsonResponse(status int, body string) *http.Response {
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+func stubGitHubPublishClient(t *testing.T, expectedPath, expectedRef string) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, "/"+expectedPath) {
+			t.Fatalf("%s path = %s", req.Method, req.URL.Path)
+		}
+		switch req.Method {
+		case http.MethodGet:
+			if req.URL.Query().Get("ref") != expectedRef {
+				t.Fatalf("GET ref = %s", req.URL.RawQuery)
+			}
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		case http.MethodPut:
+			return jsonResponse(http.StatusOK, `{"commit":{"sha":"new-commit-sha"}}`), nil
+		default:
+			t.Fatalf("unexpected method %s", req.Method)
+			return nil, nil
+		}
+	})}
 }
