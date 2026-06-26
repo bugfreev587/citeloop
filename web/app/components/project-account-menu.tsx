@@ -144,10 +144,10 @@ export function ProjectAccountMenu({
       {open && (
         <div
           aria-label="Account and projects menu"
-          className="absolute bottom-full left-0 z-30 mb-3 w-[436px] max-w-[calc(100vw-2rem)] rounded-[26px] border border-[#dfe5ec] bg-white/[0.98] px-4 py-3 text-slate-950 shadow-[0_34px_90px_rgba(55,49,43,0.21)]"
+          className="absolute bottom-full left-0 z-30 mb-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-[20px] border border-[#dfe5ec] bg-white/[0.98] px-3 py-2 text-slate-950 shadow-[0_28px_72px_rgba(55,49,43,0.18)]"
         >
-          <div className="pb-3">
-            <div className="mb-2 px-1 text-[12px] font-semibold uppercase tracking-[0.14em] text-stone-400">Projects</div>
+          <div className="pb-2">
+            <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">Projects</div>
             <div className="grid gap-1">
               {visibleProjects.map((item) => {
                 const current = item.id === projectId;
@@ -157,50 +157,50 @@ export function ProjectAccountMenu({
                     type="button"
                     onClick={() => openProject(item)}
                     className={cx(
-                      "flex min-h-12 w-full items-center gap-3 rounded-[13px] px-3 py-2 text-left transition-colors hover:bg-slate-50",
+                      "flex min-h-[44px] w-full items-center gap-2.5 rounded-[11px] px-2.5 py-1.5 text-left transition-colors hover:bg-slate-50",
                       current && "border border-slate-200 bg-[#fff8f6] hover:bg-[#fff8f6]",
                     )}
                   >
                     <span
                       className={cx(
-                        "grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-stone-100 text-xs font-semibold text-stone-700",
+                        "grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-stone-100 text-[11px] font-semibold text-stone-700",
                         current && "bg-[#241f1d] text-white",
                       )}
                     >
                       {initials(item)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[16px] font-medium leading-5 text-slate-950">{item.name}</span>
-                      <span className="mt-0.5 block truncate text-[13px] font-normal text-stone-500">/{item.slug}</span>
+                      <span className="block truncate text-[13px] font-normal leading-4 text-slate-950">{item.name}</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal leading-[14px] text-stone-500">/{item.slug}</span>
                     </span>
                     {current && (
-                      <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">Current</span>
+                      <span className="rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-normal text-green-700">Current</span>
                     )}
                   </button>
                 );
               })}
               {loadingProjects && (
-                <div className="flex h-11 items-center gap-2 rounded-[13px] px-3 text-sm font-normal text-stone-500">
-                  <Loader2 className="animate-spin" size={16} />
+                <div className="flex h-[38px] items-center gap-2 rounded-[11px] px-2.5 text-[12px] font-normal text-stone-500">
+                  <Loader2 className="animate-spin" size={14} />
                   Loading projects
                 </div>
               )}
               {projectError && (
-                <div className="rounded-[13px] px-3 py-2 text-sm font-normal leading-5 text-amber-800">
+                <div className="rounded-[11px] px-2.5 py-1.5 text-[12px] font-normal leading-4 text-amber-800">
                   Projects unavailable: {projectError}
                 </div>
               )}
             </div>
           </div>
 
-          <div className="border-t border-slate-200 py-3">
+          <div className="border-t border-slate-200 py-2.5">
             <button
               type="button"
               onClick={openAccountSettings}
-              className="flex min-h-[52px] w-full items-center gap-3 rounded-[13px] px-3 text-left text-[17px] font-medium text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
             >
-              <span className="grid h-9 w-9 place-items-center text-slate-950">
-                <Settings size={25} strokeWidth={1.8} />
+              <span className="grid h-7 w-7 place-items-center text-slate-950">
+                <Settings size={20} strokeWidth={1.8} />
               </span>
               Account Settings
             </button>
@@ -208,52 +208,52 @@ export function ProjectAccountMenu({
               <button
                 type="button"
                 onClick={openAdmin}
-                className="flex min-h-[52px] w-full items-center gap-3 rounded-[13px] px-3 text-left text-[17px] font-medium text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+                className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
               >
-                <span className="grid h-9 w-9 place-items-center text-slate-950">
-                  <KeyRound size={23} strokeWidth={1.8} />
+                <span className="grid h-7 w-7 place-items-center text-slate-950">
+                  <KeyRound size={19} strokeWidth={1.8} />
                 </span>
                 Admin
               </button>
             )}
           </div>
 
-          <div className="border-t border-slate-200 py-3">
-            <div className="mb-2 px-1 text-[12px] font-semibold uppercase tracking-[0.14em] text-stone-400">Theme</div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="border-t border-slate-200 py-2.5">
+            <div className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">Theme</div>
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => chooseTheme("light")}
                 className={cx(
-                  "flex h-11 items-center justify-center gap-2.5 rounded-xl text-[17px] font-medium text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
+                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
                   theme === "light" && "bg-stone-100 hover:bg-stone-100",
                 )}
               >
-                <Sun size={22} strokeWidth={1.8} />
+                <Sun size={18} strokeWidth={1.8} />
                 Light
               </button>
               <button
                 type="button"
                 onClick={() => chooseTheme("dark")}
                 className={cx(
-                  "flex h-11 items-center justify-center gap-2.5 rounded-xl text-[17px] font-medium text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
+                  "flex h-[34px] items-center justify-center gap-2 rounded-[10px] text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]",
                   theme === "dark" && "bg-stone-100 hover:bg-stone-100",
                 )}
               >
-                <Moon size={20} strokeWidth={1.8} />
+                <Moon size={17} strokeWidth={1.8} />
                 Dark
               </button>
             </div>
           </div>
 
-          <div className="border-t border-slate-200 pt-3">
+          <div className="border-t border-slate-200 pt-2.5">
             <button
               type="button"
               onClick={logOut}
-              className="flex min-h-[52px] w-full items-center gap-3 rounded-[13px] px-3 text-left text-[17px] font-medium text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
+              className="flex min-h-[40px] w-full items-center gap-2 rounded-[11px] px-2 text-left text-[13px] font-normal text-slate-950 transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec]"
             >
-              <span className="grid h-9 w-9 place-items-center text-slate-950">
-                <LogOut size={24} strokeWidth={1.8} />
+              <span className="grid h-7 w-7 place-items-center text-slate-950">
+                <LogOut size={20} strokeWidth={1.8} />
               </span>
               Log out
             </button>

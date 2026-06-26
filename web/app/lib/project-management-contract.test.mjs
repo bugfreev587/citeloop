@@ -42,10 +42,21 @@ test("project account menu owns project list and account actions", () => {
   assert.match(menu, /api\.listProjects\(\)/);
   assert.match(menu, /openUserProfile\(\)/);
   assert.match(menu, /signOut/);
-  assert.match(menu, /Settings[\s\S]*size=\{25\}/);
-  assert.match(menu, /KeyRound[\s\S]*size=\{23\}/);
-  assert.match(menu, /Sun[\s\S]*size=\{22\}/);
+  assert.match(menu, /Settings[\s\S]*size=\{20\}/);
+  assert.match(menu, /KeyRound[\s\S]*size=\{19\}/);
+  assert.match(menu, /Sun[\s\S]*size=\{18\}/);
   assert.match(menu, /bottom-full/);
   assert.match(menu, /border-t border-slate-200/);
   assert.doesNotMatch(menu, /Playbook|Get support|Follow us|Join the community|referral/);
+});
+
+test("project account menu uses compact popover sizing aligned with dashboard navigation", () => {
+  const menu = read("components/project-account-menu.tsx");
+
+  assert.match(menu, /w-\[320px\]/, "Popover should be narrower than the previous wide account panel");
+  assert.match(menu, /text-\[13px\]/, "Primary menu rows should be one size smaller than the text-sm sidebar nav");
+  assert.doesNotMatch(menu, /text-\[17px\]/, "Popover actions should not use oversized text");
+  assert.match(menu, /min-h-\[40px\]/, "Account action rows should be more compact than the old 52px rows");
+  assert.match(menu, /h-\[34px\]/, "Theme controls should be compact");
+  assert.doesNotMatch(menu, /w-\[436px\]|min-h-\[52px\]|h-11/, "Old loose sizing should not return");
 });
