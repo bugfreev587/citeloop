@@ -136,14 +136,19 @@ export default async function Home() {
         </header>
 
         <section className="grid flex-1 items-center gap-10 py-12 lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)] lg:gap-14 lg:py-9">
-          <div className="max-w-xl">
+          <div className="min-w-0 max-w-xl">
             <div className="mb-5 inline-flex h-8 items-center rounded-full border border-[#efcfc4] bg-white/80 px-3 text-xs font-black tracking-[0.16em] text-[#d93820]">
               SEO/GEO GROWTH LOOP
             </div>
-            <h1 className="text-4xl font-black leading-[1.02] tracking-tight text-slate-950 md:text-6xl">
-              Turn your website into a self-improving growth loop.
+            <h1
+              aria-label="Turn your website into a self-improving growth loop."
+              className="text-[2rem] font-black leading-[1.04] tracking-tight text-slate-950 break-words sm:text-4xl md:text-6xl"
+            >
+              <span className="block sm:inline">Turn your website</span>{" "}
+              <span className="block sm:inline">into a self-improving</span>{" "}
+              <span className="block sm:inline">growth loop.</span>
             </h1>
-            <p className="mt-5 max-w-[58ch] text-base leading-7 text-stone-700 md:text-lg">
+            <p className="mt-5 max-w-[31ch] text-sm leading-6 text-stone-700 sm:max-w-[58ch] sm:text-base sm:leading-7 md:text-lg">
               Connect your domain, Search Console, and publishing target. CiteLoop discovers what to improve, ships the
               work safely, and measures what moved.
             </p>
@@ -175,8 +180,8 @@ export default async function Home() {
             </div>
           </div>
 
-          <div className="relative mx-auto w-full max-w-[650px]" aria-label="CiteLoop SEO GEO flywheel">
-            <svg className="h-auto w-full overflow-visible" viewBox="0 0 600 600" role="img" aria-labelledby="flywheel-title flywheel-desc">
+          <div className="relative mx-auto min-w-0 w-full max-w-[340px] sm:max-w-[650px]" aria-label="CiteLoop SEO GEO flywheel">
+            <svg className="h-auto w-full overflow-hidden" viewBox="-28 -28 656 656" role="img" aria-labelledby="flywheel-title flywheel-desc">
               <title id="flywheel-title">CiteLoop Growth Loop flywheel</title>
               <desc id="flywheel-desc">
                 Domain and Search Console signals become opportunities, published assets, and measured outcomes.
@@ -184,8 +189,11 @@ export default async function Home() {
               <defs>
                 <path id="domain-gsc-label" d="M 165 105 A 230 230 0 0 1 435 105" />
                 <path id="opportunities-label" d="M 515 194 A 245 245 0 0 1 500 415" />
-                <path id="published-assets-label" d="M 430 548 A 265 265 0 0 1 170 548" />
+                <path id="published-assets-label" d="M 170 548 A 265 265 0 0 0 430 548" />
                 <path id="measured-outcomes-label" d="M 72 412 A 245 245 0 0 1 86 195" />
+                <path id="discover-segment-label" d="M 187 187 A 160 160 0 0 1 413 187" />
+                <path id="ship-segment-label" d="M 358 458 A 168 168 0 0 0 465 271" />
+                <path id="learn-segment-label" d="M 135 271 A 168 168 0 0 0 242 458" />
               </defs>
 
               <g className="landing-outer-track">
@@ -268,14 +276,20 @@ export default async function Home() {
                 </text>
               </g>
 
-              <text x="300" y="185" textAnchor="middle" transform="rotate(5 300 185)" className="fill-white text-[48px] font-black">
-                Discover
+              <text className="landing-segment-label fill-white text-[46px] font-black">
+                <textPath href="#discover-segment-label" startOffset="50%" textAnchor="middle">
+                  Discover
+                </textPath>
               </text>
-              <text x="422" y="407" textAnchor="middle" transform="rotate(-58 422 407)" className="fill-white text-[48px] font-black">
-                Ship
+              <text className="landing-segment-label fill-white text-[46px] font-black">
+                <textPath href="#ship-segment-label" startOffset="50%" textAnchor="middle">
+                  Ship
+                </textPath>
               </text>
-              <text x="178" y="406" textAnchor="middle" transform="rotate(58 178 406)" className="fill-white text-[48px] font-black">
-                Learn
+              <text className="landing-segment-label fill-white text-[46px] font-black">
+                <textPath href="#learn-segment-label" startOffset="50%" textAnchor="middle">
+                  Learn
+                </textPath>
               </text>
 
               <g className="landing-orbit-dot">
@@ -291,7 +305,7 @@ export default async function Home() {
                 <circle cx="300" cy="68" r="13" fill="#f59e0b" opacity=".12" />
               </g>
             </svg>
-            <p className="mx-auto -mt-4 max-w-sm text-center text-sm font-semibold leading-6 text-stone-600">
+            <p className="mx-auto -mt-3 max-w-[30ch] text-center text-xs font-semibold leading-5 text-stone-600 sm:-mt-4 sm:max-w-sm sm:text-sm sm:leading-6">
               Signals move around the wheel. Each result feeds the next opportunity.
             </p>
           </div>
