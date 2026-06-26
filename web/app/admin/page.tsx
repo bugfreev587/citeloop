@@ -221,10 +221,10 @@ function AdminPageInner() {
                 <TextInput value={model} placeholder="gpt-5.1" onChange={(event) => setModel(event.target.value)} />
               </Field>
               <Field label="Writer model" helper="Used for draft generation and AI repair. Falls back to the default model.">
-                <TextInput value={writerModel} placeholder={model || "gpt-5.1-mini"} onChange={(event) => setWriterModel(event.target.value)} />
+                <TextInput value={writerModel} placeholder={model || "gpt-5.1"} onChange={(event) => setWriterModel(event.target.value)} />
               </Field>
               <Field label="QA model" helper="Used for evidence checks and review requalification. Falls back to the default model.">
-                <TextInput value={qaModel} placeholder={model || "gpt-5.1"} onChange={(event) => setQAModel(event.target.value)} />
+                <TextInput value={qaModel} placeholder={model || "gpt-5.5"} onChange={(event) => setQAModel(event.target.value)} />
               </Field>
             </div>
 

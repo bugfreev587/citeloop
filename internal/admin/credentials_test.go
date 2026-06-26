@@ -82,8 +82,8 @@ func TestApplyUpdateForcesTokenGateProviderAndModels(t *testing.T) {
 		APIKey:      "tg-new-key",
 		BaseURL:     " https://tokengate-production.up.railway.app/v1/ ",
 		Model:       " gpt-5.1 ",
-		WriterModel: " gpt-5.1-mini ",
-		QAModel:     " gpt-5.1 ",
+		WriterModel: " gpt-5.1 ",
+		QAModel:     " gpt-5.5 ",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,10 +98,10 @@ func TestApplyUpdateForcesTokenGateProviderAndModels(t *testing.T) {
 	if next.Model != "gpt-5.1" {
 		t.Fatalf("model = %q", next.Model)
 	}
-	if next.WriterModel != "gpt-5.1-mini" {
+	if next.WriterModel != "gpt-5.1" {
 		t.Fatalf("writer model = %q", next.WriterModel)
 	}
-	if next.QAModel != "gpt-5.1" {
+	if next.QAModel != "gpt-5.5" {
 		t.Fatalf("qa model = %q", next.QAModel)
 	}
 }
@@ -150,18 +150,18 @@ func TestProviderFromCredentialsUsesTokenGateBaseURL(t *testing.T) {
 func TestModelForRequestRoutesWriterAndQA(t *testing.T) {
 	cred := Credentials{
 		Model:       "gpt-5.1",
-		WriterModel: "gpt-5.1-mini",
-		QAModel:     "gpt-5.1",
+		WriterModel: "gpt-5.1",
+		QAModel:     "gpt-5.5",
 	}
 	env := config.Env{TokenGateModel: "env-default"}
 
 	if got := modelForRequest(cred, env, llm.CompletionReq{}); got != "gpt-5.1" {
 		t.Fatalf("default model = %q", got)
 	}
-	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeWriter}); got != "gpt-5.1-mini" {
+	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeWriter}); got != "gpt-5.1" {
 		t.Fatalf("writer model = %q", got)
 	}
-	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeQA}); got != "gpt-5.1" {
+	if got := modelForRequest(cred, env, llm.CompletionReq{Purpose: llm.PurposeQA}); got != "gpt-5.5" {
 		t.Fatalf("qa model = %q", got)
 	}
 }

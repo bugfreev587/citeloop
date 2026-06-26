@@ -7,7 +7,10 @@ import "context"
 const (
 	// DefaultTokenGateModel is the environment fallback when no admin model is
 	// saved. Admin settings can override this without redeploying.
-	DefaultTokenGateModel = "claude-sonnet-4-6"
+	DefaultTokenGateModel    = "claude-sonnet-4-6"
+	DefaultOpenAIModel       = "gpt-5.1"
+	DefaultOpenAIWriterModel = "gpt-5.1"
+	DefaultOpenAIQAModel     = "gpt-5.5"
 )
 
 type CompletionPurpose string
