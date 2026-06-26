@@ -81,6 +81,20 @@ test("root page is a focused landing page with requested auth actions", async ()
   assert.doesNotMatch(source, />\s*Product\s*</);
 });
 
+test("root metadata matches the growth loop positioning", async () => {
+  const source = await readFile(new URL("../layout.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /Turn your domain and Search Console data into a self-improving SEO\/GEO growth loop\./);
+  assert.doesNotMatch(source, /content engine|automated content/i);
+});
+
+test("signed out projects page points users to the growth loop inputs", async () => {
+  const source = await readFile(new URL("../projects/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /connect your domain, authorize Search Console, and start the growth loop/i);
+  assert.doesNotMatch(source, /product URL|content engine/i);
+});
+
 test("projects page remains request-rendered for auth-gated project management", async () => {
   const source = await readFile(new URL("../projects/page.tsx", import.meta.url), "utf8");
 

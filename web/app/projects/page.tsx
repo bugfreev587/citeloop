@@ -106,7 +106,7 @@ export default async function ProjectsPage() {
               <div className="rounded-xl border border-slate-200 bg-white px-5 py-6">
                 <div className="text-base font-bold text-slate-900">Sign in to see your projects</div>
                 <p className="mt-1 text-sm text-slate-600">
-                  Create an account or sign in to connect a product URL and start the content engine.
+                  Create an account or sign in to connect your domain, authorize Search Console, and start the growth loop.
                 </p>
                 <div className="mt-4 flex gap-2">
                   <Link

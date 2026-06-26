@@ -5,7 +5,7 @@ import { ToastProvider } from "./components/toast-provider";
 
 export const metadata: Metadata = {
   title: "CiteLoop",
-  description: "SEO + GEO automated content engine",
+  description: "Turn your domain and Search Console data into a self-improving SEO/GEO growth loop.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
