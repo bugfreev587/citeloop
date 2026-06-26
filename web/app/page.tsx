@@ -171,24 +171,24 @@ export default async function Home() {
               Connect your domain, Search Console, and publishing target. CiteLoop discovers what to improve, ships the
               work safely, and measures what moved.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3">
+            <div className="mt-7 grid w-full max-w-sm grid-cols-1 gap-3 sm:flex sm:max-w-none">
               {clerkServerAuthConfigured && signedOut && (
                 <>
                   <Link
                     href="/sign-up"
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98]"
+                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98] sm:w-auto"
                   >
                     Start with your domain
                     <ArrowRight size={16} aria-hidden="true" />
                   </Link>
-                  <JoinWithGoogleButton className="h-11 px-5" />
+                  <JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" />
                 </>
               )}
               {clerkServerAuthConfigured && !signedOut && (
                 <LandingDashboardButton
                   initialProjects={projects}
                   projectPrefetchFailed={projectPrefetchFailed}
-                  className="h-11 px-5"
+                  className="h-11 w-full px-5 sm:w-auto"
                 />
               )}
             </div>
