@@ -219,12 +219,19 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   }
 
   assert.match(seo, /function GSCStatusMenu/);
+  assert.match(seo, /const \[gscMenuOpen, setGSCMenuOpen\] = useState\(false\)/);
+  assert.match(seo, /const gscMenuRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(seo, /document\.addEventListener\("pointerdown", onPointerDown\)/);
+  assert.match(seo, /document\.removeEventListener\("pointerdown", onPointerDown\)/);
+  assert.match(seo, /gscMenuRef\.current\?\.contains\(target\)/);
+  assert.match(seo, /setGSCMenuOpen\(false\)/);
   assert.match(seo, /function actionCtaForOpportunity/);
   assert.match(seo, /function analysisCapabilityBadgeLabel/);
   assert.match(seo, /Connected, low data/);
   assert.match(seo, /analysisStatus\.tone === "green"/);
   assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
   assert.match(seo, /<details[\s\S]*View evidence/);
+  assert.doesNotMatch(seo, /<details className="relative">/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
   assert.doesNotMatch(seo, /Search data status/);
   assert.doesNotMatch(seo, /Opportunity queue/);

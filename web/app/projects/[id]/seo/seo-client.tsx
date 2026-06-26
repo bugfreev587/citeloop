@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert } from "lucide-react";
 import {
@@ -345,52 +345,76 @@ function GSCStatusMenu({
   const propertyLabel = overview?.property?.gsc_site_url ?? overview?.property?.site_url ?? "Select property";
   const dataMode = searchDataModeLabel(overview, status);
   const settingsHref = `/projects/${projectId}/settings#search-console`;
+  const [gscMenuOpen, setGSCMenuOpen] = useState(false);
+  const gscMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!gscMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (gscMenuRef.current?.contains(target)) return;
+      setGSCMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [gscMenuOpen]);
+
   return (
-    <details className="relative">
-      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 [&::-webkit-details-marker]:hidden">
+    <div ref={gscMenuRef} className="relative">
+      <button
+        type="button"
+        aria-expanded={gscMenuOpen}
+        onClick={() => setGSCMenuOpen((open) => !open)}
+        className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+      >
         <span className={`h-2 w-2 rounded-full ${compact.dot}`} aria-hidden="true" />
         {compact.label}
-      </summary>
-      <div className="absolute right-0 z-20 mt-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-lg">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Search Console details</div>
-            <div className="mt-1 font-bold text-slate-950">{status.label}</div>
+      </button>
+      {gscMenuOpen && (
+        <div className="absolute right-0 z-20 mt-2 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Search Console details</div>
+              <div className="mt-1 font-bold text-slate-950">{status.label}</div>
+            </div>
+            <Badge tone={compact.tone}>{compact.label}</Badge>
           </div>
-          <Badge tone={compact.tone}>{compact.label}</Badge>
+          <div className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+            <div className="flex justify-between gap-3 border-t border-slate-100 pt-2">
+              <span className="text-slate-400">Search Console property</span>
+              <span className="max-w-[190px] truncate font-semibold text-slate-700">{propertyLabel}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-400">Data mode</span>
+              <span className="font-semibold text-slate-700">{dataMode}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-slate-400">Integration</span>
+              <span className="font-semibold text-slate-700">{gscStatus}</span>
+            </div>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">{status.detail}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {status.action && (
+              <Button size="sm" variant="primary" onClick={onConnect} disabled={!!busy}>
+                <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Search size={14} />}>
+                  {status.action}
+                </ButtonProgress>
+              </Button>
+            )}
+            <Link
+              href={settingsHref}
+              className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Manage in Settings
+            </Link>
+          </div>
         </div>
-        <div className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
-          <div className="flex justify-between gap-3 border-t border-slate-100 pt-2">
-            <span className="text-slate-400">Search Console property</span>
-            <span className="max-w-[190px] truncate font-semibold text-slate-700">{propertyLabel}</span>
-          </div>
-          <div className="flex justify-between gap-3">
-            <span className="text-slate-400">Data mode</span>
-            <span className="font-semibold text-slate-700">{dataMode}</span>
-          </div>
-          <div className="flex justify-between gap-3">
-            <span className="text-slate-400">Integration</span>
-            <span className="font-semibold text-slate-700">{gscStatus}</span>
-          </div>
-        </div>
-        <p className="mt-3 text-xs leading-5 text-slate-500">{status.detail}</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {status.action && (
-            <Button size="sm" variant="primary" onClick={onConnect} disabled={!!busy}>
-              <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Search size={14} />}>
-                {status.action}
-              </ButtonProgress>
-            </Button>
-          )}
-          <Link
-            href={settingsHref}
-            className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            Manage in Settings
-          </Link>
-        </div>
-      </div>
-    </details>
+      )}
+    </div>
   );
 }
 
