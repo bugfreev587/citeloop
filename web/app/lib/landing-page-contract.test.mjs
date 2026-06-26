@@ -81,6 +81,52 @@ test("root page is a focused landing page with requested auth actions", async ()
   assert.doesNotMatch(source, />\s*Product\s*</);
 });
 
+test("flywheel segment labels follow curved paths inside each segment", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  for (const label of ["discover", "ship", "learn"]) {
+    assert.match(source, new RegExp(`id="${label}-segment-label"`));
+    assert.match(source, new RegExp(`href="#${label}-segment-label"`));
+  }
+
+  assert.match(source, /landing-segment-label/);
+  assert.doesNotMatch(source, /transform="rotate\([^"]+"\s+className="fill-white text-\[48px\] font-black"/);
+});
+
+test("bottom flywheel output label reads upright from left to right", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /id="published-assets-label" d="M 170 548 A 265 265 0 0 0 430 548"/);
+  assert.doesNotMatch(source, /id="published-assets-label" d="M 430 548 A 265 265 0 0 1 170 548"/);
+});
+
+test("landing hero columns can shrink inside mobile viewport", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="min-w-0 max-w-xl"/);
+  assert.match(source, /className="relative mx-auto min-w-0 w-full max-w-\[340px\] sm:max-w-\[650px\]"/);
+  assert.match(source, /className="h-auto w-full overflow-hidden" viewBox="-28 -28 656 656"/);
+  assert.match(source, /text-\[2rem\] font-black leading-\[1\.04\] tracking-tight text-slate-950 break-words sm:text-4xl md:text-6xl/);
+  assert.match(source, /aria-label="Turn your website into a self-improving growth loop\."/);
+  assert.match(source, /className="block sm:inline"/);
+  assert.match(source, /mt-5 max-w-\[31ch\] text-sm leading-6 text-stone-700 sm:max-w-\[58ch\] sm:text-base sm:leading-7 md:text-lg/);
+  assert.match(source, /mx-auto -mt-3 max-w-\[30ch\] text-center text-xs font-semibold leading-5 text-stone-600 sm:-mt-4 sm:max-w-sm sm:text-sm sm:leading-6/);
+});
+
+test("root metadata matches the growth loop positioning", async () => {
+  const source = await readFile(new URL("../layout.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /Turn your domain and Search Console data into a self-improving SEO\/GEO growth loop\./);
+  assert.doesNotMatch(source, /content engine|automated content/i);
+});
+
+test("signed out projects page points users to the growth loop inputs", async () => {
+  const source = await readFile(new URL("../projects/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /connect your domain, authorize Search Console, and start the growth loop/i);
+  assert.doesNotMatch(source, /product URL|content engine/i);
+});
+
 test("projects page remains request-rendered for auth-gated project management", async () => {
   const source = await readFile(new URL("../projects/page.tsx", import.meta.url), "utf8");
 
