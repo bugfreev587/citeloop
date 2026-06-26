@@ -7,42 +7,45 @@ const appRoot = path.resolve(import.meta.dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath));
 
-test("project shell links the footer project identity to the Projects page", () => {
+test("project shell opens account and projects management from the footer popover", () => {
   const shell = read("components/project-shell.tsx");
   const footer = shell.slice(shell.indexOf('className="mt-auto grid gap-2"'));
 
   assert.doesNotMatch(shell, /FolderKanban/);
   assert.doesNotMatch(shell, /function isProjectsActive/);
   assert.doesNotMatch(footer, />\s*Projects\s*</);
-  assert.match(footer, /href="\/projects"[\s\S]*aria-label=\{`Open Projects page for \$\{projectName\}`\}/);
-  assert.match(footer, /className="[^"]*truncate text-sm font-semibold text-slate-900[^"]*">\{projectName\}/);
+  assert.doesNotMatch(footer, /href="\/projects"/);
+  assert.match(shell, /import \{ ProjectAccountMenu \} from "\.\/project-account-menu"/);
+  assert.match(footer, /<ProjectAccountMenu[\s\S]*project=\{project\}[\s\S]*projectId=\{projectId\}[\s\S]*isPlatformAdmin=\{isPlatformAdmin\}/);
+  assert.doesNotMatch(shell, /UserButton/);
 });
 
-test("projects page lists, creates, opens, and hard-deletes projects", () => {
-  assert.equal(exists("projects/page.tsx"), true, "/projects page should host project management");
+test("project account menu owns project list and account actions", () => {
   assert.equal(
-    exists("projects/project-management-client.tsx"),
+    exists("components/project-account-menu.tsx"),
     true,
-    "project management client should own delete confirmation state",
+    "Dashboard footer should own project management in an upward popover",
   );
 
-  const page = read("projects/page.tsx");
-  assert.match(page, /api\.listProjects\(\)/);
-  assert.match(page, /ProjectCreateForm/);
-  assert.match(page, /ProjectManagementClient/);
-
-  const client = read("projects/project-management-client.tsx");
+  const menu = read("components/project-account-menu.tsx");
   for (const copy of [
-    "Open",
-    "Delete project",
-    "Permanently delete",
-    "This permanently deletes the project and all associated data.",
+    "Projects",
+    "Account Settings",
+    "Admin",
+    "Theme",
+    "Light",
+    "Dark",
+    "Log out",
   ]) {
-    assert.match(client, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(menu, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.match(client, /api\.deleteProject\(pendingDelete\.id\)/);
-  assert.match(client, /confirmSlug/);
-  assert.match(client, /project\.slug/);
-  assert.match(client, /setProjects/);
-  assert.match(client, /router\.refresh\(\)/);
+  assert.match(menu, /api\.listProjects\(\)/);
+  assert.match(menu, /openUserProfile\(\)/);
+  assert.match(menu, /signOut/);
+  assert.match(menu, /Settings[\s\S]*size=\{25\}/);
+  assert.match(menu, /KeyRound[\s\S]*size=\{23\}/);
+  assert.match(menu, /Sun[\s\S]*size=\{22\}/);
+  assert.match(menu, /bottom-full/);
+  assert.match(menu, /border-t border-slate-200/);
+  assert.doesNotMatch(menu, /Playbook|Get support|Follow us|Join the community|referral/);
 });

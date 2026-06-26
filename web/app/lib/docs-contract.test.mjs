@@ -75,10 +75,10 @@ test("project shell exposes Docs in the footer and keeps it reachable on mobile"
   const shell = read("components/project-shell.tsx");
   const footer = shell.slice(shell.indexOf('className="mt-auto grid gap-2"'));
   const docsIndex = footer.indexOf("Docs");
-  const accountIndex = footer.indexOf("<UserButton");
+  const accountIndex = footer.indexOf("<ProjectAccountMenu");
 
   assert.notEqual(docsIndex, -1, "Docs link should exist");
-  assert.ok(docsIndex < accountIndex, "Docs should render above the project/account card");
+  assert.ok(docsIndex < accountIndex, "Docs should render above the account and projects menu trigger");
 
   // The old Help entry linked to "/" (home), which was redundant with Docs and misleading; it was removed.
   assert.doesNotMatch(footer, />\s*Help\s*</, "redundant Help link should be removed");
