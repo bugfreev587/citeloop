@@ -2,7 +2,7 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { ArrowRight } from "lucide-react";
-import { JoinWithGoogleButton, LandingDashboardButton } from "./landing-auth-actions";
+import { JoinWithGoogleButton, LandingDashboardButton, LandingThemeToggle } from "./landing-auth-actions";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "./lib/auth-config";
 import { createApi, Project } from "./lib/api";
 
@@ -36,8 +36,21 @@ export default async function Home() {
   }
 
   return (
-    <main className="min-h-[100dvh] overflow-hidden bg-[#f8f5ef] text-slate-950">
+    <main className="landing-page min-h-[100dvh] overflow-hidden bg-[#f8f5ef] text-slate-950">
       <style>{`
+        .landing-page {
+          --landing-orbit: #dbe5ef;
+          --landing-ring-label: #33465a;
+          --landing-segment-stroke: #26384b;
+        }
+
+        html.dark .landing-page,
+        html[data-theme="dark"] .landing-page {
+          --landing-orbit: #334155;
+          --landing-ring-label: #cbd5e1;
+          --landing-segment-stroke: #0f172a;
+        }
+
         .landing-outer-track {
           transform-origin: 300px 300px;
           animation: landing-slow-spin 24s linear infinite;
@@ -45,15 +58,23 @@ export default async function Home() {
 
         .landing-outer-arc {
           fill: none;
-          stroke: #dbe5ef;
+          stroke: var(--landing-orbit);
           stroke-linecap: round;
           stroke-linejoin: round;
           stroke-width: 38;
         }
 
         .landing-outer-arrow {
-          fill: #dbe5ef;
+          fill: var(--landing-orbit);
           opacity: .98;
+        }
+
+        .landing-ring-label {
+          fill: var(--landing-ring-label);
+        }
+
+        .landing-segment-stroke {
+          stroke: var(--landing-segment-stroke);
         }
 
         .landing-orbit-dot {
@@ -146,13 +167,14 @@ export default async function Home() {
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <Link href="/" className="flex h-10 items-center gap-2 text-sm font-bold text-slate-950">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-950 text-xs text-white">CL</span>
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-950 text-xs text-white dark:bg-slate-100 dark:text-slate-950">CL</span>
             CiteLoop
           </Link>
 
-          {clerkServerAuthConfigured &&
+          {clerkServerAuthConfigured ? (
             (signedOut ? (
               <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
+                <LandingThemeToggle />
                 <JoinWithGoogleButton />
                 <Link
                   href="/sign-up"
@@ -164,10 +186,16 @@ export default async function Home() {
               </div>
             ) : (
               <div className="hidden items-center justify-end gap-3 sm:flex">
+                <LandingThemeToggle />
                 <LandingDashboardButton initialProjects={projects} projectPrefetchFailed={projectPrefetchFailed} />
                 <UserButton />
               </div>
-            ))}
+            ))
+          ) : (
+            <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
+              <LandingThemeToggle />
+            </div>
+          )}
         </header>
 
         <section className="grid flex-1 items-center gap-10 py-12 lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)] lg:gap-14 lg:py-9">
@@ -240,48 +268,45 @@ export default async function Home() {
                 <path className="landing-outer-arrow landing-outer-arrow-learn-discover" d="M 72 152 L 108 133 L 105 174 Z" />
               </g>
 
-              <text className="fill-[#33465a] text-[24px] font-black">
+              <text className="landing-ring-label text-[24px] font-black">
                 <textPath href="#domain-gsc-label" startOffset="50%" textAnchor="middle">
                   Domain + GSC
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[24px] font-black">
+              <text className="landing-ring-label text-[24px] font-black">
                 <textPath href="#opportunities-label" startOffset="50%" textAnchor="middle">
                   Opportunities
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[24px] font-black">
+              <text className="landing-ring-label text-[24px] font-black">
                 <textPath href="#published-assets-label" startOffset="50%" textAnchor="middle">
                   Published assets
                 </textPath>
               </text>
-              <text className="fill-[#33465a] text-[24px] font-black">
+              <text className="landing-ring-label text-[24px] font-black">
                 <textPath href="#measured-outcomes-label" startOffset="50%" textAnchor="middle">
                   Measured outcomes
                 </textPath>
               </text>
 
               <path
-                className="landing-segment"
+                className="landing-segment landing-segment-stroke"
                 d="M 100.8 185 A 230 230 0 0 1 499.2 185 L 405.7 239 A 122 122 0 0 0 194.3 239 Z"
                 fill="#f3bd5b"
-                stroke="#26384b"
                 strokeLinejoin="round"
                 strokeWidth="5"
               />
               <path
-                className="landing-segment landing-segment-ship"
+                className="landing-segment landing-segment-ship landing-segment-stroke"
                 d="M 499.2 185 A 230 230 0 0 1 300 530 L 300 422 A 122 122 0 0 0 405.7 239 Z"
                 fill="#0fb8a0"
-                stroke="#26384b"
                 strokeLinejoin="round"
                 strokeWidth="5"
               />
               <path
-                className="landing-segment landing-segment-learn"
+                className="landing-segment landing-segment-learn landing-segment-stroke"
                 d="M 300 530 A 230 230 0 0 1 100.8 185 L 194.3 239 A 122 122 0 0 0 300 422 Z"
                 fill="#0da2b3"
-                stroke="#26384b"
                 strokeLinejoin="round"
                 strokeWidth="5"
               />
@@ -312,12 +337,11 @@ export default async function Home() {
 
               <g className="drop-shadow-[0_16px_32px_rgba(15,23,42,0.16)]">
                 <circle
-                  className="landing-center-pulse"
+                  className="landing-center-pulse landing-segment-stroke"
                   cx="300"
                   cy="300"
                   r="126"
                   fill="#ff7159"
-                  stroke="#26384b"
                   strokeWidth="22"
                 />
                 <text x="300" y="292" textAnchor="middle" className="fill-white text-[39px] font-black">

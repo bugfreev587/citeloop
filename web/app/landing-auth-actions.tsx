@@ -1,11 +1,13 @@
 "use client";
 
 import { useSignIn } from "@clerk/nextjs/legacy";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, Moon, Sun } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Project } from "./lib/api";
 import { LAST_PROJECT_STORAGE_KEY, dashboardHrefForProjects } from "./lib/dashboard-routing";
+import { applyThemeChoice, readStoredThemeChoice, saveThemeChoice, type ThemeChoice } from "./lib/theme";
+import { cx } from "./components/ui";
 
 const baseButtonClass =
   "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70";
@@ -38,6 +40,56 @@ export function JoinWithGoogleButton({ className = "" }: { className?: string })
       {busy && <Loader2 className="animate-spin" size={16} aria-hidden="true" />}
       {busy ? "Opening Google..." : "Join with Google"}
     </button>
+  );
+}
+
+export function LandingThemeToggle({ className = "" }: { className?: string }) {
+  const [theme, setTheme] = useState<ThemeChoice>("light");
+
+  useEffect(() => {
+    const nextTheme = readStoredThemeChoice();
+    setTheme(nextTheme);
+    applyThemeChoice(nextTheme);
+  }, []);
+
+  function chooseTheme(nextTheme: ThemeChoice) {
+    setTheme(nextTheme);
+    saveThemeChoice(nextTheme);
+  }
+
+  return (
+    <div
+      aria-label="Theme"
+      className={cx(
+        "inline-grid h-10 grid-cols-2 items-center rounded-full border border-stone-200 bg-white/80 p-1 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/80",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        aria-label="Use light mode"
+        aria-pressed={theme === "light"}
+        onClick={() => chooseTheme("light")}
+        className={cx(
+          "grid h-8 w-8 place-items-center rounded-full text-stone-500 transition-colors hover:bg-stone-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-slate-600",
+          theme === "light" && "bg-slate-950 text-white hover:bg-slate-950 hover:text-white dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-slate-100 dark:hover:text-slate-950",
+        )}
+      >
+        <Sun size={17} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        aria-label="Use dark mode"
+        aria-pressed={theme === "dark"}
+        onClick={() => chooseTheme("dark")}
+        className={cx(
+          "grid h-8 w-8 place-items-center rounded-full text-stone-500 transition-colors hover:bg-stone-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-slate-600",
+          theme === "dark" && "bg-slate-950 text-white hover:bg-slate-950 hover:text-white dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-slate-100 dark:hover:text-slate-950",
+        )}
+      >
+        <Moon size={16} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
