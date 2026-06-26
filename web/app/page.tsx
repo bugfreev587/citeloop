@@ -43,6 +43,18 @@ export default async function Home() {
           animation: landing-slow-spin 24s linear infinite;
         }
 
+        .landing-outer-arc {
+          fill: none;
+          stroke: #dbe5ef;
+          stroke-linecap: round;
+          stroke-width: 46;
+        }
+
+        .landing-outer-arrow {
+          fill: #dbe5ef;
+          opacity: .96;
+        }
+
         .landing-orbit-dot {
           transform-origin: 300px 300px;
           animation: landing-fast-spin 7.5s linear infinite;
@@ -96,6 +108,13 @@ export default async function Home() {
         @keyframes landing-center-breathe {
           0%, 100% { transform: scale(1); }
           50% { transform: scale(1.018); }
+        }
+
+        .landing-flywheel:is(:hover, :focus-within) .landing-outer-track,
+        .landing-flywheel:is(:hover, :focus-within) .landing-orbit-dot,
+        .landing-flywheel:is(:hover, :focus-within) .landing-segment,
+        .landing-flywheel:is(:hover, :focus-within) .landing-center-pulse {
+          animation-play-state: paused;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -180,7 +199,7 @@ export default async function Home() {
             </div>
           </div>
 
-          <div className="relative mx-auto min-w-0 w-full max-w-[340px] sm:max-w-[650px]" aria-label="CiteLoop SEO GEO flywheel">
+          <div className="landing-flywheel relative mx-auto min-w-0 w-full max-w-[340px] sm:max-w-[650px]" aria-label="CiteLoop SEO GEO flywheel">
             <svg className="h-auto w-full overflow-hidden" viewBox="-28 -28 656 656" role="img" aria-labelledby="flywheel-title flywheel-desc">
               <title id="flywheel-title">CiteLoop Growth Loop flywheel</title>
               <desc id="flywheel-desc">
@@ -192,24 +211,17 @@ export default async function Home() {
                 <path id="published-assets-label" d="M 170 548 A 265 265 0 0 0 430 548" />
                 <path id="measured-outcomes-label" d="M 72 412 A 245 245 0 0 1 86 195" />
                 <path id="discover-segment-label" d="M 187 187 A 160 160 0 0 1 413 187" />
-                <path id="ship-segment-label" d="M 358 458 A 168 168 0 0 0 465 271" />
-                <path id="learn-segment-label" d="M 135 271 A 168 168 0 0 0 242 458" />
+                <path id="ship-segment-label" d="M 365 483 A 195 195 0 0 0 490 256" />
+                <path id="learn-segment-label" d="M 108 266 A 195 195 0 0 0 233 483" />
               </defs>
 
               <g className="landing-outer-track">
-                <circle
-                  cx="300"
-                  cy="300"
-                  r="278"
-                  fill="none"
-                  stroke="#dbe5ef"
-                  strokeDasharray="512 68 512 68 512 68"
-                  strokeLinecap="round"
-                  strokeWidth="46"
-                />
-                <path d="M 513 151 L 551 151 L 535 191 Z" fill="#dbe5ef" opacity=".96" />
-                <path d="M 485 514 L 521 535 L 480 551 Z" fill="#dbe5ef" opacity=".96" />
-                <path d="M 52 374 L 52 330 L 87 356 Z" fill="#dbe5ef" opacity=".96" />
+                <path className="landing-outer-arc" d="M 87 121 A 278 278 0 0 1 541 161" />
+                <path className="landing-outer-arrow" d="M 514 132 L 560 158 L 532 194 Z" />
+                <path className="landing-outer-arc" d="M 574 252 A 278 278 0 0 1 252 574" />
+                <path className="landing-outer-arrow" d="M 261 551 L 220 568 L 253 599 Z" />
+                <path className="landing-outer-arc" d="M 161 541 A 278 278 0 0 1 121 87" />
+                <path className="landing-outer-arrow" d="M 128 112 L 145 67 L 98 76 Z" />
               </g>
 
               <text className="fill-[#33465a] text-[27px] font-black">

@@ -93,6 +93,43 @@ test("flywheel segment labels follow curved paths inside each segment", async ()
   assert.doesNotMatch(source, /transform="rotate\([^"]+"\s+className="fill-white text-\[48px\] font-black"/);
 });
 
+test("flywheel motion pauses while the wheel is hovered", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="landing-flywheel relative mx-auto min-w-0 w-full max-w-\[340px\] sm:max-w-\[650px\]"/);
+  assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-outer-track/);
+  assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-orbit-dot/);
+  assert.match(source, /\.landing-flywheel:is\(:hover, :focus-within\) \.landing-segment/);
+  assert.match(source, /animation-play-state: paused/);
+});
+
+test("outer flywheel arrows are attached to curved track ends", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="landing-outer-arc"/);
+  assert.match(source, /className="landing-outer-arrow"/);
+  assert.match(source, /d="M 87 121 A 278 278 0 0 1 541 161"/);
+  assert.match(source, /d="M 574 252 A 278 278 0 0 1 252 574"/);
+  assert.match(source, /d="M 161 541 A 278 278 0 0 1 121 87"/);
+  assert.match(source, /d="M 514 132 L 560 158 L 532 194 Z"/);
+  assert.match(source, /d="M 261 551 L 220 568 L 253 599 Z"/);
+  assert.match(source, /d="M 128 112 L 145 67 L 98 76 Z"/);
+  assert.doesNotMatch(source, /markerEnd="url\(#landing-outer-arrowhead\)"/);
+  assert.doesNotMatch(source, /strokeDasharray="512 68 512 68 512 68"/);
+  assert.doesNotMatch(source, /d="M 513 151 L 551 151 L 535 191 Z"/);
+  assert.doesNotMatch(source, /d="M 485 514 L 521 535 L 480 551 Z"/);
+  assert.doesNotMatch(source, /d="M 52 374 L 52 330 L 87 356 Z"/);
+});
+
+test("ship and learn labels sit near the middle of their colored bands", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /id="ship-segment-label" d="M 365 483 A 195 195 0 0 0 490 256"/);
+  assert.match(source, /id="learn-segment-label" d="M 108 266 A 195 195 0 0 0 233 483"/);
+  assert.doesNotMatch(source, /id="ship-segment-label" d="M 358 458 A 168 168 0 0 0 465 271"/);
+  assert.doesNotMatch(source, /id="learn-segment-label" d="M 135 271 A 168 168 0 0 0 242 458"/);
+});
+
 test("bottom flywheel output label reads upright from left to right", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
@@ -104,7 +141,7 @@ test("landing hero columns can shrink inside mobile viewport", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
   assert.match(source, /className="min-w-0 max-w-xl"/);
-  assert.match(source, /className="relative mx-auto min-w-0 w-full max-w-\[340px\] sm:max-w-\[650px\]"/);
+  assert.match(source, /className="landing-flywheel relative mx-auto min-w-0 w-full max-w-\[340px\] sm:max-w-\[650px\]"/);
   assert.match(source, /className="h-auto w-full overflow-hidden" viewBox="-28 -28 656 656"/);
   assert.match(source, /text-\[2rem\] font-black leading-\[1\.04\] tracking-tight text-slate-950 break-words sm:text-4xl md:text-6xl/);
   assert.match(source, /aria-label="Turn your website into a self-improving growth loop\."/);
