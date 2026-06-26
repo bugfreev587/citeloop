@@ -289,25 +289,25 @@ export default async function Home() {
                 className="landing-segment-flow-arrow landing-segment-flow-arrow-discover-ship"
                 d="M 499 185 L 482 268 L 406 239 Z"
                 fill="#f3bd5b"
-                stroke="#26384b"
+                stroke="#f3bd5b"
                 strokeLinejoin="round"
-                strokeWidth="5"
+                strokeWidth="8"
               />
               <path
                 className="landing-segment-flow-arrow landing-segment-flow-arrow-ship-learn"
                 d="M 300 530 L 238 469 L 300 422 Z"
                 fill="#0fb8a0"
-                stroke="#26384b"
+                stroke="#0fb8a0"
                 strokeLinejoin="round"
-                strokeWidth="5"
+                strokeWidth="8"
               />
               <path
                 className="landing-segment-flow-arrow landing-segment-flow-arrow-learn-discover"
                 d="M 101 185 L 184 162 L 194 239 Z"
                 fill="#0da2b3"
-                stroke="#26384b"
+                stroke="#0da2b3"
                 strokeLinejoin="round"
-                strokeWidth="5"
+                strokeWidth="8"
               />
 
               <g className="drop-shadow-[0_16px_32px_rgba(15,23,42,0.16)]">
