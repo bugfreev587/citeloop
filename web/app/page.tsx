@@ -136,7 +136,7 @@ export default async function Home() {
 
           {clerkServerAuthConfigured &&
             (signedOut ? (
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
                 <JoinWithGoogleButton />
                 <Link
                   href="/sign-up"
@@ -147,7 +147,7 @@ export default async function Home() {
                 </Link>
               </div>
             ) : (
-              <div className="flex items-center justify-end gap-3">
+              <div className="hidden items-center justify-end gap-3 sm:flex">
                 <LandingDashboardButton initialProjects={projects} projectPrefetchFailed={projectPrefetchFailed} />
                 <UserButton />
               </div>

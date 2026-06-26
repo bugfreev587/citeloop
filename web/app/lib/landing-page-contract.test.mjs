@@ -150,6 +150,14 @@ test("landing hero columns can shrink inside mobile viewport", async () => {
   assert.match(source, /mx-auto -mt-3 max-w-\[30ch\] text-center text-xs font-semibold leading-5 text-stone-600 sm:-mt-4 sm:max-w-sm sm:text-sm sm:leading-6/);
 });
 
+test("landing header actions stay out of narrow mobile viewports", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /className="hidden flex-wrap items-center justify-end gap-2 sm:flex"/);
+  assert.match(source, /className="hidden items-center justify-end gap-3 sm:flex"/);
+  assert.doesNotMatch(source, /className="flex flex-wrap items-center justify-end gap-2"/);
+});
+
 test("root metadata matches the growth loop positioning", async () => {
   const source = await readFile(new URL("../layout.tsx", import.meta.url), "utf8");
 
