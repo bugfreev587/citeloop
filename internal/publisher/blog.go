@@ -20,11 +20,6 @@ import (
 // BlogPublisher implements §8 option A: write MDX into the blog repo and
 // auto-commit to a publish branch via the GitHub Contents API —真自动, no human
 // merge. The app-internal approve is the only human gate (§1.5/§5.6).
-//
-// When the repo/token are not configured it runs in DryRun: it computes the
-// real URL and logs, so the end-to-end pipeline is demonstrable without a live
-// repo. DryRun is explicit in the result Detail so a real deploy never silently
-// no-ops.
 type BlogPublisher struct {
 	Token      string
 	Repo       string // "owner/name"
@@ -53,7 +48,9 @@ func (b *BlogPublisher) Platform() string        { return "blog" }
 func (b *BlogPublisher) Mode() Mode              { return Auto }
 func (b *BlogPublisher) SupportsCanonical() bool { return true }
 
-func (b *BlogPublisher) dryRun() bool { return b.Token == "" || b.Repo == "" }
+func (b *BlogPublisher) missingGitHubTarget() bool {
+	return strings.TrimSpace(b.Token) == "" || strings.TrimSpace(b.Repo) == ""
+}
 
 func (b *BlogPublisher) Resolve(a *db.Article) (slug, publishPath, publicURL string, err error) {
 	slug = slugOf(a)
@@ -74,9 +71,8 @@ func (b *BlogPublisher) Publish(ctx context.Context, a *db.Article) (Result, err
 		return Result{}, err
 	}
 
-	if b.dryRun() {
-		b.Log.Warn("BlogPublisher dry-run (no repo/token configured)", "path", publishPath, "url", publicURL)
-		return Result{URL: publicURL, Mode: Auto, Detail: "dry-run: not committed (configure GITHUB_TOKEN + BLOG_REPO)", Path: publishPath, Phase: "pending_url_verification"}, nil
+	if b.missingGitHubTarget() {
+		return Result{}, fmt.Errorf("publisher credential and repo are required for GitHub/Next.js publishing")
 	}
 	msg := fmt.Sprintf("CiteLoop publish: %s\n\nProject: %s\nArticle: %s", title(a), a.ProjectID, a.ID)
 	commitSHA, err := b.commitFile(ctx, publishPath, mdx, msg)
@@ -160,8 +156,8 @@ func (b *BlogPublisher) PublishedPathExists(ctx context.Context, publishPath str
 	if err != nil {
 		return err
 	}
-	if b.dryRun() {
-		return nil
+	if b.missingGitHubTarget() {
+		return fmt.Errorf("publisher credential and repo are required for GitHub/Next.js publishing")
 	}
 	api := "https://api.github.com/repos/" + b.Repo + "/contents/" + cleanPath
 	sha, err := b.existingSHA(ctx, api)
