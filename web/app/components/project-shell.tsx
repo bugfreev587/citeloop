@@ -30,28 +30,22 @@ const navSections = [
     ],
   },
   {
-    id: "analyze",
-    label: "ANALYZE",
+    id: "intelligence",
+    label: "Intelligence",
     items: [{ label: "Analysis", href: "analysis", icon: Target }],
   },
   {
-    id: "create",
-    label: "CREATE",
+    id: "execution",
+    label: "Execution",
     items: [
       { label: "Content Plan", href: "plan", icon: ListChecks },
       { label: "Review", href: "review", icon: PenLine },
-    ],
-  },
-  {
-    id: "deliver",
-    label: "DELIVER",
-    items: [
       { label: "Publish", href: "publish", icon: Send },
     ],
   },
   {
-    id: "measure",
-    label: "MEASURE",
+    id: "outcomes",
+    label: "Outcomes",
     items: [{ label: "Results", href: "results", icon: Search }],
   },
 ];
