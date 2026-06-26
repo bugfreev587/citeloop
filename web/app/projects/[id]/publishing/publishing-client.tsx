@@ -44,6 +44,16 @@ function connectionTargetLabel(connection: PublisherConnection | null) {
   return connection.label || connection.config?.repo || connection.kind.replace(/_/g, " ");
 }
 
+function publisherConnectionIsActive(connection: PublisherConnection) {
+  return connection.enabled && connection.status === "connected";
+}
+
+function publisherConnectionDetail(connection: PublisherConnection) {
+  const kind = connection.kind.replace(/_/g, " ");
+  const target = connection.config?.repo || connection.config?.base_url || connection.config?.content_dir;
+  return target ? `${kind} · ${target}` : kind;
+}
+
 function publishTargetLabel(article: Article, defaultPublishTarget: string) {
   return article.platform || defaultPublishTarget;
 }
@@ -170,7 +180,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [drawer, setDrawer] = useState<DrawerKind>(null);
-  const [selectedPublisherConnectionID, setSelectedPublisherConnectionID] = useState("");
+  const [platformsOpen, setPlatformsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -249,25 +259,18 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "manual";
   const publishIntervalDays = config?.publish_interval_days ?? 2;
   const eligiblePublisherConnections = useMemo(() => connections.filter((c) => c.enabled && c.status === "connected"), [connections]);
-  const selectedPublisherConnection = useMemo(
+  const activePublisherConnections = eligiblePublisherConnections;
+  const activePublisherConnection = useMemo(
     () =>
-      eligiblePublisherConnections.find((connection) => connection.id === selectedPublisherConnectionID) ??
       eligiblePublisherConnections.find((connection) => connection.is_default) ??
       eligiblePublisherConnections[0] ??
       null,
-    [eligiblePublisherConnections, selectedPublisherConnectionID],
+    [eligiblePublisherConnections],
   );
   const defaultPublishTarget = useMemo(
-    () => connectionTargetLabel(selectedPublisherConnection),
-    [selectedPublisherConnection],
+    () => connectionTargetLabel(activePublisherConnection),
+    [activePublisherConnection],
   );
-
-  useEffect(() => {
-    const selectedStillEligible = eligiblePublisherConnections.some((connection) => connection.id === selectedPublisherConnectionID);
-    if (!selectedStillEligible) {
-      setSelectedPublisherConnectionID(eligiblePublisherConnections[0]?.id ?? "");
-    }
-  }, [eligiblePublisherConnections, selectedPublisherConnectionID]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -285,7 +288,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function publishNow(article: Article) {
-    if (!selectedPublisherConnection) {
+    if (!activePublisherConnection) {
       setMessage({ title: "No enabled publisher connection", detail: "Manage connections in settings before publishing.", tone: "amber" });
       return;
     }
@@ -328,7 +331,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   async function retryPublish(article: Article) {
-    if (!selectedPublisherConnection) {
+    if (!activePublisherConnection) {
       setMessage({ title: "No enabled publisher connection", detail: "Manage connections in settings before retrying.", tone: "amber" });
       return;
     }
@@ -389,6 +392,56 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 {MODE_META[publishMode].label}
               </span>
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={platformsOpen}
+                onClick={() => {
+                  setPlatformsOpen((open) => !open);
+                  loadConnections();
+                }}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Plug size={14} className="text-slate-400" />
+                Platforms
+                <Badge tone={activePublisherConnections.length ? "green" : "red"}>
+                  {activePublisherConnections.length ? `${activePublisherConnections.length} active` : "none active"}
+                </Badge>
+              </button>
+              {platformsOpen && (
+                <div className="absolute right-0 top-11 z-30 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                  <div className="max-h-72 overflow-y-auto p-2">
+                    {connections.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-slate-200 px-3 py-3 text-sm font-medium text-slate-500">
+                        No publisher connections yet.
+                      </div>
+                    ) : (
+                      <div className="grid gap-1">
+                        {connections.map((connection) => (
+                          <div key={connection.id} className="flex min-w-0 items-start justify-between gap-3 rounded-md px-3 py-2 hover:bg-slate-50">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-bold text-slate-900">{connectionTargetLabel(connection)}</div>
+                              <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{publisherConnectionDetail(connection)}</div>
+                            </div>
+                            <Badge tone={publisherConnectionIsActive(connection) ? "green" : "red"}>
+                              {publisherConnectionIsActive(connection) ? "active" : "inactive"}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="border-t border-slate-100 p-2">
+                    <a
+                      href={`/projects/${projectId}/settings#publisher`}
+                      className="inline-flex h-9 w-full items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      manage connections
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
             <Button disabled={!!busy} size="sm" onClick={reconcile}>
               <ButtonProgress busy={busy === "reconcile"} busyLabel="Reconciling" idleIcon={<RotateCcw size={14} />}>
                 Reconcile
@@ -401,35 +454,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           </div>
         }
       />
-
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-        <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-          <Plug size={14} />
-          Publisher account
-        </div>
-        <select
-          value={selectedPublisherConnection?.id ?? ""}
-          disabled={eligiblePublisherConnections.length === 0}
-          onChange={(event) => setSelectedPublisherConnectionID(event.target.value)}
-          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 disabled:text-slate-400"
-        >
-          {eligiblePublisherConnections.length === 0 ? (
-            <option value="">No enabled connections</option>
-          ) : (
-            eligiblePublisherConnections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {connectionTargetLabel(connection)}
-              </option>
-            ))
-          )}
-        </select>
-        <a
-          href={`/projects/${projectId}/settings#publisher`}
-          className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-        >
-          Manage connections
-        </a>
-      </div>
 
       {eligiblePublisherConnections.length === 0 && (
         <Notice title="No enabled publisher connection" detail="Enable a connected publisher account in settings before publishing or retrying." tone="amber" />
@@ -468,7 +492,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={!selectedPublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                    <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
                       <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
                         Publish now
                       </ButtonProgress>
@@ -509,7 +533,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={!selectedPublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                    <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
                       <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
                         Publish now
                       </ButtonProgress>
@@ -602,7 +626,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                     >
                       Detail
                     </a>
-                    <Button disabled={!selectedPublisherConnection || busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                    <Button disabled={!activePublisherConnection || busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
                       <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
                         Retry
                       </ButtonProgress>
