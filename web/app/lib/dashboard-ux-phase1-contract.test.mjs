@@ -460,15 +460,33 @@ test("publishing cards constrain long titles, errors, and publish paths inside t
   assert.doesNotMatch(publishing, /canonical_url \|\| article\.publish_path\)[\s\S]{0,160}truncate/);
 });
 
-test("publishing platforms are a read-only account selector with settings handoff", () => {
+test("publishing platforms stay in the header popover with connection status", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  const publishingHeaderStart = publishing.indexOf('<SectionHeader\n        title="Publishing"');
+  const headerActions = publishing.slice(
+    publishing.indexOf('<div className="flex flex-wrap items-center gap-2">', publishingHeaderStart),
+    publishing.indexOf("\n      />", publishingHeaderStart),
+  );
+  assert.ok(headerActions.indexOf("Mode") < headerActions.indexOf("Platforms"), "Platforms should follow Mode");
+  assert.ok(headerActions.indexOf("Platforms") < headerActions.indexOf("Reconcile"), "Platforms should precede Reconcile");
+  assert.match(headerActions, /setPlatformsOpen\(\(open\) => !open\)/);
+  assert.match(headerActions, /loadConnections\(\)/);
+  assert.match(headerActions, /<Plug size=\{14\} className="text-slate-400" \/>[\s\S]*Platforms/);
+  assert.match(headerActions, /<Badge tone=\{activePublisherConnections\.length \? "green" : "red"\}>/);
 
   assert.doesNotMatch(publishing, /drawer === "platforms"/);
   assert.doesNotMatch(publishing, /async function savePublisherConnection/);
   assert.doesNotMatch(publishing, /async function disconnectConnection/);
+  assert.doesNotMatch(publishing, />\s*Publisher account\s*</i);
+  assert.doesNotMatch(publishing, /<select[\s\S]*No enabled connections[\s\S]*<\/select>/);
   assert.match(publishing, /eligiblePublisherConnections/);
-  assert.match(publishing, />\s*Manage connections\s*</);
+  assert.match(publishing, /platformsOpen && \(/);
+  assert.match(publishing, /connections\.map\(\(connection\) =>/);
+  assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "active" : "inactive"/);
+  assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "green" : "red"/);
+  assert.match(publishing, />\s*manage connections\s*</);
   assert.ok(publishing.includes('href={`/projects/${projectId}/settings#publisher`}'));
 
   assert.match(settings, /setPublisherConnectionEnabled/);
