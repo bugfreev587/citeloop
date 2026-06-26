@@ -30,6 +30,12 @@ test("theme choice applies before hydration and enables Tailwind dark variants",
   assert.match(menu, /saveThemeChoice/, "The menu should save through the shared theme helper");
   assert.match(landingActions, /LandingThemeToggle/, "Landing should expose a theme toggle");
   assert.match(landingActions, /saveThemeChoice/, "Landing toggle should save through the shared theme helper");
+  assert.match(landingActions, /const Icon = isDark \? Moon : Sun/, "Landing theme control should render one current-state icon");
+  assert.match(landingActions, /aria-label=\{label\}/, "Landing theme control should expose one toggle label");
+  assert.match(landingActions, /onClick=\{\(\) => chooseTheme\(nextTheme\)\}/, "Landing theme control should toggle with one button");
+  assert.doesNotMatch(landingActions, /grid-cols-2/, "Landing theme control should not render as a two-option switch");
+  assert.doesNotMatch(landingActions, /aria-label="Use light mode"/, "Landing theme control should not render a separate light button");
+  assert.doesNotMatch(landingActions, /aria-label="Use dark mode"/, "Landing theme control should not render a separate dark button");
   assert.match(landingPage, /LandingThemeToggle/, "Landing page should place the theme toggle in the header");
 });
 

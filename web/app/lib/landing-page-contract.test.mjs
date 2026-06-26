@@ -152,6 +152,21 @@ test("outer flywheel arrows hug the wheel and follow stage order", async () => {
   assert.doesNotMatch(source, /d="M 52 374 L 52 330 L 87 356 Z"/);
 });
 
+test("outer flywheel labels sit inside the gray orbit ring", async () => {
+  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /id="domain-gsc-label" d="M 184 96 A 238 238 0 0 1 416 96"/);
+  assert.match(source, /id="opportunities-label" d="M 520 194 A 248 248 0 0 1 520 406"/);
+  assert.match(source, /id="published-assets-label" d="M 176 518 A 248 248 0 0 0 424 518"/);
+  assert.match(source, /id="measured-outcomes-label" d="M 100 430 A 232 232 0 0 1 100 170"/);
+  assert.match(source, /className="landing-ring-label text-\[22px\] font-black"/);
+  assert.doesNotMatch(source, /id="domain-gsc-label" d="M 172 79 A 255 255 0 0 1 428 79"/);
+  assert.doesNotMatch(source, /id="opportunities-label" d="M 531 192 A 255 255 0 0 1 531 408"/);
+  assert.doesNotMatch(source, /id="published-assets-label" d="M 173 521 A 255 255 0 0 0 428 521"/);
+  assert.doesNotMatch(source, /id="measured-outcomes-label" d="M 91 446 A 255 255 0 0 1 91 154"/);
+  assert.doesNotMatch(source, /landing-ring-label text-\[24px\]/);
+});
+
 test("ship and learn labels sit near the middle of their colored bands", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
@@ -164,7 +179,7 @@ test("ship and learn labels sit near the middle of their colored bands", async (
 test("bottom flywheel output label reads upright from left to right", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /id="published-assets-label" d="M 173 521 A 255 255 0 0 0 428 521"/);
+  assert.match(source, /id="published-assets-label" d="M 176 518 A 248 248 0 0 0 424 518"/);
   assert.doesNotMatch(source, /id="published-assets-label" d="M 430 548 A 265 265 0 0 1 170 548"/);
 });
 

@@ -57,39 +57,24 @@ export function LandingThemeToggle({ className = "" }: { className?: string }) {
     saveThemeChoice(nextTheme);
   }
 
+  const isDark = theme === "dark";
+  const nextTheme: ThemeChoice = isDark ? "light" : "dark";
+  const Icon = isDark ? Moon : Sun;
+  const label = isDark ? "Switch to light theme" : "Switch to dark theme";
+
   return (
-    <div
-      aria-label="Theme"
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={() => chooseTheme(nextTheme)}
       className={cx(
-        "inline-grid h-10 grid-cols-2 items-center rounded-full border border-stone-200 bg-white/80 p-1 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/80",
+        "inline-flex h-10 w-16 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-[#d93820] shadow-sm backdrop-blur transition-colors hover:border-stone-300 hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] active:scale-[0.98] dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:focus-visible:ring-slate-600",
         className,
       )}
     >
-      <button
-        type="button"
-        aria-label="Use light mode"
-        aria-pressed={theme === "light"}
-        onClick={() => chooseTheme("light")}
-        className={cx(
-          "grid h-8 w-8 place-items-center rounded-full text-stone-500 transition-colors hover:bg-stone-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-slate-600",
-          theme === "light" && "bg-slate-950 text-white hover:bg-slate-950 hover:text-white dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-slate-100 dark:hover:text-slate-950",
-        )}
-      >
-        <Sun size={17} strokeWidth={1.8} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        aria-label="Use dark mode"
-        aria-pressed={theme === "dark"}
-        onClick={() => chooseTheme("dark")}
-        className={cx(
-          "grid h-8 w-8 place-items-center rounded-full text-stone-500 transition-colors hover:bg-stone-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-slate-600",
-          theme === "dark" && "bg-slate-950 text-white hover:bg-slate-950 hover:text-white dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-slate-100 dark:hover:text-slate-950",
-        )}
-      >
-        <Moon size={16} strokeWidth={1.8} aria-hidden="true" />
-      </button>
-    </div>
+      <Icon size={17} strokeWidth={1.9} aria-hidden="true" />
+    </button>
   );
 }
 

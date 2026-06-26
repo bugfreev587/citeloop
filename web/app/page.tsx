@@ -250,10 +250,10 @@ export default async function Home() {
                 Domain and Search Console signals become opportunities, published assets, and measured outcomes.
               </desc>
               <defs>
-                <path id="domain-gsc-label" d="M 172 79 A 255 255 0 0 1 428 79" />
-                <path id="opportunities-label" d="M 531 192 A 255 255 0 0 1 531 408" />
-                <path id="published-assets-label" d="M 173 521 A 255 255 0 0 0 428 521" />
-                <path id="measured-outcomes-label" d="M 91 446 A 255 255 0 0 1 91 154" />
+                <path id="domain-gsc-label" d="M 184 96 A 238 238 0 0 1 416 96" />
+                <path id="opportunities-label" d="M 520 194 A 248 248 0 0 1 520 406" />
+                <path id="published-assets-label" d="M 176 518 A 248 248 0 0 0 424 518" />
+                <path id="measured-outcomes-label" d="M 100 430 A 232 232 0 0 1 100 170" />
                 <path id="discover-segment-label" d="M 187 187 A 160 160 0 0 1 413 187" />
                 <path id="ship-segment-label" d="M 365 483 A 195 195 0 0 0 490 256" />
                 <path id="learn-segment-label" d="M 108 266 A 195 195 0 0 0 233 483" />
@@ -268,22 +268,22 @@ export default async function Home() {
                 <path className="landing-outer-arrow landing-outer-arrow-learn-discover" d="M 72 152 L 108 133 L 105 174 Z" />
               </g>
 
-              <text className="landing-ring-label text-[24px] font-black">
+              <text className="landing-ring-label text-[22px] font-black">
                 <textPath href="#domain-gsc-label" startOffset="50%" textAnchor="middle">
                   Domain + GSC
                 </textPath>
               </text>
-              <text className="landing-ring-label text-[24px] font-black">
+              <text className="landing-ring-label text-[22px] font-black">
                 <textPath href="#opportunities-label" startOffset="50%" textAnchor="middle">
                   Opportunities
                 </textPath>
               </text>
-              <text className="landing-ring-label text-[24px] font-black">
+              <text className="landing-ring-label text-[22px] font-black">
                 <textPath href="#published-assets-label" startOffset="50%" textAnchor="middle">
                   Published assets
                 </textPath>
               </text>
-              <text className="landing-ring-label text-[24px] font-black">
+              <text className="landing-ring-label text-[22px] font-black">
                 <textPath href="#measured-outcomes-label" startOffset="50%" textAnchor="middle">
                   Measured outcomes
                 </textPath>
