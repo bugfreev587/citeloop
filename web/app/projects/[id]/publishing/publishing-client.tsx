@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   Check,
@@ -181,6 +181,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   };
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const [platformsOpen, setPlatformsOpen] = useState(false);
+  const platformsMenuRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -218,6 +219,20 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     refresh();
     loadConnections();
   }, [refresh, loadConnections]);
+
+  useEffect(() => {
+    if (!platformsOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (platformsMenuRef.current?.contains(target)) return;
+      setPlatformsOpen(false);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [platformsOpen]);
 
   // Returning from the GitHub App connect flow lands here with ?github=connected.
   useEffect(() => {
@@ -392,7 +407,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 {MODE_META[publishMode].label}
               </span>
             </button>
-            <div className="relative">
+            <div ref={platformsMenuRef} className="relative">
               <button
                 type="button"
                 aria-expanded={platformsOpen}

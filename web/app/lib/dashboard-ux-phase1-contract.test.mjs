@@ -473,6 +473,7 @@ test("publishing platforms stay in the header popover with connection status", (
   assert.ok(headerActions.indexOf("Platforms") < headerActions.indexOf("Reconcile"), "Platforms should precede Reconcile");
   assert.match(headerActions, /setPlatformsOpen\(\(open\) => !open\)/);
   assert.match(headerActions, /loadConnections\(\)/);
+  assert.match(headerActions, /ref=\{platformsMenuRef\}/);
   assert.match(headerActions, /<Plug size=\{14\} className="text-slate-400" \/>[\s\S]*Platforms/);
   assert.match(headerActions, /<Badge tone=\{activePublisherConnections\.length \? "green" : "red"\}>/);
 
@@ -486,6 +487,11 @@ test("publishing platforms stay in the header popover with connection status", (
   assert.match(publishing, /connections\.map\(\(connection\) =>/);
   assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "active" : "inactive"/);
   assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "green" : "red"/);
+  assert.match(publishing, /const platformsMenuRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(publishing, /document\.addEventListener\("pointerdown", onPointerDown\)/);
+  assert.match(publishing, /document\.removeEventListener\("pointerdown", onPointerDown\)/);
+  assert.match(publishing, /platformsMenuRef\.current\?\.contains\(target\)/);
+  assert.match(publishing, /setPlatformsOpen\(false\)/);
   assert.match(publishing, />\s*manage connections\s*</);
   assert.ok(publishing.includes('href={`/projects/${projectId}/settings#publisher`}'));
 
