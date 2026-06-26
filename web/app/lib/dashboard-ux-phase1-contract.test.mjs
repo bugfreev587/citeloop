@@ -56,12 +56,14 @@ test("project shell groups desktop navigation into SuperX-style sections", () =>
 
   assert.match(shell, /const navSections = \[/);
   assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"[\s\S]*label: "Context"/);
-  assert.match(shell, /id: "analyze"[\s\S]*label: "ANALYZE"[\s\S]*label: "Analysis"/);
-  assert.match(shell, /id: "create"[\s\S]*label: "CREATE"[\s\S]*label: "Content Plan"[\s\S]*label: "Review"/);
-  assert.match(shell, /id: "deliver"[\s\S]*label: "DELIVER"[\s\S]*label: "Publish"/);
-  assert.match(shell, /id: "measure"[\s\S]*label: "MEASURE"[\s\S]*label: "Results"/);
-  for (const label of ["ANALYZE", "CREATE", "DELIVER", "MEASURE"]) {
+  assert.match(shell, /id: "intelligence"[\s\S]*label: "Intelligence"[\s\S]*label: "Analysis"/);
+  assert.match(shell, /id: "execution"[\s\S]*label: "Execution"[\s\S]*label: "Content Plan"[\s\S]*label: "Review"[\s\S]*label: "Publish"/);
+  assert.match(shell, /id: "outcomes"[\s\S]*label: "Outcomes"[\s\S]*label: "Results"/);
+  for (const label of ["Intelligence", "Execution", "Outcomes"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
+  }
+  for (const legacyGroup of ["ANALYZE", "CREATE", "DELIVER", "MEASURE"]) {
+    assert.doesNotMatch(shell, new RegExp(`label: "${legacyGroup}"`));
   }
   assert.doesNotMatch(shell, /id: "system"/);
   assert.match(shell, /navSections\s*\n\s*\.map/);

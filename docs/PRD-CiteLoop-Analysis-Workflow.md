@@ -197,17 +197,15 @@ The default experience should feel like a prioritized work queue, not an operati
 Home
 Context
 
-ANALYZE
+Intelligence
 Analysis
 
-CREATE
+Execution
 Content Plan
 Review
-
-DELIVER
 Publish
 
-MEASURE
+Outcomes
 Results
 ```
 
