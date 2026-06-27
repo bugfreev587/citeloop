@@ -45,9 +45,20 @@ test("project account menu owns project list and account actions", () => {
   assert.match(menu, /Settings[\s\S]*size=\{20\}/);
   assert.match(menu, /KeyRound[\s\S]*size=\{19\}/);
   assert.match(menu, /Sun[\s\S]*size=\{18\}/);
-  assert.match(menu, /bottom-full/);
   assert.match(menu, /border-t border-slate-200/);
   assert.doesNotMatch(menu, /Playbook|Get support|Follow us|Join the community|referral/);
+});
+
+test("project account popover escapes the scrollable sidebar clip", () => {
+  const shell = read("components/project-shell.tsx");
+  const menu = read("components/project-account-menu.tsx");
+  const asideClass = shell.match(/<aside className="([^"]+)"/)?.[1] ?? "";
+
+  assert.match(asideClass, /overflow-y-auto/, "Sidebar still needs to scroll in short viewports");
+  assert.match(menu, /createPortal/, "The project popover should render outside the clipped sidebar subtree");
+  assert.match(menu, /menuRef/, "Click-away handling should include the portaled menu");
+  assert.match(menu, /position: "fixed"/, "The portaled popover should be viewport-positioned beside the trigger");
+  assert.doesNotMatch(menu, /bottom-full/, "The project popover should not be absolutely positioned inside the sidebar");
 });
 
 test("project account menu uses compact popover sizing aligned with dashboard navigation", () => {
