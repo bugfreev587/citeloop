@@ -22,6 +22,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
@@ -613,6 +614,72 @@ func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
 		GoogleData:  s.SEOData,
 		Now:         s.now,
 	}
+}
+
+// TickContextRefresh lightly refreshes confirmed project Context from the
+// configured project domain. It is intentionally smaller than onboarding.
+func (s *Scheduler) TickContextRefresh(ctx context.Context) {
+	q := db.New(s.Pool)
+	projects, err := q.ListProjects(ctx)
+	if err != nil {
+		s.logger().Error("list projects for context refresh", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.refreshContextForProject(ctx, q, p); err != nil {
+			s.logger().Error("context refresh tick failed", "project", p.ID, "err", err)
+		}
+	}
+}
+
+func (s *Scheduler) refreshContextForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.SiteURL) == "" {
+		return nil
+	}
+	active, err := q.GetActiveProfile(ctx, p.ID)
+	if err != nil {
+		return nil
+	}
+	now := s.currentTime().UTC()
+	if !contextmeta.HasConfirmation(active.Profile) || contextmeta.HasActiveCrawl(active.Profile) || !contextmeta.WeeklyRefreshDue(active.Profile, now) {
+		return nil
+	}
+	startedProfile := contextmeta.StartedProfile(active.Profile, contextmeta.SourceWeekly, now)
+	if _, err := q.UpdateProfile(ctx, db.UpdateProfileParams{ID: active.ID, Profile: startedProfile, SourceUrls: active.SourceUrls}); err != nil {
+		return err
+	}
+	ag := agents.NewInsight(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	count, summary, err := ag.RunInventoryFromCrawl(ctx, p.ID, cfg.SiteURL, lightweightContextCrawlConfig(cfg.Crawl))
+	if err != nil {
+		_, _ = q.UpdateProfile(ctx, db.UpdateProfileParams{
+			ID:         active.ID,
+			Profile:    contextmeta.ClearStartedProfile(startedProfile),
+			SourceUrls: active.SourceUrls,
+		})
+		return err
+	}
+	s.logger().Info("context refresh complete", "project", p.ID, "inventory_count", count, "fetched", summary.FetchedCount)
+	return nil
+}
+
+func lightweightContextCrawlConfig(crawlCfg config.CrawlConfig) config.CrawlConfig {
+	if crawlCfg.MaxPages <= 0 || crawlCfg.MaxPages > 5 {
+		crawlCfg.MaxPages = 5
+	}
+	if crawlCfg.SitemapURLCap <= 0 || crawlCfg.SitemapURLCap > 20 {
+		crawlCfg.SitemapURLCap = 20
+	}
+	if crawlCfg.RequestTimeoutMs <= 0 || crawlCfg.RequestTimeoutMs > 4000 {
+		crawlCfg.RequestTimeoutMs = 4000
+	}
+	if crawlCfg.RateLimitRPS < 3 {
+		crawlCfg.RateLimitRPS = 3
+	}
+	return crawlCfg
 }
 
 // TickGenerate runs the daily generation pass across all projects (§5.4).

@@ -75,6 +75,7 @@ func (s *Server) Router() http.Handler {
 			r.Put("/config", s.updateConfig)
 
 			r.Post("/insight", s.runInsight)
+			r.Post("/context/refresh", s.refreshContext)
 			r.Get("/profile", s.getProfile)
 			r.Put("/profile", s.updateProfile)
 

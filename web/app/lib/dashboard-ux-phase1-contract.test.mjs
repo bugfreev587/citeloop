@@ -816,6 +816,17 @@ test("context page is a user-reviewable product cognition center, not a raw know
   assert.doesNotMatch(context, /<SectionHeader title="Source pages"/);
 });
 
+test("connected context refreshes the fixed project domain and shows crawl freshness", () => {
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+  const connectedPanel = context.slice(context.indexOf("function ContextHealthPanel"), context.indexOf("function SummaryGroup"));
+
+  assert.match(connectedPanel, /Update context/);
+  assert.match(connectedPanel, /Last updated/);
+  assert.match(context, /api\.refreshContext\(projectId\)/);
+  assert.doesNotMatch(connectedPanel, /placeholder="https:\/\/product-domain\.com"/);
+  assert.doesNotMatch(connectedPanel, /onLandingChange/);
+});
+
 test("analysis page presents decisions and results page presents measurement diagnostics", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const analysisPage = read("projects/[id]/analysis/page.tsx");

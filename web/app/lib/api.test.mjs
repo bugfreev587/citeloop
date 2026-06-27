@@ -166,6 +166,30 @@ test("listRuns calls the project runs endpoint", async () => {
   }
 });
 
+test("refreshContext calls the fixed-domain context refresh endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 202,
+      json: async () => ({ id: "profile-1", project_id: "project-1", profile: {}, source_urls: [] }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    await createApi().refreshContext("project-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/context/refresh");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(calls[0].init.body, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("generateTopic normalizes accepted background generation responses", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

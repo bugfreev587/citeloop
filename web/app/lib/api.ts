@@ -1328,6 +1328,10 @@ export function createApi(auth?: AuthOptions) {
       method: "POST",
       body: JSON.stringify({ landing_url: landingURL }),
     }, auth),
+  refreshContext: async (id: string) => {
+    const raw = await req<any>(`/projects/${id}/context/refresh`, { method: "POST" }, auth);
+    return normalizeProfile(raw);
+  },
   getProfile: async (id: string) => {
     const raw = await req<any>(`/projects/${id}/profile`, undefined, auth);
     return normalizeProfile(raw);

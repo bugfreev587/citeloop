@@ -50,13 +50,18 @@ func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "project not found")
 		return
 	}
+	landingURL, err := configuredContextLanding(cfg.SiteURL, in.LandingURL)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "landing_url must match configured domain")
+		return
+	}
 	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
-	profile, summary, err := ag.RunQuickProfile(r.Context(), id, in.LandingURL, cfg.Crawl)
+	profile, summary, err := ag.RunQuickProfile(r.Context(), id, landingURL, cfg.Crawl)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	s.startInsightInventoryCrawl(id, in.LandingURL, cfg.Crawl)
+	s.startInsightInventoryCrawl(id, landingURL, cfg.Crawl)
 	writeJSON(w, 200, map[string]any{
 		"profile":          profile,
 		"inventory_count":  0,

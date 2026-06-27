@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/crawl"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -70,7 +71,7 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 	}
 
 	// 2) Persist profile as a new active version.
-	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
+	saved, err := a.saveCrawledProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
 	if err != nil {
 		return nil, 0, summary, err
 	}
@@ -167,7 +168,7 @@ func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID
 	if err != nil {
 		return count, summary, fmt.Errorf("profile upgrade: %w", err)
 	}
-	saved, err := a.saveProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
+	saved, err := a.saveCrawledProfile(ctx, projectID, profile, profileSourceURLs(landingURL, res, true))
 	if err != nil {
 		return count, summary, fmt.Errorf("profile save: %w", err)
 	}
@@ -229,6 +230,29 @@ func (a *Insight) saveProfile(ctx context.Context, projectID uuid.UUID, profile 
 		ProjectID:  projectID,
 		SourceUrls: toJSON(sourceURLs),
 		Profile:    toJSON(profile),
+		Version:    int32(ver),
+	})
+}
+
+func (a *Insight) saveCrawledProfile(ctx context.Context, projectID uuid.UUID, profile *Profile, sourceURLs []string) (db.ProductProfile, error) {
+	var previousProfile []byte
+	existing, err := a.Q.GetActiveProfile(ctx, projectID)
+	if err == nil {
+		previousProfile = existing.Profile
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return db.ProductProfile{}, err
+	}
+	if err := a.Q.DeactivateProfiles(ctx, projectID); err != nil {
+		return db.ProductProfile{}, err
+	}
+	ver, err := a.Q.NextProfileVersion(ctx, projectID)
+	if err != nil {
+		return db.ProductProfile{}, err
+	}
+	return a.Q.InsertProfile(ctx, db.InsertProfileParams{
+		ProjectID:  projectID,
+		SourceUrls: toJSON(sourceURLs),
+		Profile:    contextmeta.CompletedProfile(profile, previousProfile, time.Now()),
 		Version:    int32(ver),
 	})
 }

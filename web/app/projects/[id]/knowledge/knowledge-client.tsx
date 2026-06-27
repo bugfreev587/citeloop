@@ -85,6 +85,17 @@ function latestCrawlSummary(runs: GenerationRun[]): CrawlSummary | null {
   return null;
 }
 
+function textOrNull(value: any) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function cooldownUntil(value: string | null) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed + 24 * 60 * 60 * 1000).toISOString();
+}
+
 function SummaryField({ label, value, className }: { label: string; value: string; className?: string }) {
   const displayValue = value.trim();
 
@@ -165,31 +176,36 @@ function SetupPanel({
 function ContextHealthPanel({
   status,
   updatedAt,
+  lastCrawledAt,
   sourcePageCount,
   evidenceCount,
   crawlWarnings,
   profileDraft,
-  landing,
   busy,
   contextConfirmed,
-  onLandingChange,
-  onRefreshContext,
+  crawlRunning,
+  manualCooldownActive,
+  manualCooldownUntil,
+  onUpdateContext,
   onConfirmContext,
 }: {
   status: ContextStatus;
   updatedAt: string | null;
+  lastCrawledAt: string | null;
   sourcePageCount: number;
   evidenceCount: number;
   crawlWarnings: number;
   profileDraft: ProfileDraft;
-  landing: string;
   busy: string | null;
   contextConfirmed: boolean;
-  onLandingChange: (value: string) => void;
-  onRefreshContext: (event: FormEvent) => void;
+  crawlRunning: boolean;
+  manualCooldownActive: boolean;
+  manualCooldownUntil: string | null;
+  onUpdateContext: () => void;
   onConfirmContext: () => void;
 }) {
   const boundaryStatus = [profileDraft.tone, profileDraft.banned_claims, profileDraft.content_rules].some((value) => value.trim()) ? "Rules captured" : "Not set";
+  const updateDisabled = Boolean(busy) || crawlRunning || manualCooldownActive;
 
   return (
     <div className="grid gap-5 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_18px_45px_-36px_rgba(15,23,42,0.45)]">
@@ -212,14 +228,22 @@ function ContextHealthPanel({
               </ButtonProgress>
             </Button>
           )}
-          <form onSubmit={onRefreshContext} className="grid gap-2">
-            <TextInput value={landing} onChange={(event) => onLandingChange(event.target.value)} placeholder="https://product-domain.com" />
-            <Button disabled={busy === "context" || !landing.trim()} variant={contextConfirmed ? "primary" : "outline"} type="submit">
-              <ButtonProgress busy={busy === "context"} busyLabel="Refreshing context" idleIcon={<Wand2 size={16} />}>
-                Refresh context
-              </ButtonProgress>
-            </Button>
-          </form>
+          <div className="grid gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button disabled={updateDisabled} variant={contextConfirmed ? "primary" : "outline"} onClick={onUpdateContext}>
+                <ButtonProgress busy={busy === "context"} busyLabel="Updating context" idleIcon={<Wand2 size={16} />}>
+                  Update context
+                </ButtonProgress>
+              </Button>
+              <span className="text-xs font-semibold text-slate-500">Last updated {formatDate(lastCrawledAt ?? updatedAt)}</span>
+            </div>
+            {crawlRunning && <div className="text-xs leading-5 text-slate-500">Context update is already running.</div>}
+            {!crawlRunning && manualCooldownActive && (
+              <div className="text-xs leading-5 text-slate-500">
+                Manual update available after {formatDate(manualCooldownUntil)}.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -474,6 +498,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
   const [activeDrawer, setActiveDrawer] = useState<DrawerMode | null>(null);
   const [backgroundCrawl, setBackgroundCrawl] = useState(false);
   const bgBaselineRef = useRef(0);
+  const bgLastCrawledRef = useRef<string | null>(null);
   const bgAttemptsRef = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -506,19 +531,26 @@ export function ContextClient({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [activeDrawer]);
 
-  // The full public crawl + evidence inventory runs in a detached background job after a
-  // landing-only "quick profile". Poll until new source pages land, then refresh and notify,
-  // so the user never has to guess whether the background work finished.
+  // The full public crawl + evidence inventory runs in a detached background job.
+  // Poll until source pages or crawl freshness change, then refresh and notify.
   useEffect(() => {
     if (!backgroundCrawl) return;
     let cancelled = false;
     const interval = window.setInterval(async () => {
       bgAttemptsRef.current += 1;
       try {
-        const items = await api.listInventory(projectId);
+        const [items, nextProfile] = await Promise.all([
+          api.listInventory(projectId),
+          api.getProfile(projectId).catch(() => null),
+        ]);
         if (cancelled) return;
-        if (items.length > bgBaselineRef.current) {
+        const nextLastCrawledAt = textOrNull(nextProfile?.profile?.context_last_crawled_at);
+        if (items.length > bgBaselineRef.current || (nextLastCrawledAt && nextLastCrawledAt !== bgLastCrawledRef.current)) {
           setInventory(items);
+          if (nextProfile) {
+            setProfile(nextProfile);
+            setProfileDraft(profileDraftFrom(nextProfile));
+          }
           await refresh();
           if (cancelled) return;
           setBackgroundCrawl(false);
@@ -567,6 +599,12 @@ export function ContextClient({ projectId }: { projectId: string }) {
   }, [inventory, query]);
 
   const contextConfirmed = Boolean(profile?.profile?.context_confirmed_at || profile?.profile?.confirmed_at);
+  const contextLastCrawledAt = textOrNull(profile?.profile?.context_last_crawled_at);
+  const contextLastManualCrawledAt = textOrNull(profile?.profile?.context_last_manual_crawled_at);
+  const contextCrawlStartedAt = textOrNull(profile?.profile?.context_crawl_started_at);
+  const manualCooldownUntil = cooldownUntil(contextLastManualCrawledAt);
+  const manualCooldownActive = Boolean(manualCooldownUntil && Date.now() < Date.parse(manualCooldownUntil));
+  const crawlRunning = Boolean(contextCrawlStartedAt);
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
   const contextStatus = !profile
     ? { label: "Needs setup", tone: "amber" as const, detail: "Connect a domain so CiteLoop can read public pages and build usable context." }
@@ -584,6 +622,7 @@ export function ContextClient({ projectId }: { projectId: string }) {
     try {
       const result = await api.runInsight(projectId, landing.trim());
       bgBaselineRef.current = inventory.length;
+      bgLastCrawledRef.current = contextLastCrawledAt;
       bgAttemptsRef.current = 0;
       setBackgroundCrawl(Boolean(result.background_crawl));
       await refresh();
@@ -597,6 +636,30 @@ export function ContextClient({ projectId }: { projectId: string }) {
       });
     } catch (e: any) {
       setMessage({ title: "Context refresh failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateContext() {
+    setBusy("context");
+    setMessage(null);
+    try {
+      const updated = await api.refreshContext(projectId);
+      setProfile(updated);
+      setProfileDraft(profileDraftFrom(updated));
+      bgBaselineRef.current = inventory.length;
+      bgLastCrawledRef.current = contextLastCrawledAt;
+      bgAttemptsRef.current = 0;
+      setBackgroundCrawl(true);
+      await refresh();
+      setMessage({
+        title: "Context update started",
+        detail: "CiteLoop is refreshing source-backed context from your connected domain. This page updates automatically when the crawl finishes.",
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Context update failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -760,15 +823,17 @@ export function ContextClient({ projectId }: { projectId: string }) {
         <ContextHealthPanel
           status={contextStatus}
           updatedAt={profile.updated_at}
+          lastCrawledAt={contextLastCrawledAt}
           sourcePageCount={sourcePageCount}
           evidenceCount={evidenceRows.length}
           crawlWarnings={crawlSummary?.errors?.length ?? 0}
           profileDraft={profileDraft}
-          landing={landing}
           busy={busy}
           contextConfirmed={contextConfirmed}
-          onLandingChange={setLanding}
-          onRefreshContext={refreshContext}
+          crawlRunning={crawlRunning}
+          manualCooldownActive={manualCooldownActive}
+          manualCooldownUntil={manualCooldownUntil}
+          onUpdateContext={updateContext}
           onConfirmContext={confirmContext}
         />
       </section>
