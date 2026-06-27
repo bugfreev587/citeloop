@@ -193,13 +193,15 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   assert.doesNotMatch(seo, /Showing \{loopRows\.length\} of \{loopTotal\}/);
 
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
-  // Evidence and source lists stay compact on the page and move full lists into drawers.
+  // Evidence stays compact on the page; source pages move behind a secondary coverage drawer.
   assert.match(context, /Show all \$\{evidenceRows\.length\}/);
-  assert.match(context, /Show all \$\{filtered\.length\}/);
   assert.match(context, /evidencePreviewRows/);
-  assert.match(context, /sourcePreviewRows/);
+  assert.match(context, /SourceCoveragePanel/);
+  assert.match(context, /View source pages/);
+  assert.match(context, /setActiveDrawer\("sources"\)/);
   assert.match(context, /activeDrawer/);
   assert.match(context, /DrawerPanel/);
+  assert.doesNotMatch(context, /sourcePreviewRows/);
   assert.doesNotMatch(context, /showAllEvidence/);
   assert.doesNotMatch(context, /Show fewer/);
 });
@@ -773,6 +775,12 @@ test("context page is a user-reviewable product cognition center, not a raw know
     "Voice & rules",
     "Source pages",
     "Advanced JSON",
+    "Set up Context",
+    "What CiteLoop checks",
+    "Product understanding",
+    "Writing boundaries",
+    "View source pages",
+    "Source coverage",
     "Positioning",
     "ICP",
     "Competitors",
@@ -784,6 +792,9 @@ test("context page is a user-reviewable product cognition center, not a raw know
   for (const legacyCopy of ["Knowledge", "Insight output", "Run Insight", "Profile JSON"]) {
     assert.doesNotMatch(context, new RegExp(legacyCopy));
   }
+
+  assert.doesNotMatch(context, /No voice rules yet/);
+  assert.doesNotMatch(context, /<SectionHeader title="Source pages"/);
 });
 
 test("analysis page presents decisions and results page presents measurement diagnostics", () => {

@@ -11,6 +11,7 @@ import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type DrawerMode = "evidence" | "sources";
 type ProfileEditorMode = "profile" | "voice";
+type ContextStatus = { label: string; tone: "amber" | "green"; detail: string };
 
 const PREVIEW_ROW_LIMIT = 8;
 
@@ -94,6 +95,215 @@ function SummaryField({ label, value, className }: { label: string; value: strin
         {displayValue || "Not set"}
       </p>
     </div>
+  );
+}
+
+function ContextMetric({ label, value, detail }: { label: string; value: ReactNode; detail?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="text-xs font-bold uppercase text-slate-400">{label}</div>
+      <div className="mt-1 text-lg font-bold text-slate-900">{value}</div>
+      {detail && <div className="mt-1 text-xs leading-4 text-slate-500">{detail}</div>}
+    </div>
+  );
+}
+
+function SetupPanel({
+  landing,
+  busy,
+  onLandingChange,
+  onRefreshContext,
+}: {
+  landing: string;
+  busy: string | null;
+  onLandingChange: (value: string) => void;
+  onRefreshContext: (event: FormEvent) => void;
+}) {
+  const checks = [
+    ["Product positioning", "What your product does and why it matters."],
+    ["Audience / ICP", "Who CiteLoop should write for."],
+    ["Evidence-backed claims", "Reusable claims with supporting snippets."],
+    ["Voice and rules", "Tone, banned claims, and writing boundaries."],
+    ["Source pages", "The public pages CiteLoop read for context."],
+  ];
+
+  return (
+    <div className="grid gap-5 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.45)] lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+      <div>
+        <Badge tone="amber">Needs setup</Badge>
+        <h3 className="mt-3 text-2xl font-bold tracking-tight text-slate-950">Set up Context</h3>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+          Connect your domain so CiteLoop can read public pages, extract product facts, and build evidence-backed context before planning or reviewing drafts.
+        </p>
+        <form onSubmit={onRefreshContext} className="mt-5 grid gap-2 sm:grid-cols-[minmax(220px,1fr)_auto]">
+          <TextInput value={landing} onChange={(event) => onLandingChange(event.target.value)} placeholder="https://product-domain.com" />
+          <Button disabled={busy === "context" || !landing.trim()} variant="primary" type="submit">
+            <ButtonProgress busy={busy === "context"} busyLabel="Refreshing context" idleIcon={<Wand2 size={16} />}>
+              Refresh context
+            </ButtonProgress>
+          </Button>
+        </form>
+      </div>
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="text-sm font-bold text-slate-900">What CiteLoop checks</div>
+        <div className="mt-3 grid gap-3">
+          {checks.map(([title, detail]) => (
+            <div key={title} className="flex gap-3">
+              <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#d93820]" />
+              <div>
+                <div className="text-sm font-semibold text-slate-800">{title}</div>
+                <div className="text-xs leading-5 text-slate-500">{detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextHealthPanel({
+  status,
+  updatedAt,
+  sourcePageCount,
+  evidenceCount,
+  crawlWarnings,
+  profileDraft,
+  landing,
+  busy,
+  contextConfirmed,
+  onLandingChange,
+  onRefreshContext,
+  onConfirmContext,
+}: {
+  status: ContextStatus;
+  updatedAt: string | null;
+  sourcePageCount: number;
+  evidenceCount: number;
+  crawlWarnings: number;
+  profileDraft: ProfileDraft;
+  landing: string;
+  busy: string | null;
+  contextConfirmed: boolean;
+  onLandingChange: (value: string) => void;
+  onRefreshContext: (event: FormEvent) => void;
+  onConfirmContext: () => void;
+}) {
+  const boundaryStatus = [profileDraft.tone, profileDraft.banned_claims, profileDraft.content_rules].some((value) => value.trim()) ? "Rules captured" : "Not set";
+
+  return (
+    <div className="grid gap-5 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_18px_45px_-36px_rgba(15,23,42,0.45)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.55fr)] lg:items-start">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={status.tone}>{status.label}</Badge>
+            {updatedAt && <span className="text-sm font-semibold text-slate-500">Updated {formatDate(updatedAt)}</span>}
+          </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            This is how CiteLoop understands your domain and writes from source-backed evidence.
+          </p>
+          <Notice title={status.label} detail={status.detail} tone={status.tone === "green" ? "green" : "amber"} />
+        </div>
+        <div className="grid gap-2">
+          {!contextConfirmed && (
+            <Button disabled={!!busy} variant="primary" onClick={onConfirmContext}>
+              <ButtonProgress busy={busy === "confirm-profile"} busyLabel="Confirming context" idleIcon={<Check size={16} />}>
+                Confirm context
+              </ButtonProgress>
+            </Button>
+          )}
+          <form onSubmit={onRefreshContext} className="grid gap-2">
+            <TextInput value={landing} onChange={(event) => onLandingChange(event.target.value)} placeholder="https://product-domain.com" />
+            <Button disabled={busy === "context" || !landing.trim()} variant={contextConfirmed ? "primary" : "outline"} type="submit">
+              <ButtonProgress busy={busy === "context"} busyLabel="Refreshing context" idleIcon={<Wand2 size={16} />}>
+                Refresh context
+              </ButtonProgress>
+            </Button>
+          </form>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-sm font-bold text-slate-900">What CiteLoop knows</div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <ContextMetric label="Positioning" value={profileDraft.positioning ? "Captured" : "Not set"} detail={profileDraft.positioning || "Review the extracted one-liner."} />
+          <ContextMetric label="Audience / ICP" value={profileDraft.icp ? "Captured" : "Not set"} detail={profileDraft.icp || "Add audience context before scaling drafts."} />
+          <ContextMetric label="Evidence" value={evidenceCount} detail={`${sourcePageCount} source page${sourcePageCount === 1 ? "" : "s"} available.`} />
+          <ContextMetric label="Writing boundaries" value={boundaryStatus} detail="Tone, banned claims, and content rules." />
+          {crawlWarnings > 0 && <ContextMetric label="Crawl warnings" value={crawlWarnings} detail="Open source coverage to inspect crawl gaps." />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryGroup({
+  title,
+  detail,
+  action,
+  children,
+}: {
+  title: string;
+  detail: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex min-h-8 items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold leading-7 text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm leading-5 text-slate-500">{detail}</p>
+        </div>
+        {action}
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-4">{children}</div>
+    </section>
+  );
+}
+
+function SourceCoveragePanel({
+  sourcePageCount,
+  inventoryCount,
+  evidenceCount,
+  crawlWarnings,
+  query,
+  filteredCount,
+  onQueryChange,
+  onOpenSources,
+}: {
+  sourcePageCount: number;
+  inventoryCount: number;
+  evidenceCount: number;
+  crawlWarnings: number;
+  query: string;
+  filteredCount: number;
+  onQueryChange: (value: string) => void;
+  onOpenSources: () => void;
+}) {
+  return (
+    <section>
+      <SectionHeader title="Source coverage" action={<Badge tone={inventoryCount ? "neutral" : "amber"}>{sourcePageCount}</Badge>} />
+      <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.45fr)] lg:items-end">
+        <div>
+          <p className="text-sm leading-6 text-slate-600">
+            CiteLoop keeps raw source pages behind this diagnostic view so the main Context page stays focused on product facts, writing rules, and evidence-backed claims.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <ContextMetric label="Source pages" value={sourcePageCount} />
+            <ContextMetric label="Evidence snippets" value={evidenceCount} />
+            <ContextMetric label="Crawl warnings" value={crawlWarnings} detail={crawlWarnings > 0 ? "Review skipped or blocked pages." : "No crawl warnings captured."} />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          {inventoryCount > 0 && <TextInput value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search title, URL, keyword" />}
+          <Button disabled={inventoryCount === 0} variant="outline" onClick={onOpenSources}>
+            View source pages
+          </Button>
+          {query.trim() && <div className="text-xs text-slate-500">{filteredCount} matching source page{filteredCount === 1 ? "" : "s"}</div>}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -356,8 +566,6 @@ export function ContextClient({ projectId }: { projectId: string }) {
     );
   }, [inventory, query]);
 
-  const sourcePreviewRows = useMemo(() => filtered.slice(0, PREVIEW_ROW_LIMIT), [filtered]);
-
   const contextConfirmed = Boolean(profile?.profile?.context_confirmed_at || profile?.profile?.confirmed_at);
   const sourcePageCount = Math.max(inventory.length, profile?.source_urls?.length ?? 0);
   const contextStatus = !profile
@@ -509,6 +717,33 @@ export function ContextClient({ projectId }: { projectId: string }) {
     );
   }
 
+  if (!profile) {
+    return (
+      <div className="space-y-7">
+        <section>
+          <SectionHeader
+            title="Context"
+            eyebrow="Domain cognition"
+            action={
+              <Button disabled={!!busy} size="sm" onClick={refresh}>
+                <RefreshCw size={14} />
+                Refresh
+              </Button>
+            }
+          />
+          <SetupPanel landing={landing} busy={busy} onLandingChange={setLanding} onRefreshContext={refreshContext} />
+        </section>
+
+        {backgroundCrawl && (
+          <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-900">
+            <Loader2 className="animate-spin" size={16} />
+            Reading the rest of your site — source pages and evidence will appear here automatically.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-7">
       <section>
@@ -522,47 +757,20 @@ export function ContextClient({ projectId }: { projectId: string }) {
             </Button>
           }
         />
-        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={contextStatus.tone}>{contextStatus.label}</Badge>
-                {profile && <span className="text-sm font-semibold text-slate-500">Updated {formatDate(profile.updated_at)}</span>}
-              </div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                This is how CiteLoop understands your domain and writes from source-backed evidence.
-              </p>
-            </div>
-            <form onSubmit={refreshContext} className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_auto]">
-              <TextInput value={landing} onChange={(event) => setLanding(event.target.value)} placeholder="https://product-domain.com" />
-              <Button disabled={busy === "context" || !landing.trim()} variant="primary" type="submit">
-                <ButtonProgress busy={busy === "context"} busyLabel="Refreshing context" idleIcon={<Wand2 size={16} />}>
-                  Refresh context
-                </ButtonProgress>
-              </Button>
-            </form>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-4">
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <div className="text-xs font-bold uppercase text-slate-400">Source pages</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{sourcePageCount}</div>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <div className="text-xs font-bold uppercase text-slate-400">Evidence</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{evidenceRows.length}</div>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <div className="text-xs font-bold uppercase text-slate-400">Crawl warnings</div>
-              <div className="mt-1 text-lg font-bold text-slate-900">{crawlSummary?.errors?.length ?? 0}</div>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <div className="text-xs font-bold uppercase text-slate-400">Last refreshed</div>
-              <div className="mt-1 truncate text-sm font-bold text-slate-900">{formatDate(profile?.updated_at ?? null)}</div>
-            </div>
-          </div>
-          <Notice title={contextStatus.label} detail={contextStatus.detail} tone={contextStatus.tone === "green" ? "green" : "amber"} />
-        </div>
+        <ContextHealthPanel
+          status={contextStatus}
+          updatedAt={profile.updated_at}
+          sourcePageCount={sourcePageCount}
+          evidenceCount={evidenceRows.length}
+          crawlWarnings={crawlSummary?.errors?.length ?? 0}
+          profileDraft={profileDraft}
+          landing={landing}
+          busy={busy}
+          contextConfirmed={contextConfirmed}
+          onLandingChange={setLanding}
+          onRefreshContext={refreshContext}
+          onConfirmContext={confirmContext}
+        />
       </section>
 
       {backgroundCrawl && (
@@ -629,12 +837,21 @@ export function ContextClient({ projectId }: { projectId: string }) {
         )}
       </section>
 
-      <section id="domain-profile">
-        <SectionHeader title="Domain profile" />
-        {!profile ? (
-          <EmptyState title="Start by connecting your domain" detail="CiteLoop will read public pages, extract product facts, and build the context used for planning and review." />
-        ) : !profileEditorOpen ? (
-          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(340px,0.88fr)]">
+        <SummaryGroup
+          title="Product understanding"
+          detail="Domain profile summary: positioning, audience, benefits, competitors, and terms CiteLoop should use when planning."
+          action={
+            !profileEditorOpen && (
+              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openProfileEditor}>
+                <Pencil size={16} />
+                Edit Domain profile
+              </Button>
+            )
+          }
+        >
+          <div id="domain-profile" />
+          {!profileEditorOpen ? (
             <div className="grid gap-3 md:grid-cols-2">
               <SummaryField className="md:col-span-2" label="Positioning" value={profileDraft.positioning} />
               <SummaryField label="ICP" value={profileDraft.icp} />
@@ -644,13 +861,8 @@ export function ContextClient({ projectId }: { projectId: string }) {
               <SummaryField label="Competitors" value={profileDraft.competitors} />
               <SummaryField label="Key terms" value={profileDraft.key_terms} />
             </div>
-            <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openProfileEditor}>
-              <Pencil size={16} />
-              Edit Domain profile
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          ) : (
+          <div className="grid gap-4">
             <Field label="Positioning">
               <TextArea rows={3} value={profileDraft.positioning} onChange={(event) => setProfileDraft({ ...profileDraft, positioning: event.target.value })} />
             </Field>
@@ -686,27 +898,29 @@ export function ContextClient({ projectId }: { projectId: string }) {
               </Button>
             </div>
           </div>
-        )}
-      </section>
+          )}
+        </SummaryGroup>
 
-      <section>
-        <SectionHeader title="Voice & rules" />
-        {!profile ? (
-          <EmptyState title="No voice rules yet" detail="Refresh context first, then set tone and banned claims before generating content." />
-        ) : !voiceEditorOpen ? (
-          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+        <SummaryGroup
+          title="Writing boundaries"
+          detail="Voice & rules: tone, banned claims, and content guardrails that keep generated drafts inside the approved context."
+          action={
+            !voiceEditorOpen && (
+              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openVoiceEditor}>
+                <Pencil size={16} />
+                Edit Voice & rules
+              </Button>
+            )
+          }
+        >
+          {!voiceEditorOpen ? (
             <div className="grid gap-3 md:grid-cols-2">
               <SummaryField className="md:col-span-2" label="Tone" value={profileDraft.tone} />
               <SummaryField label="Banned claims" value={profileDraft.banned_claims} />
               <SummaryField label="Content rules" value={profileDraft.content_rules} />
             </div>
-            <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openVoiceEditor}>
-              <Pencil size={16} />
-              Edit Voice & rules
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          ) : (
+          <div className="grid gap-4">
             <Field label="Tone">
               <TextArea rows={3} value={profileDraft.tone} onChange={(event) => setProfileDraft({ ...profileDraft, tone: event.target.value })} />
             </Field>
@@ -730,65 +944,38 @@ export function ContextClient({ projectId }: { projectId: string }) {
               </Button>
             </div>
           </div>
-        )}
-      </section>
+          )}
+        </SummaryGroup>
+      </div>
+
+      <SourceCoveragePanel
+        sourcePageCount={sourcePageCount}
+        inventoryCount={inventory.length}
+        evidenceCount={evidenceRows.length}
+        crawlWarnings={crawlSummary?.errors?.length ?? 0}
+        query={query}
+        filteredCount={filtered.length}
+        onQueryChange={setQuery}
+        onOpenSources={() => setActiveDrawer("sources")}
+      />
 
       <section>
-        <SectionHeader title="Source pages" action={<Badge tone="neutral">{inventory.length}</Badge>} />
-        <div className="mb-3">
-          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, URL, keyword" />
-        </div>
-        {filtered.length === 0 ? (
-          <EmptyState title="No source pages yet" detail="Source pages appear after CiteLoop refreshes context from your domain." />
-        ) : (
-          <div className="grid gap-3">
-            <div className="grid gap-3 md:grid-cols-2">
-              {sourcePreviewRows.map((item) => (
-                <SourcePageCard
-                  key={item.id}
-                  item={item}
-                  busy={busy}
-                  editing={editingItemId === item.id}
-                  draft={itemDraft}
-                  onEdit={startInventoryEdit}
-                  onDraftChange={setItemDraft}
-                  onCancel={cancelInventoryEdit}
-                  onSave={saveInventory}
-                />
-              ))}
-            </div>
-            {filtered.length > PREVIEW_ROW_LIMIT && (
-              <button
-                type="button"
-                onClick={() => setActiveDrawer("sources")}
-                className="justify-self-start text-sm font-semibold text-[#d93820] hover:underline"
-              >
-                {`Show all ${filtered.length}`}
-              </button>
-            )}
+        <details className="rounded-xl border border-slate-200 bg-white p-4">
+          <summary className="cursor-pointer text-sm font-bold text-slate-900">Advanced JSON</summary>
+          <div className="mt-4 grid gap-3">
+            <TextArea
+              value={profileDraft.advancedJSON}
+              onChange={(event) => setProfileDraft({ ...profileDraft, advancedJSON: event.target.value })}
+              className="min-h-[240px] font-mono text-xs"
+            />
+            <Button disabled={!!busy} variant="outline" className="w-fit" onClick={saveAdvancedProfile}>
+              <ButtonProgress busy={busy === "advanced-profile"} busyLabel="Saving advanced context" idleIcon={<Save size={16} />}>
+                Save advanced context
+              </ButtonProgress>
+            </Button>
           </div>
-        )}
+        </details>
       </section>
-
-      {profile && (
-        <section>
-          <details className="rounded-xl border border-slate-200 bg-white p-4">
-            <summary className="cursor-pointer text-sm font-bold text-slate-900">Advanced JSON</summary>
-            <div className="mt-4 grid gap-3">
-              <TextArea
-                value={profileDraft.advancedJSON}
-                onChange={(event) => setProfileDraft({ ...profileDraft, advancedJSON: event.target.value })}
-                className="min-h-[240px] font-mono text-xs"
-              />
-              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={saveAdvancedProfile}>
-                <ButtonProgress busy={busy === "advanced-profile"} busyLabel="Saving advanced context" idleIcon={<Save size={16} />}>
-                  Save advanced context
-                </ButtonProgress>
-              </Button>
-            </div>
-          </details>
-        </section>
-      )}
 
       {activeDrawer && (
         <DrawerPanel
