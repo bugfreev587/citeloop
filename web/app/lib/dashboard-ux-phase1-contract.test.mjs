@@ -81,6 +81,16 @@ test("project shell keeps primary navigation labels stable without a CTA above H
   assert.doesNotMatch(shell, /truncate whitespace-nowrap/);
 });
 
+test("project shell sidebar stays usable in short landscape mobile viewports", () => {
+  const shell = read("components/project-shell.tsx");
+  const asideClass = shell.match(/<aside className="([^"]+)"/)?.[1] ?? "";
+
+  assert.match(asideClass, /h-\[100dvh\]/);
+  assert.match(asideClass, /overflow-y-auto/);
+  assert.match(asideClass, /overscroll-contain/);
+  assert.match(asideClass, /pb-\[calc\(1rem\+env\(safe-area-inset-bottom\)\)\]/);
+});
+
 test("project shell does not fetch route or opportunity state for a sidebar CTA", () => {
   const shell = read("components/project-shell.tsx");
 
