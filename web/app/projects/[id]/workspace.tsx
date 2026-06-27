@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, RefreshCw, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, Search, Sparkles } from "lucide-react";
 import {
   Article,
   DistributeItem,
@@ -25,7 +25,7 @@ import {
 import { normalizeNumeric } from "../../lib/normalize";
 import { useApi } from "../../lib/use-api";
 import { useToast } from "../../components/toast-provider";
-import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
+import { Badge, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
 
 type Message = { tone: "neutral" | "red" | "green" | "amber"; title: string; detail?: string } | null;
 
@@ -92,6 +92,17 @@ function needsYouCountClass(tone: StageTone) {
   return classes[tone];
 }
 
+function metricChangeClass(tone: StageTone) {
+  const classes: Record<StageTone, string> = {
+    green: "text-emerald-700 bg-emerald-50 ring-emerald-100",
+    amber: "text-amber-700 bg-amber-50 ring-amber-100",
+    blue: "text-blue-700 bg-blue-50 ring-blue-100",
+    red: "text-[#d93820] bg-red-50 ring-red-100",
+    neutral: "text-slate-600 bg-slate-50 ring-slate-100",
+  };
+  return classes[tone];
+}
+
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
   const [project, setProject] = useState<Project | null>(null);
@@ -108,7 +119,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
   const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [accountProjects, setAccountProjects] = useState<Project[]>([]);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -119,7 +130,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities, actions] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities, actions, projectRows] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -134,6 +145,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.getSEOOverview(projectId).catch(() => null),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
         api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
+        api.listProjects().catch(() => []),
       ]);
       setProject(p);
       setProfile(profileRow);
@@ -149,6 +161,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setSeoOverview(overview);
       setSeoOpportunities(opportunities);
       setSeoActions(actions);
+      setAccountProjects(projectRows);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
       setApiError(friendlyApiError(e));
@@ -280,15 +293,6 @@ export function Workspace({ projectId }: { projectId: string }) {
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
 
-  const growthHeadline = searchDataConnected || publishedThisMonth > 0 || measuringActions > 0
-    ? "CiteLoop is measuring growth from published work"
-    : !profile
-      ? "Connect your product to start the growth loop"
-      : "The growth loop is warming up";
-  const growthDetail = searchDataConnected
-    ? "Verified Search Console data is connected, so CiteLoop can report clicks, impressions, and which content is moving."
-    : "CiteLoop runs the loop automatically and only stops at the gates that need a human. The next thing that needs you is below.";
-
   // Single primary action for the whole project, computed from real state.
   const primaryAction = nextWorkspaceAction({
     projectId,
@@ -302,48 +306,64 @@ export function Workspace({ projectId }: { projectId: string }) {
     openOpportunityCount: seoOpportunities.length,
   });
 
-  const growthMetricCards = [
-    {
-      label: "AI citations",
-      value: aiCitationSignals > 0 ? aiCitationSignals : "-",
-      detail: aiCitationSignals > 0 ? "citation opportunities detected" : "AI-answer tracking not connected yet",
-      icon: Sparkles,
-      muted: aiCitationSignals === 0,
-    },
+  const inMotionCount = opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions;
+  const otherProjects = accountProjects.filter((candidate) => candidate.id !== projectId);
+  const metricGridCards = [
     {
       label: "Organic traffic",
       value: searchDataConnected ? metric(clicks28d) : "Limited",
       detail: searchDataConnected ? `${metric(impressions28d)} impressions (28d)` : "Connect Search Console for traffic",
+      metricChangeLabel: searchDataConnected ? "Search Console connected" : "Connect for change data",
+      metricChangeTone: searchDataConnected ? "green" : "amber",
+      href: `/projects/${projectId}/results`,
       icon: BarChart3,
+      featured: true,
       muted: !searchDataConnected,
+    },
+    {
+      label: "AI citations",
+      value: aiCitationSignals > 0 ? aiCitationSignals : "-",
+      detail: aiCitationSignals > 0 ? "citation opportunities detected" : "AI-answer tracking not connected yet",
+      metricChangeLabel: aiCitationSignals > 0 ? `+${aiCitationSignals} active now` : "Tracking not connected",
+      metricChangeTone: aiCitationSignals > 0 ? "green" : "neutral",
+      href: `/projects/${projectId}/results`,
+      icon: Sparkles,
+      featured: false,
+      muted: aiCitationSignals === 0,
     },
     {
       label: "Published pages",
       value: publishedThisMonth,
       detail: "canonical pages live this month",
+      metricChangeLabel: publishedThisMonth > 0 ? `+${publishedThisMonth} this month` : "0 this month",
+      metricChangeTone: publishedThisMonth > 0 ? "green" : "neutral",
+      href: `/projects/${projectId}/publish`,
       icon: FileText,
+      featured: false,
       muted: publishedThisMonth === 0,
     },
     {
       label: "In motion",
-      value: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions,
+      value: inMotionCount,
       detail: "planned, in review, publishing, or measuring",
+      metricChangeLabel: inMotionCount > 0 ? `+${inMotionCount} active now` : "0 active now",
+      metricChangeTone: inMotionCount > 0 ? "blue" : "neutral",
+      href: `/projects/${projectId}/plan`,
       icon: Search,
-      muted: opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions === 0,
+      featured: false,
+      muted: inMotionCount === 0,
     },
-  ];
-
-  async function startSearchConsoleOAuth() {
-    setBusy("gsc-oauth");
-    setMessage(null);
-    try {
-      const result = await api.startGSCOAuth(projectId);
-      window.location.assign(result.authorization_url);
-    } catch (e: any) {
-      setMessage({ tone: "red", title: "Could not connect Search Console", detail: e.message });
-      setBusy(null);
-    }
-  }
+  ] satisfies Array<{
+    label: string;
+    value: number | string;
+    detail: string;
+    metricChangeLabel: string;
+    metricChangeTone: StageTone;
+    href: string;
+    icon: typeof BarChart3;
+    featured: boolean;
+    muted: boolean;
+  }>;
 
   // Pipeline stages — same honest per-stage status logic, rendered as a compact stepper.
   const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string; highlight?: boolean }> = [
@@ -479,55 +499,69 @@ export function Workspace({ projectId }: { projectId: string }) {
         />
       )}
 
-      {/* Hero + the single thing that needs you */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 md:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge tone="green">Growth loop</Badge>
-              <span className="text-xs font-semibold text-slate-400">{project?.name ?? "Project"}</span>
-            </div>
-            <h1 className="mt-3 max-w-[680px] text-2xl font-bold leading-8 tracking-tight text-slate-950 md:text-3xl">
-              {growthHeadline}
-            </h1>
-            <p className="mt-2 max-w-[68ch] text-sm leading-6 text-slate-600">{growthDetail}</p>
-          </div>
-          <Button disabled={!!busy} size="sm" variant="outline" onClick={() => refresh()}>
-            <RefreshCw size={14} />
-            Refresh
-          </Button>
-        </div>
-
-        <div className="mt-5 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Your next step</div>
-            <div className="mt-1 text-base font-bold text-slate-900">{primaryAction.title}</div>
-            <div className="mt-0.5 max-w-[64ch] text-sm leading-5 text-slate-500">{primaryAction.detail}</div>
-          </div>
-          <a
-            href={primaryAction.href}
-            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-4 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
-          >
-            {primaryAction.title}
-            <ArrowRight size={16} />
-          </a>
-        </div>
+      <section className="grid gap-3 lg:grid-cols-4 lg:auto-rows-fr">
+        {metricGridCards.map((item) => {
+          const MetricIcon = item.icon;
+          return (
+            <a
+              key={item.label}
+              href={item.href}
+              className={cx(
+                "group flex min-h-[156px] flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50",
+                item.featured && "min-h-[272px] lg:col-span-2 lg:row-span-2 lg:p-6",
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-slate-500">
+                  <MetricIcon size={item.featured ? 18 : 16} className={item.muted ? "shrink-0 text-slate-300" : "shrink-0 text-[#d93820]"} />
+                  <span className="truncate">{item.label}</span>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-slate-400 transition-colors group-hover:text-[#d93820]">
+                  View
+                  <ArrowRight size={14} />
+                </span>
+              </div>
+              <div
+                className={cx(
+                  "mt-4 font-bold leading-none tracking-tight",
+                  item.featured ? "text-5xl md:text-6xl" : "text-3xl",
+                  item.muted ? "text-slate-400" : "text-slate-950",
+                )}
+              >
+                {item.value}
+              </div>
+              <div className={cx("mt-3 text-sm font-semibold leading-5", item.muted ? "text-slate-400" : "text-slate-500")}>{item.detail}</div>
+              <div className="mt-auto pt-5">
+                <span className={cx("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", metricChangeClass(item.metricChangeTone))}>
+                  {item.metricChangeLabel}
+                </span>
+              </div>
+            </a>
+          );
+        })}
       </section>
 
-      {!searchDataConnected && (
-        <section className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <Badge tone="amber">Search data</Badge>
-            <h2 className="mt-2 text-lg font-bold leading-6 text-slate-950">Connect Search Console</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
-              Add first-party search data so CiteLoop can prioritize analysis with query, CTR, position, and decay signals.
-            </p>
+      {otherProjects.length > 0 && (
+        <section>
+          <SectionHeader title="Other projects" eyebrow="Connected to this account" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {otherProjects.map((candidate) => (
+              <a
+                key={candidate.id}
+                href={`/projects/${candidate.id}`}
+                className="group flex min-h-[92px] items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-bold text-slate-950">{candidate.name}</div>
+                  <div className="mt-1 truncate text-xs font-semibold text-slate-400">{candidate.config?.site_url || `/${candidate.slug}`}</div>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-100 transition-colors group-hover:text-[#d93820]">
+                  Switch
+                  <ArrowRight size={13} />
+                </span>
+              </a>
+            ))}
           </div>
-          <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={!!busy}>
-            <ButtonProgress busy={busy === "gsc-oauth"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
-              Connect Search Console
-            </ButtonProgress>
-          </Button>
         </section>
       )}
 
@@ -583,23 +617,6 @@ export function Workspace({ projectId }: { projectId: string }) {
           </div>
         </section>
       )}
-
-      {/* Slim, honest metric strip */}
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {growthMetricCards.map((item) => {
-          const MetricIcon = item.icon;
-          return (
-            <div key={item.label} className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
-                <MetricIcon size={16} className={item.muted ? "text-slate-300" : "text-[#d93820]"} />
-                {item.label}
-              </div>
-              <div className={cx("mt-3 text-2xl font-bold leading-none", item.muted ? "text-slate-400" : "text-slate-950")}>{item.value}</div>
-              <div className="mt-2 text-[13px] font-semibold leading-5 text-slate-400">{item.detail}</div>
-            </div>
-          );
-        })}
-      </section>
 
       {/* Pipeline — the flywheel as a connected progress spine */}
       <section>
