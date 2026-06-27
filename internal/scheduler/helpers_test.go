@@ -45,6 +45,10 @@ func TestSchedulerExposesGEOTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickGEO
 }
 
+func TestSchedulerExposesContextRefreshTick(t *testing.T) {
+	var _ func(*Scheduler, context.Context) = (*Scheduler).TickContextRefresh
+}
+
 func TestStartRegistersNotificationTick(t *testing.T) {
 	raw, err := os.ReadFile("helpers.go")
 	if err != nil {
@@ -65,6 +69,9 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	}
 	if !strings.Contains(source, "TickGEO") || !strings.Contains(source, "@weekly") {
 		t.Fatal("Start must register TickGEO weekly")
+	}
+	if !strings.Contains(source, "TickContextRefresh") || !strings.Contains(source, "@weekly") {
+		t.Fatal("Start must register TickContextRefresh weekly")
 	}
 }
 

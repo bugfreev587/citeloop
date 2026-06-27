@@ -9,6 +9,8 @@ import (
 
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/contextmeta"
+	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
 )
 
@@ -199,10 +201,32 @@ func (s *Server) runInsightInventoryCrawl(ctx context.Context, in insightInvento
 	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
 	count, summary, err := ag.RunInventoryFromCrawl(ctx, in.ProjectID, in.LandingURL, in.Crawl)
 	if err != nil {
+		s.clearContextCrawlStarted(ctx, in.ProjectID)
 		log.Warn("insight inventory crawl failed", "project_id", in.ProjectID, "err", err)
 		return
 	}
 	log.Info("insight inventory crawl complete", "project_id", in.ProjectID, "inventory_count", count, "fetched", summary.FetchedCount)
+}
+
+func (s *Server) clearContextCrawlStarted(ctx context.Context, projectID uuid.UUID) {
+	if s.Q == nil {
+		return
+	}
+	active, err := s.Q.GetActiveProfile(ctx, projectID)
+	if err != nil || !contextmeta.HasActiveCrawl(active.Profile) {
+		return
+	}
+	if _, err := s.Q.UpdateProfile(ctx, db.UpdateProfileParams{
+		ID:         active.ID,
+		Profile:    contextmeta.ClearStartedProfile(active.Profile),
+		SourceUrls: active.SourceUrls,
+	}); err != nil {
+		log := s.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("context crawl start marker clear failed", "project_id", projectID, "err", err)
+	}
 }
 
 func (s *Server) projectConfigByID(ctx context.Context, projectID uuid.UUID) (config.ProjectConfig, error) {

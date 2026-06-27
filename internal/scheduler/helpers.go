@@ -58,11 +58,13 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	_, _ = c.AddFunc("@every 2m", func() { s.TickReviewRecovery(ctx) })
 	// GEO visibility observation/analyzer pass weekly (§12.3).
 	_, _ = c.AddFunc("@weekly", func() { s.TickGEO(ctx) })
+	// Lightweight Context refresh pass weekly for confirmed project domains.
+	_, _ = c.AddFunc("@weekly", func() { s.TickContextRefresh(ctx) })
 	// Notification worker pass every 10 seconds for webhook retry/dead handling.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickNotifications(ctx) })
 	// Workflow worker pass every 10 seconds for durable growth-loop advancement.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickWorkflow(ctx) })
 	c.Start()
-	slog.Default().Info("scheduler started", "generate", "every 5m", "scheduled_topics", "every 5m", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "notifications", "every 10s", "workflow", "every 10s")
+	slog.Default().Info("scheduler started", "generate", "every 5m", "scheduled_topics", "every 5m", "seo", "daily@03:00", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "context_refresh", "weekly", "notifications", "every 10s", "workflow", "every 10s")
 	return c
 }
