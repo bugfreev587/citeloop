@@ -209,41 +209,35 @@ function ContextHealthPanel({
 
   return (
     <div className="grid gap-5 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_18px_45px_-36px_rgba(15,23,42,0.45)]">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.55fr)] lg:items-start">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={status.tone}>{status.label}</Badge>
-            {updatedAt && <span className="text-sm font-semibold text-slate-500">Updated {formatDate(updatedAt)}</span>}
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
             This is how CiteLoop understands your domain and writes from source-backed evidence.
           </p>
           <Notice title={status.label} detail={status.detail} tone={status.tone === "green" ? "green" : "amber"} />
         </div>
-        <div className="grid gap-2">
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
           {!contextConfirmed && (
-            <Button disabled={!!busy} variant="primary" onClick={onConfirmContext}>
+            <Button disabled={!!busy} variant="primary" className="w-full sm:w-auto" onClick={onConfirmContext}>
               <ButtonProgress busy={busy === "confirm-profile"} busyLabel="Confirming context" idleIcon={<Check size={16} />}>
                 Confirm context
               </ButtonProgress>
             </Button>
           )}
-          <div className="grid gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button disabled={updateDisabled} variant={contextConfirmed ? "primary" : "outline"} onClick={onUpdateContext}>
-                <ButtonProgress busy={busy === "context"} busyLabel="Updating context" idleIcon={<Wand2 size={16} />}>
-                  Update context
-                </ButtonProgress>
-              </Button>
-              <span className="text-xs font-semibold text-slate-500">Last updated {formatDate(lastCrawledAt ?? updatedAt)}</span>
+          <Button disabled={updateDisabled} variant={contextConfirmed ? "primary" : "outline"} className="w-full sm:w-auto" onClick={onUpdateContext}>
+            <ButtonProgress busy={busy === "context"} busyLabel="Updating context" idleIcon={<Wand2 size={16} />}>
+              Update context
+            </ButtonProgress>
+          </Button>
+          {crawlRunning && <div className="text-xs leading-5 text-slate-500 sm:text-right">Context update is already running.</div>}
+          {!crawlRunning && manualCooldownActive && (
+            <div className="text-xs leading-5 text-slate-500 sm:text-right">
+              Manual update available after {formatDate(manualCooldownUntil)}.
             </div>
-            {crawlRunning && <div className="text-xs leading-5 text-slate-500">Context update is already running.</div>}
-            {!crawlRunning && manualCooldownActive && (
-              <div className="text-xs leading-5 text-slate-500">
-                Manual update available after {formatDate(manualCooldownUntil)}.
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
 
@@ -256,6 +250,9 @@ function ContextHealthPanel({
           <ContextMetric label="Writing boundaries" value={boundaryStatus} detail="Tone, banned claims, and content rules." />
           {crawlWarnings > 0 && <ContextMetric label="Crawl warnings" value={crawlWarnings} detail="Open source coverage to inspect crawl gaps." />}
         </div>
+      </div>
+      <div className="border-t border-slate-100 pt-3 text-xs font-semibold text-slate-500">
+        Last updated {formatDate(lastCrawledAt ?? updatedAt)}
       </div>
     </div>
   );

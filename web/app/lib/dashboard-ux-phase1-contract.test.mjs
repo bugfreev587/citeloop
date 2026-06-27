@@ -854,6 +854,20 @@ test("connected context refreshes the fixed project domain and shows crawl fresh
   assert.doesNotMatch(connectedPanel, /onLandingChange/);
 });
 
+test("connected context keeps update action top-right and crawl freshness at the bottom", () => {
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+  const connectedPanel = context.slice(context.indexOf("function ContextHealthPanel"), context.indexOf("function SummaryGroup"));
+  const updateIndex = connectedPanel.indexOf("Update context");
+  const metricsIndex = connectedPanel.indexOf("What CiteLoop knows");
+  const lastUpdatedIndex = connectedPanel.indexOf("Last updated");
+
+  assert.match(connectedPanel, /lg:grid-cols-\[minmax\(0,1fr\)_auto\]/);
+  assert.match(connectedPanel, /flex flex-col items-stretch gap-2 sm:items-end/);
+  assert.ok(updateIndex > -1 && updateIndex < metricsIndex, "Update context should stay in the top-right action area");
+  assert.ok(lastUpdatedIndex > metricsIndex, "Last updated should render as bottom metadata");
+  assert.doesNotMatch(connectedPanel, /Updated \{formatDate\(updatedAt\)\}/);
+});
+
 test("analysis page presents decisions and results page presents measurement diagnostics", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const analysisPage = read("projects/[id]/analysis/page.tsx");
