@@ -13,6 +13,7 @@ import {
 } from "./normalize";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const MISSING_PROJECT_DETAIL = "Connect your domain to create your first project.";
 
 export type { Article, GenerationRun, InventoryItem, ProductProfile, Topic };
 
@@ -20,6 +21,58 @@ export type AuthOptions = {
   token?: string | null;
   getToken?: () => Promise<string | null>;
 };
+
+function parseErrorBody(body: string): { error?: string } {
+  try {
+    const parsed = JSON.parse(body);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export class ApiError extends Error {
+  status: number;
+  body: string;
+  apiMessage: string;
+
+  constructor(status: number, body: string) {
+    const payload = parseErrorBody(body);
+    const apiMessage = typeof payload.error === "string" ? payload.error : body;
+    super(`${status}: ${body}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.apiMessage = apiMessage;
+  }
+}
+
+export function isProjectMissingError(error: unknown) {
+  if (!(error instanceof ApiError)) return false;
+  const normalized = error.apiMessage.trim().toLowerCase();
+  return (
+    (error.status === 400 && normalized === "bad project id") ||
+    (error.status === 404 && normalized === "project not found")
+  );
+}
+
+export function friendlyApiError(error: unknown) {
+  if (isProjectMissingError(error)) {
+    return MISSING_PROJECT_DETAIL;
+  }
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) {
+      return "Your session cannot access this project. Sign in again or switch accounts.";
+    }
+    if (error.status >= 500) {
+      return "CiteLoop could not load this data. Try again in a moment.";
+    }
+    return "CiteLoop could not complete this request.";
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : "CiteLoop could not complete this request.";
+}
 
 export type ProjectConfig = {
   site_url?: string;
@@ -1273,7 +1326,7 @@ async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions): Pro
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    throw new ApiError(res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json();

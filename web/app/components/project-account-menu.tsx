@@ -102,13 +102,13 @@ export function ProjectAccountMenu({
     };
   }, [open]);
 
-  const projectName = project?.name ?? "CiteLoop project";
-  const projectSlug = project?.slug ?? projectId;
-  const currentProject = useMemo(
-    () => project ?? { id: projectId, name: projectName, slug: projectSlug },
-    [project, projectId, projectName, projectSlug],
+  const projectName = project?.name ?? "No project found";
+  const projectSlug = project?.slug ?? "Connect a domain";
+  const currentProject = useMemo(() => project as ProjectMenuItem, [project]);
+  const visibleProjects = useMemo(
+    () => (project ? uniqueProjects(projects, currentProject) : projects),
+    [currentProject, project, projects],
   );
-  const visibleProjects = useMemo(() => uniqueProjects(projects, currentProject), [currentProject, projects]);
 
   function openProject(nextProject: ProjectMenuItem) {
     window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, nextProject.id);
@@ -200,7 +200,7 @@ export function ProjectAccountMenu({
               </span>
               Account Settings
             </button>
-            {isPlatformAdmin && (
+            {isPlatformAdmin && project && (
               <button
                 type="button"
                 onClick={openAdmin}
@@ -265,7 +265,7 @@ export function ProjectAccountMenu({
         className="flex h-[58px] w-full items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2 text-left shadow-sm transition-colors hover:bg-slate-50 outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#dfe5ec] dark:border-slate-800 dark:bg-[#111827] dark:hover:bg-slate-800 dark:focus-visible:ring-slate-600"
       >
         <span className="project-avatar grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#241f1d] text-xs font-semibold text-white ring-1 ring-black/5 dark:bg-slate-100 dark:text-slate-950 dark:ring-white/10">
-          {initials(project)}
+          {initials(project, "No project")}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-slate-950 dark:text-slate-100">Projects</span>

@@ -126,6 +126,33 @@ test("settings is visible to project users while admin remains separate", () => 
   assert.doesNotMatch(settingsPage, /notFound\(\)/);
 });
 
+test("missing project routes show an onboarding warning instead of rendering child pages", () => {
+  const layout = read("projects/[id]/layout.tsx");
+  const shell = read("components/project-shell.tsx");
+  const accountMenu = read("components/project-account-menu.tsx");
+
+  assert.match(layout, /project \? children : null/);
+  assert.match(shell, /No project found/);
+  assert.match(shell, /Connect your domain to create your first project\./);
+  assert.match(shell, /Connect project/);
+  assert.match(shell, /href="\/projects"/);
+  assert.match(shell, /project && <ProjectVisitRecorder projectId=\{projectId\} \/>/);
+  assert.match(accountMenu, /project \? uniqueProjects\(projects, currentProject\) : projects/);
+  assert.match(accountMenu, /No project found/);
+  assert.doesNotMatch(accountMenu, /project \?\? \{ id: projectId/);
+});
+
+test("home does not show context-build progress or raw API payloads before a project exists", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  assert.match(workspace, /const showContextBuild = projectLoaded && contextBuild\.active/);
+  assert.match(workspace, /showContextBuild && \(/);
+  assert.doesNotMatch(workspace, /contextBuild\.active && \(/);
+  assert.doesNotMatch(workspace, /title="API server unavailable"/);
+  assert.doesNotMatch(workspace, /Dashboard data could not be loaded/);
+  assert.doesNotMatch(workspace, /detail=\{`Dashboard data could not be loaded \(\$\{apiError\}\)\.`\}/);
+});
+
 test("context and home surface a background-crawl completion signal instead of stranding the user", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
   assert.match(context, /backgroundCrawl/);

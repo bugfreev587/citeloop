@@ -14,6 +14,7 @@ import {
   SEOOpportunity,
   SEOOverview,
   Topic,
+  friendlyApiError,
 } from "../../lib/api";
 import {
   buildHomeEventStream,
@@ -150,7 +151,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setSeoActions(actions);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
-      setApiError(e.message);
+      setApiError(friendlyApiError(e));
       return null;
     }
   }, [api, projectId]);
@@ -195,13 +196,14 @@ export function Workspace({ projectId }: { projectId: string }) {
     runs: insightRuns,
   });
   const projectLoaded = Boolean(project);
+  const showContextBuild = projectLoaded && contextBuild.active;
 
   // After project creation, onboarding (crawl + product profile) runs in the background.
   // Home keeps checking the profile and inventory so fresh projects do not strand users
   // on an empty Context page while the detached onboarding jobs finish.
   const onboardingAttemptsRef = useRef(0);
   useEffect(() => {
-    if (!projectLoaded || !contextBuild.active) {
+    if (!showContextBuild) {
       onboardingAttemptsRef.current = 0;
       setOnboardingPollCount(0);
       return;
@@ -250,7 +252,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [projectLoaded, contextBuild.active, refresh]);
+  }, [showContextBuild, refresh]);
 
   const reviewArticles = review.flatMap((group) => group.articles);
   const scheduledRows = useMemo(() => {
@@ -471,8 +473,8 @@ export function Workspace({ projectId }: { projectId: string }) {
     <div className="space-y-6">
       {apiError && (
         <Notice
-          title="API server unavailable"
-          detail={`Dashboard data could not be loaded (${apiError}).`}
+          title="Project data could not be loaded"
+          detail={apiError}
           tone="amber"
         />
       )}
@@ -530,7 +532,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       )}
 
       {/* Context build progress — only while onboarding is running */}
-      {contextBuild.active && (
+      {showContextBuild && (
         <section
           role="status"
           aria-live="polite"
