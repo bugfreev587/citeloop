@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { ProjectShell } from "../../components/project-shell";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "../../lib/auth-config";
-import { createApi, Project } from "../../lib/api";
+import { createApi, friendlyApiError, isProjectMissingError, Project } from "../../lib/api";
 
 export default async function ProjectLayout({
   children,
@@ -20,15 +20,19 @@ export default async function ProjectLayout({
   }
   const api = createApi(token ? { token } : undefined);
   let project: Project | null = null;
+  let projectLoadError: string | null = null;
   try {
     project = await api.getProject(id);
-  } catch {
+  } catch (error) {
     project = null;
+    if (!isProjectMissingError(error)) {
+      projectLoadError = friendlyApiError(error);
+    }
   }
 
   return (
-    <ProjectShell project={project} projectId={id}>
-      {children}
+    <ProjectShell project={project} projectId={id} projectLoadError={projectLoadError}>
+      {project ? children : null}
     </ProjectShell>
   );
 }

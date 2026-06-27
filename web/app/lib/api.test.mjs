@@ -65,6 +65,18 @@ test("createApi resolves Clerk tokens from getToken", async () => {
   }
 });
 
+test("friendlyApiError maps missing project responses to onboarding copy", async () => {
+  const { ApiError, friendlyApiError, isProjectMissingError } = await loadApiModule();
+  const badProject = new ApiError(400, '{"error":"bad project id"}');
+  const missingProject = new ApiError(404, '{"error":"project not found"}');
+
+  assert.equal(isProjectMissingError(badProject), true);
+  assert.equal(isProjectMissingError(missingProject), true);
+  assert.equal(friendlyApiError(badProject), "Connect your domain to create your first project.");
+  assert.equal(friendlyApiError(missingProject), "Connect your domain to create your first project.");
+  assert.doesNotMatch(friendlyApiError(badProject), /400|bad project id|\{"error"/);
+});
+
 test("createApi normalizes TokenGate LLM credential status", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
