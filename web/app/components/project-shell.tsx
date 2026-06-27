@@ -99,7 +99,7 @@ export function ProjectShell({
   return (
     <div className="min-h-[100dvh] bg-stone-100 text-slate-950 dark:bg-[#0f1117] dark:text-slate-100">
       <ProjectVisitRecorder projectId={projectId} />
-      <aside className="fixed left-0 top-0 z-20 hidden h-[100dvh] w-[210px] flex-col border-r border-gray-200 bg-white px-3 py-4 dark:border-slate-800 dark:bg-[#111827] md:flex">
+      <aside className="fixed left-0 top-0 z-20 hidden h-[100dvh] w-[210px] flex-col overflow-y-auto overscroll-contain border-r border-gray-200 bg-white px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4 dark:border-slate-800 dark:bg-[#111827] md:flex">
         <Link href="/" className="mb-4 flex h-9 items-center gap-2 px-2 text-sm font-bold text-slate-900 dark:text-slate-100">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-950 text-xs text-white dark:bg-slate-100 dark:text-slate-950">CL</span>
           CiteLoop
