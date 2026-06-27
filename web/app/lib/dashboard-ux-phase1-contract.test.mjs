@@ -345,7 +345,7 @@ test("gsc oauth entry points are self-serve and action-first", () => {
   );
 
   for (const [file, copies] of [
-    ["projects/[id]/workspace.tsx", ["Connect Search Console", "first-party search data"]],
+    ["projects/[id]/workspace.tsx", ["Connect Search Console for traffic", "Search Console connected"]],
     ["projects/[id]/seo/seo-client.tsx", ["Connect Search Console", "Search Console property", "Select property", "Backfilling Search Console", "Search data is stale", "Property mismatch"]],
     [
       "projects/[id]/settings/settings-client.tsx",
@@ -596,19 +596,42 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
   }
 });
 
-test("home leads with a single next step and does not show run internals by default", () => {
+test("home leads with linked metrics instead of hero or refresh-context prompts", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "Your next step",
+    "metricGridCards",
+    "metricChangeLabel",
+    "accountProjects",
+    "otherProjects",
     "primaryAction",
     "nextWorkspaceAction",
     "AI citations",
     "Organic traffic",
     "Published pages",
-    "Growth loop",
+    "In motion",
   ]) {
     assert.match(workspace, new RegExp(copy));
+  }
+
+  for (const route of [
+    "href: `/projects/${projectId}/results`",
+    "href: `/projects/${projectId}/publish`",
+    "href: `/projects/${projectId}/plan`",
+  ]) {
+    assert.match(workspace, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const removed of [
+    "growthHeadline",
+    "growthDetail",
+    "Your next step",
+    "Growth loop",
+    "CiteLoop is measuring growth from published work",
+    "Connect your product to start the growth loop",
+    "<RefreshCw",
+  ]) {
+    assert.doesNotMatch(workspace, new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
   for (const internalCopy of ["Run Insight", "Run Strategist", "Publish tick", "Recent runs", "tokens"]) {
@@ -638,16 +661,23 @@ test("home removes manual planning controls and secondary growth panels", () => 
   assert.doesNotMatch(dashboardLogic, /Refresh context when product facts change/);
 });
 
-test("home growth metrics use a slim honest strip without a fake trend chart", () => {
+test("home growth metrics are first-viewport linked cards with honest change labels", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   for (const copy of [
-    "growthMetricCards",
+    "metricGridCards",
+    "metricChangeLabel",
+    "metricChangeTone",
+    "featured",
     "MetricIcon",
     "AI citations",
     "Organic traffic",
     "Published pages",
     "In motion",
+    "Search Console connected",
+    "this month",
+    "active now",
+    "View",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
@@ -656,6 +686,23 @@ test("home growth metrics use a slim honest strip without a fake trend chart", (
   assert.doesNotMatch(workspace, /growthTrendPath/);
   assert.doesNotMatch(workspace, /Growth metric trend/);
   assert.doesNotMatch(workspace, /growthMetricFill/);
+});
+
+test("home shows other account projects only when more than one project is available", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const copy of [
+    "api.listProjects().catch(() => [])",
+    "setAccountProjects(projectRows)",
+    "const otherProjects = accountProjects.filter",
+    "otherProjects.length > 0",
+    "Other projects",
+    "Switch",
+  ]) {
+    assert.match(workspace, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(workspace, /href=\{`\/projects\/\$\{candidate\.id\}`\}/);
 });
 
 test("home explains growth status and loop stages from existing product data", () => {
