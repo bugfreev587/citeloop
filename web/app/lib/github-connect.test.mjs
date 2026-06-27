@@ -52,3 +52,31 @@ test("GitHub callback prefers state but can recover the project from the connect
     }
   }
 });
+
+test("GitHub callback can recover a safe return path from the connect handoff", async () => {
+  const originalWindow = globalThis.window;
+  const storage = memoryStorage();
+  globalThis.window = { localStorage: storage };
+  try {
+    const { rememberGithubConnectProject, resolveGithubCallbackReturnHref, forgetGithubConnectProject } = await loadGithubConnectModule();
+
+    rememberGithubConnectProject("project-from-settings", "/projects/project-from-settings/settings?github=connected#publisher");
+
+    assert.equal(
+      resolveGithubCallbackReturnHref("project-from-settings"),
+      "/projects/project-from-settings/settings?github=connected#publisher",
+    );
+
+    rememberGithubConnectProject("project-from-settings", "https://evil.example.test/");
+    assert.equal(resolveGithubCallbackReturnHref("project-from-settings"), "/projects/project-from-settings/publishing?github=connected");
+
+    forgetGithubConnectProject();
+    assert.equal(resolveGithubCallbackReturnHref("project-from-settings"), "/projects/project-from-settings/publishing?github=connected");
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
