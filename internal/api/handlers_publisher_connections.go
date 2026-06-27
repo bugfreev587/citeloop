@@ -35,6 +35,36 @@ type publisherConnectionDTO struct {
 	LastError               *string         `json:"last_error,omitempty"`
 }
 
+type githubNextJSPublisherInput struct {
+	Label         string `json:"label"`
+	Repo          string `json:"repo"`
+	Branch        string `json:"branch"`
+	ContentDir    string `json:"content_dir"`
+	BaseURL       string `json:"base_url"`
+	PublishMode   string `json:"publish_mode"`
+	CredentialRef string `json:"credential_ref"`
+}
+
+func githubNextJSConfigForUpsert(in githubNextJSPublisherInput, existing json.RawMessage) (json.RawMessage, string, error) {
+	cfg := githubConnConfig{
+		Repo:           strings.TrimSpace(in.Repo),
+		Branch:         strings.TrimSpace(in.Branch),
+		ContentDir:     strings.TrimSpace(in.ContentDir),
+		BaseURL:        strings.TrimSpace(in.BaseURL),
+		PublishMode:    strings.TrimSpace(in.PublishMode),
+		InstallationID: strings.TrimSpace(parseGithubConnConfig(existing).InstallationID),
+	}
+	cfgRaw := mustPublisherJSON(cfg)
+	if _, err := publisher.ParseGitHubNextJSConfig(cfgRaw); err != nil {
+		return nil, "", err
+	}
+	status := "missing"
+	if cfg.InstallationID != "" {
+		status = "connected"
+	}
+	return cfgRaw, status, nil
+}
+
 func (s *Server) listPublisherConnections(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -72,27 +102,8 @@ func (s *Server) upsertGitHubNextJSPublisherConnection(w http.ResponseWriter, r 
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var in struct {
-		Label         string `json:"label"`
-		Repo          string `json:"repo"`
-		Branch        string `json:"branch"`
-		ContentDir    string `json:"content_dir"`
-		BaseURL       string `json:"base_url"`
-		PublishMode   string `json:"publish_mode"`
-		CredentialRef string `json:"credential_ref"`
-	}
+	var in githubNextJSPublisherInput
 	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cfgRaw := mustPublisherJSON(map[string]string{
-		"repo":         strings.TrimSpace(in.Repo),
-		"branch":       strings.TrimSpace(in.Branch),
-		"content_dir":  strings.TrimSpace(in.ContentDir),
-		"base_url":     strings.TrimSpace(in.BaseURL),
-		"publish_mode": strings.TrimSpace(in.PublishMode),
-	})
-	if _, err := publisher.ParseGitHubNextJSConfig(cfgRaw); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -100,16 +111,30 @@ func (s *Server) upsertGitHubNextJSPublisherConnection(w http.ResponseWriter, r 
 		writeErr(w, http.StatusInternalServerError, "database unavailable")
 		return
 	}
+	var existing db.PublisherConnection
+	var existingConfig json.RawMessage
+	if conn, ok := s.githubConnection(r, projectID); ok {
+		existing = conn
+		existingConfig = conn.Config
+	}
+	cfgRaw, status, err := githubNextJSConfigForUpsert(in, existingConfig)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	label := strings.TrimSpace(in.Label)
 	if label == "" {
 		label = "GitHub/Next.js"
 	}
-	credentialRef := strPtr(strings.TrimSpace(in.CredentialRef))
+	credentialRef := existing.CredentialRef
+	if ref := strings.TrimSpace(in.CredentialRef); ref != "" {
+		credentialRef = &ref
+	}
 	conn, err := s.Q.UpsertDefaultPublisherConnection(r.Context(), db.UpsertDefaultPublisherConnectionParams{
 		ProjectID:               projectID,
 		Kind:                    publisher.ConnectionKindGitHubNextJS,
 		Label:                   label,
-		Status:                  "missing",
+		Status:                  status,
 		Capabilities:            publisher.GitHubNextJSCapabilities().JSON(),
 		CapabilitySchemaVersion: 1,
 		CredentialRef:           credentialRef,

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, GitBranch, Loader2, XCircle } from "lucide-react";
 import { GithubRepo } from "../../../lib/api";
-import { forgetGithubConnectProject, resolveGithubCallbackProjectID } from "../../../lib/github-connect";
+import { forgetGithubConnectProject, resolveGithubCallbackProjectID, resolveGithubCallbackReturnHref } from "../../../lib/github-connect";
 import { deriveGitHubBranch, derivePublishTarget, normalizeDomain } from "../../../lib/publisher-target";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
@@ -33,7 +33,7 @@ function GithubCallbackInner() {
   const [branchTouched, setBranchTouched] = useState(false);
   const [siteURL, setSiteURL] = useState("");
 
-  const publishingHref = projectID ? `/projects/${projectID}/publishing` : "/";
+  const fallbackHref = projectID ? `/projects/${projectID}/publishing` : "/";
 
   const link = useCallback(async () => {
     if (!installationID || !projectID) {
@@ -91,9 +91,10 @@ function GithubCallbackInner() {
         content_dir: contentDir.trim() || "content/citeloop/blog",
         base_url: baseURL.trim(),
       });
+      const returnHref = resolveGithubCallbackReturnHref(projectID);
       forgetGithubConnectProject();
       setPhase("done");
-      router.push(`${publishingHref}?github=connected`);
+      router.push(returnHref);
     } catch (e: any) {
       setPhase("picking");
       setError(e.message ?? "Could not save the selected repository.");
@@ -103,7 +104,7 @@ function GithubCallbackInner() {
   return (
     <main className="mx-auto max-w-[640px] px-4 py-8 md:px-6 md:py-12">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <Link href={publishingHref} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
+        <Link href={fallbackHref} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900">
           <ArrowLeft size={15} />
           Publishing
         </Link>
@@ -133,7 +134,7 @@ function GithubCallbackInner() {
             Connection failed
           </div>
           <div className="mt-1 leading-6">{error}</div>
-          <Link href={publishingHref} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820] hover:underline">
+          <Link href={fallbackHref} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-[#d93820] hover:underline">
             <ArrowLeft size={14} />
             Back to Publishing
           </Link>

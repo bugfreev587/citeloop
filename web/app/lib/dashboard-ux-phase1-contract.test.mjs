@@ -363,6 +363,25 @@ test("publisher settings show CMS connector next steps without pretending connec
   }
 });
 
+test("publisher settings restore GitHub OAuth App connection as the primary path", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  assert.match(settings, /GithubIntegrationStatus/);
+  assert.match(settings, /rememberGithubConnectProject/);
+  assert.match(settings, /const \[githubIntegration, setGithubIntegration\]/);
+  assert.match(settings, /api\.getGithubIntegration\(projectId\)/);
+  assert.match(settings, /function connectGithub\(\)/);
+  assert.match(settings, /rememberGithubConnectProject\(projectId,\s*`\/projects\/\$\{projectId\}\/settings\?github=connected#publisher`/);
+  assert.match(settings, /githubIntegration\?\.install_url/);
+  assert.match(settings, /window\.location\.href = githubIntegration\.install_url/);
+  assert.match(settings, /function reuseGithub\(\)/);
+  assert.match(settings, /reusable_installation_id/);
+  assert.match(settings, /\/integrations\/github\/callback\?installation_id=/);
+  assert.match(settings, /Connect GitHub/);
+  assert.match(settings, /Connected via GitHub App/);
+  assert.match(settings, /Advanced: connect with a personal access token/);
+});
+
 test("context profile editors collapse after saving", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 

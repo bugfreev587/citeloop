@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Trash2 } from "lucide-react";
+import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2 } from "lucide-react";
 import {
   defaultProjectConfig,
   GSCConnection,
   GitHubNextJSPublisherInput,
+  GithubIntegrationStatus,
   NotificationChannel,
   NotificationChannelKind,
   NotificationDelivery,
@@ -15,6 +16,7 @@ import {
   PublisherConnection,
   ProjectConfig,
 } from "../../../lib/api";
+import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
@@ -201,6 +203,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
+  const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
+  const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
@@ -282,6 +286,35 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refreshPublisherConnections();
   }, [refreshPublisherConnections]);
+
+  const refreshGithubIntegration = useCallback(async () => {
+    try {
+      const integration = await api.getGithubIntegration(projectId);
+      setGithubIntegration(integration);
+    } catch {
+      setGithubIntegration(null);
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshGithubIntegration();
+  }, [refreshGithubIntegration]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("github") !== "connected") return;
+    setActiveSettingsTab("publisher");
+    setMessage({
+      title: "GitHub connected",
+      detail: "Choose or confirm the publisher target before enabling the connection.",
+      tone: "green",
+    });
+    refreshPublisherConnections();
+    refreshGithubIntegration();
+    url.searchParams.delete("github");
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  }, [refreshGithubIntegration, refreshPublisherConnections]);
 
   const refreshGSCConnection = useCallback(async () => {
     try {
@@ -483,6 +516,21 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  function connectGithub() {
+    if (githubIntegration?.install_url) {
+      rememberGithubConnectProject(projectId, `/projects/${projectId}/settings?github=connected#publisher`);
+      window.location.href = githubIntegration.install_url;
+    }
+  }
+
+  function reuseGithub() {
+    const reuse = githubIntegration?.reusable_installation_id;
+    if (reuse) {
+      rememberGithubConnectProject(projectId, `/projects/${projectId}/settings?github=connected#publisher`);
+      window.location.href = `/integrations/github/callback?installation_id=${encodeURIComponent(reuse)}&state=${encodeURIComponent(projectId)}`;
+    }
+  }
+
   async function startSearchConsoleOAuth() {
     setGSCBusy("connect");
     setMessage(null);
@@ -633,6 +681,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       ? "Select a Search Console property."
       : "Connect Search Console for first-party search data.";
   const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
+  const githubAppConnected = Boolean(githubIntegration?.connected);
+  const githubAppReusable = Boolean(!githubIntegration?.connected && githubIntegration?.reusable_installation_id);
+  const githubAppTitle = githubAppConnected
+    ? "Connected via GitHub App"
+    : githubAppReusable
+      ? "Use your connected GitHub App"
+      : "Connect with GitHub";
+  const githubAppDetail = githubAppConnected
+    ? `${githubIntegration?.repo || "Repository selected"}${githubIntegration?.branch ? ` on ${githubIntegration.branch}` : ""}`
+    : githubAppReusable
+      ? "This owner already has the CiteLoop GitHub App installed. Reuse that installation or connect a different account."
+      : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
 
   return (
     <div className="space-y-7">
@@ -862,7 +922,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           title="Publisher connection"
           eyebrow="Publishing"
           action={
-            <Button size="sm" onClick={refreshPublisherConnections} disabled={notificationBusy === "save-publisher"}>
+            <Button
+              size="sm"
+              onClick={() => {
+                refreshPublisherConnections();
+                refreshGithubIntegration();
+              }}
+              disabled={notificationBusy === "save-publisher"}
+            >
               <RefreshCw size={14} />
               Refresh
             </Button>
@@ -879,6 +946,47 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </Badge>
             <Badge tone={githubPublisher?.enabled ? "green" : "neutral"}>{githubPublisher?.enabled ? "enabled" : "disabled"}</Badge>
           </div>
+
+          {githubIntegration?.configured === false ? (
+            <Notice
+              title="GitHub OAuth is not configured"
+              detail="Add the GitHub App client and private key environment variables on the backend to enable OAuth connection."
+              tone="amber"
+            />
+          ) : (
+            <div
+              className={cx(
+                "border-y px-0 py-3",
+                githubAppConnected ? "border-green-100 text-green-950" : "border-slate-100 text-slate-900",
+              )}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 text-sm font-bold">
+                    {githubAppConnected ? <CheckCircle2 size={16} /> : <GitBranch size={16} />}
+                    {githubAppTitle}
+                  </div>
+                  <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">{githubAppDetail}</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                  {githubAppReusable && (
+                    <Button variant="primary" onClick={reuseGithub}>
+                      <RotateCcw size={16} />
+                      Use connected GitHub
+                    </Button>
+                  )}
+                  <Button
+                    variant={githubAppConnected || githubAppReusable ? "outline" : "primary"}
+                    onClick={connectGithub}
+                    disabled={!githubIntegration?.install_url}
+                  >
+                    <Settings2 size={16} />
+                    {githubAppConnected || githubAppReusable ? "Change repository or access" : "Connect GitHub"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Field label="Repository">
@@ -916,20 +1024,38 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 placeholder="publish"
               />
             </Field>
-            <Field label="GitHub token">
-              <div className="grid gap-2">
-                <TextInput
-                  type="password"
-                  value={publisherCredentialDraft}
-                  onChange={(event) => setPublisherCredentialDraft(event.target.value)}
-                  placeholder={githubPublisher?.credential_configured ? "Saved" : "ghp_..."}
-                  autoComplete="off"
-                />
-                <Badge tone={githubPublisher?.credential_configured ? "green" : "amber"}>
-                  {githubPublisher?.credential_configured ? "Credential saved" : "Credential missing"}
-                </Badge>
+          </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <button
+              type="button"
+              onClick={() => setShowManualPublisherCredential((current) => !current)}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 transition-colors hover:text-slate-950"
+            >
+              <Settings2 size={14} />
+              Advanced: connect with a personal access token
+            </button>
+            {showManualPublisherCredential && (
+              <div className="mt-3 grid max-w-xl gap-3 border-l border-slate-200 pl-3">
+                <Field label="GitHub token">
+                  <div className="grid gap-2">
+                    <TextInput
+                      type="password"
+                      value={publisherCredentialDraft}
+                      onChange={(event) => setPublisherCredentialDraft(event.target.value)}
+                      placeholder={githubPublisher?.credential_configured ? "Saved" : "ghp_..."}
+                      autoComplete="off"
+                    />
+                    <Badge tone={githubPublisher?.credential_configured ? "green" : "amber"}>
+                      {githubPublisher?.credential_configured ? "Credential saved" : "Credential missing"}
+                    </Badge>
+                  </div>
+                </Field>
+                <p className="text-sm leading-5 text-slate-500">
+                  Use a personal access token only when the GitHub App OAuth connection is unavailable for this repository.
+                </p>
               </div>
-            </Field>
+            )}
           </div>
 
           <div className="border-t border-slate-100 pt-4">
@@ -959,19 +1085,21 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 Save publisher
               </ButtonProgress>
             </Button>
-            <Button
-              variant="outline"
-              onClick={savePublisherCredential}
-              disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
-            >
-              <ButtonProgress
-                busy={notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
-                busyLabel="Saving token"
-                idleIcon={<Save size={16} />}
+            {(showManualPublisherCredential || publisherCredentialDraft.trim()) && (
+              <Button
+                variant="outline"
+                onClick={savePublisherCredential}
+                disabled={!githubPublisher || !publisherCredentialDraft.trim() || notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
               >
-                Save token
-              </ButtonProgress>
-            </Button>
+                <ButtonProgress
+                  busy={notificationBusy === `save-publisher-credential-${githubPublisher?.id}`}
+                  busyLabel="Saving token"
+                  idleIcon={<Save size={16} />}
+                >
+                  Save token
+                </ButtonProgress>
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => githubPublisher && testPublisherConnection(githubPublisher.id)}

@@ -84,6 +84,29 @@ func TestRejectPublisherConnectionSecretFields(t *testing.T) {
 	}
 }
 
+func TestGitHubNextJSUpsertPreservesGitHubAppInstallation(t *testing.T) {
+	cfgRaw, status, err := githubNextJSConfigForUpsert(githubNextJSPublisherInput{
+		Repo:        "owner/site",
+		Branch:      "main",
+		ContentDir:  "content/blog",
+		BaseURL:     "https://example.com/blog",
+		PublishMode: "publish",
+	}, json.RawMessage(`{"installation_id":"12345","repo":"old/site","base_url":"https://old.example/blog"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "connected" {
+		t.Fatalf("status = %q, want connected", status)
+	}
+	cfg := parseGithubConnConfig(cfgRaw)
+	if cfg.InstallationID != "12345" {
+		t.Fatalf("installation_id = %q, want preserved", cfg.InstallationID)
+	}
+	if cfg.Repo != "owner/site" || cfg.Branch != "main" || cfg.ContentDir != "content/blog" || cfg.BaseURL != "https://example.com/blog" {
+		t.Fatalf("target fields were not updated: %#v", cfg)
+	}
+}
+
 func TestPublisherCredentialTokenRejectsEnvFallback(t *testing.T) {
 	s := &Server{Env: config.Env{GitHubToken: "fallback-token"}}
 	conn := db.PublisherConnection{
