@@ -55,6 +55,15 @@ test("landing auth actions use Clerk Google OAuth and server-prefetched Dashboar
   assert.match(source, /dashboardHrefForProjects/);
 });
 
+test("Google OAuth callback route completes Clerk redirect authentication", async () => {
+  const source = await readFile(new URL("../sign-in/sso-callback/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /"use client"/);
+  assert.match(source, /AuthenticateWithRedirectCallback/);
+  assert.match(source, /signInFallbackRedirectUrl=(\{["']\/["']\}|["']\/["'])/);
+  assert.match(source, /signUpFallbackRedirectUrl=(\{["']\/["']\}|["']\/["'])/);
+});
+
 test("root page is a focused landing page with requested auth actions", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
