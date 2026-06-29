@@ -24,10 +24,16 @@ export type AuthOptions = {
 };
 
 const DEFAULT_API_TIMEOUT_MS = 8000;
+const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 60_000;
 
 function apiTimeoutMs(auth?: AuthOptions) {
   const configured = auth?.timeoutMs ?? Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_API_TIMEOUT_MS;
+}
+
+function withMinimumTimeout(auth: AuthOptions | undefined, timeoutMs: number): AuthOptions {
+  if (apiTimeoutMs(auth) >= timeoutMs) return auth ?? {};
+  return { ...auth, timeoutMs };
 }
 
 function parseErrorBody(body: string): { error?: string } {
@@ -1429,7 +1435,11 @@ export function createApi(auth?: AuthOptions) {
     return arrayFrom(raw).map(normalizeAdminProject);
   },
   deleteAdminProject: async (id: string) => {
-    const raw = await req<any>(`/admin/projects/${id}`, { method: "DELETE" }, auth);
+    const raw = await req<any>(
+      `/admin/projects/${id}`,
+      { method: "DELETE" },
+      withMinimumTimeout(auth, ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS),
+    );
     return normalizeAdminProject(raw);
   },
   listAdminUsers: async () => {
@@ -1437,7 +1447,11 @@ export function createApi(auth?: AuthOptions) {
     return arrayFrom(raw).map(normalizeAdminUser);
   },
   deleteAdminUser: async (ownerID: string) => {
-    const raw = await req<any>(`/admin/users/${encodeURIComponent(ownerID)}`, { method: "DELETE" }, auth);
+    const raw = await req<any>(
+      `/admin/users/${encodeURIComponent(ownerID)}`,
+      { method: "DELETE" },
+      withMinimumTimeout(auth, ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS),
+    );
     return normalizeAdminUserDeleteResult(raw);
   },
   listProjects: async () => {

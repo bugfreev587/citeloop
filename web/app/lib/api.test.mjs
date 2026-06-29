@@ -88,6 +88,61 @@ test("createApi aborts stalled backend requests before a Vercel function timeout
   }
 });
 
+test("admin destructive deletes use an extended timeout for cascading cleanup", async () => {
+  const calls = [];
+  const timeouts = [];
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+
+  globalThis.setTimeout = (handler, delay, ...args) => {
+    timeouts.push(delay);
+    return originalSetTimeout(handler, 0, ...args);
+  };
+  globalThis.clearTimeout = (id) => originalClearTimeout(id);
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "3ee1f12c-42d0-4b18-be7a-13cacb348778",
+        owner_id: "user_123",
+        owner_email: "owner@example.test",
+        name: "unipost.dev",
+        slug: "unipost-dev",
+        config: {},
+        deleted_projects: 1,
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const api = createApi({ token: "session-token" });
+
+    await api.deleteAdminProject("3ee1f12c-42d0-4b18-be7a-13cacb348778");
+    await api.deleteAdminUser("user_123");
+
+    assert.deepEqual(
+      calls.map((call) => call.url),
+      [
+        "https://api.example.test/api/admin/projects/3ee1f12c-42d0-4b18-be7a-13cacb348778",
+        "https://api.example.test/api/admin/users/user_123",
+      ],
+    );
+    assert.deepEqual(
+      timeouts,
+      [60_000, 60_000],
+      "admin deletes need enough time for database cascades instead of the 8s read timeout",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("friendlyApiError maps missing project responses to onboarding copy", async () => {
   const { ApiError, friendlyApiError, isProjectMissingError } = await loadApiModule();
   const badProject = new ApiError(400, '{"error":"bad project id"}');
