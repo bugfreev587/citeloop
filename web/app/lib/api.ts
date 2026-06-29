@@ -24,7 +24,7 @@ export type AuthOptions = {
 };
 
 const DEFAULT_API_TIMEOUT_MS = 8000;
-const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 60_000;
+const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
 
 function apiTimeoutMs(auth?: AuthOptions) {
   const configured = auth?.timeoutMs ?? Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS);

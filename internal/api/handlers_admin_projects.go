@@ -45,13 +45,15 @@ func (s *Server) deleteAdminProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad project id")
 		return
 	}
-	project, err := s.Q.DeleteProject(r.Context(), projectID)
+	deleteCtx, cancel := adminDeleteContext(r.Context())
+	defer cancel()
+	project, err := s.deleteAdminProjectRecord(deleteCtx, projectID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeAdminDeleteError(w, deleteCtx, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.adminProjectResponse(r, project))

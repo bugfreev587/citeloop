@@ -46,9 +46,11 @@ func (s *Server) deleteAdminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownerEmail := s.userEmail(r.Context(), ownerID)
-	projects, err := s.Q.DeleteProjectsByOwner(r.Context(), ownerID)
+	deleteCtx, cancel := adminDeleteContext(r.Context())
+	defer cancel()
+	projects, err := s.deleteAdminOwnerProjects(deleteCtx, ownerID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeAdminDeleteError(w, deleteCtx, err)
 		return
 	}
 	if len(projects) == 0 {
