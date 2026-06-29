@@ -39,6 +39,7 @@ type Querier interface {
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
+	DeleteProject(ctx context.Context, id uuid.UUID) (Project, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
 	DeletePublisherConnectionForProject(ctx context.Context, arg DeletePublisherConnectionForProjectParams) (PublisherConnection, error)
 	// DeleteRecoverableArticlesForTopic clears a topic's non-terminal drafts so the
@@ -101,6 +102,7 @@ type Querier interface {
 	// approval can be staggered after it instead of publishing immediately.
 	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
+	ListAdminProjects(ctx context.Context) ([]Project, error)
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
 	// hands-off auto-approval when the project runs in auto-advance mode.
 	ListApprovableForProject(ctx context.Context, arg ListApprovableForProjectParams) ([]Article, error)

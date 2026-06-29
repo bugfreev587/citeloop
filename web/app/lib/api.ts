@@ -111,6 +111,11 @@ export type Project = {
   created_at?: any;
 };
 
+export type AdminProject = Project & {
+  owner_id: string;
+  owner_email: string;
+};
+
 export type ReviewGroup = { topic_id: string; articles: Article[] };
 
 export type GenerateTopicResult = {
@@ -825,6 +830,14 @@ function normalizeProject(raw: any): Project {
   };
 }
 
+function normalizeAdminProject(raw: any): AdminProject {
+  return {
+    ...normalizeProject(raw),
+    owner_id: raw.owner_id ?? "",
+    owner_email: raw.owner_email ?? "",
+  };
+}
+
 function normalizeReviewGroup(raw: any): ReviewGroup {
   return {
     topic_id: raw.topic_id,
@@ -1376,6 +1389,14 @@ export function createApi(auth?: AuthOptions) {
   },
   getMe: async () => {
     return req<{ user_id: string; email: string; is_admin: boolean }>("/me", undefined, auth);
+  },
+  listAdminProjects: async () => {
+    const raw = await req<any[]>("/admin/projects", undefined, auth);
+    return arrayFrom(raw).map(normalizeAdminProject);
+  },
+  deleteAdminProject: async (id: string) => {
+    const raw = await req<any>(`/admin/projects/${id}`, { method: "DELETE" }, auth);
+    return normalizeAdminProject(raw);
   },
   listProjects: async () => {
     const raw = await req<any[]>("/projects", undefined, auth);

@@ -166,7 +166,12 @@ function AdminPageInner() {
           <ArrowLeft size={15} />
           {backLabel}
         </Link>
-        <Badge tone="neutral">Admin</Badge>
+        <div className="flex items-center gap-2">
+          <Link href="/admin/projects" className="text-sm font-semibold text-slate-500 hover:text-slate-900">
+            Projects
+          </Link>
+          <Badge tone="neutral">Admin</Badge>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
@@ -174,6 +179,9 @@ function AdminPageInner() {
           <nav className="sticky top-6 grid gap-1 text-sm">
             <div className="mb-2 px-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Admin</div>
             <span className="rounded-lg bg-white px-2 py-1.5 font-semibold text-slate-950 ring-1 ring-slate-200">TokenGate</span>
+            <Link href="/admin/projects" className="rounded-lg px-2 py-1.5 font-semibold text-slate-500 hover:bg-white hover:text-slate-950 hover:ring-1 hover:ring-slate-200">
+              Projects
+            </Link>
           </nav>
         </aside>
 
