@@ -1,6 +1,6 @@
-// Command api is the CiteLoop service entrypoint: runs migrations, seeds the
-// placeholder project, wires TokenGate or mock providers, starts the scheduler
-// cron, and serves the HTTP API.
+// Command api is the CiteLoop service entrypoint: runs migrations, wires
+// TokenGate or mock providers, starts the scheduler cron, and serves the HTTP
+// API.
 package main
 
 import (
@@ -50,10 +50,14 @@ func main() {
 	}
 
 	q := db.New(pool)
-	if p, err := seed.EnsurePlaceholder(ctx, q); err != nil {
-		log.Warn("seed placeholder failed", "err", err)
+	if shouldSeedPlaceholder(env) {
+		if p, err := seed.EnsurePlaceholder(ctx, q); err != nil {
+			log.Warn("seed placeholder failed", "err", err)
+		} else {
+			log.Info("placeholder project ready", "id", p.ID, "slug", p.Slug)
+		}
 	} else {
-		log.Info("placeholder project ready", "id", p.ID, "slug", p.Slug)
+		log.Info("placeholder project seed skipped", "environment", env.Environment, "clerk_configured", env.ClerkSecretKey != "")
 	}
 
 	// Providers: real when keyed, deterministic mock otherwise (still runs).
@@ -114,6 +118,13 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+}
+
+func shouldSeedPlaceholder(env config.Env) bool {
+	if env.ClerkSecretKey != "" {
+		return false
+	}
+	return env.Environment != "production"
 }
 
 func selectLLMProvider(env config.Env, log *slog.Logger) llm.Provider {

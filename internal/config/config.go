@@ -12,6 +12,7 @@ import (
 // Env is process-level configuration sourced from the environment.
 type Env struct {
 	DatabaseURL              string
+	Environment              string
 	Port                     string
 	TokenGateAPIKey          string
 	TokenGateBaseURL         string
@@ -45,6 +46,7 @@ type Env struct {
 func FromEnv() Env {
 	return Env{
 		DatabaseURL:              getenv("DATABASE_URL", "postgres://localhost:5432/citeloop?sslmode=disable"),
+		Environment:              firstEnv("RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT", "APP_ENV", "GO_ENV"),
 		Port:                     getenv("PORT", "8080"),
 		TokenGateAPIKey:          os.Getenv("TOKENGATE_API_KEY"),
 		TokenGateBaseURL:         getenv("TOKENGATE_BASE_URL", "https://tokengate-production.up.railway.app/v1"),
@@ -73,6 +75,15 @@ func FromEnv() Env {
 		GitHubAppClientSecret:    os.Getenv("GITHUB_APP_CLIENT_SECRET"),
 		GitHubAppPrivateKey:      os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 	}
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func getenv(k, def string) string {

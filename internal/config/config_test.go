@@ -131,6 +131,16 @@ func TestFromEnvReadsClerkSecretKeyAndAdmins(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsRailwayEnvironmentName(t *testing.T) {
+	t.Setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+	t.Setenv("RAILWAY_ENVIRONMENT", "")
+
+	env := FromEnv()
+	if env.Environment != "production" {
+		t.Fatalf("Environment = %q, want production", env.Environment)
+	}
+}
+
 func TestFromEnvReadsBlogContentDirDefaultAndOverride(t *testing.T) {
 	t.Setenv("BLOG_CONTENT_DIR", "")
 	env := FromEnv()
