@@ -47,6 +47,7 @@ test("global docs route exists and explains the CiteLoop loop with Phase 1 IA la
 
 test("root page is a landing page before a zero-project user creates a project", () => {
   const home = read("page.tsx");
+  const landingActions = read("landing-auth-actions.tsx");
 
   for (const copy of [
     "Turn your website into a self-improving growth loop.",
@@ -63,7 +64,8 @@ test("root page is a landing page before a zero-project user creates a project",
     assert.match(home, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  assert.match(home, /JoinWithGoogleButton/);
+  assert.match(home, /LandingHeroActions/);
+  assert.match(landingActions, /JoinWithGoogleButton/);
   assert.match(home, /prefers-reduced-motion/);
   assert.doesNotMatch(home, /content engine/i);
   assert.doesNotMatch(home, />\s*Docs\s*</);

@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
+import { UserButton, useAuth } from "@clerk/nextjs";
 import { useSignIn } from "@clerk/nextjs/legacy";
 import { ArrowRight, Loader2, Moon, Sun } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { Project } from "./lib/api";
 import { LAST_PROJECT_STORAGE_KEY, dashboardHrefForProjects } from "./lib/dashboard-routing";
 import { applyThemeChoice, readStoredThemeChoice, saveThemeChoice, type ThemeChoice } from "./lib/theme";
 import { cx } from "./components/ui";
@@ -79,12 +80,8 @@ export function LandingThemeToggle({ className = "" }: { className?: string }) {
 }
 
 export function LandingDashboardButton({
-  initialProjects,
-  projectPrefetchFailed = false,
   className = "",
 }: {
-  initialProjects: Project[];
-  projectPrefetchFailed?: boolean;
   className?: string;
 }) {
   const router = useRouter();
@@ -95,7 +92,7 @@ export function LandingDashboardButton({
     setBusy(true);
     const storedProjectId =
       typeof window === "undefined" ? null : window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY);
-    router.push(dashboardHrefForProjects(initialProjects, storedProjectId, projectPrefetchFailed));
+    router.push(dashboardHrefForProjects([], storedProjectId, true));
   }
 
   return (
@@ -108,5 +105,57 @@ export function LandingDashboardButton({
       {busy ? <Loader2 className="animate-spin" size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
       {busy ? "Opening..." : "Dashboard"}
     </button>
+  );
+}
+
+export function LandingHeaderActions() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const showAuthenticatedActions = isLoaded && isSignedIn;
+
+  return (
+    <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
+      <LandingThemeToggle />
+      {showAuthenticatedActions ? (
+        <>
+          <LandingDashboardButton />
+          <UserButton />
+        </>
+      ) : (
+        <>
+          <JoinWithGoogleButton />
+          <Link
+            href="/sign-up"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98]"
+          >
+            Start for free
+            <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function LandingHeroActions() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const showAuthenticatedActions = isLoaded && isSignedIn;
+
+  return (
+    <>
+      {showAuthenticatedActions ? (
+        <LandingDashboardButton className="h-11 w-full px-5 sm:w-auto" />
+      ) : (
+        <>
+          <Link
+            href="/sign-up"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98] sm:w-auto"
+          >
+            Start with your domain
+            <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+          <JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" />
+        </>
+      )}
+    </>
   );
 }

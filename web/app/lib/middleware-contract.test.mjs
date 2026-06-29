@@ -6,6 +6,8 @@ test("middleware keeps the landing page public", async () => {
   const source = await readFile(new URL("../../middleware.ts", import.meta.url), "utf8");
 
   assert.equal(source.includes('"/"'), true);
+  assert.match(source, /if \(!isPublicRoute\(req\)\)/);
+  assert.match(source, /if \(isPublicRoute\(req\)\) {\n\s*return NextResponse\.next\(\);\n\s*}/);
   assert.equal(source.includes('"/docs(.*)"'), true);
   assert.equal(source.includes('"/privacy(.*)"'), true);
   assert.equal(source.includes('"/terms(.*)"'), true);
