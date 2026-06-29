@@ -1656,4 +1656,10 @@ func lockKey(id uuid.UUID) int64 {
 	return int64(binary.BigEndian.Uint64(b[:8]))
 }
 
+// LockKey exposes the scheduler's project advisory-lock key for admin cleanup
+// paths that must coordinate with background project work.
+func LockKey(id uuid.UUID) int64 {
+	return lockKey(id)
+}
+
 var _ = pgx.ErrNoRows // keep pgx import for callers that switch on it

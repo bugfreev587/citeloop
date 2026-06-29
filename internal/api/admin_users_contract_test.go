@@ -30,24 +30,30 @@ func TestAdminUserRoutesAreRegistered(t *testing.T) {
 }
 
 func TestAdminUserHandlersUseOwnerWideDelete(t *testing.T) {
-	source, err := os.ReadFile("handlers_admin_users.go")
+	handler, err := os.ReadFile("handlers_admin_users.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(source)
+	helper, err := os.ReadFile("admin_delete.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(handler) + "\n" + string(helper)
 
 	for _, expected := range []string{
 		"ListAdminUsers",
 		"DeleteProjectsByOwner",
+		"deleteAdminOwnerProjects",
 		"userEmail",
 		"owner_email",
 		"deleted_projects",
 	} {
 		if !strings.Contains(text, expected) {
-			t.Fatalf("handlers_admin_users.go should contain %q", expected)
+			t.Fatalf("admin user delete source should contain %q", expected)
 		}
 	}
-	if strings.Contains(text, "DeleteProjectForOwner") || strings.Contains(text, "DeleteProject(") {
+	handlerText := string(handler)
+	if strings.Contains(handlerText, "DeleteProjectForOwner") || strings.Contains(handlerText, "DeleteProject(") {
 		t.Fatal("admin user delete must delete every project for the owner, not a single project")
 	}
 }

@@ -133,8 +133,8 @@ test("admin destructive deletes use an extended timeout for cascading cleanup", 
     );
     assert.deepEqual(
       timeouts,
-      [60_000, 60_000],
-      "admin deletes need enough time for database cascades instead of the 8s read timeout",
+      [120_000, 120_000],
+      "admin deletes need enough time to wait for project jobs and database cascades instead of the 8s read timeout",
     );
   } finally {
     globalThis.fetch = originalFetch;

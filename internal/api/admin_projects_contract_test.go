@@ -30,22 +30,27 @@ func TestAdminProjectRoutesAreRegistered(t *testing.T) {
 }
 
 func TestAdminProjectHandlersUseAdminOnlyQueries(t *testing.T) {
-	source, err := os.ReadFile("handlers_admin_projects.go")
+	handler, err := os.ReadFile("handlers_admin_projects.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(source)
+	helper, err := os.ReadFile("admin_delete.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(handler) + "\n" + string(helper)
 
 	for _, expected := range []string{
 		"ListAdminProjects",
 		"DeleteProject",
+		"deleteAdminProjectRecord",
 		"userEmail",
 		"owner_email",
 		"updated_at",
 		"UpdatedAt",
 	} {
 		if !strings.Contains(text, expected) {
-			t.Fatalf("handlers_admin_projects.go should contain %q", expected)
+			t.Fatalf("admin project delete source should contain %q", expected)
 		}
 	}
 	if strings.Contains(text, "DeleteProjectForOwner") {
