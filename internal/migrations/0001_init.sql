@@ -9,7 +9,8 @@ create table projects (
   name        text not null,
   slug        text not null unique,
   config      jsonb not null default '{}',   -- see projects.config schema (§3)
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
 
 create table product_profiles (

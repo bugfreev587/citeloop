@@ -18,9 +18,10 @@ test("admin projects page exposes all-account project management", () => {
   assert.match(page, /ProjectsClient/);
   assert.match(adminHome, /href="\/admin\/projects"/, "admin home should link to project management");
 
-  for (const copy of ["Projects", "Owner email", "Owner ID", "Created", "Delete"]) {
+  for (const copy of ["Projects", "Owner email", "Owner ID", "Created", "Last updated at", "Delete"]) {
     assert.match(client, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(client, /project\.updated_at/);
   assert.match(client, /api\.listAdminProjects\(\)/);
   assert.match(client, /api\.deleteAdminProject/);
   assert.match(client, /window\.confirm/);
@@ -36,4 +37,5 @@ test("web API client exposes admin project list and delete endpoints", () => {
   assert.match(source, /\/admin\/projects/);
   assert.match(source, /deleteAdminProject/);
   assert.match(source, /owner_email/);
+  assert.match(source, /updated_at/);
 });

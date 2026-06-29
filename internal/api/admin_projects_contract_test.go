@@ -41,6 +41,8 @@ func TestAdminProjectHandlersUseAdminOnlyQueries(t *testing.T) {
 		"DeleteProject",
 		"userEmail",
 		"owner_email",
+		"updated_at",
+		"UpdatedAt",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("handlers_admin_projects.go should contain %q", expected)

@@ -18,7 +18,7 @@ select * from projects where slug = $1;
 select * from projects order by created_at desc;
 
 -- name: ListAdminProjects :many
-select * from projects order by created_at desc;
+select * from projects order by updated_at desc, created_at desc;
 
 -- name: ListProjectsByOwner :many
 select * from projects
@@ -26,11 +26,11 @@ where owner_id = $1
 order by created_at desc;
 
 -- name: UpdateProjectConfig :one
-update projects set config = $2 where id = $1
+update projects set config = $2, updated_at = now() where id = $1
 returning *;
 
 -- name: UpdateProjectConfigForOwner :one
-update projects set config = $2
+update projects set config = $2, updated_at = now()
 where id = $1
   and owner_id = $3
 returning *;

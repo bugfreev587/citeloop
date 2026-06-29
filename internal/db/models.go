@@ -416,6 +416,7 @@ type Project struct {
 	Slug      string             `json:"slug"`
 	Config    json.RawMessage    `json:"config"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PublisherConnection struct {

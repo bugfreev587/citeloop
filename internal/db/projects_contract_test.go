@@ -19,6 +19,47 @@ func TestProjectQueriesAreOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestProjectQueriesTouchUpdatedAt(t *testing.T) {
+	if !strings.Contains(createProject, "updated_at") {
+		t.Fatal("CreateProject should return updated_at")
+	}
+	if !strings.Contains(updateProjectConfig, "updated_at = now()") {
+		t.Fatal("UpdateProjectConfig should refresh project updated_at")
+	}
+	if !strings.Contains(updateProjectConfigForOwner, "updated_at = now()") {
+		t.Fatal("UpdateProjectConfigForOwner should refresh project updated_at")
+	}
+
+	files, err := os.ReadDir(filepath.Join("..", "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migration string
+	for _, file := range files {
+		if strings.Contains(file.Name(), "project_updated_at") {
+			body, err := os.ReadFile(filepath.Join("..", "migrations", file.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			migration += "\n" + strings.ToLower(string(body))
+		}
+	}
+	if migration == "" {
+		t.Fatal("project updated_at migration is required")
+	}
+	for _, expected := range []string{
+		"alter table projects",
+		"add column if not exists updated_at",
+		"update projects",
+		"set updated_at = created_at",
+		"set not null",
+	} {
+		if !strings.Contains(migration, expected) {
+			t.Fatalf("project updated_at migration should contain %q", expected)
+		}
+	}
+}
+
 func TestProjectHardDeleteIsOwnerScopedAndCascading(t *testing.T) {
 	if !strings.Contains(deleteProjectForOwner, "delete from projects") {
 		t.Fatal("DeleteProjectForOwner must delete from projects")

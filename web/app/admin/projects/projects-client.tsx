@@ -10,7 +10,7 @@ import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx } 
 
 type Access = "loading" | "granted" | "denied";
 
-function formatCreatedAt(value: any) {
+function formatDateTime(value: any) {
   if (!value) return "Not set";
   const raw = typeof value === "string" ? value : value.Time ?? value.time ?? value;
   const date = new Date(raw);
@@ -171,6 +171,7 @@ export function ProjectsClient() {
                   <th className="px-4 py-3">Owner email</th>
                   <th className="px-4 py-3">Owner ID</th>
                   <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Last updated at</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -207,7 +208,8 @@ export function ProjectsClient() {
                       <td className="px-4 py-3">
                         <div className="max-w-[260px] break-all font-mono text-xs text-slate-500">{project.owner_id || "Unknown"}</div>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatCreatedAt(project.created_at)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDateTime(project.created_at)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDateTime(project.updated_at ?? project.created_at)}</td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
                           <Link
