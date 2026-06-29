@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink, FolderKanban, Loader2, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ExternalLink, FolderKanban, Loader2, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { AdminProject } from "../../lib/api";
 import { useApi } from "../../lib/use-api";
 import { useToast } from "../../components/toast-provider";
@@ -28,12 +28,17 @@ function projectSiteURL(project: AdminProject) {
   return project.config?.site_url?.trim() || "";
 }
 
+function ownerLabel(project: AdminProject) {
+  return project.owner_email || project.owner_id || "unknown owner";
+}
+
 export function ProjectsClient() {
   const api = useApi();
   const { notify } = useToast();
   const [access, setAccess] = useState<Access>("loading");
   const [projects, setProjects] = useState<AdminProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingDelete, setPendingDelete] = useState<AdminProject | null>(null);
   const [deletingID, setDeletingID] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -66,20 +71,25 @@ export function ProjectsClient() {
 
   const ownerCount = useMemo(() => new Set(projects.map((project) => project.owner_id).filter(Boolean)).size, [projects]);
 
-  async function deleteProject(project: AdminProject) {
-    const ownerLabel = project.owner_email || project.owner_id || "unknown owner";
-    if (
-      !window.confirm(
-        `Delete project "${project.name}" for ${ownerLabel}? This permanently removes the project and its generated work.`,
-      )
-    ) {
-      return;
-    }
+  function openDelete(project: AdminProject) {
+    if (deletingID !== null) return;
+    setPendingDelete(project);
+  }
+
+  function closeDelete() {
+    if (deletingID !== null) return;
+    setPendingDelete(null);
+  }
+
+  async function deleteProject() {
+    if (!pendingDelete) return;
+    const project = pendingDelete;
     setDeletingID(project.id);
     try {
       await api.deleteAdminProject(project.id);
       setProjects((current) => current.filter((item) => item.id !== project.id));
       notify({ title: "Project deleted", detail: `${project.name} was removed.`, tone: "green" });
+      setPendingDelete(null);
     } catch (error: any) {
       notify({ title: "Delete failed", detail: error.message, tone: "red" });
     } finally {
@@ -222,7 +232,7 @@ export function ProjectsClient() {
                             size="sm"
                             variant="danger"
                             disabled={deletingID !== null}
-                            onClick={() => deleteProject(project)}
+                            onClick={() => openDelete(project)}
                           >
                             <ButtonProgress busy={deleting} busyLabel="Deleting" idleIcon={<Trash2 size={14} />}>
                               Delete
@@ -238,6 +248,44 @@ export function ProjectsClient() {
           </div>
         )}
       </section>
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-project-title"
+            className="w-full max-w-md rounded-xl border border-red-200 bg-white p-4 shadow-xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-50 text-red-700">
+                <AlertTriangle size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-project-title" className="text-base font-bold text-slate-950">
+                  Delete {pendingDelete.name}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  This permanently removes this project and all associated CiteLoop data for {ownerLabel(pendingDelete)}.
+                </p>
+                <div className="mt-3 break-all rounded-lg bg-slate-50 px-3 py-2 font-mono text-xs text-slate-500">
+                  {pendingDelete.id}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button type="button" variant="outline" disabled={deletingID !== null} onClick={closeDelete}>
+                Cancel
+              </Button>
+              <Button type="button" variant="danger" disabled={deletingID !== null} onClick={deleteProject}>
+                <ButtonProgress busy={deletingID === pendingDelete.id} busyLabel="Deleting" idleIcon={<Trash2 size={16} />}>
+                  Delete
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

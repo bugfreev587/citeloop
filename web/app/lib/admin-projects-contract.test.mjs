@@ -18,13 +18,14 @@ test("admin projects page exposes all-account project management", () => {
   assert.match(page, /ProjectsClient/);
   assert.match(adminHome, /href="\/admin\/projects"/, "admin home should link to project management");
 
-  for (const copy of ["Projects", "Owner email", "Owner ID", "Created", "Last updated at", "Delete"]) {
+  for (const copy of ["Projects", "Owner email", "Owner ID", "Created", "Last updated at", "Cancel", "Delete"]) {
     assert.match(client, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(client, /project\.updated_at/);
   assert.match(client, /api\.listAdminProjects\(\)/);
   assert.match(client, /api\.deleteAdminProject/);
-  assert.match(client, /window\.confirm/);
+  assert.match(client, /role="dialog"/);
+  assert.doesNotMatch(client, /window\.confirm/);
   assert.match(client, /admin access required/i);
 });
 
