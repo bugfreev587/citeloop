@@ -17,6 +17,9 @@ select * from projects where slug = $1;
 -- name: ListProjects :many
 select * from projects order by created_at desc;
 
+-- name: ListAdminProjects :many
+select * from projects order by created_at desc;
+
 -- name: ListProjectsByOwner :many
 select * from projects
 where owner_id = $1
@@ -36,4 +39,9 @@ returning *;
 delete from projects
 where id = $1
   and owner_id = $2
+returning *;
+
+-- name: DeleteProject :one
+delete from projects
+where id = $1
 returning *;

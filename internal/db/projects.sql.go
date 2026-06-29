@@ -44,6 +44,26 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 	return i, err
 }
 
+const deleteProject = `-- name: DeleteProject :one
+delete from projects
+where id = $1
+returning id, owner_id, name, slug, config, created_at
+`
+
+func (q *Queries) DeleteProject(ctx context.Context, id uuid.UUID) (Project, error) {
+	row := q.db.QueryRow(ctx, deleteProject, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Config,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteProjectForOwner = `-- name: DeleteProjectForOwner :one
 delete from projects
 where id = $1
@@ -129,6 +149,37 @@ func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwner
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAdminProjects = `-- name: ListAdminProjects :many
+select id, owner_id, name, slug, config, created_at from projects order by created_at desc
+`
+
+func (q *Queries) ListAdminProjects(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listAdminProjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Config,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProjects = `-- name: ListProjects :many

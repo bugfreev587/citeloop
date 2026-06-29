@@ -64,6 +64,8 @@ func (s *Server) Router() http.Handler {
 			r.Put("/admin/llm-credentials", s.updateLLMCredentials)
 			r.Post("/admin/llm-credentials/test", s.testLLMCredentials)
 			r.Delete("/admin/llm-credentials", s.deleteLLMCredentials)
+			r.Get("/admin/projects", s.listAdminProjects)
+			r.Delete("/admin/projects/{projectID}", s.deleteAdminProject)
 		})
 
 		r.Get("/projects", s.listProjects)
