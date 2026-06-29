@@ -1,6 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import type { NextFetchEvent, NextRequest } from "next/server";
 import { allowUnconfiguredClerkBypass, clerkServerAuthConfigured } from "./app/lib/auth-config";
 
 const isPublicRoute = createRouteMatcher(["/", "/docs(.*)", "/privacy(.*)", "/terms(.*)", "/sign-in(.*)", "/sign-up(.*)"]);
@@ -11,6 +11,13 @@ const protectedMiddleware = clerkMiddleware(async (auth, req) => {
   }
 });
 
+function configuredMiddleware(req: NextRequest, event: NextFetchEvent) {
+  if (isPublicRoute(req)) {
+    return NextResponse.next();
+  }
+  return protectedMiddleware(req, event);
+}
+
 function unconfiguredMiddleware(_req: NextRequest) {
   if (!allowUnconfiguredClerkBypass) {
     return new NextResponse("Clerk server authentication is not configured.", { status: 503 });
@@ -18,7 +25,7 @@ function unconfiguredMiddleware(_req: NextRequest) {
   return NextResponse.next();
 }
 
-export default clerkServerAuthConfigured ? protectedMiddleware : unconfiguredMiddleware;
+export default clerkServerAuthConfigured ? configuredMiddleware : unconfiguredMiddleware;
 
 export const config = {
   matcher: [

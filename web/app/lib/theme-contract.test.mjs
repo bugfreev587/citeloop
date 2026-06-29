@@ -36,7 +36,8 @@ test("theme choice applies before hydration and enables Tailwind dark variants",
   assert.doesNotMatch(landingActions, /grid-cols-2/, "Landing theme control should not render as a two-option switch");
   assert.doesNotMatch(landingActions, /aria-label="Use light mode"/, "Landing theme control should not render a separate light button");
   assert.doesNotMatch(landingActions, /aria-label="Use dark mode"/, "Landing theme control should not render a separate dark button");
-  assert.match(landingPage, /LandingThemeToggle/, "Landing page should place the theme toggle in the header");
+  assert.match(landingPage, /LandingHeaderActions/, "Landing page should place the auth action cluster in the header");
+  assert.match(landingActions, /<LandingThemeToggle \/>/, "Landing header actions should include the theme toggle");
 });
 
 test("global stylesheet gives shared surfaces a dark-mode palette", () => {

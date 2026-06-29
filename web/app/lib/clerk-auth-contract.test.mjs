@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("home page avoids server auth when Clerk is not configured", async () => {
+test("home page avoids server auth and backend fetch on the public landing route", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
-  assert.equal(source.includes("clerkServerAuthConfigured"), true);
-  assert.equal(source.includes("requireConfiguredClerk()"), true);
-  assert.equal(source.includes("createApi(token ? { token } : undefined)"), true);
+  assert.equal(source.includes("from \"@clerk/nextjs/server\""), false);
+  assert.equal(source.includes("clerkServerAuthConfigured"), false);
+  assert.equal(source.includes("requireConfiguredClerk()"), false);
+  assert.equal(source.includes("createApi("), false);
+  assert.equal(source.includes("listProjects("), false);
 });
 
 test("project layout avoids server auth when Clerk is not configured", async () => {

@@ -41,15 +41,20 @@ test("landing dashboard route falls back to projects when server prefetch failed
   assert.equal(dashboardHrefForProjects(projects, "project-old", true), "/projects");
 });
 
-test("landing auth actions use Clerk Google OAuth and server-prefetched Dashboard projects", async () => {
+test("landing auth actions use Clerk Google OAuth and client-only Dashboard routing", async () => {
   const source = await readFile(new URL("../landing-auth-actions.tsx", import.meta.url), "utf8");
 
   assert.match(source, /"use client"/);
   assert.match(source, /useSignIn/);
+  assert.match(source, /useAuth/);
+  assert.match(source, /isLoaded/);
+  assert.match(source, /isSignedIn/);
+  assert.doesNotMatch(source, /<SignedIn\b/);
+  assert.doesNotMatch(source, /<SignedOut\b/);
   assert.match(source, /authenticateWithRedirect/);
   assert.match(source, /strategy:\s*"oauth_google"/);
   assert.doesNotMatch(source, /href="\/sign-in"/);
-  assert.match(source, /initialProjects/);
+  assert.doesNotMatch(source, /initialProjects/);
   assert.doesNotMatch(source, /listProjects\(/);
   assert.match(source, /LAST_PROJECT_STORAGE_KEY/);
   assert.match(source, /dashboardHrefForProjects/);
@@ -67,7 +72,11 @@ test("Google OAuth callback route completes Clerk redirect authentication", asyn
 test("root page is a focused landing page with requested auth actions", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /export const dynamic = "force-dynamic"/);
+  assert.doesNotMatch(source, /export const dynamic = "force-dynamic"/);
+  assert.doesNotMatch(source, /from "@clerk\/nextjs\/server"/);
+  assert.doesNotMatch(source, /requireConfiguredClerk/);
+  assert.doesNotMatch(source, /createApi/);
+  assert.doesNotMatch(source, /listProjects\(/);
   assert.match(source, /Turn your website into a self-improving growth loop\./);
   assert.match(source, /Connect your domain, Search Console, and publishing target\./);
   assert.match(source, /SEO\/GEO GROWTH LOOP/);
@@ -79,10 +88,8 @@ test("root page is a focused landing page with requested auth actions", async ()
   assert.match(source, /Ship/);
   assert.match(source, /Learn/);
   assert.match(source, /prefers-reduced-motion/);
-  assert.match(source, /JoinWithGoogleButton/);
-  assert.match(source, /Start with your domain/);
-  assert.match(source, /Start for free/);
-  assert.match(source, /LandingDashboardButton/);
+  assert.match(source, /LandingHeaderActions/);
+  assert.match(source, /LandingHeroActions/);
   assert.doesNotMatch(source, /content engine/i);
   assert.doesNotMatch(source, /ProjectManagementClient/);
   assert.doesNotMatch(source, /ProjectCreateForm/);
@@ -206,21 +213,24 @@ test("landing hero columns can shrink inside mobile viewport", async () => {
 });
 
 test("landing header actions stay out of narrow mobile viewports", async () => {
-  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+  const source = await readFile(new URL("../landing-auth-actions.tsx", import.meta.url), "utf8");
 
   assert.match(source, /className="hidden flex-wrap items-center justify-end gap-2 sm:flex"/);
-  assert.match(source, /className="hidden items-center justify-end gap-3 sm:flex"/);
+  assert.match(source, /Start for free/);
+  assert.match(source, /LandingDashboardButton/);
+  assert.match(source, /UserButton/);
   assert.doesNotMatch(source, /className="flex flex-wrap items-center justify-end gap-2"/);
 });
 
 test("landing hero actions stack cleanly on narrow mobile viewports", async () => {
-  const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+  const pageSource = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
+  const actionSource = await readFile(new URL("../landing-auth-actions.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /className="mt-7 grid w-full max-w-sm grid-cols-1 gap-3 sm:flex sm:max-w-none"/);
-  assert.match(source, /inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-\[0\.98\] sm:w-auto/);
-  assert.match(source, /<JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" \/>/);
-  assert.match(source, /className="h-11 w-full px-5 sm:w-auto"/);
-  assert.doesNotMatch(source, /className="mt-7 flex flex-wrap gap-3"/);
+  assert.match(pageSource, /className="mt-7 grid w-full max-w-sm grid-cols-1 gap-3 sm:flex sm:max-w-none"/);
+  assert.match(actionSource, /inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-\[0\.98\] sm:w-auto/);
+  assert.match(actionSource, /<JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" \/>/);
+  assert.match(actionSource, /className="h-11 w-full px-5 sm:w-auto"/);
+  assert.doesNotMatch(pageSource, /className="mt-7 flex flex-wrap gap-3"/);
 });
 
 test("root metadata matches the growth loop positioning", async () => {

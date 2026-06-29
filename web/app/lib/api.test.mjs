@@ -65,6 +65,29 @@ test("createApi resolves Clerk tokens from getToken", async () => {
   }
 });
 
+test("createApi aborts stalled backend requests before a Vercel function timeout", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    assert.ok(init.signal, "fetch should receive an AbortSignal");
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        reject(init.signal.reason ?? new Error("aborted"));
+      });
+    });
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+
+    await assert.rejects(
+      () => createApi({ token: "session-token", timeoutMs: 1 }).listProjects(),
+      /CiteLoop API request timed out/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("friendlyApiError maps missing project responses to onboarding copy", async () => {
   const { ApiError, friendlyApiError, isProjectMissingError } = await loadApiModule();
   const badProject = new ApiError(400, '{"error":"bad project id"}');

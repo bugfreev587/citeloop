@@ -1,12 +1,5 @@
 import Link from "next/link";
-import { UserButton } from "@clerk/nextjs";
-import { auth } from "@clerk/nextjs/server";
-import { ArrowRight } from "lucide-react";
-import { JoinWithGoogleButton, LandingDashboardButton, LandingThemeToggle } from "./landing-auth-actions";
-import { clerkServerAuthConfigured, requireConfiguredClerk } from "./lib/auth-config";
-import { createApi, Project } from "./lib/api";
-
-export const dynamic = "force-dynamic";
+import { LandingHeaderActions, LandingHeroActions } from "./landing-auth-actions";
 
 const loopMoves = [
   ["Discover", "Read the domain, GSC property, page inventory, queries, and technical signals."],
@@ -14,27 +7,7 @@ const loopMoves = [
   ["Learn", "Measure outcome windows and feed results back into the next growth plan."],
 ];
 
-export default async function Home() {
-  requireConfiguredClerk();
-
-  let token: string | null = null;
-  if (clerkServerAuthConfigured) {
-    const { getToken } = await auth();
-    token = await getToken();
-  }
-  const signedOut = clerkServerAuthConfigured && !token;
-
-  const api = createApi(token ? { token } : undefined);
-  let projects: Project[] = [];
-  let projectPrefetchFailed = false;
-  if (!signedOut) {
-    try {
-      projects = await api.listProjects();
-    } catch {
-      projectPrefetchFailed = true;
-    }
-  }
-
+export default function Home() {
   return (
     <main className="landing-page min-h-[100dvh] overflow-hidden bg-[#f8f5ef] text-slate-950">
       <style>{`
@@ -171,31 +144,7 @@ export default async function Home() {
             CiteLoop
           </Link>
 
-          {clerkServerAuthConfigured ? (
-            (signedOut ? (
-              <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
-                <LandingThemeToggle />
-                <JoinWithGoogleButton />
-                <Link
-                  href="/sign-up"
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98]"
-                >
-                  Start for free
-                  <ArrowRight size={16} aria-hidden="true" />
-                </Link>
-              </div>
-            ) : (
-              <div className="hidden items-center justify-end gap-3 sm:flex">
-                <LandingThemeToggle />
-                <LandingDashboardButton initialProjects={projects} projectPrefetchFailed={projectPrefetchFailed} />
-                <UserButton />
-              </div>
-            ))
-          ) : (
-            <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
-              <LandingThemeToggle />
-            </div>
-          )}
+          <LandingHeaderActions />
         </header>
 
         <section className="grid flex-1 items-center gap-10 py-12 lg:grid-cols-[minmax(0,430px)_minmax(0,1fr)] lg:gap-14 lg:py-9">
@@ -216,25 +165,7 @@ export default async function Home() {
               work safely, and measures what moved.
             </p>
             <div className="mt-7 grid w-full max-w-sm grid-cols-1 gap-3 sm:flex sm:max-w-none">
-              {clerkServerAuthConfigured && signedOut && (
-                <>
-                  <Link
-                    href="/sign-up"
-                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-slate-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 active:scale-[0.98] sm:w-auto"
-                  >
-                    Start with your domain
-                    <ArrowRight size={16} aria-hidden="true" />
-                  </Link>
-                  <JoinWithGoogleButton className="h-11 w-full px-5 sm:w-auto" />
-                </>
-              )}
-              {clerkServerAuthConfigured && !signedOut && (
-                <LandingDashboardButton
-                  initialProjects={projects}
-                  projectPrefetchFailed={projectPrefetchFailed}
-                  className="h-11 w-full px-5 sm:w-auto"
-                />
-              )}
+              <LandingHeroActions />
             </div>
             <div className="mt-7 grid max-w-xl gap-2 text-sm font-semibold text-stone-600 sm:grid-cols-3">
               <div className="rounded-lg border border-stone-200 bg-white/70 px-3 py-2">Domain</div>

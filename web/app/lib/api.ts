@@ -20,7 +20,15 @@ export type { Article, GenerationRun, InventoryItem, ProductProfile, Topic };
 export type AuthOptions = {
   token?: string | null;
   getToken?: () => Promise<string | null>;
+  timeoutMs?: number;
 };
+
+const DEFAULT_API_TIMEOUT_MS = 8000;
+
+function apiTimeoutMs(auth?: AuthOptions) {
+  const configured = auth?.timeoutMs ?? Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_API_TIMEOUT_MS;
+}
 
 function parseErrorBody(body: string): { error?: string } {
   try {
@@ -1319,11 +1327,24 @@ async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions): Pro
   if (authHeader.Authorization && !headers.has("Authorization")) {
     headers.set("Authorization", authHeader.Authorization);
   }
-  const res = await fetch(`${BASE}/api${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), apiTimeoutMs(auth));
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("CiteLoop API request timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new ApiError(res.status, body);
