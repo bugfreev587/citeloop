@@ -20,6 +20,16 @@ select * from projects order by created_at desc;
 -- name: ListAdminProjects :many
 select * from projects order by updated_at desc, created_at desc;
 
+-- name: ListAdminUsers :many
+select
+  owner_id,
+  count(*)::bigint as project_count,
+  min(created_at) as created_at,
+  max(updated_at) as updated_at
+from projects
+group by owner_id
+order by updated_at desc, created_at desc;
+
 -- name: ListProjectsByOwner :many
 select * from projects
 where owner_id = $1
@@ -44,4 +54,9 @@ returning *;
 -- name: DeleteProject :one
 delete from projects
 where id = $1
+returning *;
+
+-- name: DeleteProjectsByOwner :many
+delete from projects
+where owner_id = $1
 returning *;

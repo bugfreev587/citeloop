@@ -170,6 +170,9 @@ function AdminPageInner() {
           <Link href="/admin/projects" className="text-sm font-semibold text-slate-500 hover:text-slate-900">
             Projects
           </Link>
+          <Link href="/admin/users" className="text-sm font-semibold text-slate-500 hover:text-slate-900">
+            Users
+          </Link>
           <Badge tone="neutral">Admin</Badge>
         </div>
       </div>
@@ -181,6 +184,9 @@ function AdminPageInner() {
             <span className="rounded-lg bg-white px-2 py-1.5 font-semibold text-slate-950 ring-1 ring-slate-200">TokenGate</span>
             <Link href="/admin/projects" className="rounded-lg px-2 py-1.5 font-semibold text-slate-500 hover:bg-white hover:text-slate-950 hover:ring-1 hover:ring-slate-200">
               Projects
+            </Link>
+            <Link href="/admin/users" className="rounded-lg px-2 py-1.5 font-semibold text-slate-500 hover:bg-white hover:text-slate-950 hover:ring-1 hover:ring-slate-200">
+              Users
             </Link>
           </nav>
         </aside>

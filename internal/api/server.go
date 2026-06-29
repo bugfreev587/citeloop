@@ -66,6 +66,8 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/admin/llm-credentials", s.deleteLLMCredentials)
 			r.Get("/admin/projects", s.listAdminProjects)
 			r.Delete("/admin/projects/{projectID}", s.deleteAdminProject)
+			r.Get("/admin/users", s.listAdminUsers)
+			r.Delete("/admin/users/{ownerID}", s.deleteAdminUser)
 		})
 
 		r.Get("/projects", s.listProjects)

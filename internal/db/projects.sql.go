@@ -93,6 +93,40 @@ func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectFo
 	return i, err
 }
 
+const deleteProjectsByOwner = `-- name: DeleteProjectsByOwner :many
+delete from projects
+where owner_id = $1
+returning id, owner_id, name, slug, config, created_at, updated_at
+`
+
+func (q *Queries) DeleteProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error) {
+	rows, err := q.db.Query(ctx, deleteProjectsByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getProject = `-- name: GetProject :one
 select id, owner_id, name, slug, config, created_at, updated_at from projects where id = $1
 `
@@ -176,6 +210,49 @@ func (q *Queries) ListAdminProjects(ctx context.Context) ([]Project, error) {
 			&i.Name,
 			&i.Slug,
 			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAdminUsers = `-- name: ListAdminUsers :many
+select
+  owner_id,
+  count(*)::bigint as project_count,
+  min(created_at) as created_at,
+  max(updated_at) as updated_at
+from projects
+group by owner_id
+order by updated_at desc, created_at desc
+`
+
+type ListAdminUsersRow struct {
+	OwnerID      string      `json:"owner_id"`
+	ProjectCount int64       `json:"project_count"`
+	CreatedAt    interface{} `json:"created_at"`
+	UpdatedAt    interface{} `json:"updated_at"`
+}
+
+func (q *Queries) ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error) {
+	rows, err := q.db.Query(ctx, listAdminUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAdminUsersRow
+	for rows.Next() {
+		var i ListAdminUsersRow
+		if err := rows.Scan(
+			&i.OwnerID,
+			&i.ProjectCount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

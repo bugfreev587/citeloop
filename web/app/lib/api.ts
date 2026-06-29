@@ -117,6 +117,20 @@ export type AdminProject = Project & {
   owner_email: string;
 };
 
+export type AdminUser = {
+  owner_id: string;
+  owner_email: string;
+  project_count: number;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type AdminUserDeleteResult = {
+  owner_id: string;
+  owner_email: string;
+  deleted_projects: number;
+};
+
 export type ReviewGroup = { topic_id: string; articles: Article[] };
 
 export type GenerateTopicResult = {
@@ -840,6 +854,24 @@ function normalizeAdminProject(raw: any): AdminProject {
   };
 }
 
+function normalizeAdminUser(raw: any): AdminUser {
+  return {
+    owner_id: raw.owner_id ?? "",
+    owner_email: raw.owner_email ?? "",
+    project_count: Number(raw.project_count ?? 0),
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+  };
+}
+
+function normalizeAdminUserDeleteResult(raw: any): AdminUserDeleteResult {
+  return {
+    owner_id: raw.owner_id ?? "",
+    owner_email: raw.owner_email ?? "",
+    deleted_projects: Number(raw.deleted_projects ?? 0),
+  };
+}
+
 function normalizeReviewGroup(raw: any): ReviewGroup {
   return {
     topic_id: raw.topic_id,
@@ -1399,6 +1431,14 @@ export function createApi(auth?: AuthOptions) {
   deleteAdminProject: async (id: string) => {
     const raw = await req<any>(`/admin/projects/${id}`, { method: "DELETE" }, auth);
     return normalizeAdminProject(raw);
+  },
+  listAdminUsers: async () => {
+    const raw = await req<any[]>("/admin/users", undefined, auth);
+    return arrayFrom(raw).map(normalizeAdminUser);
+  },
+  deleteAdminUser: async (ownerID: string) => {
+    const raw = await req<any>(`/admin/users/${encodeURIComponent(ownerID)}`, { method: "DELETE" }, auth);
+    return normalizeAdminUserDeleteResult(raw);
   },
   listProjects: async () => {
     const raw = await req<any[]>("/projects", undefined, auth);
