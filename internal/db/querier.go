@@ -41,6 +41,7 @@ type Querier interface {
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	DeleteProject(ctx context.Context, id uuid.UUID) (Project, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
+	DeleteProjectsByOwner(ctx context.Context, ownerID string) ([]Project, error)
 	DeletePublisherConnectionForProject(ctx context.Context, arg DeletePublisherConnectionForProjectParams) (PublisherConnection, error)
 	// DeleteRecoverableArticlesForTopic clears a topic's non-terminal drafts so the
 	// recovery loop can regenerate a fresh canonical/variant without colliding with
@@ -103,6 +104,7 @@ type Querier interface {
 	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
 	ListAdminProjects(ctx context.Context) ([]Project, error)
+	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
 	// hands-off auto-approval when the project runs in auto-advance mode.
 	ListApprovableForProject(ctx context.Context, arg ListApprovableForProjectParams) ([]Article, error)
