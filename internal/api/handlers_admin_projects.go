@@ -19,6 +19,7 @@ type adminProjectResponse struct {
 	Slug       string    `json:"slug"`
 	Config     any       `json:"config"`
 	CreatedAt  any       `json:"created_at"`
+	UpdatedAt  any       `json:"updated_at"`
 }
 
 func (s *Server) listAdminProjects(w http.ResponseWriter, r *http.Request) {
@@ -82,5 +83,6 @@ func adminProjectResponseFor(project db.Project, ownerEmail string) adminProject
 		Slug:       project.Slug,
 		Config:     project.Config,
 		CreatedAt:  project.CreatedAt,
+		UpdatedAt:  project.UpdatedAt,
 	}
 }

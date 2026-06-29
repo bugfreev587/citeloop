@@ -15,7 +15,7 @@ import (
 const createProject = `-- name: CreateProject :one
 insert into projects (owner_id, name, slug, config)
 values ($1, $2, $3, $4)
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, updated_at
 `
 
 type CreateProjectParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -47,7 +48,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 const deleteProject = `-- name: DeleteProject :one
 delete from projects
 where id = $1
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, updated_at
 `
 
 func (q *Queries) DeleteProject(ctx context.Context, id uuid.UUID) (Project, error) {
@@ -60,6 +61,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id uuid.UUID) (Project, err
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -68,7 +70,7 @@ const deleteProjectForOwner = `-- name: DeleteProjectForOwner :one
 delete from projects
 where id = $1
   and owner_id = $2
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, updated_at
 `
 
 type DeleteProjectForOwnerParams struct {
@@ -86,12 +88,13 @@ func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectFo
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getProject = `-- name: GetProject :one
-select id, owner_id, name, slug, config, created_at from projects where id = $1
+select id, owner_id, name, slug, config, created_at, updated_at from projects where id = $1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id uuid.UUID) (Project, error) {
@@ -104,12 +107,13 @@ func (q *Queries) GetProject(ctx context.Context, id uuid.UUID) (Project, error)
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getProjectBySlug = `-- name: GetProjectBySlug :one
-select id, owner_id, name, slug, config, created_at from projects where slug = $1
+select id, owner_id, name, slug, config, created_at, updated_at from projects where slug = $1
 `
 
 func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, error) {
@@ -122,12 +126,13 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, slug string) (Project, e
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getProjectForOwner = `-- name: GetProjectForOwner :one
-select id, owner_id, name, slug, config, created_at from projects
+select id, owner_id, name, slug, config, created_at, updated_at from projects
 where id = $1
   and owner_id = $2
 `
@@ -147,12 +152,13 @@ func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwner
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const listAdminProjects = `-- name: ListAdminProjects :many
-select id, owner_id, name, slug, config, created_at from projects order by created_at desc
+select id, owner_id, name, slug, config, created_at, updated_at from projects order by updated_at desc, created_at desc
 `
 
 func (q *Queries) ListAdminProjects(ctx context.Context) ([]Project, error) {
@@ -171,6 +177,7 @@ func (q *Queries) ListAdminProjects(ctx context.Context) ([]Project, error) {
 			&i.Slug,
 			&i.Config,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -183,7 +190,7 @@ func (q *Queries) ListAdminProjects(ctx context.Context) ([]Project, error) {
 }
 
 const listProjects = `-- name: ListProjects :many
-select id, owner_id, name, slug, config, created_at from projects order by created_at desc
+select id, owner_id, name, slug, config, created_at, updated_at from projects order by created_at desc
 `
 
 func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
@@ -202,6 +209,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.Slug,
 			&i.Config,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -214,7 +222,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-select id, owner_id, name, slug, config, created_at from projects
+select id, owner_id, name, slug, config, created_at, updated_at from projects
 where owner_id = $1
 order by created_at desc
 `
@@ -235,6 +243,7 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 			&i.Slug,
 			&i.Config,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -247,8 +256,8 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerID string) ([]Pr
 }
 
 const updateProjectConfig = `-- name: UpdateProjectConfig :one
-update projects set config = $2 where id = $1
-returning id, owner_id, name, slug, config, created_at
+update projects set config = $2, updated_at = now() where id = $1
+returning id, owner_id, name, slug, config, created_at, updated_at
 `
 
 type UpdateProjectConfigParams struct {
@@ -266,15 +275,16 @@ func (q *Queries) UpdateProjectConfig(ctx context.Context, arg UpdateProjectConf
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const updateProjectConfigForOwner = `-- name: UpdateProjectConfigForOwner :one
-update projects set config = $2
+update projects set config = $2, updated_at = now()
 where id = $1
   and owner_id = $3
-returning id, owner_id, name, slug, config, created_at
+returning id, owner_id, name, slug, config, created_at, updated_at
 `
 
 type UpdateProjectConfigForOwnerParams struct {
@@ -293,6 +303,7 @@ func (q *Queries) UpdateProjectConfigForOwner(ctx context.Context, arg UpdatePro
 		&i.Slug,
 		&i.Config,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

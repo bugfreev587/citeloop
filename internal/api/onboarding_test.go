@@ -313,7 +313,7 @@ func (s *projectCreateDBSpy) QueryRow(_ context.Context, query string, args ...i
 	switch {
 	case strings.Contains(query, "insert into projects"):
 		return onboardingScanRow{values: []any{
-			s.projectID, args[0].(string), args[1].(string), args[2].(string), args[3].(json.RawMessage), pgtype.Timestamptz{},
+			s.projectID, args[0].(string), args[1].(string), args[2].(string), args[3].(json.RawMessage), pgtype.Timestamptz{}, pgtype.Timestamptz{},
 		}}
 	case strings.Contains(query, "insert into seo_properties"):
 		s.seoSiteURL = args[1].(string)
@@ -337,9 +337,9 @@ func (s *onboardingDBSpy) Query(context.Context, string, ...interface{}) (pgx.Ro
 
 func (s *onboardingDBSpy) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
-	case strings.Contains(query, "select id, owner_id, name, slug, config, created_at from projects"):
+	case strings.Contains(query, "select id, owner_id, name, slug, config, created_at, updated_at from projects"):
 		return onboardingScanRow{values: []any{
-			s.projectID, "owner", "UniPost", "unipost", config.Default().JSON(), pgtype.Timestamptz{},
+			s.projectID, "owner", "UniPost", "unipost", config.Default().JSON(), pgtype.Timestamptz{}, pgtype.Timestamptz{},
 		}}
 	case strings.Contains(query, "insert into generation_runs"):
 		return onboardingScanRow{values: []any{

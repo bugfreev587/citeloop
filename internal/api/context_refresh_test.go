@@ -146,8 +146,8 @@ func (s *contextRefreshDBSpy) Query(context.Context, string, ...interface{}) (pg
 
 func (s *contextRefreshDBSpy) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
-	case strings.Contains(query, "select id, owner_id, name, slug, config, created_at from projects"):
-		return onboardingScanRow{values: []any{s.projectID, "owner", "UniPost", "unipost", s.config, pgtype.Timestamptz{}}}
+	case strings.Contains(query, "select id, owner_id, name, slug, config, created_at, updated_at from projects"):
+		return onboardingScanRow{values: []any{s.projectID, "owner", "UniPost", "unipost", s.config, pgtype.Timestamptz{}, pgtype.Timestamptz{}}}
 	case strings.Contains(query, "select id, project_id, source_urls, profile, version, is_active, created_at, updated_at from product_profiles"):
 		profile := s.profile
 		if len(profile) == 0 {

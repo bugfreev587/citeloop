@@ -109,6 +109,7 @@ export type Project = {
   slug: string;
   config: ProjectConfig;
   created_at?: any;
+  updated_at?: any;
 };
 
 export type AdminProject = Project & {
@@ -827,6 +828,7 @@ function normalizeProject(raw: any): Project {
     slug: raw.slug ?? raw.id,
     config: { ...defaultProjectConfig(), ...(raw.config ?? {}) },
     created_at: raw.created_at,
+    updated_at: raw.updated_at,
   };
 }
 

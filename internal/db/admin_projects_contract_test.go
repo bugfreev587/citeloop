@@ -9,8 +9,11 @@ func TestAdminProjectQueriesExposeGlobalManagementSurface(t *testing.T) {
 	if !strings.Contains(listAdminProjects, "from projects") {
 		t.Fatal("ListAdminProjects should read from projects")
 	}
-	if !strings.Contains(listAdminProjects, "order by created_at desc") {
-		t.Fatal("ListAdminProjects should keep newest projects first")
+	if !strings.Contains(listAdminProjects, "updated_at") {
+		t.Fatal("ListAdminProjects should expose project updated_at for admin cleanup")
+	}
+	if !strings.Contains(listAdminProjects, "order by updated_at desc, created_at desc") {
+		t.Fatal("ListAdminProjects should keep recently updated projects first")
 	}
 	if !strings.Contains(deleteProject, "delete from projects") {
 		t.Fatal("DeleteProject should delete from projects")
