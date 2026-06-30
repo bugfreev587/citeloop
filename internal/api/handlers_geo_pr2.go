@@ -77,7 +77,7 @@ func (s *Server) generateGEOPromptSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := s.geoService().GeneratePromptSet(r.Context(), projectID, in)
+	result, err := s.geoService(r.Context()).GeneratePromptSet(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -304,7 +304,7 @@ func (s *Server) observeGEOManualFixtures(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := s.geoService().ImportManualFixtureObservations(r.Context(), projectID, in)
+	result, err := s.geoService(r.Context()).ImportManualFixtureObservations(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -325,7 +325,7 @@ func (s *Server) observeGEOAnswerProvider(w http.ResponseWriter, r *http.Request
 	if in.BudgetUSD <= 0 {
 		in.BudgetUSD = s.Env.GEOProviderRunBudgetUSD
 	}
-	result, err := s.geoService().ObserveAnswerProvider(r.Context(), projectID, in)
+	result, err := s.geoService(r.Context()).ObserveAnswerProvider(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -508,7 +508,7 @@ func (s *Server) monitorGEOExternalSurfaces(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := s.geoService().MonitorExternalSurfaces(r.Context(), projectID, in)
+	result, err := s.geoService(r.Context()).MonitorExternalSurfaces(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -526,7 +526,7 @@ func (s *Server) analyzeGEOOpportunities(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := s.geoService().AnalyzeObservations(r.Context(), projectID, in)
+	result, err := s.geoService(r.Context()).AnalyzeObservations(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -566,7 +566,7 @@ func (s *Server) acceptGEOAssetBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad asset brief id")
 		return
 	}
-	result, err := s.geoService().AcceptGEOAssetBrief(r.Context(), projectID, briefID)
+	result, err := s.geoService(r.Context()).AcceptGEOAssetBrief(r.Context(), projectID, briefID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

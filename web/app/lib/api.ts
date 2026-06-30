@@ -152,6 +152,7 @@ export type DistributeItem = {
 };
 
 export type LLMProvider = "tokengate";
+export type GEOProviderScope = "perplexity" | "openai" | "anthropic" | "gemini";
 
 export type CrawlSummary = {
   landing_url?: string;
@@ -172,6 +173,35 @@ export type LLMCredentialsStatus = {
   writer_model?: string;
   qa_model?: string;
   updated_at?: string;
+};
+
+export type GEOCredentialsStatus = {
+  scope: GEOProviderScope;
+  provider: LLMProvider;
+  configured: boolean;
+  enabled: boolean;
+  key_tail?: string;
+  base_url?: string;
+  model?: string;
+  updated_at?: string;
+};
+
+export type GEOCredentialsUpdate = {
+  provider?: LLMProvider;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  enabled?: boolean;
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  latency_ms?: number;
+  sample?: string;
+  cost_usd?: number;
+  error?: string;
 };
 
 export type InsightResult = {
@@ -921,6 +951,19 @@ function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
   };
 }
 
+function normalizeGEOCredentialsStatus(raw: any): GEOCredentialsStatus {
+  return {
+    scope: raw?.scope,
+    provider: "tokengate",
+    configured: Boolean(raw?.configured),
+    enabled: Boolean(raw?.enabled),
+    key_tail: raw?.key_tail ?? undefined,
+    base_url: raw?.base_url ?? undefined,
+    model: raw?.model ?? undefined,
+    updated_at: raw?.updated_at ?? undefined,
+  };
+}
+
 function normalizeSEOOverview(raw: any): SEOOverview {
   const data = raw ?? {};
   return {
@@ -1426,6 +1469,25 @@ export function createApi(auth?: AuthOptions) {
   deleteLLMCredentials: async () => {
     const raw = await req<any>("/admin/llm-credentials", { method: "DELETE" }, auth);
     return normalizeLLMCredentialsStatus(raw);
+  },
+  listGEOCredentials: async () => {
+    const raw = await req<any[]>("/admin/geo-credentials", undefined, auth);
+    return arrayFrom(raw).map(normalizeGEOCredentialsStatus);
+  },
+  updateGEOCredentials: async (scope: GEOProviderScope, body: GEOCredentialsUpdate) => {
+    const raw = await req<any>(`/admin/geo-credentials/${encodeURIComponent(scope)}`, { method: "PUT", body: JSON.stringify(body) }, auth);
+    return normalizeGEOCredentialsStatus(raw);
+  },
+  testGEOCredentials: async (scope: GEOProviderScope) => {
+    return req<ProviderTestResult>(
+      `/admin/geo-credentials/${encodeURIComponent(scope)}/test`,
+      { method: "POST" },
+      auth,
+    );
+  },
+  deleteGEOCredentials: async (scope: GEOProviderScope) => {
+    const raw = await req<any>(`/admin/geo-credentials/${encodeURIComponent(scope)}`, { method: "DELETE" }, auth);
+    return normalizeGEOCredentialsStatus(raw);
   },
   getMe: async () => {
     return req<{ user_id: string; email: string; is_admin: boolean }>("/me", undefined, auth);

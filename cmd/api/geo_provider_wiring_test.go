@@ -13,8 +13,6 @@ func TestMainWiresGEOProviderConfigIntoScheduler(t *testing.T) {
 	}
 	body := string(raw)
 	for _, want := range []string{
-		"geo.NewPerplexityProvider(env.PerplexityAPIKey, env.PerplexityBaseURL, env.PerplexityModel, nil)",
-		"sched.GEOAnswerProvider",
 		"sched.GEOProviderRunBudgetUSD = env.GEOProviderRunBudgetUSD",
 	} {
 		if !strings.Contains(body, want) {
