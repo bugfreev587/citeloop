@@ -424,8 +424,8 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 		AssetType:            assetType,
 		TargetSurfaceID:      targetSurfaceID,
 		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
-		EvidenceSnapshot:     rawOrDefault(in.EvidenceSnapshot, `{}`),
-		InputSnapshot:        rawOrDefault(in.InputSnapshot, `{}`),
+		EvidenceSnapshot:     contentActionEvidenceSnapshot(in.EvidenceSnapshot, opp),
+		InputSnapshot:        contentActionInputSnapshot(in.InputSnapshot, opp, actionType),
 		OutputSnapshot:       rawOrDefault(in.OutputSnapshot, `{}`),
 		DiffSnapshot:         rawOrDefault(in.DiffSnapshot, `{}`),
 		ReviewRequired:       reviewRequired,
@@ -711,6 +711,40 @@ func strPtrFrom(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func contentActionEvidenceSnapshot(raw json.RawMessage, opp db.SeoOpportunity) json.RawMessage {
+	if len(raw) > 0 && json.Valid(raw) {
+		return raw
+	}
+	return rawOrDefault(opp.Evidence, `{}`)
+}
+
+func contentActionInputSnapshot(raw json.RawMessage, opp db.SeoOpportunity, actionType string) json.RawMessage {
+	if len(raw) > 0 && json.Valid(raw) {
+		return raw
+	}
+	payload := map[string]any{
+		"opportunity_id":   opp.ID.String(),
+		"opportunity_type": opp.Type,
+		"action_type":      actionType,
+	}
+	if opp.Query != nil && strings.TrimSpace(*opp.Query) != "" {
+		payload["query"] = strings.TrimSpace(*opp.Query)
+	}
+	if opp.PageUrl != nil && strings.TrimSpace(*opp.PageUrl) != "" {
+		payload["page_url"] = strings.TrimSpace(*opp.PageUrl)
+	}
+	if strings.TrimSpace(opp.NormalizedPageUrl) != "" {
+		payload["normalized_page_url"] = strings.TrimSpace(opp.NormalizedPageUrl)
+	}
+	if opp.RecommendedAction != nil && strings.TrimSpace(*opp.RecommendedAction) != "" {
+		payload["recommended_action"] = strings.TrimSpace(*opp.RecommendedAction)
+	}
+	if opp.ExpectedImpact != nil && strings.TrimSpace(*opp.ExpectedImpact) != "" {
+		payload["expected_impact"] = strings.TrimSpace(*opp.ExpectedImpact)
+	}
+	return mustJSONLocal(payload)
 }
 
 func measurementWindowForAction(assetType, actionType string) json.RawMessage {

@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const searchOpportunityScoringVersion = "gsc_metric_v2"
+
 type searchQueryRollup struct {
 	PageURL           string
 	NormalizedPageURL string
@@ -61,6 +63,28 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 				Evidence:          searchQueryEvidence(row, "low_ctr"),
 			})
 		}
+		if row.Impressions >= 250 && row.Position > 3 && row.Position <= 15 && row.CTR > 0.025 {
+			candidates = append(candidates, searchMetricOpportunityCandidate{
+				Type:              "gsc_query_gap",
+				Query:             row.Query,
+				PageURL:           row.PageURL,
+				NormalizedPageURL: row.NormalizedPageURL,
+				PriorityScore:     clampScore(69 + row.Impressions/140),
+				Confidence:        74,
+				RecommendedAction: "Expand the existing page or create a supporting section for the query intent",
+				ExpectedImpact:    "Captures demand where Search Console shows relevance but the page is not yet the strongest answer.",
+				Effort:            3,
+				RiskLevel:         "medium",
+				Evidence: withSearchOpportunityMetadata(
+					searchQueryEvidence(row, "query_gap"),
+					"query_gap = impressions>=250 + position 3-15 + CTR>2.5%",
+					"medium",
+					"Search Console shows this page already earns clicks for the query, but its average position suggests the answer is not strong enough yet.",
+					[]string{"gsc_search_analytics", "query_data_partial"},
+				),
+			})
+			continue
+		}
 		if row.Impressions >= 100 && row.Position > 8 && row.Position <= 20 {
 			candidates = append(candidates, searchMetricOpportunityCandidate{
 				Type:              "gsc_striking_distance_query",
@@ -73,7 +97,13 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 				ExpectedImpact:    "A focused refresh can move an already-visible query closer to page-one traffic.",
 				Effort:            3,
 				RiskLevel:         "medium",
-				Evidence:          searchQueryEvidence(row, "striking_distance"),
+				Evidence: withSearchOpportunityMetadata(
+					searchQueryEvidence(row, "striking_distance"),
+					"striking_distance = impressions>=100 + position 8-20",
+					"medium",
+					"Search Console shows meaningful impressions for a query ranking just outside high-click positions.",
+					[]string{"gsc_search_analytics", "query_data_partial"},
+				),
 			})
 		}
 	}
@@ -92,7 +122,7 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 			ExpectedImpact:    "Recovers existing search demand where CiteLoop can see a meaningful click drop.",
 			Effort:            3,
 			RiskLevel:         "medium",
-			Evidence: map[string]any{
+			Evidence: withSearchOpportunityMetadata(map[string]any{
 				"source":               "gsc_search_analytics",
 				"reason":               "content_decay",
 				"click_drop_ratio":     dropRatio,
@@ -103,6 +133,11 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 				"window_start":         dateOnly(row.WindowStart),
 				"window_end":           dateOnly(row.WindowEnd),
 			},
+				"content_decay = previous_clicks>=10 + current_clicks<70% previous_clicks",
+				"medium",
+				"Search Console page totals show a meaningful click decline compared with the previous 28-day window.",
+				[]string{"gsc_search_analytics", "page_total"},
+			),
 		})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -112,7 +147,7 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 }
 
 func searchQueryEvidence(row searchQueryRollup, reason string) map[string]any {
-	return map[string]any{
+	evidence := map[string]any{
 		"source":          "gsc_search_analytics",
 		"reason":          reason,
 		"clicks_28d":      round2(row.Clicks),
@@ -122,6 +157,25 @@ func searchQueryEvidence(row searchQueryRollup, reason string) map[string]any {
 		"window_start":    dateOnly(row.WindowStart),
 		"window_end":      dateOnly(row.WindowEnd),
 	}
+	if reason == "low_ctr" {
+		return withSearchOpportunityMetadata(
+			evidence,
+			"low_ctr = impressions>=100 + position<=8 + CTR<=2%",
+			"low",
+			"Search Console shows high visibility but weak click capture for this query.",
+			[]string{"gsc_search_analytics", "query_data_partial"},
+		)
+	}
+	return evidence
+}
+
+func withSearchOpportunityMetadata(evidence map[string]any, method, impactRange, whyNow string, notes []string) map[string]any {
+	evidence["scoring_method"] = method
+	evidence["scoring_version"] = searchOpportunityScoringVersion
+	evidence["expected_impact_range"] = impactRange
+	evidence["why_now"] = whyNow
+	evidence["data_source_notes"] = notes
+	return evidence
 }
 
 func clampScore(score float64) float64 {

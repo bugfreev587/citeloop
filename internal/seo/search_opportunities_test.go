@@ -31,6 +31,17 @@ func TestSearchMetricOpportunityCandidatesUseGSCSignals(t *testing.T) {
 			WindowStart:       windowStart,
 			WindowEnd:         windowEnd,
 		},
+		{
+			PageURL:           "https://example.com/guides/source-backed-seo",
+			NormalizedPageURL: "/guides/source-backed-seo",
+			Query:             "source backed seo workflow",
+			Clicks:            28,
+			Impressions:       700,
+			CTR:               0.04,
+			Position:          9.8,
+			WindowStart:       windowStart,
+			WindowEnd:         windowEnd,
+		},
 	}
 	decayRows := []pageDecayRollup{
 		{
@@ -47,16 +58,26 @@ func TestSearchMetricOpportunityCandidatesUseGSCSignals(t *testing.T) {
 
 	candidates := searchMetricOpportunityCandidates(queryRows, decayRows)
 
-	if len(candidates) != 3 {
-		t.Fatalf("candidate count = %d, want 3", len(candidates))
+	if len(candidates) != 4 {
+		t.Fatalf("candidate count = %d, want 4", len(candidates))
 	}
 	byType := map[string]searchMetricOpportunityCandidate{}
 	for _, candidate := range candidates {
 		byType[candidate.Type] = candidate
 	}
-	for _, typ := range []string{"gsc_low_ctr_query", "gsc_striking_distance_query", "gsc_content_decay"} {
+	for _, typ := range []string{"gsc_low_ctr_query", "gsc_striking_distance_query", "gsc_query_gap", "gsc_content_decay"} {
 		if _, ok := byType[typ]; !ok {
 			t.Fatalf("missing candidate type %q in %#v", typ, candidates)
+		}
+	}
+	for _, candidate := range candidates {
+		for _, key := range []string{"scoring_method", "scoring_version", "expected_impact_range", "why_now"} {
+			if candidate.Evidence[key] == nil || candidate.Evidence[key] == "" {
+				t.Fatalf("%s evidence missing %q in %#v", candidate.Type, key, candidate.Evidence)
+			}
+		}
+		if notes, ok := candidate.Evidence["data_source_notes"].([]string); !ok || len(notes) == 0 {
+			t.Fatalf("%s evidence missing data source notes in %#v", candidate.Type, candidate.Evidence)
 		}
 	}
 	lowCTR := byType["gsc_low_ctr_query"]
