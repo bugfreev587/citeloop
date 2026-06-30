@@ -14,6 +14,7 @@ type ProfileEditorMode = "profile" | "voice";
 type ContextStatus = { label: string; tone: "amber" | "green"; detail: string };
 
 const PREVIEW_ROW_LIMIT = 8;
+const contextEditButtonClass = "w-fit min-w-[180px] shrink-0 whitespace-nowrap px-4";
 
 type InventoryDraft = {
   title: string;
@@ -905,9 +906,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
           detail="Domain profile summary: positioning, audience, benefits, competitors, and terms CiteLoop should use when planning."
           action={
             !profileEditorOpen && (
-              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openProfileEditor}>
+              <Button disabled={!!busy} variant="outline" className={contextEditButtonClass} onClick={openProfileEditor}>
                 <Pencil size={16} />
-                Edit Domain profile
+                Edit domain profile
               </Button>
             )
           }
@@ -968,9 +969,9 @@ export function ContextClient({ projectId }: { projectId: string }) {
           detail="Voice & rules: tone, banned claims, and content guardrails that keep generated drafts inside the approved context."
           action={
             !voiceEditorOpen && (
-              <Button disabled={!!busy} variant="outline" className="w-fit" onClick={openVoiceEditor}>
+              <Button disabled={!!busy} variant="outline" className={contextEditButtonClass} onClick={openVoiceEditor}>
                 <Pencil size={16} />
-                Edit Voice & rules
+                Edit voice & rules
               </Button>
             )
           }

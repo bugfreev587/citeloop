@@ -416,8 +416,18 @@ test("context profile editors collapse after saving", () => {
   assert.match(context, /voiceEditorOpen/);
   assert.match(context, /setProfileEditorOpen\(false\)/);
   assert.match(context, /setVoiceEditorOpen\(false\)/);
-  assert.match(context, /Edit Domain profile/);
-  assert.match(context, /Edit Voice & rules/);
+  assert.match(context, /Edit domain profile/);
+  assert.match(context, /Edit voice & rules/);
+});
+
+test("context edit buttons stay single-line in section headers", () => {
+  const context = read("projects/[id]/knowledge/knowledge-client.tsx");
+
+  assert.match(context, /const contextEditButtonClass = "([^"]*whitespace-nowrap[^"]*)"/);
+  assert.match(context, /const contextEditButtonClass = "([^"]*shrink-0[^"]*)"/);
+  assert.match(context, /const contextEditButtonClass = "([^"]*min-w-\[[^\]]+\][^"]*)"/);
+  assert.match(context, /className=\{contextEditButtonClass\}[\s\S]*Edit domain profile/);
+  assert.match(context, /className=\{contextEditButtonClass\}[\s\S]*Edit voice & rules/);
 });
 
 test("settings maps raw errors to user copy, confirms a budget pause, and drops dev jargon", () => {
