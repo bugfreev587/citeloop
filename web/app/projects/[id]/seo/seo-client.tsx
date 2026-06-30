@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert } from "lucide-react";
+import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   AICrawlerAccessSnapshot,
   GEOAssetBrief,
@@ -454,6 +454,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
+  const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
+  const selectedOpportunity = useMemo(
+    () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
+    [opportunities, selectedOpportunityID],
+  );
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -498,6 +503,22 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!selectedOpportunityID || selectedOpportunity) return;
+    setSelectedOpportunityID(null);
+  }, [selectedOpportunity, selectedOpportunityID]);
+
+  useEffect(() => {
+    if (!selectedOpportunity) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedOpportunityID(null);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedOpportunity]);
 
   const gscStatus = useMemo(() => {
     return overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
@@ -825,6 +846,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       });
       setOpportunities((current) => current.filter((item) => item.id !== opp.id));
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
+      setSelectedOpportunityID(null);
       setMessage({ title: "Content action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
@@ -856,6 +878,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     try {
       await api.dismissSEOOpportunity(projectId, opp.id);
       setOpportunities((current) => current.filter((item) => item.id !== opp.id));
+      setSelectedOpportunityID(null);
     } catch (e: any) {
       setMessage({ title: "Could not dismiss opportunity", detail: e.message, tone: "red" });
     } finally {
@@ -983,7 +1006,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             </div>
           </section>
 
-          <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
             <div className="min-w-0 rounded-xl border border-slate-200 bg-white">
               <div className="flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row md:items-start md:justify-between">
                 <div>
@@ -992,14 +1015,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     {opportunities.length ? `${opportunities.length} findings need review` : "No analysis to review"}
                   </h3>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                    Review the search or public-site signal first. Open evidence only when you need the supporting rows.
+                    Scan the cards first, then open a finding when you need the supporting evidence and decision controls.
                   </p>
-	                </div>
-	                <div className="flex flex-wrap gap-2 md:justify-end">
-	                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
-	                  <Badge tone="neutral">{loopActiveCount} in loop</Badge>
-	                </div>
-	              </div>
+                </div>
+                <div className="flex flex-wrap gap-2 md:justify-end">
+                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
+                  <Badge tone="neutral">{loopActiveCount} in loop</Badge>
+                </div>
+              </div>
 
               {opportunities.length === 0 ? (
                 <div className="p-4">
@@ -1009,68 +1032,42 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   />
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100">
+                <div className="grid gap-3 p-4 lg:grid-cols-2">
                   {opportunities.slice(0, 12).map((opp) => {
                     const cta = actionCtaForOpportunity(opp);
                     return (
-                      <article key={opp.id} className="px-4 py-4">
-                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-start">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
-                              <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
-                              <Badge tone="neutral">{sourceModeForOpportunity(opp, overview)}</Badge>
-                              <span className="text-xs font-semibold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
-                            </div>
-                            <h3 className="mt-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-                            <p className="mt-1 text-sm leading-6 text-slate-600">
-                              {opp.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
-                            </p>
+                      <button
+                        key={opp.id}
+                        type="button"
+                        onClick={() => setSelectedOpportunityID(opp.id)}
+                        aria-label={`Open finding details: ${opportunityTitle(opp)}`}
+                        className={`group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 ${
+                          selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
+                          <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
+                          <Badge tone="neutral">{sourceModeForOpportunity(opp, overview)}</Badge>
+                        </div>
+                        <div className="mt-3 flex items-start justify-between gap-3">
+                          <h3 className="min-w-0 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <span className="shrink-0 font-mono text-xs font-bold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
+                        </div>
+                        <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">
+                          {opp.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
+                        </p>
+                        <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-500">
+                          <div className="min-w-0 truncate">
+                            <span className="font-semibold uppercase tracking-[0.1em] text-slate-400">Signal</span>{" "}
+                            <span className="font-medium text-slate-700">{opp.query ?? opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</span>
                           </div>
-                          <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-                            <div className="font-semibold uppercase tracking-[0.1em] text-slate-400">Next action</div>
-                            <div className="mt-1 truncate font-semibold text-slate-800">{cta.label}</div>
-                            <div className="mt-1 truncate">{opp.query ?? opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate font-medium text-slate-500">{cta.label}</span>
+                            <span className="font-semibold text-slate-700 transition group-hover:translate-x-0.5">Open details</span>
                           </div>
                         </div>
-
-                        <div className="mt-3 grid gap-2 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold uppercase text-slate-400">Source page</div>
-                            <div className="mt-1 truncate font-medium text-slate-700">{opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Badge tone="neutral">{opp.type}</Badge>
-                            <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
-                          </div>
-                        </div>
-
-                        <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                          <summary className="cursor-pointer text-sm font-semibold text-slate-700">View evidence</summary>
-                          <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
-                            <div>
-                              <span className="font-semibold text-slate-800">Evidence</span>
-                              <br />
-                              {compactEvidenceText(opp.evidence)}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Confidence</span>
-                              <br />
-                              {metric(opp.confidence, 2)}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Query</span>
-                              <br />
-                              {opp.query ?? "Not query-specific"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-slate-800">Effort</span>
-                              <br />
-                              {opp.effort ?? "Unknown"}
-                            </div>
-                          </div>
-                        </details>
-                      </article>
+                      </button>
                     );
                   })}
                 </div>
@@ -1079,94 +1076,51 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
             <aside className="space-y-4">
               <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Decision queue</div>
-                    <div className="mt-1 text-lg font-bold text-slate-950">What needs approval now</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loop in motion</div>
+                    <div className="mt-1 text-lg font-bold text-slate-950">Analysis already in execution</div>
                   </div>
-                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length}</Badge>
+                  <Badge tone={loopActiveCount ? "amber" : "neutral"}>{loopActiveCount}</Badge>
                 </div>
-                {opportunities.length === 0 ? (
-                  <p className="mt-4 text-sm leading-6 text-slate-500">Nothing needs a decision right now. CiteLoop will keep watching for new findings.</p>
-                ) : (
-                  <div className="mt-4 space-y-3">
-                    {opportunities.slice(0, 5).map((opp) => {
-                      const addingToPlan = createActionBusy(opp);
-                      const dismissingOpportunity = dismissBusy(opp);
-                      const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-                      const cta = actionCtaForOpportunity(opp);
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  {loopSummaryItems.filter((item) => item.value > 0).slice(0, 6).map((item) => (
+                    <div key={item.key} className="border-t border-slate-100 pt-2">
+                      <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
+                      <div className="mt-1 text-xs font-medium text-slate-500">{item.label}</div>
+                    </div>
+                  ))}
+                  {loopSummaryItems.every((item) => item.value === 0) && (
+                    <div className="col-span-2 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-500">
+                      Reviewed analysis will appear here after it enters the content loop.
+                    </div>
+                  )}
+                </div>
+                {loopPreviewActions.length > 0 && (
+                  <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">
+                    {loopPreviewActions.map((action) => {
+                      const stage = deriveVisibilityLifecycleStage(action);
                       return (
-                        <div key={opp.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
-                            <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
-                          </div>
-                          <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-900">{opportunityTitle(opp)}</div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <Button size="sm" variant="primary" onClick={() => createAction(opp)} disabled={reviewingOpportunity}>
-                              <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
-                                {cta.label}
-                              </ButtonProgress>
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => dismiss(opp)} disabled={reviewingOpportunity}>
-                              <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
-                                Dismiss
-                              </ButtonProgress>
-                            </Button>
+                        <div key={action.id} className="py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
+                              <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
+                            </div>
+                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
+                <Link
+                  href={`/projects/${projectId}/results`}
+                  className="mt-3 inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  View measurement
+                </Link>
               </div>
-
-	              <div className="rounded-xl border border-slate-200 bg-white p-4">
-	                <div className="flex items-start justify-between gap-3">
-	                  <div>
-	                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loop in motion</div>
-	                    <div className="mt-1 text-lg font-bold text-slate-950">Analysis already in execution</div>
-	                  </div>
-	                  <Badge tone={loopActiveCount ? "amber" : "neutral"}>{loopActiveCount}</Badge>
-	                </div>
-	                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-	                  {loopSummaryItems.filter((item) => item.value > 0).slice(0, 6).map((item) => (
-	                    <div key={item.key} className="border-t border-slate-100 pt-2">
-	                      <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
-	                      <div className="mt-1 text-xs font-medium text-slate-500">{item.label}</div>
-	                    </div>
-	                  ))}
-	                  {loopSummaryItems.every((item) => item.value === 0) && (
-	                    <div className="col-span-2 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-500">
-	                      Reviewed analysis will appear here after it enters the content loop.
-	                    </div>
-	                  )}
-	                </div>
-	                {loopPreviewActions.length > 0 && (
-	                  <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">
-	                    {loopPreviewActions.map((action) => {
-	                      const stage = deriveVisibilityLifecycleStage(action);
-	                      return (
-	                        <div key={action.id} className="py-2">
-	                          <div className="flex items-start justify-between gap-2">
-	                            <div className="min-w-0">
-	                              <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
-	                              <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
-	                            </div>
-	                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-	                          </div>
-	                        </div>
-	                      );
-	                    })}
-	                  </div>
-	                )}
-	                <Link
-	                  href={`/projects/${projectId}/results`}
-	                  className="mt-3 inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-	                >
-	                  View measurement
-	                </Link>
-	              </div>
 
               {visibilityBlockers.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -1178,6 +1132,123 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               )}
             </aside>
           </section>
+
+          {selectedOpportunity && (() => {
+            const addingToPlan = createActionBusy(selectedOpportunity);
+            const dismissingOpportunity = dismissBusy(selectedOpportunity);
+            const reviewingOpportunity = addingToPlan || dismissingOpportunity;
+            const cta = actionCtaForOpportunity(selectedOpportunity);
+            const evidence = selectedOpportunity.evidence;
+            const dataSourceNotes =
+              evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
+                ? String((evidence as Record<string, any>).data_source_notes)
+                : "No additional data notes.";
+
+            return (
+              <div className="fixed inset-0 z-30">
+                <button
+                  type="button"
+                  aria-label="Close finding details"
+                  onClick={() => setSelectedOpportunityID(null)}
+                  className="absolute inset-0 bg-slate-950/20"
+                />
+                <aside
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="finding-details-title"
+                  className="absolute right-0 top-0 flex min-h-[100dvh] w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl"
+                >
+                  <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Finding details</div>
+                      <h3 id="finding-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
+                        {opportunityTitle(selectedOpportunity)}
+                      </h3>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Badge tone="blue">{findingTypeLabel(selectedOpportunity)}</Badge>
+                        <Badge tone={toneForRisk(selectedOpportunity.risk_level)}>{selectedOpportunity.risk_level ?? "risk unknown"}</Badge>
+                        <Badge tone="neutral">{sourceModeForOpportunity(selectedOpportunity, overview)}</Badge>
+                        <Badge tone={toneForStatus(selectedOpportunity.status)}>{visibilityLifecycleLabel(selectedOpportunity.status)}</Badge>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Close finding details"
+                      onClick={() => setSelectedOpportunityID(null)}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                    <div className="space-y-5">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">
+                          {selectedOpportunity.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
+                        </p>
+                      </section>
+
+                      <section className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-lg border border-slate-200 p-3">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Score</div>
+                          <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.priority_score)}</div>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 p-3">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Confidence</div>
+                          <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.confidence, 2)}</div>
+                        </div>
+                      </section>
+
+                      <section className="grid gap-3 text-sm sm:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Query</div>
+                          <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.query ?? "Not query-specific"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Effort</div>
+                          <div className="mt-1 font-medium text-slate-700">{selectedOpportunity.effort ?? "Unknown"}</div>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Source</div>
+                          <div className="mt-1 break-words font-medium text-slate-700">
+                            {selectedOpportunity.page_url ?? selectedOpportunity.normalized_page_url ?? "Project domain"}
+                          </div>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Opportunity type</div>
+                          <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.type}</div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-xl border border-slate-200 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence</div>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">{compactEvidenceText(selectedOpportunity.evidence)}</p>
+                        <div className="mt-4 border-t border-slate-100 pt-3">
+                          <div className="text-xs font-semibold uppercase text-slate-400">Data notes</div>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">{dataSourceNotes}</p>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+
+                  <div aria-label="Drawer actions" className="sticky bottom-0 flex flex-col gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:justify-end">
+                    <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
+                      <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
+                        Dismiss
+                      </ButtonProgress>
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>
+                      <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
+                        {cta.label}
+                      </ButtonProgress>
+                    </Button>
+                  </div>
+                </aside>
+              </div>
+            );
+          })()}
         </div>
       )}
 
