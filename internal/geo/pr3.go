@@ -31,6 +31,13 @@ type AcceptGEOAssetBriefResult struct {
 	Topic db.Topic         `json:"topic"`
 }
 
+type assetBriefTopicMetadata struct {
+	AssetBriefID       string   `json:"asset_brief_id,omitempty"`
+	Links              []string `json:"links,omitempty"`
+	SourceEvidence     []string `json:"source_evidence,omitempty"`
+	RecommendedOutline []string `json:"recommended_outline,omitempty"`
+}
+
 type geoGap struct {
 	Type        string
 	AssetType   string
@@ -138,7 +145,7 @@ func (s Service) AcceptGEOAssetBrief(ctx context.Context, projectID, briefID uui
 		Angle:         stringPtr(accepted.AssetType),
 		Format:        stringPtr("geo_asset_brief"),
 		Priority:      8,
-		InternalLinks: accepted.InternalLinkPlan,
+		InternalLinks: assetBriefTopicMetadataJSON(accepted),
 		Status:        string(topicstate.StatusBacklog),
 		ScheduledAt:   pgtype.Timestamptz{},
 	})
@@ -252,14 +259,15 @@ func assetTypeForIntent(intent string, competitorGap bool) string {
 	if intent == "definition_entity" {
 		return "glossary_definition"
 	}
-	return "evidence_refresh"
+	return "source_backed_evidence_page"
 }
 
 func requiredEvidenceForGap(gap geoGap) []string {
+	extras := gapSourceEvidence(gap.Evidence)
 	if gap.Type == "geo_competitor_cited_project_absent" {
-		return []string{"first-party comparison criteria", "supported product claims", "competitor citation evidence"}
+		return append([]string{"first-party comparison criteria", "supported product claims", "competitor citation evidence"}, extras...)
 	}
-	return []string{"self-contained definition or evidence block", "supported product claims", "extractable citation snippet"}
+	return append([]string{"self-contained definition or evidence block", "supported product claims", "extractable citation snippet"}, extras...)
 }
 
 func outlineForGap(gap geoGap) []string {
@@ -299,6 +307,49 @@ func rawJSONList(raw json.RawMessage) []string {
 	var values []string
 	_ = json.Unmarshal(raw, &values)
 	return values
+}
+
+func assetBriefTopicMetadataJSON(brief db.GeoAssetBrief) json.RawMessage {
+	return jsonBytes(assetBriefTopicMetadata{
+		AssetBriefID:       brief.ID.String(),
+		Links:              rawJSONList(brief.InternalLinkPlan),
+		SourceEvidence:     rawJSONList(brief.RequiredEvidence),
+		RecommendedOutline: rawJSONList(brief.RecommendedOutline),
+	})
+}
+
+func gapSourceEvidence(evidence map[string]any) []string {
+	if len(evidence) == 0 {
+		return nil
+	}
+	var out []string
+	if values := stringValues(evidence["competitor_citations"]); len(values) > 0 {
+		out = append(out, "competitor citations observed: "+strings.Join(values, ", "))
+	}
+	if values := stringValues(evidence["cited_urls"]); len(values) > 0 {
+		out = append(out, "cited URLs: "+strings.Join(values, ", "))
+	}
+	if count, ok := evidence["project_citation_count"].(int32); ok {
+		out = append(out, fmt.Sprintf("project citation count observed: %d", count))
+	}
+	return out
+}
+
+func stringValues(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func jsonArrayLen(raw json.RawMessage) int {

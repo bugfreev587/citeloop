@@ -134,6 +134,13 @@ function normalizeArray(value: any): any[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+function normalizeInternalLinks(value: any): any[] {
+  const parsed = parseJSONValue(value, []);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && Array.isArray(parsed.links)) return parsed.links;
+  return [];
+}
+
 function normalizeObject(value: any): Record<string, any> {
   const parsed = parseJSONValue(value, {});
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
@@ -223,7 +230,7 @@ export function normalizeTopic(raw: any): Topic {
     angle: raw.angle ?? null,
     format: raw.format ?? null,
     priority: Number(raw.priority ?? 0),
-    internal_links: normalizeArray(raw.internal_links),
+    internal_links: normalizeInternalLinks(raw.internal_links),
     status: raw.status ?? "backlog",
     scheduled_at: normalizeTime(raw.scheduled_at),
     created_at: normalizeTime(raw.created_at),

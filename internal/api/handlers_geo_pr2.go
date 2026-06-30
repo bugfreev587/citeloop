@@ -571,6 +571,22 @@ func (s *Server) acceptGEOAssetBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.Pool != nil && s.LLM != nil && result.Topic.ID != uuid.Nil {
+		started, startErr := s.Q.StartTopicGenerationForProject(r.Context(), db.StartTopicGenerationForProjectParams{
+			ID:        result.Topic.ID,
+			ProjectID: projectID,
+		})
+		if startErr != nil && !errors.Is(startErr, pgx.ErrNoRows) {
+			writeErr(w, http.StatusInternalServerError, startErr.Error())
+			return
+		}
+		if startErr == nil {
+			result.Topic = started
+			s.startTopicGeneration(projectID, started.ID)
+			writeJSON(w, http.StatusAccepted, result)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 

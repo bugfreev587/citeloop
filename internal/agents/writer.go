@@ -310,11 +310,13 @@ func approvedQAAfterAppliedFix(previous *QAOutput, instruction string) *QAOutput
 
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
 	canonicalInstr := writerCanonicalInstruction(plat, canonical)
+	assetContract := writerAssetContract(topic)
 
 	prompt := fmt.Sprintf(`[[WRITER]] Write a content article for this topic.
 %s
 Only state product facts supported by the profile. Return JSON: {content_md, seo_meta:{title,meta_description,slug,h1,target_keyword,canonical_url?}}.
 If TARGET KEYWORD is empty, infer one concise primary search query from TOPIC and include it as seo_meta.target_keyword.
+%s
 %s
 
 TOPIC: %s
@@ -323,7 +325,7 @@ TARGET PROMPT: %s
 ANGLE: %s / FORMAT: %s
 
 PRODUCT PROFILE:
-%s`, canonicalInstr, profileGuardrailInstruction, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, canonicalInstr, profileGuardrailInstruction, assetContract, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
@@ -365,6 +367,7 @@ Rules:
 - If the evidence is insufficient, make the article more conservative instead of asking the reviewer to edit.
 
 %s
+%s
 
 TOPIC: %s
 TARGET KEYWORD: %s
@@ -381,7 +384,7 @@ QA AND SEO FEEDBACK:
 %s
 
 CURRENT ARTICLE:
-%s`, profileGuardrailInstruction, writerCanonicalInstruction(plat, canonical), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, profileGuardrailInstruction, writerCanonicalInstruction(plat, canonical), writerAssetContract(topic), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000), string(metaJSON), string(feedbackJSON), clip(current.ContentMD, 7000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
@@ -405,6 +408,7 @@ func (w *Writer) draftMarkdownFallback(ctx context.Context, topic db.Topic, prof
 Only state product facts supported by the profile. Return only Markdown/MDX body text. Do not wrap the answer in a code fence. Do not return JSON or front matter.
 Write a complete, concise 900-1400 word article. Prefer prose, tables, and short bullets over long code examples. If you include a code block, close it before continuing.
 %s
+%s
 
 TOPIC: %s
 TARGET KEYWORD: %s
@@ -412,7 +416,7 @@ TARGET PROMPT: %s
 ANGLE: %s / FORMAT: %s
 
 PRODUCT PROFILE:
-%s`, canonicalInstr, profileGuardrailInstruction, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
+%s`, canonicalInstr, profileGuardrailInstruction, writerAssetContract(topic), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
 	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
@@ -451,6 +455,112 @@ func writerCanonicalInstruction(plat string, canonical bool) string {
 	return fmt.Sprintf("Rewrite for %s. This platform does NOT support rel=canonical; place a source link line in the body referencing %q. Do not set canonical_url.", plat, canonicalPlaceholder)
 }
 
+type geoAssetTopicMetadata struct {
+	AssetBriefID       string   `json:"asset_brief_id"`
+	Links              []string `json:"links"`
+	SourceEvidence     []string `json:"source_evidence"`
+	RecommendedOutline []string `json:"recommended_outline"`
+}
+
+func writerAssetContract(topic db.Topic) string {
+	assetType := geoAssetType(topic)
+	if assetType == "" {
+		return ""
+	}
+	metadata := geoAssetMetadata(topic)
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nGEO ASSET BRIEF CONTRACT:\nASSET TYPE: %s\n", assetType)
+	if len(metadata.SourceEvidence) > 0 {
+		b.WriteString("\nSOURCE EVIDENCE:\n")
+		for _, item := range metadata.SourceEvidence {
+			if text := strings.TrimSpace(item); text != "" {
+				fmt.Fprintf(&b, "- %s\n", text)
+			}
+		}
+	}
+	if len(metadata.RecommendedOutline) > 0 {
+		b.WriteString("\nRECOMMENDED OUTLINE:\n")
+		for _, item := range metadata.RecommendedOutline {
+			if text := strings.TrimSpace(item); text != "" {
+				fmt.Fprintf(&b, "- %s\n", text)
+			}
+		}
+	}
+	b.WriteString("\nSTRUCTURE CONTRACT:\n")
+	b.WriteString(assetStructureContract(assetType))
+	b.WriteString("\nDo not flatten this into a generic blog article. Keep the asset type visible in the structure and make every product claim supportable from the profile or source evidence.\n")
+	return b.String()
+}
+
+func geoAssetType(topic db.Topic) string {
+	assetType := strings.TrimSpace(strDeref(topic.Angle))
+	if !knownGEOAssetType(assetType) {
+		return ""
+	}
+	format := strings.TrimSpace(strDeref(topic.Format))
+	if format == "geo_asset_brief" || format == assetType {
+		return assetType
+	}
+	return ""
+}
+
+func knownGEOAssetType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "comparison_page",
+		"alternative_page",
+		"use_case_page",
+		"template_checklist",
+		"benchmark_report",
+		"glossary_definition",
+		"integration_docs_page",
+		"source_backed_evidence_page",
+		"faq_answer_block":
+		return true
+	default:
+		return false
+	}
+}
+
+func geoAssetMetadata(topic db.Topic) geoAssetTopicMetadata {
+	raw := strings.TrimSpace(string(topic.InternalLinks))
+	if raw == "" {
+		return geoAssetTopicMetadata{}
+	}
+	if strings.HasPrefix(raw, "[") {
+		var links []string
+		_ = json.Unmarshal(topic.InternalLinks, &links)
+		return geoAssetTopicMetadata{Links: links}
+	}
+	var metadata geoAssetTopicMetadata
+	_ = json.Unmarshal(topic.InternalLinks, &metadata)
+	return metadata
+}
+
+func assetStructureContract(assetType string) string {
+	switch assetType {
+	case "comparison_page":
+		return "- Use decision criteria, who each option is for, supported differentiators, and limitations.\n- Include a balanced comparison table only when each cell can be supported."
+	case "alternative_page":
+		return "- Cover migration reasons, alternative evaluation, primary use cases, and when not to switch.\n- Keep competitor claims conservative and source-backed."
+	case "glossary_definition":
+		return "- Start with a short definition, then examples, related terms, and source-backed product context.\n- Keep the answer extractable for AI answer engines."
+	case "template_checklist":
+		return "- Provide actionable steps, a download or use section, and FAQ.\n- Make checklist items specific enough to execute."
+	case "benchmark_report":
+		return "- Include methodology, data caveats, findings, and chart or table placeholders.\n- Label any estimates or inferred observations clearly."
+	case "integration_docs_page":
+		return "- Include setup steps, API or workflow details, troubleshooting, and related links.\n- Separate verified capabilities from future or unsupported integrations."
+	case "source_backed_evidence_page":
+		return "- Create a citation-ready evidence block with extractable claims, supporting context, and limitations.\n- Prefer concise sections answer engines can quote safely."
+	case "faq_answer_block":
+		return "- Write concise question-answer blocks with direct answers first and supporting evidence second.\n- Avoid broad article framing."
+	case "use_case_page":
+		return "- Anchor the page in the audience use case, success criteria, workflow, proof points, and limitations.\n- Include where the product does and does not fit."
+	default:
+		return "- Use the recommended outline and source evidence; keep the draft conservative and citation-ready."
+	}
+}
+
 func seoMetaFromTopic(topic db.Topic, plat string, canonical bool) SEOMeta {
 	meta := SEOMeta{
 		Title:           topic.Title,
@@ -462,7 +572,7 @@ func seoMetaFromTopic(topic db.Topic, plat string, canonical bool) SEOMeta {
 	if !canonical && platform.SupportsCanonical(platform.Platform(plat)) {
 		meta.CanonicalURL = canonicalPlaceholder
 	}
-	return meta
+	return applyGEOAssetSEOMeta(topic, meta)
 }
 
 func completeSEOMeta(topic db.Topic, meta SEOMeta, plat string, canonical bool) SEOMeta {
@@ -484,6 +594,20 @@ func completeSEOMeta(topic db.Topic, meta SEOMeta, plat string, canonical bool) 
 	}
 	if !canonical && platform.SupportsCanonical(platform.Platform(plat)) && strings.TrimSpace(meta.CanonicalURL) == "" {
 		meta.CanonicalURL = canonicalPlaceholder
+	}
+	return applyGEOAssetSEOMeta(topic, meta)
+}
+
+func applyGEOAssetSEOMeta(topic db.Topic, meta SEOMeta) SEOMeta {
+	assetType := geoAssetType(topic)
+	if assetType == "" {
+		return meta
+	}
+	if strings.TrimSpace(meta.AssetType) == "" {
+		meta.AssetType = assetType
+	}
+	if len(meta.SourceEvidence) == 0 {
+		meta.SourceEvidence = geoAssetMetadata(topic).SourceEvidence
 	}
 	return meta
 }

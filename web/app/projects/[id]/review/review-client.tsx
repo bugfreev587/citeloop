@@ -28,6 +28,26 @@ const STATE_ORDER: Record<ReviewArticleState["kind"], number> = {
   recovering: 2,
 };
 
+type AssetMetadata = {
+  assetType: string;
+  assetTypeLabel: string;
+  sourceEvidence: string[];
+};
+
+function assetMetadata(article: Article): AssetMetadata {
+  const rawType = typeof article.seo_meta?.asset_type === "string" ? article.seo_meta.asset_type.trim() : "";
+  return {
+    assetType: rawType,
+    assetTypeLabel: rawType ? rawType.replace(/_/g, " ") : "",
+    sourceEvidence: stringList(article.seo_meta?.source_evidence),
+  };
+}
+
+function stringList(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
 export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
@@ -332,6 +352,7 @@ function ReviewQueueRow({
   const { article, topicId } = item;
   const state = reviewArticleState(article);
   const title = articleReviewTitle(article);
+  const metadata = assetMetadata(article);
 
   return (
     <article
@@ -341,6 +362,7 @@ function ReviewQueueRow({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+          {metadata.assetType && <Badge tone="blue">{metadata.assetTypeLabel}</Badge>}
           <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
         </div>
         <div className="mt-1.5 text-sm font-bold leading-5 text-slate-950">{title}</div>
@@ -354,6 +376,7 @@ function ReviewQueueRow({
             <>
               <span>geo {formatScore(article.geo_score)}</span>
               <span>seo {formatScore(article.seo_score)}</span>
+              {metadata.sourceEvidence.length > 0 && <span>{metadata.sourceEvidence.length} source evidence</span>}
             </>
           )}
         </div>
@@ -440,12 +463,14 @@ function ReviewInspector({
   const seoContributions = useMemo(() => buildSEOContributions(article), [article]);
   const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
+  const metadata = assetMetadata(article);
 
   return (
     <aside className="min-w-0 bg-slate-50">
       <div className="border-b border-slate-200 bg-white px-4 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <StateBadge state={state} />
+          {metadata.assetType && <Badge tone="blue">Asset type: {metadata.assetTypeLabel}</Badge>}
           <Badge tone="neutral">Topic {topicId.slice(0, 8)}</Badge>
         </div>
         <h3 className="mt-3 content-font text-lg font-bold leading-6 text-slate-950">{title}</h3>
@@ -471,6 +496,7 @@ function ReviewInspector({
           <ReadyPanel busy={busy} approveBusy={approveBusy} previewHref={previewHref} detailHref={detailHref} onApprove={onApprove} onToggleEditor={onToggleEditor} />
         )}
 
+        {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
         <ClaimEvidencePanel article={article} />
         <SearchAppearancePanel article={article} />
         <SEOContributionPanel rows={seoContributions} />
@@ -478,6 +504,25 @@ function ReviewInspector({
         {editorOpen && <DraftEditor content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />}
       </div>
     </aside>
+  );
+}
+
+function AssetMetadataPanel({ metadata }: { metadata: AssetMetadata }) {
+  return (
+    <section className="rounded-lg border border-sky-100 bg-sky-50 p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.08em] text-sky-700">Asset type</div>
+      <div className="mt-1 text-sm font-semibold text-slate-950">{metadata.assetTypeLabel || "GEO asset"}</div>
+      {metadata.sourceEvidence.length > 0 && (
+        <div className="mt-3">
+          <div className="text-xs font-bold uppercase tracking-[0.08em] text-sky-700">Source evidence</div>
+          <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-700">
+            {metadata.sourceEvidence.slice(0, 5).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
 

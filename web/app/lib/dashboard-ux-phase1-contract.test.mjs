@@ -545,6 +545,9 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /CiteLoop is handling/);
   assert.match(review, /No action needed/);
   assert.match(review, /Claim evidence map/);
+  assert.match(review, /Asset type/);
+  assert.match(review, /Source evidence/);
+  assert.match(review, /assetMetadata/);
   assert.match(review, /How this article appears in search/);
   assert.match(review, /Preview/);
   assert.match(review, /applied the fix and approved the draft/);

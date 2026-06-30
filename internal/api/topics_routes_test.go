@@ -72,6 +72,27 @@ func TestGenerateTopicRouteStartsBackgroundGeneration(t *testing.T) {
 	}
 }
 
+func TestAcceptGEOAssetBriefStartsBackgroundGeneration(t *testing.T) {
+	source, err := os.ReadFile("handlers_geo_pr2.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+
+	if !strings.Contains(body, "StartTopicGenerationForProject") {
+		t.Fatal("accepting a GEO asset brief should reserve the created topic for background generation")
+	}
+	if !strings.Contains(body, "startTopicGeneration") {
+		t.Fatal("accepting a GEO asset brief should dispatch writer and QA through the existing background generation path")
+	}
+	if !strings.Contains(body, "http.StatusAccepted") {
+		t.Fatal("GEO brief accept should report background generation with HTTP 202 when generation starts")
+	}
+	if strings.Contains(body, "writer.Generate(r.Context()") {
+		t.Fatal("GEO brief accept must not run Writer+QA synchronously on the request context")
+	}
+}
+
 func TestGenerateTopicReconcilesExistingDraftTopic(t *testing.T) {
 	projectID := uuid.New()
 	topicID := uuid.New()

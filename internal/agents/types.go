@@ -157,12 +157,14 @@ func normalizeTopicPriorityNumber(value float64) int {
 
 // SEOMeta is the on-page SEO block (PRD §5.3).
 type SEOMeta struct {
-	Title           string `json:"title"`
-	MetaDescription string `json:"meta_description"`
-	Slug            string `json:"slug"`
-	H1              string `json:"h1"`
-	TargetKeyword   string `json:"target_keyword,omitempty"`
-	CanonicalURL    string `json:"canonical_url,omitempty"`
+	Title           string   `json:"title"`
+	MetaDescription string   `json:"meta_description"`
+	Slug            string   `json:"slug"`
+	H1              string   `json:"h1"`
+	TargetKeyword   string   `json:"target_keyword,omitempty"`
+	CanonicalURL    string   `json:"canonical_url,omitempty"`
+	AssetType       string   `json:"asset_type,omitempty"`
+	SourceEvidence  []string `json:"source_evidence,omitempty"`
 }
 
 // WriterOutput is the Writer agent's article payload (PRD §5.3).

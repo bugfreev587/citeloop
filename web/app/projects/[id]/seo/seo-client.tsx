@@ -844,7 +844,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     try {
       const result = await api.acceptGEOAssetBrief(projectId, brief.id);
       await refresh();
-      setMessage({ title: "GEO brief converted", detail: result.topic?.title ?? brief.asset_type, tone: "green" });
+      const generating = result.topic?.status === "generating";
+      setMessage({ title: generating ? "GEO draft generation started" : "GEO brief converted", detail: result.topic?.title ?? brief.asset_type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not accept GEO brief", detail: e.message, tone: "red" });
     } finally {
