@@ -520,6 +520,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [selectedOpportunity]);
 
+  useEffect(() => {
+    if (!selectedOpportunity) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [selectedOpportunity]);
+
   const gscStatus = useMemo(() => {
     return overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
   }, [overview]);
@@ -1156,7 +1166,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="finding-details-title"
-                  className="absolute right-0 top-0 flex min-h-[100dvh] w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-2xl"
+                  className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-xl flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
                 >
                   <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
                     <div className="min-w-0">
@@ -1181,7 +1191,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </button>
                   </div>
 
-                  <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
                     <div className="space-y-5">
                       <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
@@ -1233,7 +1243,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </div>
                   </div>
 
-                  <div aria-label="Drawer actions" className="sticky bottom-0 flex flex-col gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:justify-end">
+                  <div aria-label="Drawer actions" className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:justify-end">
                     <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
                       <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
                         Dismiss
