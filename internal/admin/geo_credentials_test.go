@@ -112,6 +112,39 @@ func TestApplyGEOUpdateRequiresKeyForNewProvider(t *testing.T) {
 	}
 }
 
+func TestRuntimeGEOCredentialScopesPreferOpenAIAndAnthropic(t *testing.T) {
+	want := []GEOProviderScope{GEOProviderOpenAI, GEOProviderAnthropic, GEOProviderPerplexity}
+	got := RuntimeGEOCredentialScopes()
+	if len(got) != len(want) {
+		t.Fatalf("runtime scope count = %d, want %d (%v)", len(got), len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("runtime scopes = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSelectRuntimeGEOCredentialsSkipsDisabledAndBlankKeys(t *testing.T) {
+	selected := SelectRuntimeGEOCredentials([]*GEOCredentials{
+		{Scope: GEOProviderOpenAI, Provider: ProviderTokenGate, APIKey: "   ", Model: "gpt-5.1", Enabled: true},
+		{Scope: GEOProviderAnthropic, Provider: ProviderTokenGate, APIKey: "tg-anthropic", Model: "claude-sonnet-4-6", Enabled: false},
+		{Scope: GEOProviderPerplexity, Provider: ProviderTokenGate, APIKey: "tg-perplexity", Model: "sonar-pro", Enabled: true},
+	})
+	if selected == nil || selected.Scope != GEOProviderPerplexity {
+		t.Fatalf("selected = %+v, want optional Perplexity fallback", selected)
+	}
+
+	selected = SelectRuntimeGEOCredentials([]*GEOCredentials{
+		{Scope: GEOProviderOpenAI, Provider: ProviderTokenGate, APIKey: "tg-openai", Model: "gpt-5.1", Enabled: true},
+		{Scope: GEOProviderAnthropic, Provider: ProviderTokenGate, APIKey: "tg-anthropic", Model: "claude-sonnet-4-6", Enabled: true},
+		{Scope: GEOProviderPerplexity, Provider: ProviderTokenGate, APIKey: "tg-perplexity", Model: "sonar-pro", Enabled: true},
+	})
+	if selected == nil || selected.Scope != GEOProviderOpenAI {
+		t.Fatalf("selected = %+v, want OpenAI first", selected)
+	}
+}
+
 func boolPtr(value bool) *bool {
 	return &value
 }

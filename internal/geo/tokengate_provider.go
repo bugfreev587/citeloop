@@ -55,6 +55,10 @@ func (p TokenGateAnswerProvider) Name() string {
 	return "tokengate_" + scope
 }
 
+func (p TokenGateAnswerProvider) Engine() string {
+	return firstNonBlank(p.engine, strings.Title(p.scope))
+}
+
 func (p TokenGateAnswerProvider) Available() bool {
 	return p.apiKey != "" && p.model != ""
 }
@@ -114,7 +118,7 @@ func (p TokenGateAnswerProvider) observePrompt(ctx context.Context, prompt db.Ge
 	}
 	return ProviderObservation{
 		PromptID:      prompt.ID,
-		Engine:        firstNonBlank(p.engine, strings.Title(p.scope)),
+		Engine:        p.Engine(),
 		Locale:        providerLocale(prompt.Locale),
 		AnswerSummary: strings.TrimSpace(content),
 		CitedURLs:     uniqueStrings(out.Citations),

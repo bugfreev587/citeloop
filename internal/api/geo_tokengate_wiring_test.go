@@ -13,12 +13,14 @@ func TestGEORuntimeLoadsAdminTokenGateCredential(t *testing.T) {
 	}
 	source := string(data)
 	for _, want := range []string{
-		"admin.LoadGEOCredentials",
-		"admin.GEOProviderPerplexity",
+		"admin.LoadRuntimeGEOCredentials",
 		"tokenGateProviderFromGEOCredentials",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("GEO runtime wiring missing %q", want)
 		}
+	}
+	if strings.Contains(source, "admin.GEOProviderPerplexity") {
+		t.Fatal("GEO runtime should not require Perplexity when OpenAI or Anthropic TokenGate credentials are configured")
 	}
 }

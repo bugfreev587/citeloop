@@ -1020,12 +1020,12 @@ func (s *Scheduler) adminGEOAnswerProvider(ctx context.Context) geo.AnswerProvid
 	if s.Pool == nil {
 		return nil
 	}
-	credentials, err := admin.LoadGEOCredentials(ctx, s.Pool, admin.GEOProviderPerplexity)
+	credentials, err := admin.LoadRuntimeGEOCredentials(ctx, s.Pool)
 	if err != nil {
 		s.logger().Warn("admin GEO credential unavailable", "err", err)
 		return nil
 	}
-	if credentials == nil || !credentials.Enabled || strings.TrimSpace(credentials.APIKey) == "" {
+	if credentials == nil {
 		return nil
 	}
 	return geo.NewTokenGateAnswerProvider(geo.TokenGateAnswerProviderConfig{
@@ -1033,7 +1033,7 @@ func (s *Scheduler) adminGEOAnswerProvider(ctx context.Context) geo.AnswerProvid
 		APIKey:  credentials.APIKey,
 		BaseURL: credentials.BaseURL,
 		Model:   credentials.Model,
-		Engine:  "Perplexity",
+		Engine:  admin.GEOEngineForScope(credentials.Scope),
 	}, nil)
 }
 
@@ -1043,7 +1043,7 @@ func (s *Scheduler) geoObserveRequest() geo.ObserveAnswerProviderRequest {
 		budgetUSD = 1
 	}
 	return geo.ObserveAnswerProviderRequest{
-		Engine:     "Perplexity",
+		Engine:     "OpenAI",
 		MaxPrompts: 10,
 		BudgetUSD:  budgetUSD,
 	}
