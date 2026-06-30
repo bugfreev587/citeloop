@@ -86,6 +86,7 @@ type Querier interface {
 	GetProjectBySlug(ctx context.Context, slug string) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetPublisherConnectionForProject(ctx context.Context, arg GetPublisherConnectionForProjectParams) (PublisherConnection, error)
+	GetResultsActionRow(ctx context.Context, arg GetResultsActionRowParams) (GetResultsActionRowRow, error)
 	GetRiskClassificationRule(ctx context.Context, arg GetRiskClassificationRuleParams) (RiskClassificationRule, error)
 	GetSEOOpportunity(ctx context.Context, arg GetSEOOpportunityParams) (SeoOpportunity, error)
 	GetSEOPolicy(ctx context.Context, projectID uuid.UUID) (SeoPolicy, error)
@@ -103,6 +104,8 @@ type Querier interface {
 	// taken by a project's canonical articles (scheduled or published), so a new
 	// approval can be staggered after it instead of publishing immediately.
 	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
+	ListActionMeasurementsForAction(ctx context.Context, arg ListActionMeasurementsForActionParams) ([]ActionMeasurement, error)
+	ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
 	ListAdminProjects(ctx context.Context) ([]Project, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
@@ -146,6 +149,7 @@ type Querier interface {
 	// blocked, not yet a genuine human decision. The recovery tick re-runs QA,
 	// repairs, or regenerates these without involving a human.
 	ListRecoverableArticlesForProject(ctx context.Context, arg ListRecoverableArticlesForProjectParams) ([]Article, error)
+	ListResultsActionRows(ctx context.Context, arg ListResultsActionRowsParams) ([]ListResultsActionRowsRow, error)
 	ListSEOActionPlans(ctx context.Context, arg ListSEOActionPlansParams) ([]SeoActionPlan, error)
 	ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
 	ListSEOIntegrations(ctx context.Context, projectID uuid.UUID) ([]SeoIntegration, error)
@@ -241,6 +245,7 @@ type Querier interface {
 	UpdateTopicStatus(ctx context.Context, arg UpdateTopicStatusParams) (Topic, error)
 	UpdateTopicStatusForProject(ctx context.Context, arg UpdateTopicStatusForProjectParams) (Topic, error)
 	UpsertAICrawlerAccessSnapshot(ctx context.Context, arg UpsertAICrawlerAccessSnapshotParams) (AiCrawlerAccessSnapshot, error)
+	UpsertActionMeasurement(ctx context.Context, arg UpsertActionMeasurementParams) (ActionMeasurement, error)
 	UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error)
 	UpsertDefaultPublisherConnection(ctx context.Context, arg UpsertDefaultPublisherConnectionParams) (PublisherConnection, error)
 	UpsertGEOCompetitor(ctx context.Context, arg UpsertGEOCompetitorParams) (GeoCompetitor, error)

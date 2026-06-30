@@ -144,6 +144,10 @@ func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEv
 	}
 }
 
+func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UUID) error {
+	return s.handleMeasurementWindowDue(ctx, projectID)
+}
+
 func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uuid.UUID) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -170,6 +174,11 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 			status = "completed"
 		}
 		outcome := measurementOutcomeSummary(action, status, completed, remaining, now, window)
+		for _, measurement := range actionMeasurementsFromWindow(action, window, now) {
+			if _, err := q.UpsertActionMeasurement(ctx, measurement); err != nil {
+				return err
+			}
+		}
 		if _, err := q.UpdateContentActionOutcomeSummary(ctx, db.UpdateContentActionOutcomeSummaryParams{
 			ID:                action.ID,
 			ProjectID:         projectID,
@@ -193,7 +202,9 @@ func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.T
 	checkpoints, _ := window["checkpoints"].([]any)
 	if len(checkpoints) == 0 {
 		window["state"] = "completed"
-		window["latest_outcome"] = "inconclusive"
+		window["latest_outcome"] = "insufficient_data"
+		window["outcome_label"] = "insufficient_data"
+		window["outcome_reason"] = measurementInsufficientDataReason()
 		return mustJSON(window), 0, 0
 	}
 
@@ -215,7 +226,11 @@ func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.T
 		if measurementCheckpointDue(publishedAt, day, now) {
 			checkpoint["status"] = "completed"
 			checkpoint["completed_at"] = now.Format(time.RFC3339)
-			checkpoint["outcome"] = "inconclusive"
+			checkpoint["outcome"] = "insufficient_data"
+			checkpoint["outcome_label"] = "insufficient_data"
+			checkpoint["outcome_reason"] = measurementInsufficientDataReason()
+			checkpoint["attribution_confidence"] = "low"
+			checkpoint["confounders"] = measurementDefaultConfounders()
 			completedNow++
 			continue
 		}
@@ -227,7 +242,9 @@ func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.T
 		state = "completed"
 	}
 	window["state"] = state
-	window["latest_outcome"] = "inconclusive"
+	window["latest_outcome"] = "insufficient_data"
+	window["outcome_label"] = "insufficient_data"
+	window["outcome_reason"] = measurementInsufficientDataReason()
 	return mustJSON(window), completedNow, remainingScheduled
 }
 
@@ -258,28 +275,146 @@ func measurementCheckpointDue(publishedAt pgtype.Timestamptz, day int, now time.
 	return !dueAt.After(now)
 }
 
+func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessage, now time.Time) []db.UpsertActionMeasurementParams {
+	var data map[string]any
+	if len(window) == 0 || !json.Valid(window) || json.Unmarshal(window, &data) != nil {
+		return nil
+	}
+	checkpoints, _ := data["checkpoints"].([]any)
+	if len(checkpoints) == 0 {
+		return nil
+	}
+	measurements := make([]db.UpsertActionMeasurementParams, 0, len(checkpoints))
+	for _, item := range checkpoints {
+		checkpoint, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(checkpoint["status"])) != "completed" {
+			continue
+		}
+		day := measurementCheckpointDay(checkpoint["day"])
+		windowStart, windowEnd := measurementWindowDates(action.PublishedAt, day, now)
+		articleID := action.DraftArticleID
+		if !articleID.Valid {
+			articleID = action.TargetArticleID
+		}
+		outcomeLabel := firstNonEmptyString(fmt.Sprint(checkpoint["outcome_label"]), fmt.Sprint(checkpoint["outcome"]), "insufficient_data")
+		if outcomeLabel == "<nil>" {
+			outcomeLabel = "insufficient_data"
+		}
+		outcomeReason := strings.TrimSpace(fmt.Sprint(checkpoint["outcome_reason"]))
+		if outcomeReason == "" || outcomeReason == "<nil>" {
+			outcomeReason = measurementInsufficientDataReason()
+		}
+		confidence := strings.TrimSpace(fmt.Sprint(checkpoint["attribution_confidence"]))
+		if confidence == "" || confidence == "<nil>" {
+			confidence = "low"
+		}
+		confounders := checkpoint["confounders"]
+		if confounders == nil {
+			confounders = measurementDefaultConfounders()
+		}
+		measurements = append(measurements, db.UpsertActionMeasurementParams{
+			ProjectID:             action.ProjectID,
+			ContentActionID:       action.ID,
+			ArticleID:             articleID,
+			CheckpointDay:         int32(day),
+			WindowStart:           windowStart,
+			WindowEnd:             windowEnd,
+			SeoMetrics:            json.RawMessage(`{}`),
+			Ga4Metrics:            json.RawMessage(`{}`),
+			GeoMetrics:            json.RawMessage(`{}`),
+			ExecutionMetrics:      measurementExecutionMetrics(action, data, checkpoint),
+			OutcomeLabel:          outcomeLabel,
+			OutcomeReason:         outcomeReason,
+			AttributionConfidence: confidence,
+			Confounders:           mustJSON(confounders),
+			ComputedAt:            pgtype.Timestamptz{Time: now, Valid: true},
+		})
+	}
+	return measurements
+}
+
+func measurementWindowDates(publishedAt pgtype.Timestamptz, day int, now time.Time) (pgtype.Date, pgtype.Date) {
+	start := now.UTC()
+	if publishedAt.Valid {
+		start = publishedAt.Time.UTC()
+	}
+	end := start.AddDate(0, 0, day)
+	return pgtype.Date{Time: dateOnly(start), Valid: true}, pgtype.Date{Time: dateOnly(end), Valid: true}
+}
+
+func dateOnly(t time.Time) time.Time {
+	year, month, day := t.UTC().Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
 func measurementOutcomeSummary(action db.ContentAction, status string, completed, remaining int, now time.Time, window json.RawMessage) json.RawMessage {
 	primaryMetric := ""
 	windowData := map[string]any{}
 	if len(window) > 0 && json.Valid(window) && json.Unmarshal(window, &windowData) == nil {
 		primaryMetric, _ = windowData["primary_metric"].(string)
 	}
-	summary := "Measurement checkpoint processed without enough comparative search data to attribute movement."
+	outcomeLabel := "insufficient_data"
+	outcomeReason := measurementInsufficientDataReason()
 	if status == "completed" {
-		summary = "Measurement window closed; comparative search data remained inconclusive."
+		outcomeReason = "Measurement window closed, but comparative search or engagement data is still insufficient for reliable attribution."
 	}
 	return mustJSON(map[string]any{
-		"action_id":             action.ID.String(),
-		"computed_at":           now.Format(time.RFC3339),
-		"completed_checkpoints": completed,
-		"outcome_summary":       "inconclusive",
-		"primary_metric":        primaryMetric,
-		"remaining_checkpoints": remaining,
-		"result":                "inconclusive",
-		"state":                 "inconclusive",
-		"status":                status,
-		"summary":               summary,
+		"action_id":               action.ID.String(),
+		"attribution_confidence":  "low",
+		"computed_at":             now.Format(time.RFC3339),
+		"completed_checkpoints":   completed,
+		"confounders":             measurementDefaultConfounders(),
+		"outcome_label":           outcomeLabel,
+		"outcome_reason":          outcomeReason,
+		"outcome_summary":         outcomeLabel,
+		"primary_metric":          primaryMetric,
+		"remaining_checkpoints":   remaining,
+		"result":                  outcomeLabel,
+		"state":                   outcomeLabel,
+		"status":                  status,
+		"summary":                 outcomeReason,
+		"legacy_outcome_fallback": "inconclusive",
 	})
+}
+
+func measurementExecutionMetrics(action db.ContentAction, window map[string]any, checkpoint map[string]any) json.RawMessage {
+	payload := map[string]any{
+		"action_status":  action.Status,
+		"checkpoint_day": checkpoint["day"],
+		"primary_metric": window["primary_metric"],
+		"source":         "measurement_window_due",
+	}
+	if action.VerifiedAt.Valid {
+		payload["verified_at"] = action.VerifiedAt.Time.UTC().Format(time.RFC3339)
+	}
+	if action.PublishedAt.Valid {
+		payload["published_at"] = action.PublishedAt.Time.UTC().Format(time.RFC3339)
+	}
+	return mustJSON(payload)
+}
+
+func measurementInsufficientDataReason() string {
+	return "No comparable before/after search, engagement, or citation data was available for this checkpoint."
+}
+
+func measurementDefaultConfounders() []string {
+	return []string{
+		"Search Console or analytics data is missing for the checkpoint window.",
+		"Ranking, traffic, and AI citation movement can be influenced by seasonality, competitor changes, or crawl latency.",
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Scheduler) handleContentPlanCreated(ctx context.Context, projectID uuid.UUID) error {

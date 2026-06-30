@@ -265,6 +265,152 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 	return i, err
 }
 
+const getResultsActionRow = `-- name: GetResultsActionRow :one
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.target_content_hash_before,
+  ca.target_content_hash_after,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.target_surface_id,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.input_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.approved_by,
+  ca.approved_at,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.query as opportunity_query,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  t.title as topic_title,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.id = $1
+  and ca.project_id = $2
+`
+
+type GetResultsActionRowParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+type GetResultsActionRowRow struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	OpportunityID                uuid.UUID          `json:"opportunity_id"`
+	ActionType                   string             `json:"action_type"`
+	Status                       string             `json:"status"`
+	TargetArticleID              pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                    *string            `json:"target_url"`
+	NormalizedTargetUrl          *string            `json:"normalized_target_url"`
+	TargetContentHashBefore      *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter       *string            `json:"target_content_hash_after"`
+	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow               json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	AssetType                    *string            `json:"asset_type"`
+	TargetSurfaceID              pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons                  json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot             json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot                json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot               json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot                 json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired               bool               `json:"review_required"`
+	ApprovedBy                   *string            `json:"approved_by"`
+	ApprovedAt                   pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	OpportunityType              string             `json:"opportunity_type"`
+	OpportunityQuery             *string            `json:"opportunity_query"`
+	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
+	OpportunityNormalizedPageUrl *string            `json:"opportunity_normalized_page_url"`
+	OpportunityRecommendedAction *string            `json:"opportunity_recommended_action"`
+	OpportunityExpectedImpact    *string            `json:"opportunity_expected_impact"`
+	TopicTitle                   *string            `json:"topic_title"`
+	DraftArticleStatus           *string            `json:"draft_article_status"`
+	DraftArticleCanonicalUrl     *string            `json:"draft_article_canonical_url"`
+}
+
+func (q *Queries) GetResultsActionRow(ctx context.Context, arg GetResultsActionRowParams) (GetResultsActionRowRow, error) {
+	row := q.db.QueryRow(ctx, getResultsActionRow, arg.ID, arg.ProjectID)
+	var i GetResultsActionRowRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.OpportunityType,
+		&i.OpportunityQuery,
+		&i.OpportunityPageUrl,
+		&i.OpportunityNormalizedPageUrl,
+		&i.OpportunityRecommendedAction,
+		&i.OpportunityExpectedImpact,
+		&i.TopicTitle,
+		&i.DraftArticleStatus,
+		&i.DraftArticleCanonicalUrl,
+	)
+	return i, err
+}
+
 const getSEOOpportunity = `-- name: GetSEOOpportunity :one
 select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from seo_opportunities
 where id = $1 and project_id = $2
@@ -373,6 +519,110 @@ func (q *Queries) InsertSEORun(ctx context.Context, arg InsertSEORunParams) (Seo
 		&i.Error,
 	)
 	return i, err
+}
+
+const listActionMeasurementsForAction = `-- name: ListActionMeasurementsForAction :many
+select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at from action_measurements
+where project_id = $1
+  and content_action_id = $2
+order by checkpoint_day asc, computed_at asc
+`
+
+type ListActionMeasurementsForActionParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	ContentActionID uuid.UUID `json:"content_action_id"`
+}
+
+func (q *Queries) ListActionMeasurementsForAction(ctx context.Context, arg ListActionMeasurementsForActionParams) ([]ActionMeasurement, error) {
+	rows, err := q.db.Query(ctx, listActionMeasurementsForAction, arg.ProjectID, arg.ContentActionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActionMeasurement
+	for rows.Next() {
+		var i ActionMeasurement
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ContentActionID,
+			&i.ArticleID,
+			&i.CheckpointDay,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.SeoMetrics,
+			&i.Ga4Metrics,
+			&i.GeoMetrics,
+			&i.ExecutionMetrics,
+			&i.OutcomeLabel,
+			&i.OutcomeReason,
+			&i.AttributionConfidence,
+			&i.Confounders,
+			&i.ComputedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActionMeasurementsForProject = `-- name: ListActionMeasurementsForProject :many
+select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at from action_measurements
+where project_id = $1
+  and ($2::uuid is null or content_action_id = $2)
+order by computed_at desc, checkpoint_day desc
+limit $3
+`
+
+type ListActionMeasurementsForProjectParams struct {
+	ProjectID       uuid.UUID   `json:"project_id"`
+	ContentActionID pgtype.UUID `json:"content_action_id"`
+	LimitRows       int32       `json:"limit_rows"`
+}
+
+func (q *Queries) ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error) {
+	rows, err := q.db.Query(ctx, listActionMeasurementsForProject, arg.ProjectID, arg.ContentActionID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActionMeasurement
+	for rows.Next() {
+		var i ActionMeasurement
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ContentActionID,
+			&i.ArticleID,
+			&i.CheckpointDay,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.SeoMetrics,
+			&i.Ga4Metrics,
+			&i.GeoMetrics,
+			&i.ExecutionMetrics,
+			&i.OutcomeLabel,
+			&i.OutcomeReason,
+			&i.AttributionConfidence,
+			&i.Confounders,
+			&i.ComputedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listContentActions = `-- name: ListContentActions :many
@@ -652,6 +902,175 @@ func (q *Queries) ListPublishedCanonicalArticlesForSEO(ctx context.Context, proj
 			&i.ExternalUrl,
 			&i.VerificationStatus,
 			&i.ExternalSurfaceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listResultsActionRows = `-- name: ListResultsActionRows :many
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.target_content_hash_before,
+  ca.target_content_hash_after,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.target_surface_id,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.input_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.approved_by,
+  ca.approved_at,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.query as opportunity_query,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  t.title as topic_title,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.project_id = $1
+  and ($2::text = '' or ca.status = $2)
+  and ($3::timestamptz is null or ca.updated_at < $3)
+order by coalesce(ca.published_at, ca.verified_at, ca.updated_at) desc, ca.created_at desc
+limit $4
+`
+
+type ListResultsActionRowsParams struct {
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Status          string             `json:"status"`
+	CursorUpdatedAt pgtype.Timestamptz `json:"cursor_updated_at"`
+	LimitRows       int32              `json:"limit_rows"`
+}
+
+type ListResultsActionRowsRow struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	OpportunityID                uuid.UUID          `json:"opportunity_id"`
+	ActionType                   string             `json:"action_type"`
+	Status                       string             `json:"status"`
+	TargetArticleID              pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                    *string            `json:"target_url"`
+	NormalizedTargetUrl          *string            `json:"normalized_target_url"`
+	TargetContentHashBefore      *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter       *string            `json:"target_content_hash_after"`
+	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow               json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	AssetType                    *string            `json:"asset_type"`
+	TargetSurfaceID              pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons                  json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot             json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot                json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot               json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot                 json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired               bool               `json:"review_required"`
+	ApprovedBy                   *string            `json:"approved_by"`
+	ApprovedAt                   pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	OpportunityType              string             `json:"opportunity_type"`
+	OpportunityQuery             *string            `json:"opportunity_query"`
+	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
+	OpportunityNormalizedPageUrl *string            `json:"opportunity_normalized_page_url"`
+	OpportunityRecommendedAction *string            `json:"opportunity_recommended_action"`
+	OpportunityExpectedImpact    *string            `json:"opportunity_expected_impact"`
+	TopicTitle                   *string            `json:"topic_title"`
+	DraftArticleStatus           *string            `json:"draft_article_status"`
+	DraftArticleCanonicalUrl     *string            `json:"draft_article_canonical_url"`
+}
+
+func (q *Queries) ListResultsActionRows(ctx context.Context, arg ListResultsActionRowsParams) ([]ListResultsActionRowsRow, error) {
+	rows, err := q.db.Query(ctx, listResultsActionRows,
+		arg.ProjectID,
+		arg.Status,
+		arg.CursorUpdatedAt,
+		arg.LimitRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListResultsActionRowsRow
+	for rows.Next() {
+		var i ListResultsActionRowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.ActionType,
+			&i.Status,
+			&i.TargetArticleID,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.TargetContentHashBefore,
+			&i.TargetContentHashAfter,
+			&i.DraftArticleID,
+			&i.BaselineWindow,
+			&i.MeasurementWindow,
+			&i.PublishedAt,
+			&i.OutcomeSummary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AssetType,
+			&i.TargetSurfaceID,
+			&i.RiskReasons,
+			&i.EvidenceSnapshot,
+			&i.InputSnapshot,
+			&i.OutputSnapshot,
+			&i.DiffSnapshot,
+			&i.ReviewRequired,
+			&i.ApprovedBy,
+			&i.ApprovedAt,
+			&i.VerifiedAt,
+			&i.VerificationSnapshot,
+			&i.OpportunityType,
+			&i.OpportunityQuery,
+			&i.OpportunityPageUrl,
+			&i.OpportunityNormalizedPageUrl,
+			&i.OpportunityRecommendedAction,
+			&i.OpportunityExpectedImpact,
+			&i.TopicTitle,
+			&i.DraftArticleStatus,
+			&i.DraftArticleCanonicalUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -1786,6 +2205,105 @@ func (q *Queries) UpdateSEOOpportunityStatus(ctx context.Context, arg UpdateSEOO
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+	)
+	return i, err
+}
+
+const upsertActionMeasurement = `-- name: UpsertActionMeasurement :one
+insert into action_measurements
+  (project_id, content_action_id, article_id, checkpoint_day, window_start, window_end,
+   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason,
+   attribution_confidence, confounders, computed_at)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7::jsonb,
+  $8::jsonb,
+  $9::jsonb,
+  $10::jsonb,
+  $11,
+  $12,
+  $13,
+  $14::jsonb,
+  $15
+)
+on conflict (project_id, content_action_id, checkpoint_day) do update set
+  article_id = coalesce(excluded.article_id, action_measurements.article_id),
+  window_start = excluded.window_start,
+  window_end = excluded.window_end,
+  seo_metrics = excluded.seo_metrics,
+  ga4_metrics = excluded.ga4_metrics,
+  geo_metrics = excluded.geo_metrics,
+  execution_metrics = excluded.execution_metrics,
+  outcome_label = excluded.outcome_label,
+  outcome_reason = excluded.outcome_reason,
+  attribution_confidence = excluded.attribution_confidence,
+  confounders = excluded.confounders,
+  computed_at = excluded.computed_at,
+  updated_at = now()
+returning id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at
+`
+
+type UpsertActionMeasurementParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	ContentActionID       uuid.UUID          `json:"content_action_id"`
+	ArticleID             pgtype.UUID        `json:"article_id"`
+	CheckpointDay         int32              `json:"checkpoint_day"`
+	WindowStart           pgtype.Date        `json:"window_start"`
+	WindowEnd             pgtype.Date        `json:"window_end"`
+	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
+	OutcomeLabel          string             `json:"outcome_label"`
+	OutcomeReason         string             `json:"outcome_reason"`
+	AttributionConfidence string             `json:"attribution_confidence"`
+	Confounders           json.RawMessage    `json:"confounders"`
+	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
+}
+
+func (q *Queries) UpsertActionMeasurement(ctx context.Context, arg UpsertActionMeasurementParams) (ActionMeasurement, error) {
+	row := q.db.QueryRow(ctx, upsertActionMeasurement,
+		arg.ProjectID,
+		arg.ContentActionID,
+		arg.ArticleID,
+		arg.CheckpointDay,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.SeoMetrics,
+		arg.Ga4Metrics,
+		arg.GeoMetrics,
+		arg.ExecutionMetrics,
+		arg.OutcomeLabel,
+		arg.OutcomeReason,
+		arg.AttributionConfidence,
+		arg.Confounders,
+		arg.ComputedAt,
+	)
+	var i ActionMeasurement
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.ArticleID,
+		&i.CheckpointDay,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.SeoMetrics,
+		&i.Ga4Metrics,
+		&i.GeoMetrics,
+		&i.ExecutionMetrics,
+		&i.OutcomeLabel,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.Confounders,
+		&i.ComputedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

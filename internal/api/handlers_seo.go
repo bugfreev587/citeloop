@@ -122,6 +122,25 @@ type VisibilityMeasurement struct {
 	Summary  string    `json:"summary"`
 }
 
+// ActionMeasurement fields expose outcome_label, outcome_reason,
+// attribution_confidence, and confounders for Results attribution.
+type ActionMeasurement = db.ActionMeasurement
+
+type ResultsAction struct {
+	db.ContentAction
+	OpportunityType              string              `json:"opportunity_type"`
+	OpportunityQuery             *string             `json:"opportunity_query,omitempty"`
+	OpportunityPageURL           *string             `json:"opportunity_page_url,omitempty"`
+	OpportunityNormalizedURL     *string             `json:"opportunity_normalized_page_url,omitempty"`
+	OpportunityRecommendedAction *string             `json:"opportunity_recommended_action,omitempty"`
+	OpportunityExpectedImpact    *string             `json:"opportunity_expected_impact,omitempty"`
+	TopicTitle                   *string             `json:"topic_title,omitempty"`
+	DraftArticleStatus           *string             `json:"draft_article_status,omitempty"`
+	DraftArticleCanonicalURL     *string             `json:"draft_article_canonical_url,omitempty"`
+	LatestMeasurement            *ActionMeasurement  `json:"latest_measurement,omitempty"`
+	Measurements                 []ActionMeasurement `json:"measurements"`
+}
+
 func (s *Server) getVisibilitySummary(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -490,6 +509,122 @@ func (s *Server) getSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) listResultsActions(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	limit, err := parseLimit(r, 50, 100)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad limit")
+		return
+	}
+	cursor, err := parseCursor(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad cursor")
+		return
+	}
+	actions, err := s.resultsActionsForProject(r.Context(), projectID, r.URL.Query().Get("status"), limit, cursor)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, emptySlice(actions))
+}
+
+func (s *Server) getResultsAction(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	row, err := s.Q.GetResultsActionRow(r.Context(), db.GetResultsActionRowParams{ID: actionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	measurements, err := s.Q.ListActionMeasurementsForAction(r.Context(), db.ListActionMeasurementsForActionParams{
+		ProjectID:       projectID,
+		ContentActionID: actionID,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	action := resultsActionFromGetRow(row)
+	attachResultsMeasurements(&action, measurements)
+	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) recomputeResults(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	status := "scheduler_unavailable"
+	if s.Sched != nil {
+		if err := s.Sched.RecomputeMeasurements(r.Context(), projectID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		status = "recomputed"
+	}
+	actions, err := s.resultsActionsForProject(r.Context(), projectID, "", 50, time.Time{})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "actions": emptySlice(actions)})
+}
+
+func (s *Server) resultsActionsForProject(ctx context.Context, projectID uuid.UUID, status string, limit int, cursor time.Time) ([]ResultsAction, error) {
+	if s.Q == nil {
+		return nil, fmt.Errorf("database unavailable")
+	}
+	params := db.ListResultsActionRowsParams{
+		ProjectID: projectID,
+		Status:    status,
+		LimitRows: int32(limit),
+	}
+	if !cursor.IsZero() {
+		params.CursorUpdatedAt = pgutil.TS(cursor)
+	}
+	rows, err := s.Q.ListResultsActionRows(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	measurementLimit := limit * 8
+	if measurementLimit < 100 {
+		measurementLimit = 100
+	}
+	if measurementLimit > 500 {
+		measurementLimit = 500
+	}
+	measurements, err := s.Q.ListActionMeasurementsForProject(ctx, db.ListActionMeasurementsForProjectParams{
+		ProjectID: projectID,
+		LimitRows: int32(measurementLimit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	grouped := map[uuid.UUID][]ActionMeasurement{}
+	for _, measurement := range measurements {
+		grouped[measurement.ContentActionID] = append(grouped[measurement.ContentActionID], measurement)
+	}
+	actions := make([]ResultsAction, 0, len(rows))
+	for _, row := range rows {
+		action := resultsActionFromListRow(row)
+		attachResultsMeasurements(&action, grouped[row.ID])
+		actions = append(actions, action)
+	}
+	return actions, nil
 }
 
 func (s *Server) updateSEOContentActionStatus(w http.ResponseWriter, r *http.Request, status string) {
@@ -872,6 +1007,117 @@ func visibilityActionInLoop(row db.ListVisibilityActionRowsRow, stage Visibility
 		CreatedAt:                 pgTimePtr(row.CreatedAt),
 		UpdatedAt:                 pgTimePtr(row.UpdatedAt),
 	}
+}
+
+func resultsActionFromListRow(row db.ListResultsActionRowsRow) ResultsAction {
+	return ResultsAction{
+		ContentAction: db.ContentAction{
+			ID:                      row.ID,
+			ProjectID:               row.ProjectID,
+			OpportunityID:           row.OpportunityID,
+			ActionType:              row.ActionType,
+			Status:                  row.Status,
+			TargetArticleID:         row.TargetArticleID,
+			TargetUrl:               row.TargetUrl,
+			NormalizedTargetUrl:     row.NormalizedTargetUrl,
+			TargetContentHashBefore: row.TargetContentHashBefore,
+			TargetContentHashAfter:  row.TargetContentHashAfter,
+			DraftArticleID:          row.DraftArticleID,
+			BaselineWindow:          rawOrDefault(row.BaselineWindow, `{}`),
+			MeasurementWindow:       rawOrDefault(row.MeasurementWindow, `{}`),
+			PublishedAt:             row.PublishedAt,
+			OutcomeSummary:          rawOrDefault(row.OutcomeSummary, `{}`),
+			CreatedAt:               row.CreatedAt,
+			UpdatedAt:               row.UpdatedAt,
+			AssetType:               row.AssetType,
+			TargetSurfaceID:         row.TargetSurfaceID,
+			RiskReasons:             rawOrDefault(row.RiskReasons, `[]`),
+			EvidenceSnapshot:        rawOrDefault(row.EvidenceSnapshot, `{}`),
+			InputSnapshot:           rawOrDefault(row.InputSnapshot, `{}`),
+			OutputSnapshot:          rawOrDefault(row.OutputSnapshot, `{}`),
+			DiffSnapshot:            rawOrDefault(row.DiffSnapshot, `{}`),
+			ReviewRequired:          row.ReviewRequired,
+			ApprovedBy:              row.ApprovedBy,
+			ApprovedAt:              row.ApprovedAt,
+			VerifiedAt:              row.VerifiedAt,
+			VerificationSnapshot:    rawOrDefault(row.VerificationSnapshot, `{}`),
+		},
+		OpportunityType:              row.OpportunityType,
+		OpportunityQuery:             row.OpportunityQuery,
+		OpportunityPageURL:           row.OpportunityPageUrl,
+		OpportunityNormalizedURL:     row.OpportunityNormalizedPageUrl,
+		OpportunityRecommendedAction: row.OpportunityRecommendedAction,
+		OpportunityExpectedImpact:    row.OpportunityExpectedImpact,
+		TopicTitle:                   row.TopicTitle,
+		DraftArticleStatus:           row.DraftArticleStatus,
+		DraftArticleCanonicalURL:     row.DraftArticleCanonicalUrl,
+		Measurements:                 []ActionMeasurement{},
+	}
+}
+
+func resultsActionFromGetRow(row db.GetResultsActionRowRow) ResultsAction {
+	return ResultsAction{
+		ContentAction: db.ContentAction{
+			ID:                      row.ID,
+			ProjectID:               row.ProjectID,
+			OpportunityID:           row.OpportunityID,
+			ActionType:              row.ActionType,
+			Status:                  row.Status,
+			TargetArticleID:         row.TargetArticleID,
+			TargetUrl:               row.TargetUrl,
+			NormalizedTargetUrl:     row.NormalizedTargetUrl,
+			TargetContentHashBefore: row.TargetContentHashBefore,
+			TargetContentHashAfter:  row.TargetContentHashAfter,
+			DraftArticleID:          row.DraftArticleID,
+			BaselineWindow:          rawOrDefault(row.BaselineWindow, `{}`),
+			MeasurementWindow:       rawOrDefault(row.MeasurementWindow, `{}`),
+			PublishedAt:             row.PublishedAt,
+			OutcomeSummary:          rawOrDefault(row.OutcomeSummary, `{}`),
+			CreatedAt:               row.CreatedAt,
+			UpdatedAt:               row.UpdatedAt,
+			AssetType:               row.AssetType,
+			TargetSurfaceID:         row.TargetSurfaceID,
+			RiskReasons:             rawOrDefault(row.RiskReasons, `[]`),
+			EvidenceSnapshot:        rawOrDefault(row.EvidenceSnapshot, `{}`),
+			InputSnapshot:           rawOrDefault(row.InputSnapshot, `{}`),
+			OutputSnapshot:          rawOrDefault(row.OutputSnapshot, `{}`),
+			DiffSnapshot:            rawOrDefault(row.DiffSnapshot, `{}`),
+			ReviewRequired:          row.ReviewRequired,
+			ApprovedBy:              row.ApprovedBy,
+			ApprovedAt:              row.ApprovedAt,
+			VerifiedAt:              row.VerifiedAt,
+			VerificationSnapshot:    rawOrDefault(row.VerificationSnapshot, `{}`),
+		},
+		OpportunityType:              row.OpportunityType,
+		OpportunityQuery:             row.OpportunityQuery,
+		OpportunityPageURL:           row.OpportunityPageUrl,
+		OpportunityNormalizedURL:     row.OpportunityNormalizedPageUrl,
+		OpportunityRecommendedAction: row.OpportunityRecommendedAction,
+		OpportunityExpectedImpact:    row.OpportunityExpectedImpact,
+		TopicTitle:                   row.TopicTitle,
+		DraftArticleStatus:           row.DraftArticleStatus,
+		DraftArticleCanonicalURL:     row.DraftArticleCanonicalUrl,
+		Measurements:                 []ActionMeasurement{},
+	}
+}
+
+func attachResultsMeasurements(action *ResultsAction, measurements []ActionMeasurement) {
+	action.Measurements = emptySlice(measurements)
+	if len(action.Measurements) == 0 {
+		action.LatestMeasurement = nil
+		return
+	}
+	latest := action.Measurements[0]
+	for _, measurement := range action.Measurements[1:] {
+		if measurement.ComputedAt.Valid && (!latest.ComputedAt.Valid || measurement.ComputedAt.Time.After(latest.ComputedAt.Time)) {
+			latest = measurement
+			continue
+		}
+		if !measurement.ComputedAt.Valid && !latest.ComputedAt.Valid && measurement.CheckpointDay > latest.CheckpointDay {
+			latest = measurement
+		}
+	}
+	action.LatestMeasurement = &latest
 }
 
 func visibilityPrimaryStatus(openCount, actionCount int, setupBlockers []seopkg.SetupChecklistItem, counts map[string]int) string {

@@ -440,6 +440,41 @@ export type SEOContentAction = {
   created_at?: any;
 };
 
+export type ActionMeasurement = {
+  id: string;
+  project_id: string;
+  content_action_id: string;
+  article_id?: string | null;
+  checkpoint_day: number;
+  window_start?: any;
+  window_end?: any;
+  seo_metrics?: any;
+  ga4_metrics?: any;
+  geo_metrics?: any;
+  execution_metrics?: any;
+  outcome_label: "insufficient_data" | "positive" | "negative" | "mixed" | "inconclusive" | string;
+  outcome_reason: string;
+  attribution_confidence: "high" | "medium" | "low" | "none" | string;
+  confounders: any[];
+  computed_at?: any;
+  created_at?: any;
+  updated_at?: any;
+};
+
+export type ResultsAction = SEOContentAction & {
+  opportunity_type?: string;
+  opportunity_page_url?: string | null;
+  opportunity_normalized_page_url?: string | null;
+  opportunity_query?: string | null;
+  opportunity_recommended_action?: string | null;
+  opportunity_expected_impact?: string | null;
+  topic_title?: string | null;
+  draft_article_status?: string | null;
+  draft_article_canonical_url?: string | null;
+  latest_measurement?: ActionMeasurement | null;
+  measurements: ActionMeasurement[];
+};
+
 export type VisibilityLifecycleStage =
   | "detected"
   | "added_to_plan"
@@ -999,6 +1034,80 @@ function normalizeSEOBrief(raw: any): SEOBrief {
     geo_blockers: arrayFrom<string>(data.geo_blockers).map(String),
     geo_opportunities: arrayFrom<SEOOpportunity>(data.geo_opportunities),
     measurement_updates: arrayFrom<string>(data.measurement_updates).map(String),
+  };
+}
+
+function normalizeSEOContentAction(raw: any): SEOContentAction {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    opportunity_id: data.opportunity_id ?? "",
+    action_type: data.action_type ?? "",
+    status: data.status ?? "",
+    asset_type: data.asset_type ?? null,
+    target_surface_id: data.target_surface_id ?? null,
+    target_url: data.target_url ?? null,
+    normalized_target_url: data.normalized_target_url ?? null,
+    target_content_hash_before: data.target_content_hash_before ?? null,
+    risk_reasons: data.risk_reasons ?? [],
+    evidence_snapshot: data.evidence_snapshot ?? {},
+    input_snapshot: data.input_snapshot ?? {},
+    output_snapshot: data.output_snapshot ?? {},
+    diff_snapshot: data.diff_snapshot ?? {},
+    review_required: Boolean(data.review_required),
+    approved_by: data.approved_by ?? null,
+    approved_at: data.approved_at ?? undefined,
+    verified_at: data.verified_at ?? undefined,
+    verification_snapshot: data.verification_snapshot ?? {},
+    baseline_window: data.baseline_window ?? {},
+    measurement_window: data.measurement_window ?? {},
+    published_at: data.published_at ?? undefined,
+    outcome_summary: data.outcome_summary ?? {},
+    created_at: data.created_at ?? undefined,
+  };
+}
+
+function normalizeActionMeasurement(raw: any): ActionMeasurement {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    content_action_id: data.content_action_id ?? "",
+    article_id: data.article_id ?? null,
+    checkpoint_day: Number(data.checkpoint_day ?? 0),
+    window_start: data.window_start ?? undefined,
+    window_end: data.window_end ?? undefined,
+    seo_metrics: data.seo_metrics ?? {},
+    ga4_metrics: data.ga4_metrics ?? {},
+    geo_metrics: data.geo_metrics ?? {},
+    execution_metrics: data.execution_metrics ?? {},
+    outcome_label: data.outcome_label ?? "insufficient_data",
+    outcome_reason: data.outcome_reason ?? "No comparable before/after data is available yet.",
+    attribution_confidence: data.attribution_confidence ?? "low",
+    confounders: arrayFrom(data.confounders),
+    computed_at: data.computed_at ?? undefined,
+    created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeResultsAction(raw: any): ResultsAction {
+  const data = raw ?? {};
+  const measurements = arrayFrom(data.measurements).map(normalizeActionMeasurement);
+  const latest = data.latest_measurement ? normalizeActionMeasurement(data.latest_measurement) : measurements[0] ?? null;
+  return {
+    ...normalizeSEOContentAction(data),
+    opportunity_type: data.opportunity_type ?? "",
+    opportunity_page_url: data.opportunity_page_url ?? null,
+    opportunity_normalized_page_url: data.opportunity_normalized_page_url ?? null,
+    opportunity_query: data.opportunity_query ?? null,
+    opportunity_recommended_action: data.opportunity_recommended_action ?? null,
+    opportunity_expected_impact: data.opportunity_expected_impact ?? null,
+    topic_title: data.topic_title ?? null,
+    draft_article_status: data.draft_article_status ?? null,
+    draft_article_canonical_url: data.draft_article_canonical_url ?? null,
+    latest_measurement: latest,
+    measurements,
   };
 }
 
@@ -1698,6 +1807,27 @@ export function createApi(auth?: AuthOptions) {
       auth,
     );
     return normalizePublisherConnection(raw);
+  },
+  listResultsActions: async (id: string, options: SEOListOptions = {}): Promise<ResultsAction[]> => {
+    const params = new URLSearchParams();
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.cursor) params.set("cursor", options.cursor);
+    const suffix = params.toString();
+    const endpoint = suffix ? `/projects/${id}/results/actions?${suffix}` : `/projects/${id}/results/actions`;
+    const raw = await req<any[]>(endpoint, undefined, auth);
+    return arrayFrom(raw).map(normalizeResultsAction);
+  },
+  getResultsAction: async (id: string, actionID: string): Promise<ResultsAction> => {
+    const raw = await req<any>(`/projects/${id}/results/actions/${actionID}`, undefined, auth);
+    return normalizeResultsAction(raw);
+  },
+  recomputeResults: async (id: string): Promise<{ status: string; actions: ResultsAction[] }> => {
+    const raw = await req<any>(`/projects/${id}/results/recompute`, { method: "POST" }, auth);
+    return {
+      status: raw?.status ?? "recomputed",
+      actions: arrayFrom(raw?.actions).map(normalizeResultsAction),
+    };
   },
   getSEOOverview: async (id: string): Promise<SEOOverview> => {
     const raw = await req<any>(`/projects/${id}/seo/overview`, undefined, auth);

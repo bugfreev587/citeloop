@@ -11,6 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ActionMeasurement struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	ContentActionID       uuid.UUID          `json:"content_action_id"`
+	ArticleID             pgtype.UUID        `json:"article_id"`
+	CheckpointDay         int32              `json:"checkpoint_day"`
+	WindowStart           pgtype.Date        `json:"window_start"`
+	WindowEnd             pgtype.Date        `json:"window_end"`
+	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
+	OutcomeLabel          string             `json:"outcome_label"`
+	OutcomeReason         string             `json:"outcome_reason"`
+	AttributionConfidence string             `json:"attribution_confidence"`
+	Confounders           json.RawMessage    `json:"confounders"`
+	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AdminGeoProviderCredential struct {
+	Scope     string             `json:"scope"`
+	Provider  string             `json:"provider"`
+	ApiKey    string             `json:"api_key"`
+	BaseUrl   string             `json:"base_url"`
+	Model     string             `json:"model"`
+	Enabled   bool               `json:"enabled"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AdminLlmCredential struct {
 	Singleton   bool               `json:"singleton"`
 	Provider    string             `json:"provider"`

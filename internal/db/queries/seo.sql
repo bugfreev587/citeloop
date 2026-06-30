@@ -448,6 +448,166 @@ update content_actions set
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
+-- name: UpsertActionMeasurement :one
+insert into action_measurements
+  (project_id, content_action_id, article_id, checkpoint_day, window_start, window_end,
+   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason,
+   attribution_confidence, confounders, computed_at)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(content_action_id),
+  sqlc.narg(article_id),
+  sqlc.arg(checkpoint_day),
+  sqlc.narg(window_start),
+  sqlc.narg(window_end),
+  sqlc.arg(seo_metrics)::jsonb,
+  sqlc.arg(ga4_metrics)::jsonb,
+  sqlc.arg(geo_metrics)::jsonb,
+  sqlc.arg(execution_metrics)::jsonb,
+  sqlc.arg(outcome_label),
+  sqlc.arg(outcome_reason),
+  sqlc.arg(attribution_confidence),
+  sqlc.arg(confounders)::jsonb,
+  sqlc.arg(computed_at)
+)
+on conflict (project_id, content_action_id, checkpoint_day) do update set
+  article_id = coalesce(excluded.article_id, action_measurements.article_id),
+  window_start = excluded.window_start,
+  window_end = excluded.window_end,
+  seo_metrics = excluded.seo_metrics,
+  ga4_metrics = excluded.ga4_metrics,
+  geo_metrics = excluded.geo_metrics,
+  execution_metrics = excluded.execution_metrics,
+  outcome_label = excluded.outcome_label,
+  outcome_reason = excluded.outcome_reason,
+  attribution_confidence = excluded.attribution_confidence,
+  confounders = excluded.confounders,
+  computed_at = excluded.computed_at,
+  updated_at = now()
+returning *;
+
+-- name: ListActionMeasurementsForProject :many
+select * from action_measurements
+where project_id = sqlc.arg(project_id)
+  and (sqlc.narg(content_action_id)::uuid is null or content_action_id = sqlc.narg(content_action_id))
+order by computed_at desc, checkpoint_day desc
+limit sqlc.arg(limit_rows);
+
+-- name: ListActionMeasurementsForAction :many
+select * from action_measurements
+where project_id = sqlc.arg(project_id)
+  and content_action_id = sqlc.arg(content_action_id)
+order by checkpoint_day asc, computed_at asc;
+
+-- name: ListResultsActionRows :many
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.target_content_hash_before,
+  ca.target_content_hash_after,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.target_surface_id,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.input_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.approved_by,
+  ca.approved_at,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.query as opportunity_query,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  t.title as topic_title,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.project_id = sqlc.arg(project_id)
+  and (sqlc.arg(status)::text = '' or ca.status = sqlc.arg(status))
+  and (sqlc.arg(cursor_updated_at)::timestamptz is null or ca.updated_at < sqlc.arg(cursor_updated_at))
+order by coalesce(ca.published_at, ca.verified_at, ca.updated_at) desc, ca.created_at desc
+limit sqlc.arg(limit_rows);
+
+-- name: GetResultsActionRow :one
+select
+  ca.id,
+  ca.project_id,
+  ca.opportunity_id,
+  ca.action_type,
+  ca.status,
+  ca.target_article_id,
+  ca.target_url,
+  ca.normalized_target_url,
+  ca.target_content_hash_before,
+  ca.target_content_hash_after,
+  ca.draft_article_id,
+  ca.baseline_window,
+  ca.measurement_window,
+  ca.published_at,
+  ca.outcome_summary,
+  ca.created_at,
+  ca.updated_at,
+  ca.asset_type,
+  ca.target_surface_id,
+  ca.risk_reasons,
+  ca.evidence_snapshot,
+  ca.input_snapshot,
+  ca.output_snapshot,
+  ca.diff_snapshot,
+  ca.review_required,
+  ca.approved_by,
+  ca.approved_at,
+  ca.verified_at,
+  ca.verification_snapshot,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.query as opportunity_query,
+  so.page_url as opportunity_page_url,
+  so.normalized_page_url as opportunity_normalized_page_url,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact,
+  t.title as topic_title,
+  a.status as draft_article_status,
+  a.canonical_url as draft_article_canonical_url
+from content_actions ca
+left join seo_opportunities so
+  on so.id = ca.opportunity_id
+  and so.project_id = ca.project_id
+left join topics t
+  on t.source_content_action_id = ca.id
+  and t.project_id = ca.project_id
+left join articles a
+  on a.id = ca.draft_article_id
+  and a.project_id = ca.project_id
+where ca.id = sqlc.arg(id)
+  and ca.project_id = sqlc.arg(project_id);
+
 -- name: UpdateContentActionExecutionMetadata :one
 update content_actions set
   asset_type = coalesce(sqlc.narg(asset_type)::text, asset_type),
