@@ -233,6 +233,80 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
   }
 });
 
+test("GEO credential APIs use admin TokenGate provider endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.endsWith("/test")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, provider: "tokengate_perplexity", model: "sonar-pro", latency_ms: 42 }),
+      };
+    }
+    if (init.method === "DELETE") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ scope: "perplexity", provider: "tokengate", configured: false, enabled: false }),
+      };
+    }
+    if (init.method === "PUT") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ scope: "perplexity", provider: "tokengate", configured: true, enabled: true, key_tail: "abcd" }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [
+        { scope: "perplexity", provider: "tokengate", configured: true, enabled: true, key_tail: "abcd", model: "sonar-pro" },
+        { scope: "openai", provider: "tokengate", configured: false, enabled: false, model: "gpt-5.1" },
+      ],
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const api = createApi({ token: "session-token" });
+
+    const statuses = await api.listGEOCredentials();
+    await api.updateGEOCredentials("perplexity", {
+      provider: "tokengate",
+      api_key: "tg-perplexity-key",
+      base_url: "https://tokengate-production.up.railway.app/v1",
+      model: "sonar-pro",
+      enabled: true,
+    });
+    await api.testGEOCredentials("perplexity");
+    await api.deleteGEOCredentials("perplexity");
+
+    assert.equal(statuses[0].scope, "perplexity");
+    assert.equal(statuses[0].provider, "tokengate");
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.init.method ?? "GET"]),
+      [
+        ["https://api.example.test/api/admin/geo-credentials", "GET"],
+        ["https://api.example.test/api/admin/geo-credentials/perplexity", "PUT"],
+        ["https://api.example.test/api/admin/geo-credentials/perplexity/test", "POST"],
+        ["https://api.example.test/api/admin/geo-credentials/perplexity", "DELETE"],
+      ],
+    );
+    assert.deepEqual(JSON.parse(calls[1].init.body), {
+      provider: "tokengate",
+      api_key: "tg-perplexity-key",
+      base_url: "https://tokengate-production.up.railway.app/v1",
+      model: "sonar-pro",
+      enabled: true,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("listRuns calls the project runs endpoint", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

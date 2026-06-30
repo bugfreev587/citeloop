@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/agents"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
@@ -988,7 +989,7 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 }
 
 func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	svc := s.geoService(q)
+	svc := s.geoService(ctx, q)
 	logStep := func(step string, err error) {
 		if err != nil {
 			s.logger().Warn("geo tick step failed", "project", p.ID, "step", step, "err", err)
@@ -1006,13 +1007,41 @@ func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Proje
 	return nil
 }
 
-func (s *Scheduler) geoService(q *db.Queries) geo.Service {
+func (s *Scheduler) geoService(ctx context.Context, q *db.Queries) geo.Service {
 	return geo.Service{
 		Q:              q,
 		HTTPClient:     s.httpClient,
-		AnswerProvider: s.GEOAnswerProvider,
+		AnswerProvider: s.geoAnswerProvider(ctx),
 		Now:            s.currentTime,
 	}
+}
+
+func (s *Scheduler) geoAnswerProvider(ctx context.Context) geo.AnswerProvider {
+	if provider := s.adminGEOAnswerProvider(ctx); provider != nil {
+		return provider
+	}
+	return s.GEOAnswerProvider
+}
+
+func (s *Scheduler) adminGEOAnswerProvider(ctx context.Context) geo.AnswerProvider {
+	if s.Pool == nil {
+		return nil
+	}
+	credentials, err := admin.LoadGEOCredentials(ctx, s.Pool, admin.GEOProviderPerplexity)
+	if err != nil {
+		s.logger().Warn("admin GEO credential unavailable", "err", err)
+		return nil
+	}
+	if credentials == nil || !credentials.Enabled || strings.TrimSpace(credentials.APIKey) == "" {
+		return nil
+	}
+	return geo.NewTokenGateAnswerProvider(geo.TokenGateAnswerProviderConfig{
+		Scope:   string(credentials.Scope),
+		APIKey:  credentials.APIKey,
+		BaseURL: credentials.BaseURL,
+		Model:   credentials.Model,
+		Engine:  "Perplexity",
+	}, nil)
 }
 
 func (s *Scheduler) geoObserveRequest() geo.ObserveAnswerProviderRequest {

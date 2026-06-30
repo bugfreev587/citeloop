@@ -1220,10 +1220,16 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /Default model/);
   assert.match(admin, /Writer model/);
   assert.match(admin, /QA model/);
-  assert.doesNotMatch(admin, /OpenAI/);
-  assert.doesNotMatch(admin, /Claude/);
-  assert.doesNotMatch(admin, /providers\.map/);
-  assert.doesNotMatch(admin, /selectProvider/);
+  assert.match(admin, /type AdminTabId = "runtime" \| "geo"/);
+  assert.match(admin, /GEO providers/);
+  assert.match(admin, /TokenGate key for Perplexity/);
+  assert.match(admin, /TokenGate key for OpenAI/);
+  assert.match(admin, /TokenGate key for Anthropic/);
+  assert.match(admin, /TokenGate key for Gemini/);
+  assert.match(admin, /geoProviders\.map/);
+  assert.match(admin, /api\.listGEOCredentials/);
+  assert.match(admin, /api\.updateGEOCredentials/);
+  assert.match(admin, /api\.testGEOCredentials/);
 });
 
 test("temporary page feedback uses the global auto-dismissing toast system", () => {
