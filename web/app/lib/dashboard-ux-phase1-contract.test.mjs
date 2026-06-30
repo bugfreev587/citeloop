@@ -319,7 +319,7 @@ test("results surface defaults to published outcomes with collapsed measurement 
     "Measurement details",
     "Measurement window",
     "AI citation signals",
-    "No published work is measuring yet",
+    "No content actions are ready for verification yet",
     "Advanced diagnostics",
   ]) {
     assert.match(resultsBlock, new RegExp(copy));
@@ -327,6 +327,8 @@ test("results surface defaults to published outcomes with collapsed measurement 
 
   assert.match(seo, /function actionMeasurementState/);
   assert.match(seo, /const measuredActions = loopActions\.filter/);
+  assert.match(seo, /const resultActions = loopActions\.filter/);
+  assert.match(resultsBlock, /resultActions\.slice\(0, 12\)\.map/);
   assert.match(resultsBlock, /verifyAction\(action, "verified"\)/);
   assert.match(resultsBlock, /verifyAction\(action, "failed"\)/);
   assert.match(resultsBlock, /<details[\s\S]*Measurement details/);
