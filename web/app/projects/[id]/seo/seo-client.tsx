@@ -1317,7 +1317,21 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div>{formatDate(action.published_at ?? null)}</div>
                         </div>
                       </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2">
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-3 xl:grid-cols-5">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Asset</div>
+                          <div className="mt-1 font-medium text-slate-700">{action.asset_type ?? "unspecified"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Review</div>
+                          <div className="mt-1 font-medium text-slate-700">{action.review_required === false ? "Optional" : "Required"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
+                          <div className="mt-1 font-medium text-slate-700">
+                            {action.verified_at ? "Verified" : action.verification_snapshot ? "Needs check" : "Not started"}
+                          </div>
+                        </div>
                         <div>
                           <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
                           <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
@@ -1352,6 +1366,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           </div>
                         </div>
                       </details>
+                      <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                        <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
+                          <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
+                            Manual verify
+                          </ButtonProgress>
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
+                          <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
+                            Verification failed
+                          </ButtonProgress>
+                        </Button>
+                      </div>
                     </article>
                   );
                 })}
@@ -2025,62 +2051,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         )}
         </div>
       </details>
-      )}
-
-      {mode === "analysis" && actions.length > 0 && (
-      <section>
-        <SectionHeader title="Content actions" action={<Badge tone="neutral">{actions.length}</Badge>} />
-          <div className="grid gap-2">
-            {actions.map((action) => (
-              <div key={action.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-900">{action.action_type}</div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
-                    <span className="text-xs text-slate-400">{formatDate(action.created_at ?? null)}</span>
-                  </div>
-                </div>
-                <div className="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
-                  <div>
-                    <span className="font-semibold text-slate-700">Asset</span>
-                    <br />
-                    {action.asset_type ?? "unspecified"}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-700">Review</span>
-                    <br />
-                    {action.review_required === false ? "Optional" : "Required"}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-700">Verification</span>
-                    <br />
-                    {action.verified_at ? "Verified" : action.verification_snapshot ? "Pending" : "Not started"}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-700">Measurement</span>
-                    <br />
-                    {measurementWindowLabel(action.measurement_window)}
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
-                    <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
-                      Manual verify
-                    </ButtonProgress>
-                  </Button>
-                  <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
-                    <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
-                      Verification failed
-                    </ButtonProgress>
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-      </section>
       )}
     </div>
   );

@@ -292,6 +292,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.doesNotMatch(seo, /Search data status/);
   assert.doesNotMatch(seo, /Opportunity queue/);
   assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
+  assert.doesNotMatch(seo, /\{mode === "analysis" && actions\.length > 0 && \(/);
+  assert.doesNotMatch(seo, /<SectionHeader title="Content actions"/);
   assert.doesNotMatch(seo, /Add to Content Plan/);
   assert.doesNotMatch(seo, /Decide which recommendations deserve content work/);
   assert.doesNotMatch(seo, /Raw GSC rows/);
@@ -308,6 +310,8 @@ test("results surface defaults to published outcomes with collapsed measurement 
     "Outcome summary",
     "Published work",
     "Measurement queue",
+    "Manual verify",
+    "Verification failed",
     "Waiting",
     "Positive",
     "Negative",
@@ -323,6 +327,8 @@ test("results surface defaults to published outcomes with collapsed measurement 
 
   assert.match(seo, /function actionMeasurementState/);
   assert.match(seo, /const measuredActions = loopActions\.filter/);
+  assert.match(resultsBlock, /verifyAction\(action, "verified"\)/);
+  assert.match(resultsBlock, /verifyAction\(action, "failed"\)/);
   assert.match(resultsBlock, /<details[\s\S]*Measurement details/);
   assert.match(resultsBlock, /<details[\s\S]*Advanced diagnostics/);
   assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
