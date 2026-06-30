@@ -92,6 +92,13 @@ function metricChangeClass(tone: StageTone) {
   return classes[tone];
 }
 
+function compactMetricCardClass(featured: boolean) {
+  return cx(
+    "group flex min-h-[124px] flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50 lg:min-h-[148px]",
+    featured && "lg:col-span-1",
+  );
+}
+
 type HumanActionCategory = "Blocking now" | "Needs review" | "Improves results" | "Warnings";
 
 type HumanActionItem = {
@@ -117,6 +124,13 @@ function humanActionTileToneClass(tone: StageTone) {
     neutral: "border-l-4 border-slate-200 border-l-slate-300 bg-white hover:border-slate-300 hover:border-l-slate-400",
   };
   return classes[tone];
+}
+
+function compactActionTileClass(tone: StageTone) {
+  return cx(
+    "group flex min-h-[116px] flex-col justify-between overflow-hidden rounded-xl border border-slate-200 p-3 shadow-[0_14px_30px_-26px_rgba(15,23,42,0.45)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 lg:min-h-[118px]",
+    humanActionTileToneClass(tone),
+  );
 }
 
 function humanActionIconToneClass(tone: StageTone) {
@@ -627,7 +641,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {apiError && (
         <Notice
           title="Project data could not be loaded"
@@ -636,21 +650,18 @@ export function Workspace({ projectId }: { projectId: string }) {
         />
       )}
 
-      <section className="grid gap-3 lg:grid-cols-4 lg:auto-rows-fr">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {metricGridCards.map((item) => {
           const MetricIcon = item.icon;
           return (
             <a
               key={item.label}
               href={item.href}
-              className={cx(
-                "group flex min-h-[156px] flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50",
-                item.featured && "min-h-[272px] lg:col-span-2 lg:row-span-2 lg:p-6",
-              )}
+              className={compactMetricCardClass(item.featured)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-slate-500">
-                  <MetricIcon size={item.featured ? 18 : 16} className={item.muted ? "shrink-0 text-slate-300" : "shrink-0 text-[#d93820]"} />
+                  <MetricIcon size={16} className={item.muted ? "shrink-0 text-slate-300" : "shrink-0 text-[#d93820]"} />
                   <span className="truncate">{item.label}</span>
                 </div>
                 <span className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-slate-400 transition-colors group-hover:text-[#d93820]">
@@ -660,15 +671,15 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
               <div
                 className={cx(
-                  "mt-4 font-bold leading-none tracking-tight",
-                  item.featured ? "text-5xl md:text-6xl" : "text-3xl",
+                  "mt-3 font-bold leading-none tracking-tight",
+                  item.featured ? "text-3xl" : "text-2xl",
                   item.muted ? "text-slate-400" : "text-slate-950",
                 )}
               >
                 {item.value}
               </div>
-              <div className={cx("mt-3 text-sm font-semibold leading-5", item.muted ? "text-slate-400" : "text-slate-500")}>{item.detail}</div>
-              <div className="mt-auto pt-5">
+              <div className={cx("mt-2 line-clamp-2 text-sm font-semibold leading-5", item.muted ? "text-slate-400" : "text-slate-500")}>{item.detail}</div>
+              <div className="mt-auto pt-3">
                 <span className={cx("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", metricChangeClass(item.metricChangeTone))}>
                   {item.metricChangeLabel}
                 </span>
@@ -775,27 +786,24 @@ export function Workspace({ projectId }: { projectId: string }) {
                 <a
                   key={item.id}
                   href={item.href}
-                  className={cx(
-                    "group flex min-h-[188px] flex-col justify-between overflow-hidden rounded-xl border border-slate-200 p-4 shadow-[0_18px_38px_-28px_rgba(15,23,42,0.45)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_44px_-30px_rgba(15,23,42,0.5)] active:translate-y-0 sm:aspect-[1.05/1]",
-                    humanActionTileToneClass(item.tone),
-                  )}
+                  className={compactActionTileClass(item.tone)}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <span className={cx("inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset", humanActionIconToneClass(item.tone))}>
-                      <ActionIcon aria-hidden="true" size={18} />
+                    <span className={cx("inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset", humanActionIconToneClass(item.tone))}>
+                      <ActionIcon aria-hidden="true" size={16} />
                     </span>
                     {item.count != null && (
-                      <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-white px-2 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
+                      <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-white px-2 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
                         {item.count}
                       </span>
                     )}
                   </div>
-                  <div className="mt-4 min-w-0">
+                  <div className="mt-2 min-w-0">
                     <Badge tone={item.tone}>{item.category}</Badge>
-                    <h3 className="mt-3 line-clamp-2 text-base font-bold leading-5 text-slate-950">{item.title}</h3>
-                    <p className="mt-2 line-clamp-3 text-sm font-semibold leading-5 text-slate-600">{item.detail}</p>
+                    <h3 className="mt-2 line-clamp-1 text-[15px] font-bold leading-5 text-slate-950">{item.title}</h3>
+                    <p className="mt-1 line-clamp-2 text-[13px] font-semibold leading-5 text-slate-600">{item.detail}</p>
                   </div>
-                  <span className="mt-4 inline-flex h-9 items-center justify-between gap-2 rounded-lg bg-white px-3 text-xs font-bold text-slate-800 ring-1 ring-slate-200 transition-colors group-hover:text-[#d93820]">
+                  <span className="mt-3 inline-flex h-8 items-center justify-between gap-2 rounded-lg bg-white px-3 text-xs font-bold text-slate-800 ring-1 ring-slate-200 transition-colors group-hover:text-[#d93820]">
                     <span className="truncate">{item.cta}</span>
                     <ArrowRight aria-hidden="true" size={14} className="shrink-0 transition-transform group-hover:translate-x-0.5" />
                   </span>
@@ -823,7 +831,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         )}
       </section>
 
-      {/* Pipeline — the flywheel as a connected progress spine */}
+      {/* First-fold pipeline — the flywheel as a connected progress spine */}
       <section>
         <SectionHeader title="Pipeline" eyebrow="Where this project is in the loop" />
         <div className="flex gap-2 overflow-x-auto pb-1">
