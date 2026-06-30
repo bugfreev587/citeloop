@@ -1,7 +1,7 @@
 # PRD: Analysis and Review Decision Drawer Redesign
 
-> Date: 2026-06-30  
-> Scope: `/projects/[id]/analysis` and `/projects/[id]/review`  
+> Date: 2026-06-30
+> Scope: `/projects/[id]/analysis` and `/projects/[id]/review`
 > Status: Approved for implementation
 
 ## Summary
@@ -112,4 +112,3 @@ The Review drawer should:
 - Run TypeScript typecheck.
 - Run a local visual check in a browser against Analysis and Review.
 - After PR merge and deployment, verify production Analysis and Review URLs.
-

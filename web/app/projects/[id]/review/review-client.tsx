@@ -416,6 +416,7 @@ function ReviewInspector({
   const previewHref = articlePreviewHref(projectId, article);
   const detailHref = `/projects/${projectId}/articles/${article.id}`;
   const metadata = assetMetadata(article);
+  const showRecheck = isReviewInfraFailure(article);
 
   return (
     <aside
@@ -473,6 +474,7 @@ function ReviewInspector({
         approveBusy={approveBusy}
         rejectBusy={rejectBusy}
         recheckBusy={recheckBusy}
+        showRecheck={showRecheck}
         previewHref={previewHref}
         detailHref={detailHref}
         onApprove={onApprove}
@@ -509,6 +511,7 @@ function ReviewDrawerActions({
   approveBusy,
   rejectBusy,
   recheckBusy,
+  showRecheck,
   previewHref,
   detailHref,
   onApprove,
@@ -521,6 +524,7 @@ function ReviewDrawerActions({
   approveBusy: boolean;
   rejectBusy: boolean;
   recheckBusy: boolean;
+  showRecheck: boolean;
   previewHref: string;
   detailHref: string;
   onApprove: () => void;
@@ -545,11 +549,13 @@ function ReviewDrawerActions({
       )}
       {state.kind === "needs_human" && (
         <>
-          <Button disabled={busy} size="sm" onClick={onRecheck}>
-            <ButtonProgress busy={recheckBusy} busyLabel="Re-running QA" idleIcon={<RefreshCw size={14} />}>
-              Re-run QA
-            </ButtonProgress>
-          </Button>
+          {showRecheck && (
+            <Button disabled={busy} size="sm" onClick={onRecheck}>
+              <ButtonProgress busy={recheckBusy} busyLabel="Re-running QA" idleIcon={<RefreshCw size={14} />}>
+                Re-run QA
+              </ButtonProgress>
+            </Button>
+          )}
           <Button disabled={busy} size="sm" onClick={onToggleEditor}>
             <FileText size={14} />
             Edit draft
@@ -616,9 +622,15 @@ function ReadyPanel() {
 
 const genericOptionPattern = /^(reject|edit the draft|add or fix evidence)/i;
 const contextEvidenceOptionPattern = /\b(context|evidence|profile|source)\b/i;
+const qaInfraFailurePattern = /parse qa|unexpected eof|qa re-check failed|qa step failed|missing claims|compact fallback/i;
 
 function decisionText(value: any): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isReviewInfraFailure(article: Article) {
+  const rawReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
+  return qaInfraFailurePattern.test(rawReason);
 }
 
 function DecisionPanel({
@@ -646,7 +658,7 @@ function DecisionPanel({
   const rawReason = decisionText(article.qa_feedback?.blocking_reason) || decisionText(article.qa_issues?.[0]);
   // A QA *infrastructure* failure (truncated/unparseable model response) is not a
   // content decision — never show the raw error; offer a one-click re-check.
-  const isInfraFailure = /parse qa|unexpected eof|qa re-check failed|qa step failed|missing claims|compact fallback/i.test(rawReason);
+  const isInfraFailure = isReviewInfraFailure(article);
   const blockingReason = isInfraFailure ? "" : rawReason;
   const fixInstructions = Array.isArray(article.qa_feedback?.fix_instructions)
     ? (article.qa_feedback!.fix_instructions as any[]).map((v) => String(v).trim()).filter(Boolean)
