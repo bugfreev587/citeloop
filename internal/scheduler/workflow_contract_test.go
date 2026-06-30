@@ -15,7 +15,6 @@ func TestSchedulerWorkflowHandlerPlansReviewedOpportunities(t *testing.T) {
 	for _, want := range []string{
 		"workflow.EventOpportunityReviewed",
 		"workflow.EventOpportunityBatchDone",
-		"CountOpenSEOOpportunities",
 		"ListUnplannedContentActions",
 		"EnqueueWorkflowEvent",
 		"CreateTopic",
@@ -25,6 +24,26 @@ func TestSchedulerWorkflowHandlerPlansReviewedOpportunities(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scheduler workflow handler missing %q", want)
 		}
+	}
+}
+
+func TestOpportunityReviewedPlansAcceptedActionsWithoutWaitingForAllOpenOpportunities(t *testing.T) {
+	source, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (s *Scheduler) handleOpportunityReviewed")
+	end := strings.Index(body, "func (s *Scheduler) handleOpportunityBatchCompleted")
+	if start == -1 || end == -1 || end <= start {
+		t.Fatal("could not locate handleOpportunityReviewed body")
+	}
+	handler := body[start:end]
+	if strings.Contains(handler, "CountOpenSEOOpportunities") || strings.Contains(handler, "open > 0") {
+		t.Fatal("accepted content actions must be planned even when other analysis recommendations remain open")
+	}
+	if !strings.Contains(handler, "ListUnplannedContentActions") || !strings.Contains(handler, "EventOpportunityBatchDone") {
+		t.Fatal("opportunity review must enqueue pending content actions for planning")
 	}
 }
 

@@ -89,6 +89,28 @@ func TestOpportunityPlanningQueriesExposeBatchInputs(t *testing.T) {
 	}
 }
 
+func TestUnplannedContentActionsAreRequeuedByMigration(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0029_requeue_unplanned_content_actions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"insert into workflow_events",
+		"opportunity.batch_completed",
+		"content_actions ca",
+		"left join topics t",
+		"t.source_content_action_id = ca.id",
+		"ca.status = 'ready_for_review'",
+		"t.id is null",
+		"on conflict (dedupe_key) do nothing",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("unplanned content action requeue migration missing %q", want)
+		}
+	}
+}
+
 func TestTopicSourceContentActionContract(t *testing.T) {
 	if !strings.Contains(createTopic, "source_content_action_id") {
 		t.Fatal("CreateTopic must persist source_content_action_id")
