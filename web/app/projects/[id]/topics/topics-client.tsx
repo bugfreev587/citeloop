@@ -70,7 +70,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [openOpportunities, setOpenOpportunities] = useState(0);
-  const [contentActions, setContentActions] = useState(0);
+  const [pendingContentActions, setPendingContentActions] = useState(0);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
@@ -88,7 +88,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       ]);
       setTopics(next);
       setOpenOpportunities(opps.length);
-      setContentActions(actions.length);
+      setPendingContentActions(actions.filter((action) => action.status === "ready_for_review").length);
       if (project) setConfig(project.config);
       setInReview(review.reduce((sum, group) => sum + group.articles.length, 0));
       setApprovedCount(approvedArticles.length);
@@ -108,6 +108,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
+    const hasPendingPlanActions = pendingContentActions > 0 && topics.length === 0;
     // A scheduled topic whose slot has arrived is drafted by the server's 5-minute
     // pass, transitioning scheduled → generating → drafted between client polls. Poll
     // so the plan reflects that without a manual reload (the topic then moves to the
@@ -119,10 +120,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       const due = Date.parse(topic.scheduled_at);
       return Number.isFinite(due) && due <= now && now - due <= 30 * 60_000;
     });
-    if (!hasGenerating && !hasDueScheduled) return;
-    const interval = window.setInterval(refresh, hasGenerating ? 10_000 : 30_000);
+    if (!hasGenerating && !hasPendingPlanActions && !hasDueScheduled) return;
+    const interval = window.setInterval(refresh, hasGenerating ? 10_000 : hasPendingPlanActions ? 5_000 : 30_000);
     return () => window.clearInterval(interval);
-  }, [generatingIds, refresh, topics]);
+  }, [generatingIds, pendingContentActions, refresh, topics]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -192,7 +193,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             : "CiteLoop turns accepted analysis recommendations into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
           cta: null,
         }
-      : contentActions > 0
+      : pendingContentActions > 0
         ? {
             tone: "blue",
             title: "Generating your content plan from accepted analysis",

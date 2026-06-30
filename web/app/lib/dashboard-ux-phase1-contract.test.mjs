@@ -1093,6 +1093,16 @@ test("content plan treats topic generation as a per-topic background operation",
   assert.doesNotMatch(topics, /disabled=\{!!busy \|\| topic\.status === "archived"\} size="sm" variant="primary" onClick=\{\(\) => generate\(topic\)\}/);
 });
 
+test("content plan polls accepted analysis actions until topics appear", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /pendingContentActions/);
+  assert.match(topics, /status === "ready_for_review"/);
+  assert.match(topics, /hasPendingPlanActions/);
+  assert.match(topics, /topics\.length === 0/);
+  assert.match(topics, /window\.setInterval\(refresh, hasGenerating \? 10_000 : hasPendingPlanActions \? 5_000 : 30_000\)/);
+});
+
 test("content plan backlog excludes drafted topics", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 

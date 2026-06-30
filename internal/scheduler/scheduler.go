@@ -343,13 +343,6 @@ func (s *Scheduler) handleOpportunityReviewed(ctx context.Context, projectID uui
 		s.Log.Info("workflow auto advance disabled", "project", projectID)
 		return tx.Commit(ctx)
 	}
-	open, err := q.CountOpenSEOOpportunities(ctx, projectID)
-	if err != nil {
-		return err
-	}
-	if open > 0 {
-		return tx.Commit(ctx)
-	}
 	actions, err := q.ListUnplannedContentActions(ctx, db.ListUnplannedContentActionsParams{
 		ProjectID: projectID,
 		Limit:     50,
