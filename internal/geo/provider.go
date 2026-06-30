@@ -76,6 +76,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 	if s.AnswerProvider != nil && s.AnswerProvider.Name() != "" {
 		providerName = s.AnswerProvider.Name()
 	}
+	req.Engine = AnswerProviderEngine(s.AnswerProvider, req.Engine)
 	run, err := s.Q.StartGEORun(ctx, db.StartGEORunParams{
 		ProjectID: projectID,
 		Agent:     AgentObserver,
@@ -118,12 +119,12 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 	if err != nil {
 		return finish("error", result, 0, err)
 	}
-	prompts, result.SkippedPrompts = sampleProviderPrompts(prompts, req.MaxPrompts, providerEngine(req.Engine, "Perplexity"))
+	prompts, result.SkippedPrompts = sampleProviderPrompts(prompts, req.MaxPrompts, req.Engine)
 	if len(prompts) == 0 {
 		return finish("degraded", result, 0, nil)
 	}
 	if s.AnswerProvider == nil || !s.AnswerProvider.Available() {
-		result.SkippedEngines = append(result.SkippedEngines, providerEngine(req.Engine, "Perplexity"))
+		result.SkippedEngines = append(result.SkippedEngines, req.Engine)
 		for _, prompt := range prompts {
 			observation, err := s.createProviderUnavailableObservation(ctx, projectID, run.ID, prompt, req)
 			if err != nil {
@@ -136,7 +137,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 
 	providerRows, costUSD, providerErr := s.AnswerProvider.Observe(ctx, prompts)
 	if providerErr != nil {
-		result.SkippedEngines = appendUniqueString(result.SkippedEngines, providerEngine(req.Engine, "Perplexity"))
+		result.SkippedEngines = appendUniqueString(result.SkippedEngines, req.Engine)
 	}
 	result.CostUSD = costUSD
 	ownedSurfaces, err := s.Q.ListProjectOwnedGEOExternalSurfaces(ctx, projectID)
@@ -240,6 +241,20 @@ func providerEngine(value, fallback string) string {
 	return fallback
 }
 
+func AnswerProviderEngine(provider AnswerProvider, fallback string) string {
+	if provider != nil {
+		type engineProvider interface {
+			Engine() string
+		}
+		if withEngine, ok := provider.(engineProvider); ok {
+			if engine := strings.TrimSpace(withEngine.Engine()); engine != "" {
+				return engine
+			}
+		}
+	}
+	return providerEngine(fallback, "Perplexity")
+}
+
 func providerLocale(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -301,6 +316,10 @@ func NewPerplexityProvider(apiKey, baseURL, model string, client *http.Client) P
 
 func (p PerplexityProvider) Name() string {
 	return ProviderPerplexitySonar
+}
+
+func (p PerplexityProvider) Engine() string {
+	return "Perplexity"
 }
 
 func (p PerplexityProvider) Available() bool {

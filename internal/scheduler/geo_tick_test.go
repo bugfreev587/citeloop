@@ -36,7 +36,7 @@ func TestSchedulerGEOTickUsesConfiguredAnswerProvider(t *testing.T) {
 	}
 
 	req := s.geoObserveRequest()
-	if req.Engine != "Perplexity" || req.MaxPrompts != 10 || req.BudgetUSD != 0.25 {
-		t.Fatalf("observe request = %+v, want Perplexity top 10 with configured budget", req)
+	if req.Engine != "OpenAI" || req.MaxPrompts != 10 || req.BudgetUSD != 0.25 {
+		t.Fatalf("observe request = %+v, want OpenAI top 10 with configured budget", req)
 	}
 }

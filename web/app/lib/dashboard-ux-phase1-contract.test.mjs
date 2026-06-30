@@ -1243,6 +1243,14 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /api\.testGEOCredentials/);
 });
 
+test("GEO provider observation defaults to OpenAI instead of required Perplexity", () => {
+  const results = read("projects/[id]/seo/seo-client.tsx");
+  const observeBlock = results.slice(results.indexOf("async function observeGEOProvider"), results.indexOf("async function monitorGEOExternalSurfaces"));
+
+  assert.match(observeBlock, /api\.observeGEOProvider\(projectId, \{ engine: "OpenAI", max_prompts: 10 \}\)/);
+  assert.doesNotMatch(observeBlock, /engine: "Perplexity"/);
+});
+
 test("temporary page feedback uses the global auto-dismissing toast system", () => {
   const layout = read("layout.tsx");
   const toastProvider = read("components/toast-provider.tsx");

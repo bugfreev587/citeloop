@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/citeloop/citeloop/internal/admin"
 	geopkg "github.com/citeloop/citeloop/internal/geo"
@@ -22,8 +21,8 @@ func (s *Server) geoService(ctx context.Context) geopkg.Service {
 
 func (s *Server) geoAnswerProvider(ctx context.Context) geopkg.AnswerProvider {
 	if s.Pool != nil {
-		credentials, err := admin.LoadGEOCredentials(ctx, s.Pool, admin.GEOProviderPerplexity)
-		if err == nil && credentials != nil && credentials.Enabled && strings.TrimSpace(credentials.APIKey) != "" {
+		credentials, err := admin.LoadRuntimeGEOCredentials(ctx, s.Pool)
+		if err == nil && credentials != nil {
 			return tokenGateProviderFromGEOCredentials(*credentials)
 		}
 		if err != nil && s.Log != nil {

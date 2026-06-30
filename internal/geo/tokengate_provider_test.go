@@ -82,3 +82,19 @@ func TestTokenGateAnswerProviderUsesChatCompletionsAndCitations(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 }
+
+func TestAnswerProviderEngineUsesTokenGateEngine(t *testing.T) {
+	provider := NewTokenGateAnswerProvider(TokenGateAnswerProviderConfig{
+		Scope:  "anthropic",
+		APIKey: "tg-test-key",
+		Model:  "claude-sonnet-4-6",
+		Engine: "Anthropic",
+	}, nil)
+
+	if got := AnswerProviderEngine(provider, "OpenAI"); got != "Anthropic" {
+		t.Fatalf("engine = %q, want Anthropic", got)
+	}
+	if got := AnswerProviderEngine(NewPerplexityProvider("pplx", "", "", nil), "OpenAI"); got != "Perplexity" {
+		t.Fatalf("perplexity engine = %q, want Perplexity", got)
+	}
+}

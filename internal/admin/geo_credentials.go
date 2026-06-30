@@ -57,6 +57,14 @@ func GEOCredentialScopes() []GEOProviderScope {
 	}
 }
 
+func RuntimeGEOCredentialScopes() []GEOProviderScope {
+	return []GEOProviderScope{
+		GEOProviderOpenAI,
+		GEOProviderAnthropic,
+		GEOProviderPerplexity,
+	}
+}
+
 func ValidGEOCredentialScope(value string) bool {
 	_, err := ParseGEOCredentialScope(value)
 	return err == nil
@@ -232,6 +240,46 @@ func SaveGEOCredentials(ctx context.Context, pool *pgxpool.Pool, scope GEOProvid
 func DeleteGEOCredentials(ctx context.Context, pool *pgxpool.Pool, scope GEOProviderScope) error {
 	_, err := pool.Exec(ctx, `delete from admin_geo_provider_credentials where scope = $1`, scope)
 	return err
+}
+
+func LoadRuntimeGEOCredentials(ctx context.Context, pool *pgxpool.Pool) (*GEOCredentials, error) {
+	candidates := make([]*GEOCredentials, 0, len(RuntimeGEOCredentialScopes()))
+	for _, scope := range RuntimeGEOCredentialScopes() {
+		credentials, err := LoadGEOCredentials(ctx, pool, scope)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, credentials)
+	}
+	return SelectRuntimeGEOCredentials(candidates), nil
+}
+
+func SelectRuntimeGEOCredentials(candidates []*GEOCredentials) *GEOCredentials {
+	for _, credentials := range candidates {
+		if credentials == nil || !credentials.Enabled {
+			continue
+		}
+		if strings.TrimSpace(credentials.APIKey) == "" || strings.TrimSpace(credentials.Model) == "" {
+			continue
+		}
+		return credentials
+	}
+	return nil
+}
+
+func GEOEngineForScope(scope GEOProviderScope) string {
+	switch scope {
+	case GEOProviderOpenAI:
+		return "OpenAI"
+	case GEOProviderAnthropic:
+		return "Anthropic"
+	case GEOProviderPerplexity:
+		return "Perplexity"
+	case GEOProviderGemini:
+		return "Gemini"
+	default:
+		return strings.Title(string(scope))
+	}
 }
 
 func existingGEOModel(existing *GEOCredentials) string {

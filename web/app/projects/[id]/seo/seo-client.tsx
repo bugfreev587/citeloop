@@ -770,7 +770,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setBusy("geo-provider");
     setMessage(null);
     try {
-      const result = await api.observeGEOProvider(projectId, { engine: "Perplexity", max_prompts: 10 });
+      const result = await api.observeGEOProvider(projectId, { engine: "OpenAI", max_prompts: 10 });
       await refresh();
       const status = result.run?.status ?? "degraded";
       setMessage({

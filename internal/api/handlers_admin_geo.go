@@ -128,23 +128,8 @@ func tokenGateProviderFromGEOCredentials(credentials admin.GEOCredentials) geopk
 		APIKey:  credentials.APIKey,
 		BaseURL: credentials.BaseURL,
 		Model:   credentials.Model,
-		Engine:  geoEngineForScope(credentials.Scope),
+		Engine:  admin.GEOEngineForScope(credentials.Scope),
 	}, nil)
-}
-
-func geoEngineForScope(scope admin.GEOProviderScope) string {
-	switch scope {
-	case admin.GEOProviderPerplexity:
-		return "Perplexity"
-	case admin.GEOProviderOpenAI:
-		return "OpenAI"
-	case admin.GEOProviderAnthropic:
-		return "Anthropic"
-	case admin.GEOProviderGemini:
-		return "Gemini"
-	default:
-		return strings.Title(string(scope))
-	}
 }
 
 func dbGeoPromptForAdminTest(_ admin.GEOProviderScope) db.GeoPrompt {
