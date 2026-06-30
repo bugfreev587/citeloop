@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
   articlePreviewHref,
@@ -92,9 +92,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       .sort((a, b) => STATE_ORDER[reviewArticleState(a.article).kind] - STATE_ORDER[reviewArticleState(b.article).kind]);
   }, [groups]);
 
-  const decisionArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "needs_human"), [queueArticles]);
   const readyArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "ready"), [queueArticles]);
-  const recoveringArticles = useMemo(() => queueArticles.filter((item) => reviewArticleState(item.article).kind === "recovering"), [queueArticles]);
 
   const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? null;
   const selectedArticle = selectedQueueArticle?.article ?? null;
@@ -103,6 +101,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       busy === `approve-${selectedArticle.id}` ||
       busy === `reject-${selectedArticle.id}` ||
       busy === `save-${selectedArticle.id}` ||
+      busy === `recheck-${selectedArticle.id}` ||
       (busy?.startsWith(`apply-${selectedArticle.id}`) ?? false)
     : false;
 
@@ -113,9 +112,22 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   }, [queueArticles, selectedArticleId]);
 
   useEffect(() => {
-    if (selectedArticleId || queueArticles.length === 0) return;
-    setSelectedArticleId(queueArticles[0].article.id);
-  }, [queueArticles, selectedArticleId]);
+    if (!selectedArticle) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedArticleId(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedArticle]);
+
+  useEffect(() => {
+    if (!selectedArticle) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [selectedArticle]);
 
   useEffect(() => {
     if (!selectedArticle) {
@@ -208,63 +220,73 @@ export function ReviewClient({ projectId }: { projectId: string }) {
           detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real positioning choice or manual edit will show up here."
         />
       ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="grid border-b border-slate-200 bg-white sm:grid-cols-3">
-            <SummaryCard label="Needs your decision" value={summary.needsHuman} detail="Only rare manual calls" tone="red" />
-            <SummaryCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
-            <SummaryCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
-          </div>
-
-          <div className="grid min-h-[560px] xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
-            <div className="min-w-0 border-b border-slate-200 xl:border-b-0 xl:border-r">
-              <QueueSection title="Needs your decision" tone="red" items={decisionArticles} selectedId={selectedArticle?.id} busy={busy} onSelect={setSelectedArticleId} onApprove={onApprove} />
-              <QueueSection title="Ready to approve" tone="green" items={readyArticles} selectedId={selectedArticle?.id} busy={busy} onSelect={setSelectedArticleId} onApprove={onApprove} />
-              <QueueSection
-                title="CiteLoop is handling these"
-                tone="amber"
-                items={recoveringArticles}
-                selectedId={selectedArticle?.id}
-                busy={busy}
-                onSelect={setSelectedArticleId}
-                onApprove={onApprove}
-                collapsible
-              />
+        <>
+          <section data-review-overall-metrics className="space-y-3">
+            <SectionHeader title="Overall Metrics" eyebrow="Review queue status" />
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <ReviewMetricCard label="Needs your decision" value={summary.needsHuman} detail="Only rare manual calls" tone="red" />
+              <ReviewMetricCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
+              <ReviewMetricCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
+              <ReviewMetricCard label="Total in review" value={summary.total} detail="Drafts currently visible here" tone="neutral" />
             </div>
+          </section>
 
-            {selectedArticle ? (
-              <ReviewInspector
-                article={selectedArticle}
-                topicId={selectedQueueArticle?.topicId ?? selectedArticle.topic_id}
-                projectId={projectId}
-                busy={selectedBusy}
-                approveBusy={busy === `approve-${selectedArticle.id}` || busy === "bulk-approve"}
-                rejectBusy={busy === `reject-${selectedArticle.id}`}
-                saveBusy={busy === `save-${selectedArticle.id}`}
-                editorOpen={editorOpen}
-                content={content}
-                onContentChange={setContent}
-                onToggleEditor={() => setEditorOpen((value) => !value)}
-                onApprove={() => onApprove(selectedArticle)}
-                onReject={() => onReject(selectedArticle)}
-                onSave={(next) => onSave(selectedArticle, next)}
-                onApplyFix={(optionIndex, instruction) => onApplyFix(selectedArticle, optionIndex, instruction)}
-                applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
-                onRecheck={() => onRecheck(selectedArticle)}
-                recheckBusy={busy === `recheck-${selectedArticle.id}`}
-              />
+          <section data-review-decision-section className="space-y-3">
+            <SectionHeader title="Needs Your Decision" eyebrow="Open a card to inspect details and act" action={<Badge tone="neutral">{queueArticles.length}</Badge>} />
+            {queueArticles.length === 0 ? (
+              <EmptyState title="No review cards" detail="Drafts that need a decision or approval will appear here." />
             ) : (
-              <aside className="hidden items-center justify-center bg-slate-50 p-8 text-center text-sm text-slate-500 xl:flex">
-                Loading the first draft...
-              </aside>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {queueArticles.map((item) => (
+                  <ReviewDecisionCard
+                    key={item.article.id}
+                    item={item}
+                    selected={selectedArticleId === item.article.id}
+                    onSelect={() => setSelectedArticleId(item.article.id)}
+                  />
+                ))}
+              </div>
             )}
-          </div>
-        </section>
+          </section>
+        </>
+      )}
+
+      {selectedArticle && (
+        <div className="fixed inset-0 z-30">
+          <button
+            type="button"
+            aria-label="Close review details"
+            onClick={() => setSelectedArticleId(null)}
+            className="absolute inset-0 animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
+          />
+          <ReviewInspector
+            article={selectedArticle}
+            topicId={selectedQueueArticle?.topicId ?? selectedArticle.topic_id}
+            projectId={projectId}
+            busy={selectedBusy}
+            approveBusy={busy === `approve-${selectedArticle.id}` || busy === "bulk-approve"}
+            rejectBusy={busy === `reject-${selectedArticle.id}`}
+            saveBusy={busy === `save-${selectedArticle.id}`}
+            editorOpen={editorOpen}
+            content={content}
+            onContentChange={setContent}
+            onToggleEditor={() => setEditorOpen((value) => !value)}
+            onApprove={() => onApprove(selectedArticle)}
+            onReject={() => onReject(selectedArticle)}
+            onSave={(next) => onSave(selectedArticle, next)}
+            onApplyFix={(optionIndex, instruction) => onApplyFix(selectedArticle, optionIndex, instruction)}
+            applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
+            onRecheck={() => onRecheck(selectedArticle)}
+            recheckBusy={busy === `recheck-${selectedArticle.id}`}
+            onClose={() => setSelectedArticleId(null)}
+          />
+        </div>
       )}
     </div>
   );
 }
 
-function SummaryCard({
+function ReviewMetricCard({
   label,
   value,
   detail,
@@ -273,81 +295,31 @@ function SummaryCard({
   label: string;
   value: number;
   detail: string;
-  tone: "green" | "amber" | "red";
+  tone: "green" | "amber" | "red" | "neutral";
 }) {
-  const valueClass = { green: "text-green-700", amber: "text-amber-700", red: value > 0 ? "text-red-700" : "text-slate-950" }[tone];
+  const valueClass = {
+    green: "text-green-700",
+    amber: "text-amber-700",
+    red: value > 0 ? "text-red-700" : "text-slate-950",
+    neutral: "text-slate-950",
+  }[tone];
   return (
-    <div className="border-b border-slate-200 px-4 py-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+    <div data-review-metric-card className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</div>
-      <div className={cx("mt-2 text-3xl font-bold leading-none", valueClass)}>{value}</div>
-      <div className="mt-2 text-xs font-medium text-slate-500">{detail}</div>
+      <div className={cx("mt-3 text-2xl font-bold leading-none", valueClass)}>{value}</div>
+      <div className="mt-2 text-[13px] font-semibold leading-5 text-slate-400">{detail}</div>
     </div>
   );
 }
 
-function QueueSection({
-  title,
-  tone,
-  items,
-  selectedId,
-  busy,
-  onSelect,
-  onApprove,
-  collapsible,
-}: {
-  title: string;
-  tone: "green" | "amber" | "red";
-  items: QueueArticle[];
-  selectedId?: string;
-  busy: string | null;
-  onSelect: (id: string) => void;
-  onApprove: (article: Article) => void;
-  collapsible?: boolean;
-}) {
-  const [open, setOpen] = useState(true);
-  if (items.length === 0) return null;
-  const dot = { green: "bg-green-500", amber: "bg-amber-500", red: "bg-red-500" }[tone];
-  return (
-    <div className="border-b border-slate-200 last:border-b-0">
-      <button
-        type="button"
-        onClick={() => collapsible && setOpen((v) => !v)}
-        className={cx("flex w-full items-center gap-2 px-4 py-2.5 text-left", collapsible ? "cursor-pointer hover:bg-slate-50" : "cursor-default")}
-      >
-        <span className={cx("h-2 w-2 shrink-0 rounded-full", dot)} />
-        <span className="text-xs font-bold uppercase tracking-[0.1em] text-slate-600">{title}</span>
-        <Badge tone="neutral">{items.length}</Badge>
-      </button>
-      {open && (
-        <div className="divide-y divide-slate-100">
-          {items.map((item) => (
-            <ReviewQueueRow
-              key={item.article.id}
-              item={item}
-              selected={selectedId === item.article.id}
-              busy={busy === `approve-${item.article.id}` || busy === "bulk-approve"}
-              onSelect={() => onSelect(item.article.id)}
-              onApprove={() => onApprove(item.article)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ReviewQueueRow({
+function ReviewDecisionCard({
   item,
   selected,
-  busy,
   onSelect,
-  onApprove,
 }: {
   item: QueueArticle;
   selected: boolean;
-  busy: boolean;
   onSelect: () => void;
-  onApprove: () => void;
 }) {
   const { article, topicId } = item;
   const state = reviewArticleState(article);
@@ -355,62 +327,40 @@ function ReviewQueueRow({
   const metadata = assetMetadata(article);
 
   return (
-    <article
-      className={cx("flex cursor-pointer items-start gap-3 px-4 py-3.5 transition-colors hover:bg-slate-50", selected && "bg-orange-50/80 shadow-[inset_3px_0_0_#d93820]")}
+    <button
+      data-review-card
+      type="button"
       onClick={onSelect}
+      aria-label={`Open review details: ${title}`}
+      className={cx(
+        "group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0",
+        selected ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
+      )}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
-          {metadata.assetType && <Badge tone="blue">{metadata.assetTypeLabel}</Badge>}
-          <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
-        </div>
-        <div className="mt-1.5 text-sm font-bold leading-5 text-slate-950">{title}</div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          {state.kind === "recovering" ? (
-            <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
-              <Loader2 size={12} className="animate-spin" />
-              {article.repair_status === "repairing" ? "Repairing draft" : "Re-checking with QA"}
-            </span>
-          ) : (
-            <>
-              <span>geo {formatScore(article.geo_score)}</span>
-              <span>seo {formatScore(article.seo_score)}</span>
-              {metadata.sourceEvidence.length > 0 && <span>{metadata.sourceEvidence.length} source evidence</span>}
-            </>
-          )}
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <StateBadge state={state} />
+        <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
+        {metadata.assetType && <Badge tone="blue">{metadata.assetTypeLabel}</Badge>}
+        <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
       </div>
-      <div className="shrink-0">
-        {state.approvable ? (
-          <Button
-            disabled={busy}
-            size="sm"
-            variant="primary"
-            onClick={(event) => {
-              event.stopPropagation();
-              onApprove();
-            }}
-          >
-            <ButtonProgress busy={busy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-              Approve
-            </ButtonProgress>
-          </Button>
-        ) : state.kind === "needs_human" ? (
-          <Button
-            size="sm"
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect();
-            }}
-          >
-            Decide
-          </Button>
+      <h3 className="mt-3 text-base font-bold leading-6 text-slate-950">{title}</h3>
+      <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{state.detail}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
+        {state.kind === "recovering" ? (
+          <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
+            <Loader2 size={12} className="animate-spin" />
+            {article.repair_status === "repairing" ? "Repairing draft" : "Re-checking with QA"}
+          </span>
         ) : (
-          <span className="text-xs font-semibold text-amber-700">Working…</span>
+          <>
+            <span>geo {formatScore(article.geo_score)}</span>
+            <span>seo {formatScore(article.seo_score)}</span>
+            {metadata.sourceEvidence.length > 0 && <span>{metadata.sourceEvidence.length} source evidence</span>}
+          </>
         )}
+        <span className="ml-auto font-semibold text-slate-700 transition group-hover:translate-x-0.5">Open details</span>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -438,6 +388,7 @@ function ReviewInspector({
   applyingIndex,
   onRecheck,
   recheckBusy,
+  onClose,
 }: {
   article: Article;
   topicId: string;
@@ -457,6 +408,7 @@ function ReviewInspector({
   applyingIndex: number | null;
   onRecheck: () => void;
   recheckBusy: boolean;
+  onClose: () => void;
 }) {
   const title = articleReviewTitle(article);
   const state = reviewArticleState(article);
@@ -466,43 +418,68 @@ function ReviewInspector({
   const metadata = assetMetadata(article);
 
   return (
-    <aside className="min-w-0 bg-slate-50">
-      <div className="border-b border-slate-200 bg-white px-4 py-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <StateBadge state={state} />
-          {metadata.assetType && <Badge tone="blue">Asset type: {metadata.assetTypeLabel}</Badge>}
-          <Badge tone="neutral">Topic {topicId.slice(0, 8)}</Badge>
+    <aside
+      data-review-drawer
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="review-details-title"
+      className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
+    >
+      <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <StateBadge state={state} />
+            {metadata.assetType && <Badge tone="blue">Asset type: {metadata.assetTypeLabel}</Badge>}
+            <Badge tone="neutral">Topic {topicId.slice(0, 8)}</Badge>
+          </div>
+          <h3 id="review-details-title" className="mt-3 content-font text-lg font-bold leading-6 text-slate-950">{title}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{state.detail}</p>
         </div>
-        <h3 className="mt-3 content-font text-lg font-bold leading-6 text-slate-950">{title}</h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">{state.detail}</p>
+        <button
+          type="button"
+          aria-label="Close review details"
+          onClick={onClose}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
+        >
+          <X size={16} />
+        </button>
       </div>
 
-      <div className="grid gap-4 p-4">
-        {state.kind === "recovering" && <RecoveringPanel article={article} />}
-        {state.kind === "needs_human" && (
-          <DecisionPanel
-            article={article}
-            busy={busy}
-            rejectBusy={rejectBusy}
-            onReject={onReject}
-            onToggleEditor={onToggleEditor}
-            onApplyFix={onApplyFix}
-            applyingIndex={applyingIndex}
-            onRecheck={onRecheck}
-            recheckBusy={recheckBusy}
-          />
-        )}
-        {state.kind === "ready" && (
-          <ReadyPanel busy={busy} approveBusy={approveBusy} previewHref={previewHref} detailHref={detailHref} onApprove={onApprove} onToggleEditor={onToggleEditor} />
-        )}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50">
+        <div className="grid gap-4 p-4">
+          {state.kind === "recovering" && <RecoveringPanel article={article} />}
+          {state.kind === "needs_human" && (
+            <DecisionPanel
+              article={article}
+              busy={busy}
+              onApplyFix={onApplyFix}
+              applyingIndex={applyingIndex}
+            />
+          )}
+          {state.kind === "ready" && <ReadyPanel />}
 
-        {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
-        <ClaimEvidencePanel article={article} />
-        <SearchAppearancePanel article={article} />
-        <SEOContributionPanel rows={seoContributions} />
+          {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
+          <ClaimEvidencePanel article={article} />
+          <SearchAppearancePanel article={article} />
+          <SEOContributionPanel rows={seoContributions} />
 
-        {editorOpen && <DraftEditor content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />}
+          {editorOpen && <DraftEditor content={content} busy={busy} saveBusy={saveBusy} onChange={onContentChange} onSave={onSave} />}
+        </div>
       </div>
+
+      <ReviewDrawerActions
+        state={state}
+        busy={busy}
+        approveBusy={approveBusy}
+        rejectBusy={rejectBusy}
+        recheckBusy={recheckBusy}
+        previewHref={previewHref}
+        detailHref={detailHref}
+        onApprove={onApprove}
+        onReject={onReject}
+        onToggleEditor={onToggleEditor}
+        onRecheck={onRecheck}
+      />
     </aside>
   );
 }
@@ -526,6 +503,87 @@ function AssetMetadataPanel({ metadata }: { metadata: AssetMetadata }) {
   );
 }
 
+function ReviewDrawerActions({
+  state,
+  busy,
+  approveBusy,
+  rejectBusy,
+  recheckBusy,
+  previewHref,
+  detailHref,
+  onApprove,
+  onReject,
+  onToggleEditor,
+  onRecheck,
+}: {
+  state: ReviewArticleState;
+  busy: boolean;
+  approveBusy: boolean;
+  rejectBusy: boolean;
+  recheckBusy: boolean;
+  previewHref: string;
+  detailHref: string;
+  onApprove: () => void;
+  onReject: () => void;
+  onToggleEditor: () => void;
+  onRecheck: () => void;
+}) {
+  return (
+    <div
+      aria-label="Review drawer actions"
+      className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+    >
+      {state.kind === "recovering" && (
+        <>
+          <a href={previewHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Preview <ExternalLink size={14} />
+          </a>
+          <a href={detailHref} className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Detail
+          </a>
+        </>
+      )}
+      {state.kind === "needs_human" && (
+        <>
+          <Button disabled={busy} size="sm" onClick={onRecheck}>
+            <ButtonProgress busy={recheckBusy} busyLabel="Re-running QA" idleIcon={<RefreshCw size={14} />}>
+              Re-run QA
+            </ButtonProgress>
+          </Button>
+          <Button disabled={busy} size="sm" onClick={onToggleEditor}>
+            <FileText size={14} />
+            Edit draft
+          </Button>
+          <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
+            <ButtonProgress busy={rejectBusy} busyLabel="Rejecting" idleIcon={<XCircle size={14} />}>
+              Reject
+            </ButtonProgress>
+          </Button>
+        </>
+      )}
+      {state.kind === "ready" && (
+        <>
+          <Button disabled={busy} size="sm" onClick={onToggleEditor}>
+            <FileText size={14} />
+            Edit draft
+          </Button>
+          <a href={previewHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Preview <ExternalLink size={14} />
+          </a>
+          <a href={detailHref} className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            Detail
+          </a>
+          <Button disabled={busy} size="sm" variant="primary" onClick={onApprove}>
+            <ButtonProgress busy={approveBusy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+              Approve
+            </ButtonProgress>
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RecoveringPanel({ article }: { article: Article }) {
   const repairing = article.repair_status === "repairing";
   return (
@@ -544,21 +602,7 @@ function RecoveringPanel({ article }: { article: Article }) {
   );
 }
 
-function ReadyPanel({
-  busy,
-  approveBusy,
-  previewHref,
-  detailHref,
-  onApprove,
-  onToggleEditor,
-}: {
-  busy: boolean;
-  approveBusy: boolean;
-  previewHref: string;
-  detailHref: string;
-  onApprove: () => void;
-  onToggleEditor: () => void;
-}) {
+function ReadyPanel() {
   return (
     <section className="rounded-lg border border-green-200 bg-green-50 p-3">
       <div className="inline-flex items-center gap-2 text-sm font-bold text-green-900">
@@ -566,23 +610,6 @@ function ReadyPanel({
         QA cleared this draft
       </div>
       <p className="mt-1 text-xs leading-5 text-green-800">Approve to publish on schedule, or open the preview for a final scan.</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button disabled={busy} size="sm" variant="primary" onClick={onApprove}>
-          <ButtonProgress busy={approveBusy} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-            Approve
-          </ButtonProgress>
-        </Button>
-        <a href={previewHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
-          Preview <ExternalLink size={14} />
-        </a>
-        <a href={detailHref} className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
-          Detail
-        </a>
-        <Button disabled={busy} size="sm" onClick={onToggleEditor}>
-          <FileText size={14} />
-          Edit draft
-        </Button>
-      </div>
     </section>
   );
 }
@@ -597,23 +624,13 @@ function decisionText(value: any): string {
 function DecisionPanel({
   article,
   busy,
-  rejectBusy,
-  onReject,
-  onToggleEditor,
   onApplyFix,
   applyingIndex,
-  onRecheck,
-  recheckBusy,
 }: {
   article: Article;
   busy: boolean;
-  rejectBusy: boolean;
-  onReject: () => void;
-  onToggleEditor: () => void;
   onApplyFix: (optionIndex: number, instruction: string) => void;
   applyingIndex: number | null;
-  onRecheck: () => void;
-  recheckBusy: boolean;
 }) {
   const allOptions = (article.human_decision_options ?? []).filter((option) => option?.label || option?.description);
   // QA-proposed content fixes (one-click) vs the standard manual actions, which
@@ -655,13 +672,6 @@ function DecisionPanel({
                 ? `CiteLoop could not automatically rewrite ${unmapped.length === 1 ? "this unsupported product claim" : `${unmapped.length} unsupported product claims`} after several attempts. Edit the draft or reject it.`
                 : "CiteLoop re-checked, repaired, and regenerated this draft but QA still could not clear it. Edit the draft or reject it.")}
         </p>
-        {isInfraFailure && (
-          <Button disabled={busy} size="sm" variant="primary" className="mt-2" onClick={onRecheck}>
-            <ButtonProgress busy={recheckBusy} busyLabel="Re-running QA" idleIcon={<RefreshCw size={14} />}>
-              Re-run QA check
-            </ButtonProgress>
-          </Button>
-        )}
         {unmapped.length > 0 && (
           <div className="mt-2 grid gap-1.5">
             {unmapped.slice(0, 4).map((row, index) => (
@@ -715,17 +725,6 @@ function DecisionPanel({
         </ul>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button disabled={busy} size="sm" onClick={onToggleEditor}>
-          <FileText size={14} />
-          Edit draft
-        </Button>
-        <Button disabled={busy} size="sm" variant="danger" onClick={onReject}>
-          <ButtonProgress busy={rejectBusy} busyLabel="Rejecting" idleIcon={<XCircle size={14} />}>
-            Reject
-          </ButtonProgress>
-        </Button>
-      </div>
       <p className="mt-2 text-[11px] leading-4 text-red-700/80">
         QA only blocks unsupported product claims, banned claims, or missing required SEO — never writing style. Applying a fix approves the draft automatically; saving a manual edit still re-runs QA.
       </p>
