@@ -264,6 +264,9 @@ type ActionMeasurementState = {
 
 function actionMeasurementState(action: SEOContentAction): ActionMeasurementState {
   const rawResult = String(action.outcome_summary?.result ?? action.outcome_summary?.state ?? "").toLowerCase();
+  const hasMeasurementSignal =
+    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
+    Boolean(action.published_at || action.verified_at || action.verification_snapshot);
   if (["improved", "positive", "won", "up"].includes(rawResult)) {
     return { key: "positive", label: "Positive", tone: "green", detail: "Measured signals improved after publishing." };
   }
@@ -272,6 +275,9 @@ function actionMeasurementState(action: SEOContentAction): ActionMeasurementStat
   }
   if (["inconclusive", "neutral", "flat"].includes(rawResult) || action.status === "completed") {
     return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: "The measurement window closed without a clear positive or negative signal." };
+  }
+  if (!hasMeasurementSignal) {
+    return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Action is waiting for publish or URL verification before measurement starts." };
   }
   return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Published work is still inside the measurement window." };
 }
@@ -573,6 +579,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
     Boolean(action.published_at || action.verified_at),
   );
+  const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status));
   const outcomeCounts = measuredActions.reduce(
     (counts, action) => {
       counts[actionMeasurementState(action).key] += 1;
@@ -1294,12 +1301,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           </section>
 
           <section>
-            <SectionHeader title="Measurement queue" action={<Badge tone="neutral">{measuredActions.length}</Badge>} />
-            {measuredActions.length === 0 ? (
-              <EmptyState title="No published work is measuring yet" detail="Published or URL-verified actions will appear here once the Publish step finishes." />
+            <SectionHeader title="Measurement queue" action={<Badge tone="neutral">{resultActions.length}</Badge>} />
+            {resultActions.length === 0 ? (
+              <EmptyState title="No content actions are ready for verification yet" detail="Accepted, published, or URL-verified actions will appear here once they enter the loop." />
             ) : (
               <div className="grid gap-3">
-                {measuredActions.slice(0, 12).map((action) => {
+                {resultActions.slice(0, 12).map((action) => {
                   const state = actionMeasurementState(action);
                   return (
                     <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4">
