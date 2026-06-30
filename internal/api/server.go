@@ -124,6 +124,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/integrations/github/installation", s.storeGithubInstallation)
 			r.Get("/integrations/github/repos", s.listGithubRepos)
 			r.Post("/integrations/github/select-repo", s.selectGithubRepo)
+			r.Get("/results/actions", s.listResultsActions)
+			r.Get("/results/actions/{actionID}", s.getResultsAction)
+			r.Post("/results/recompute", s.recomputeResults)
 			r.Route("/seo", func(r chi.Router) {
 				r.Get("/overview", s.getSEOOverview)
 				r.Post("/sync", s.syncSEO)

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
+  ActionMeasurement,
   AICrawlerAccessSnapshot,
   GEOAssetBrief,
   GEOCompetitor,
@@ -17,6 +18,7 @@ import {
   SEOOverview,
   SEOPolicy,
   SafeModeEvent,
+  ResultsAction,
   VisibilitySummary,
 } from "../../../lib/api";
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
@@ -256,27 +258,75 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
-type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive";
+type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive" | "insufficient_data";
 type ActionMeasurementState = {
   key: ActionMeasurementKey;
-  label: "Waiting" | "Positive" | "Negative" | "Inconclusive";
+  label: "Waiting" | "Positive" | "Negative" | "Inconclusive" | "Insufficient data";
   tone: "green" | "amber" | "red" | "neutral";
   detail: string;
 };
 
-function actionMeasurementState(action: SEOContentAction): ActionMeasurementState {
-  const rawResult = String(action.outcome_summary?.result ?? action.outcome_summary?.state ?? "").toLowerCase();
+function latestActionMeasurement(action: SEOContentAction | ResultsAction): ActionMeasurement | null {
+  const resultAction = action as ResultsAction;
+  return resultAction.latest_measurement ?? resultAction.measurements?.[0] ?? null;
+}
+
+function actionOutcomeReason(action: SEOContentAction | ResultsAction, fallback: string) {
+  const measurement = latestActionMeasurement(action);
+  return measurement?.outcome_reason || action.outcome_summary?.outcome_reason || fallback;
+}
+
+function actionAttributionConfidence(action: SEOContentAction | ResultsAction) {
+  const measurement = latestActionMeasurement(action);
+  return measurement?.attribution_confidence || action.outcome_summary?.attribution_confidence || "none";
+}
+
+function actionConfounders(action: SEOContentAction | ResultsAction) {
+  const measurement = latestActionMeasurement(action);
+  const raw = measurement?.confounders ?? action.outcome_summary?.confounders ?? [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === "string" && raw.trim()) return [raw.trim()];
+  return [];
+}
+
+function measurementMetricText(measurement: ActionMeasurement | null, side: "before" | "after") {
+  if (!measurement) return "-";
+  const sources = [measurement.seo_metrics, measurement.ga4_metrics, measurement.geo_metrics, measurement.execution_metrics];
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    const value = source[side] ?? source[`${side}_value`] ?? source[`${side}_metrics`];
+    if (value == null || value === "") continue;
+    if (typeof value === "number") return metric(value, 2);
+    if (typeof value === "string") return value;
+    return compactOutcomeText(value);
+  }
+  return "-";
+}
+
+function actionMeasurementState(action: SEOContentAction | ResultsAction): ActionMeasurementState {
+  const measurement = latestActionMeasurement(action);
+  const rawResult = String(
+    measurement?.outcome_label ?? action.outcome_summary?.outcome_label ?? action.outcome_summary?.result ?? action.outcome_summary?.state ?? "",
+  ).toLowerCase();
   const hasMeasurementSignal =
     ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
     Boolean(action.published_at || action.verified_at || action.verification_snapshot);
+  if (rawResult === "insufficient_data") {
+    return {
+      key: "insufficient_data",
+      label: "Insufficient data",
+      tone: "amber",
+      detail: actionOutcomeReason(action, "The checkpoint ran, but there is not enough before/after data for attribution yet."),
+    };
+  }
   if (["improved", "positive", "won", "up"].includes(rawResult)) {
-    return { key: "positive", label: "Positive", tone: "green", detail: "Measured signals improved after publishing." };
+    return { key: "positive", label: "Positive", tone: "green", detail: actionOutcomeReason(action, "Measured signals improved after publishing.") };
   }
   if (["worsened", "negative", "lost", "down"].includes(rawResult) || ["failed", "verification_failed", "recovery_required"].includes(action.status)) {
-    return { key: "negative", label: "Negative", tone: "red", detail: "The result needs follow-up before it can be treated as a win." };
+    return { key: "negative", label: "Negative", tone: "red", detail: actionOutcomeReason(action, "The result needs follow-up before it can be treated as a win.") };
   }
   if (["inconclusive", "neutral", "flat"].includes(rawResult) || action.status === "completed") {
-    return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: "The measurement window closed without a clear positive or negative signal." };
+    return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: actionOutcomeReason(action, "The measurement window closed without a clear positive or negative signal.") };
   }
   if (!hasMeasurementSignal) {
     return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Action is waiting for publish or URL verification before measurement starts." };
@@ -443,6 +493,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
+  const [resultsActions, setResultsActions] = useState<ResultsAction[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
   const [objectives, setObjectives] = useState<SEOObjective[]>([]);
   const [plans, setPlans] = useState<SEOActionPlan[]>([]);
@@ -478,13 +529,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, summaryData, settings, briefData, opps, actionRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
+      const [overviewData, summaryData, settings, briefData, opps, actionRows, resultsRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
         api.getSEOSettings(projectId),
         api.getSEOBrief(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }),
         api.listSEOContentActions(projectId, { limit: 50 }),
+        api.listResultsActions(projectId, { limit: 50 }),
         api.getSEOPolicy(projectId),
         api.listSEOObjectives(projectId),
         api.listAutopilotPlans(projectId),
@@ -498,6 +550,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setBrief(briefData);
       setOpportunities(opps);
       setActions(actionRows);
+      setResultsActions(resultsRows);
       setPolicy(policyData);
       setObjectives(objectiveRows);
       setPlans(planRows);
@@ -619,14 +672,22 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     Boolean(action.published_at || action.verified_at),
   );
   const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status));
-  const outcomeCounts = measuredActions.reduce(
+  const attributionActions = resultsActions.length ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status)) : resultActions;
+  const attributionMeasuredActions = resultsActions.length
+    ? resultsActions.filter(
+        (action) =>
+          ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
+          Boolean(action.published_at || action.verified_at),
+      )
+    : measuredActions;
+  const outcomeCounts = attributionMeasuredActions.reduce(
     (counts, action) => {
       counts[actionMeasurementState(action).key] += 1;
       return counts;
     },
-    { waiting: 0, positive: 0, negative: 0, inconclusive: 0 },
+    { waiting: 0, positive: 0, negative: 0, inconclusive: 0, insufficient_data: 0 },
   );
-  const measurementExceptions = measuredActions.filter((action) => ["negative", "inconclusive"].includes(actionMeasurementState(action).key));
+  const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
   loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;
@@ -921,6 +982,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         verification_snapshot: { source: "manual_dashboard", status },
       });
       setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
       setMessage({ title: status === "verified" ? "Action verified" : "Verification failed", detail: action.action_type, tone: status === "verified" ? "green" : "amber" });
     } catch (e: any) {
       setMessage({ title: "Could not update verification", detail: e.message, tone: "red" });
@@ -1196,41 +1258,76 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       )}
 
       {mode === "results" && (
-        <div className="space-y-7">
+        <div className="space-y-7" data-results-actions={resultsActions.length}>
           <section>
             <SectionHeader
               title="Outcome summary"
               eyebrow="Published work"
               action={
-                <Badge tone={measurementExceptions.length ? "amber" : measuredActions.length ? "green" : "neutral"}>
-                  {measuredActions.length}
+                <Badge tone={measurementExceptions.length ? "amber" : attributionMeasuredActions.length ? "green" : "neutral"}>
+                  {attributionMeasuredActions.length}
                 </Badge>
               }
             />
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-5">
               {[
                 { label: "Waiting", value: outcomeCounts.waiting, tone: "neutral" as const, detail: "Inside measurement window" },
                 { label: "Positive", value: outcomeCounts.positive, tone: "green" as const, detail: "Signals improved" },
                 { label: "Negative", value: outcomeCounts.negative, tone: "red" as const, detail: "Needs follow-up" },
+                { label: "Insufficient data", value: outcomeCounts.insufficient_data, tone: "amber" as const, detail: "insufficient_data" },
                 { label: "Inconclusive", value: outcomeCounts.inconclusive, tone: "amber" as const, detail: "No clear signal yet" },
               ].map((item) => (
-                <div key={item.label} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div key={item.label} data-state={item.detail === "insufficient_data" ? "insufficient_data" : undefined} className="rounded-lg border border-slate-200 bg-white p-4">
                   <Badge tone={item.tone}>{item.label}</Badge>
                   <div className="mt-3 text-2xl font-bold text-slate-950">{item.value}</div>
-                  <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail}</p>
+                  <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail === "insufficient_data" ? "Not enough comparable data" : item.detail}</p>
                 </div>
               ))}
             </div>
           </section>
 
           <section>
-            <SectionHeader title="Measurement queue" action={<Badge tone="neutral">{resultActions.length}</Badge>} />
-            {resultActions.length === 0 ? (
+            <SectionHeader
+              title="Action-level attribution"
+              eyebrow="Measurement queue"
+              action={
+                <div className="flex items-center gap-2">
+                  <Badge tone="neutral">{attributionActions.length}</Badge>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      setBusy("results-recompute");
+                      setMessage(null);
+                      try {
+                        const result = await api.recomputeResults(projectId);
+                        const freshRows = await api.listResultsActions(projectId, { limit: 50 });
+                        setResultsActions(freshRows.length ? freshRows : result.actions);
+                        setMessage({ title: "Results recomputed", detail: result.status, tone: "green" });
+                      } catch (e: any) {
+                        setMessage({ title: "Could not recompute results", detail: e.message, tone: "red" });
+                      } finally {
+                        setBusy(null);
+                      }
+                    }}
+                    disabled={busy === "results-recompute"}
+                  >
+                    <ButtonProgress busy={busy === "results-recompute"} busyLabel="Recomputing" idleIcon={<RefreshCw size={14} />}>
+                      Recompute
+                    </ButtonProgress>
+                  </Button>
+                </div>
+              }
+            />
+            {attributionActions.length === 0 ? (
               <EmptyState title="No content actions are ready for verification yet" detail="Accepted, published, or URL-verified actions will appear here once they enter the loop." />
             ) : (
               <div className="grid gap-3">
-                {resultActions.slice(0, 12).map((action) => {
+                {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
                   const state = actionMeasurementState(action);
+                  const measurement = latestActionMeasurement(action);
+                  const before = measurementMetricText(measurement, "before");
+                  const after = measurementMetricText(measurement, "after");
+                  const confounders = actionConfounders(action);
                   return (
                     <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1269,6 +1366,28 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div>
                           <div className="text-xs font-semibold uppercase text-slate-400">Result</div>
                           <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-5">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Before</div>
+                          <div className="mt-1 font-medium text-slate-700">{before}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">After</div>
+                          <div className="mt-1 font-medium text-slate-700">{after}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Outcome reason</div>
+                          <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Attribution confidence</div>
+                          <div className="mt-1 font-medium text-slate-700">{actionAttributionConfidence(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Confounders</div>
+                          <div className="mt-1 font-medium text-slate-700">{confounders.length ? confounders.slice(0, 2).join(" / ") : "None noted"}</div>
                         </div>
                       </div>
                       <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
