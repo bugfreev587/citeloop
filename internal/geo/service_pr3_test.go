@@ -90,8 +90,9 @@ func TestAcceptAssetBriefCreatesTopic(t *testing.T) {
 			AssetType:          "comparison_page",
 			Status:             "ready_for_review",
 			TargetPrompts:      json.RawMessage(`["best social scheduling tools"]`),
-			RequiredEvidence:   json.RawMessage(`["first-party comparison proof"]`),
+			RequiredEvidence:   json.RawMessage(`["first-party comparison proof","competitor citation evidence: Buffer"]`),
 			RecommendedOutline: json.RawMessage(`["What to compare","Evidence","When to choose UniPost"]`),
+			InternalLinkPlan:   json.RawMessage(`["/blog/social-scheduling"]`),
 			PublicationSurface: "blog",
 		}},
 	}
@@ -108,6 +109,33 @@ func TestAcceptAssetBriefCreatesTopic(t *testing.T) {
 	}
 	if len(store.createdTopics) != 1 {
 		t.Fatalf("created topics = %d, want 1", len(store.createdTopics))
+	}
+	if result.Topic.Angle == nil || *result.Topic.Angle != "comparison_page" {
+		t.Fatalf("topic angle = %v, want comparison_page asset type", result.Topic.Angle)
+	}
+	if result.Topic.Format == nil || *result.Topic.Format != "geo_asset_brief" {
+		t.Fatalf("topic format = %v, want geo_asset_brief", result.Topic.Format)
+	}
+	var metadata struct {
+		AssetBriefID       string   `json:"asset_brief_id"`
+		Links              []string `json:"links"`
+		SourceEvidence     []string `json:"source_evidence"`
+		RecommendedOutline []string `json:"recommended_outline"`
+	}
+	if err := json.Unmarshal(result.Topic.InternalLinks, &metadata); err != nil {
+		t.Fatalf("topic internal_links should carry asset metadata object: %v; raw=%s", err, string(result.Topic.InternalLinks))
+	}
+	if metadata.AssetBriefID != briefID.String() {
+		t.Fatalf("metadata asset brief id = %q, want %s", metadata.AssetBriefID, briefID)
+	}
+	if len(metadata.SourceEvidence) != 2 || metadata.SourceEvidence[0] != "first-party comparison proof" {
+		t.Fatalf("metadata source evidence = %#v, want brief evidence", metadata.SourceEvidence)
+	}
+	if len(metadata.RecommendedOutline) != 3 || metadata.RecommendedOutline[0] != "What to compare" {
+		t.Fatalf("metadata outline = %#v, want brief outline", metadata.RecommendedOutline)
+	}
+	if len(metadata.Links) != 1 || metadata.Links[0] != "/blog/social-scheduling" {
+		t.Fatalf("metadata links = %#v, want internal link plan", metadata.Links)
 	}
 }
 

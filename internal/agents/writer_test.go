@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -95,6 +96,53 @@ func TestWriterPromptTreatsBannedClaimsAsNegativeConstraints(t *testing.T) {
 	}
 	if provider.reqs[0].Purpose != llm.PurposeWriter {
 		t.Fatalf("draft purpose = %q, want writer", provider.reqs[0].Purpose)
+	}
+}
+
+func TestWriterPromptUsesGEOAssetBriefContract(t *testing.T) {
+	provider := &sequenceLLM{resps: []string{
+		`{"content_md":"# Buffer vs UniPost\n\nA supported comparison draft.","seo_meta":{"title":"Buffer vs UniPost","meta_description":"Desc","slug":"buffer-vs-unipost","h1":"Buffer vs UniPost","target_keyword":"best social scheduling tools"}}`,
+	}}
+	writer := NewWriter(Deps{LLM: provider}, nil)
+	topic := db.Topic{
+		Title:        "best social scheduling tools",
+		TargetPrompt: ptr("best social scheduling tools"),
+		Angle:        ptr("comparison_page"),
+		Format:       ptr("geo_asset_brief"),
+		InternalLinks: json.RawMessage(`{
+			"links":["/blog/social-scheduling"],
+			"source_evidence":["first-party comparison proof","competitor citation evidence: Buffer"],
+			"recommended_outline":["Decision criteria","Supported differentiators","Limitations"]
+		}`),
+	}
+
+	out, _, err := writer.draft(context.Background(), topic, []byte(`{"features":["workspace scheduling"],"evidence":["calendar proof"]}`), "", true)
+	if err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
+	}
+	prompt := provider.reqs[0].Prompt
+	for _, want := range []string{
+		"ASSET TYPE: comparison_page",
+		"SOURCE EVIDENCE",
+		"first-party comparison proof",
+		"competitor citation evidence: Buffer",
+		"decision criteria",
+		"who each option is for",
+		"supported differentiators",
+		"limitations",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("writer prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if out.SEOMeta.AssetType != "comparison_page" {
+		t.Fatalf("seo_meta asset_type = %q, want comparison_page", out.SEOMeta.AssetType)
+	}
+	if len(out.SEOMeta.SourceEvidence) != 2 || out.SEOMeta.SourceEvidence[1] != "competitor citation evidence: Buffer" {
+		t.Fatalf("seo_meta source_evidence = %#v, want brief evidence", out.SEOMeta.SourceEvidence)
 	}
 }
 

@@ -58,6 +58,21 @@ test("normalizeRun decodes base64 JSON payloads returned for Go byte slices", as
   assert.deepEqual(run.output, { crawl_summary: { fetched_count: 20, inventory_count: 19 } });
 });
 
+test("normalizeTopic reads internal links from GEO asset metadata objects", async () => {
+  const { normalizeTopic } = await loadNormalizeModule();
+
+  const topic = normalizeTopic({
+    id: "t1",
+    title: "Comparison asset",
+    internal_links: {
+      links: ["/blog/social-scheduling"],
+      source_evidence: ["competitor citation evidence"],
+    },
+  });
+
+  assert.deepEqual(topic.internal_links, ["/blog/social-scheduling"]);
+});
+
 test("normalizeArticle returns clean scores, time fields, and qa issues", async () => {
   const { normalizeArticle } = await loadNormalizeModule();
 
