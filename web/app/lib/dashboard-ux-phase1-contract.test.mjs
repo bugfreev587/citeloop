@@ -528,6 +528,9 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /Apply QA fix/);
   assert.match(review, /reviewQueueSummary/);
   assert.match(review, /selectedArticleId/);
+  assert.match(review, /queueArticles\.length === 0/);
+  assert.match(review, /setSelectedArticleId\(queueArticles\[0\]\.article\.id\)/);
+  assert.match(review, /Loading the first draft/);
   assert.match(review, /articlePreviewHref/);
   assert.equal(previewRouteExists, true);
   assert.match(review, /Edit draft/);
@@ -541,6 +544,7 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.doesNotMatch(review, /Web preview/);
   assert.doesNotMatch(review, /qa blocking/);
   assert.doesNotMatch(review, /Applying & re-checking/);
+  assert.doesNotMatch(review, /Select a draft to see the details\./);
   assert.match(articleDetail, /Cannot approve:/);
   assert.doesNotMatch(articleDetail, /qa blocking/);
 });
@@ -578,6 +582,26 @@ test("publishing schedule cards show publish time and target platform", () => {
   assert.match(scheduledBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
 });
 
+test("publishing defaults to action-only lanes instead of four empty columns", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+
+  for (const contract of [
+    "hasCanonicalPublishingWork",
+    "No publishing work is waiting",
+    "Check status",
+    "Checking status",
+    "readyCanonicals.length > 0 &&",
+    "scheduledCanonicals.length > 0 &&",
+    "published.length + inflight.length > 0 &&",
+    "failed.length > 0 &&",
+  ]) {
+    assert.match(publishing, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(publishing, />\s*Reconcile\s*</);
+  assert.doesNotMatch(publishing, /busyLabel="Reconciling"/);
+});
+
 test("publishing cards constrain long titles, errors, and publish paths inside the page", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
 
@@ -613,7 +637,7 @@ test("publishing platforms stay in the header popover with connection status", (
     publishing.indexOf("\n      />", publishingHeaderStart),
   );
   assert.ok(headerActions.indexOf("Mode") < headerActions.indexOf("Platforms"), "Platforms should follow Mode");
-  assert.ok(headerActions.indexOf("Platforms") < headerActions.indexOf("Reconcile"), "Platforms should precede Reconcile");
+  assert.ok(headerActions.indexOf("Platforms") < headerActions.indexOf("Check status"), "Platforms should precede status check");
   assert.match(headerActions, /setPlatformsOpen\(\(open\) => !open\)/);
   assert.match(headerActions, /loadConnections\(\)/);
   assert.match(headerActions, /ref=\{platformsMenuRef\}/);
@@ -1066,7 +1090,7 @@ test("content plan helps users choose from backlog topics and supports density v
 
   for (const copy of [
     "Content Plan",
-    "Plan health",
+    "Plan pulse",
     "Ready to draft",
     "Scheduled intent",
     "Needs priority",
@@ -1084,8 +1108,11 @@ test("content plan helps users choose from backlog topics and supports density v
   assert.match(topics, /lg:grid-cols-2/);
   assert.match(topics, /2xl:grid-cols-3/);
   assert.match(topics, /aria-pressed=\{view === "grid"\}/);
+  assert.match(topics, /planPulseForTopics\(topics\)/);
   assert.match(topics, /planHealthForTopics\(topics\)/);
   assert.match(topics, /\{planHealth\.backlog\}/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Plan health"/);
+  assert.doesNotMatch(topics, /Topics waiting for draft generation\./);
 });
 
 test("content plan edit form keeps priority inside the card at narrow widths", () => {
@@ -1157,7 +1184,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   for (const [source, markers] of [
     [topics, ["Saving topic", "Scheduling", "Archiving"]],
     [review, ["Approving", "Rejecting", "Saving content"]],
-    [publishing, ["Reconciling", "Retrying", "Marking distributed"]],
+    [publishing, ["Checking status", "Retrying", "Marking distributed"]],
     [settings, ["Saving publisher", "Saving token", "Testing", "Retrying", "Saving settings"]],
     [context, ["Refreshing context", "Confirming context", "Saving source page", "Saving advanced context"]],
     [admin, ["Saving", "Testing", "Removing"]],

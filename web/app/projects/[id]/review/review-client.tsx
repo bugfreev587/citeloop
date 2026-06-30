@@ -93,6 +93,11 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   }, [queueArticles, selectedArticleId]);
 
   useEffect(() => {
+    if (selectedArticleId || queueArticles.length === 0) return;
+    setSelectedArticleId(queueArticles[0].article.id);
+  }, [queueArticles, selectedArticleId]);
+
+  useEffect(() => {
     if (!selectedArticle) {
       setContent("");
       setEditorOpen(false);
@@ -229,7 +234,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
               />
             ) : (
               <aside className="hidden items-center justify-center bg-slate-50 p-8 text-center text-sm text-slate-500 xl:flex">
-                Select a draft to see the details.
+                Loading the first draft...
               </aside>
             )}
           </div>
