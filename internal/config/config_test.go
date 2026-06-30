@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -208,5 +210,23 @@ func TestFromEnvReadsGEOProviderConfig(t *testing.T) {
 	}
 	if env.GEOProviderRunBudgetUSD != 1 {
 		t.Fatalf("GEOProviderRunBudgetUSD = %f, want 1", env.GEOProviderRunBudgetUSD)
+	}
+}
+
+func TestEnvExampleDocumentsGEOProviderConfig(t *testing.T) {
+	raw, err := os.ReadFile("../../.env.example")
+	if err != nil {
+		t.Fatalf("read .env.example: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"PERPLEXITY_API_KEY=",
+		"PERPLEXITY_BASE_URL=https://api.perplexity.ai",
+		"PERPLEXITY_MODEL=sonar-pro",
+		"GEO_PROVIDER_RUN_BUDGET_USD=1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf(".env.example missing %q", want)
+		}
 	}
 }
