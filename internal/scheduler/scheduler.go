@@ -53,20 +53,22 @@ type seoRunner interface {
 }
 
 type Scheduler struct {
-	Pool                 *pgxpool.Pool
-	LLM                  llm.Provider
-	Search               search.Provider
-	Blog                 *publisher.BlogPublisher
-	SEOData              seopkg.GoogleDataProvider
-	BlogBaseURL          string
-	Log                  *slog.Logger
-	now                  func() time.Time
-	alert                func(projectID uuid.UUID, msg string)
-	httpClient           *http.Client
-	seoRunnerFactory     func(q *db.Queries) seoRunner
-	NotificationSecret   string
-	UniPostDeployHookURL string
-	GitHubApp            *githubapp.Service
+	Pool                    *pgxpool.Pool
+	LLM                     llm.Provider
+	Search                  search.Provider
+	Blog                    *publisher.BlogPublisher
+	SEOData                 seopkg.GoogleDataProvider
+	GEOAnswerProvider       geo.AnswerProvider
+	GEOProviderRunBudgetUSD float64
+	BlogBaseURL             string
+	Log                     *slog.Logger
+	now                     func() time.Time
+	alert                   func(projectID uuid.UUID, msg string)
+	httpClient              *http.Client
+	seoRunnerFactory        func(q *db.Queries) seoRunner
+	NotificationSecret      string
+	UniPostDeployHookURL    string
+	GitHubApp               *githubapp.Service
 }
 
 type publisherConnectionQuerier interface {
@@ -986,7 +988,7 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 }
 
 func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	svc := geo.Service{Q: q, HTTPClient: s.httpClient, Now: s.currentTime}
+	svc := s.geoService(q)
 	logStep := func(step string, err error) {
 		if err != nil {
 			s.logger().Warn("geo tick step failed", "project", p.ID, "step", step, "err", err)
@@ -995,13 +997,34 @@ func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Proje
 
 	_, auditErr := svc.RunCrawlerAudit(ctx, p.ID, geo.CrawlerAuditRequest{})
 	logStep("crawler_audit", auditErr)
-	_, observeErr := svc.ObserveAnswerProvider(ctx, p.ID, geo.ObserveAnswerProviderRequest{Engine: "Perplexity", MaxPrompts: 10, BudgetUSD: 1})
+	_, observeErr := svc.ObserveAnswerProvider(ctx, p.ID, s.geoObserveRequest())
 	logStep("observe_provider", observeErr)
 	_, surfaceErr := svc.MonitorExternalSurfaces(ctx, p.ID, geo.MonitorExternalSurfacesRequest{Limit: 25})
 	logStep("external_surfaces", surfaceErr)
 	_, analyzeErr := svc.AnalyzeObservations(ctx, p.ID, geo.AnalyzeObservationsRequest{Limit: 100})
 	logStep("analyze", analyzeErr)
 	return nil
+}
+
+func (s *Scheduler) geoService(q *db.Queries) geo.Service {
+	return geo.Service{
+		Q:              q,
+		HTTPClient:     s.httpClient,
+		AnswerProvider: s.GEOAnswerProvider,
+		Now:            s.currentTime,
+	}
+}
+
+func (s *Scheduler) geoObserveRequest() geo.ObserveAnswerProviderRequest {
+	budgetUSD := s.GEOProviderRunBudgetUSD
+	if budgetUSD <= 0 {
+		budgetUSD = 1
+	}
+	return geo.ObserveAnswerProviderRequest{
+		Engine:     "Perplexity",
+		MaxPrompts: 10,
+		BudgetUSD:  budgetUSD,
+	}
 }
 
 // TickPublish auto-publishes due canonicals and unlocks distributable variants.

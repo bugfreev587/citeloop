@@ -17,6 +17,7 @@ import (
 	"github.com/citeloop/citeloop/internal/api"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -82,6 +83,10 @@ func main() {
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
 	sched.BlogBaseURL = env.BlogBaseURL
 	sched.SEOData = seoData
+	sched.GEOProviderRunBudgetUSD = env.GEOProviderRunBudgetUSD
+	if env.PerplexityAPIKey != "" {
+		sched.GEOAnswerProvider = geo.NewPerplexityProvider(env.PerplexityAPIKey, env.PerplexityBaseURL, env.PerplexityModel, nil)
+	}
 	sched.NotificationSecret = env.NotificationSecretKey
 	sched.UniPostDeployHookURL = env.UniPostDeployHookURL
 	sched.GitHubApp = githubapp.New(githubapp.Config{
