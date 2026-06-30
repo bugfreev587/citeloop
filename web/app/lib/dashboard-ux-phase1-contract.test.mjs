@@ -349,6 +349,29 @@ test("home turns Needs you into the main human action queue", () => {
   assert.doesNotMatch(workspace, /Variants waiting on canonical/);
 });
 
+test("home presents Needs you as square action tiles above the pipeline", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  const needsYouIndex = workspace.indexOf('title="Needs you"');
+  const pipelineIndex = workspace.indexOf('title="Pipeline"');
+  assert.ok(needsYouIndex > -1, "Needs you section should render");
+  assert.ok(pipelineIndex > -1, "Pipeline section should render");
+  assert.ok(needsYouIndex < pipelineIndex, "Needs you should appear before Pipeline on Home");
+
+  for (const contract of [
+    "humanActionTileToneClass",
+    "humanActionIcon",
+    "Action spotlight",
+    "aspect-[1.05/1]",
+    "sm:grid-cols-2 xl:grid-cols-4",
+    "border-l-4",
+    "shadow-[0_18px_38px_-28px_rgba(15,23,42,0.45)]",
+    "Where this project is in the loop",
+  ]) {
+    assert.match(workspace, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("gsc oauth entry points are self-serve and action-first", () => {
   assert.equal(exists("projects/[id]/settings/gsc/callback/page.tsx"), true, "GSC callback route should exist");
   assert.equal(

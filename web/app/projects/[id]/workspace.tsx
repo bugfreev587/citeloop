@@ -106,7 +106,39 @@ type HumanActionItem = {
   count?: number;
 };
 
-const VISIBLE_HUMAN_ACTION_LIMIT = 5;
+const VISIBLE_HUMAN_ACTION_LIMIT = 4;
+
+function humanActionTileToneClass(tone: StageTone) {
+  const classes: Record<StageTone, string> = {
+    green: "border-l-4 border-slate-200 border-l-green-500 bg-green-50/40 hover:border-green-300 hover:border-l-green-500",
+    amber: "border-l-4 border-slate-200 border-l-amber-500 bg-amber-50/50 hover:border-amber-300 hover:border-l-amber-500",
+    blue: "border-l-4 border-slate-200 border-l-sky-500 bg-sky-50/45 hover:border-sky-300 hover:border-l-sky-500",
+    red: "border-l-4 border-slate-200 border-l-[#d93820] bg-red-50/55 hover:border-red-300 hover:border-l-[#d93820]",
+    neutral: "border-l-4 border-slate-200 border-l-slate-300 bg-white hover:border-slate-300 hover:border-l-slate-400",
+  };
+  return classes[tone];
+}
+
+function humanActionIconToneClass(tone: StageTone) {
+  const classes: Record<StageTone, string> = {
+    green: "bg-green-100 text-green-700 ring-green-200",
+    amber: "bg-amber-100 text-amber-800 ring-amber-200",
+    blue: "bg-sky-100 text-sky-700 ring-sky-200",
+    red: "bg-red-100 text-[#d93820] ring-red-200",
+    neutral: "bg-slate-100 text-slate-600 ring-slate-200",
+  };
+  return classes[tone];
+}
+
+function humanActionIcon(item: HumanActionItem) {
+  if (item.id.includes("context")) return CheckCircle2;
+  if (item.id.includes("analysis")) return Sparkles;
+  if (item.id.includes("gsc")) return Search;
+  if (item.id === "publishing-failed") return AlertTriangle;
+  if (item.id.includes("distribute")) return ArrowRight;
+  if (item.id.includes("draft")) return FileText;
+  return AlertTriangle;
+}
 
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
@@ -723,6 +755,74 @@ export function Workspace({ projectId }: { projectId: string }) {
         </section>
       )}
 
+      {/* Human action queue — the Home action spotlight for every manual gate. */}
+      <section aria-label="Action spotlight">
+        <SectionHeader
+          title="Needs you"
+          eyebrow="Manual gates and setup"
+          action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open</Badge>}
+        />
+        {humanActionItems.length === 0 ? (
+          <EmptyState
+            title="No open actions"
+            detail="Nothing needs a manual decision right now. CiteLoop will keep planning, drafting, publishing, or measuring as the loop advances."
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {visibleHumanActionItems.map((item) => {
+              const ActionIcon = humanActionIcon(item);
+              return (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  className={cx(
+                    "group flex min-h-[188px] flex-col justify-between overflow-hidden rounded-xl border border-slate-200 p-4 shadow-[0_18px_38px_-28px_rgba(15,23,42,0.45)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_44px_-30px_rgba(15,23,42,0.5)] active:translate-y-0 sm:aspect-[1.05/1]",
+                    humanActionTileToneClass(item.tone),
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className={cx("inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset", humanActionIconToneClass(item.tone))}>
+                      <ActionIcon aria-hidden="true" size={18} />
+                    </span>
+                    {item.count != null && (
+                      <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-white px-2 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
+                        {item.count}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-4 min-w-0">
+                    <Badge tone={item.tone}>{item.category}</Badge>
+                    <h3 className="mt-3 line-clamp-2 text-base font-bold leading-5 text-slate-950">{item.title}</h3>
+                    <p className="mt-2 line-clamp-3 text-sm font-semibold leading-5 text-slate-600">{item.detail}</p>
+                  </div>
+                  <span className="mt-4 inline-flex h-9 items-center justify-between gap-2 rounded-lg bg-white px-3 text-xs font-bold text-slate-800 ring-1 ring-slate-200 transition-colors group-hover:text-[#d93820]">
+                    <span className="truncate">{item.cta}</span>
+                    <ArrowRight aria-hidden="true" size={14} className="shrink-0 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </a>
+              );
+            })}
+            {hiddenHumanActionItems.length > 0 && (
+              <details className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3 sm:col-span-2 xl:col-span-4">
+                <summary className="cursor-pointer text-sm font-bold text-slate-700">View all open actions</summary>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {hiddenHumanActionItems.map((item) => (
+                    <a
+                      key={item.id}
+                      href={item.href}
+                      className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm transition-colors hover:bg-white"
+                    >
+                      <span className="min-w-0 truncate font-semibold text-slate-900">{item.title}</span>
+                      <span className="shrink-0 text-xs font-bold text-slate-500">{item.cta}</span>
+                    </a>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Pipeline — the flywheel as a connected progress spine */}
       <section>
         <SectionHeader title="Pipeline" eyebrow="Where this project is in the loop" />
@@ -752,65 +852,6 @@ export function Workspace({ projectId }: { projectId: string }) {
             );
           })}
         </div>
-      </section>
-
-      {/* Human action queue — one Home entry point for every manual gate. */}
-      <section>
-        <SectionHeader
-          title="Needs you"
-          eyebrow="Manual gates and setup"
-          action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open</Badge>}
-        />
-        {humanActionItems.length === 0 ? (
-          <EmptyState
-            title="No open actions"
-            detail="Nothing needs a manual decision right now. CiteLoop will keep planning, drafting, publishing, or measuring as the loop advances."
-          />
-        ) : (
-          <div className="grid gap-2">
-            {visibleHumanActionItems.map((item) => (
-              <a
-                key={item.id}
-                href={item.href}
-                className="group grid gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={item.tone}>{item.category}</Badge>
-                    {item.count != null && (
-                      <span className="inline-flex h-6 items-center rounded-md bg-slate-100 px-2 text-xs font-bold text-slate-600">
-                        {item.count}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-2 text-[15px] font-bold leading-5 text-slate-950">{item.title}</div>
-                  <p className="mt-1 max-w-[78ch] text-sm font-semibold leading-5 text-slate-500">{item.detail}</p>
-                </div>
-                <span className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition-colors group-hover:border-[#d93820] group-hover:text-[#d93820]">
-                  {item.cta}
-                  <ArrowRight size={14} />
-                </span>
-              </a>
-            ))}
-            {hiddenHumanActionItems.length > 0 && (
-              <details className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                <summary className="cursor-pointer text-sm font-bold text-slate-700">View all open actions</summary>
-                <div className="mt-3 grid gap-2">
-                  {hiddenHumanActionItems.map((item) => (
-                    <a
-                      key={item.id}
-                      href={item.href}
-                      className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm transition-colors hover:bg-white"
-                    >
-                      <span className="min-w-0 truncate font-semibold text-slate-900">{item.title}</span>
-                      <span className="shrink-0 text-xs font-bold text-slate-500">{item.cta}</span>
-                    </a>
-                  ))}
-                </div>
-              </details>
-            )}
-          </div>
-        )}
       </section>
 
       {/* One merged activity timeline */}
