@@ -60,3 +60,15 @@ func TestArticleRepairQueriesAreProjectScopedAndBounded(t *testing.T) {
 		t.Fatal("StartArticleRepairForProject must not repair drafts already escalated to human decision")
 	}
 }
+
+func TestCountStockedCanonicalIncludesReservedGeneratingTopics(t *testing.T) {
+	if !strings.Contains(countStockedCanonical, "from topics") {
+		t.Fatal("CountStockedCanonical must count reserved generating topics before their first article exists")
+	}
+	if !strings.Contains(countStockedCanonical, "status = 'generating'") {
+		t.Fatal("CountStockedCanonical must include topics.status='generating' as in-flight generation")
+	}
+	if !strings.Contains(countStockedCanonical, "union") {
+		t.Fatal("CountStockedCanonical should deduplicate article-backed and topic-backed in-flight work")
+	}
+}

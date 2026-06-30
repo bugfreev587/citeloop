@@ -103,6 +103,53 @@ func TestGenerationFailureRequeuesTopic(t *testing.T) {
 	}
 }
 
+func TestGenerationReservesBeforeWritingOutsideAdvisoryTransaction(t *testing.T) {
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	generateBody := functionBody(t, source, "func (s *Scheduler) generateForProject")
+	dueBody := functionBody(t, source, "func (s *Scheduler) generateDueScheduledForProject")
+
+	if !strings.Contains(source, "pg_try_advisory_xact_lock") {
+		t.Fatal("scheduler generation should use try-advisory locks so ticks do not queue behind long project work")
+	}
+	for name, body := range map[string]string{
+		"generateForProject":             generateBody,
+		"generateDueScheduledForProject": dueBody,
+	} {
+		if !strings.Contains(body, "reserveGenerationCandidates") {
+			t.Fatalf("%s must reserve topics in a short transaction before writing", name)
+		}
+		if strings.Contains(body, "s.Pool.Begin") || strings.Contains(body, "pg_advisory_xact_lock") {
+			t.Fatalf("%s must not hold a transaction/advisory lock while writer.Generate runs", name)
+		}
+		if !strings.Contains(body, "db.New(s.Pool)") || strings.Contains(body, "db.New(tx)") {
+			t.Fatalf("%s must build the writer with a pool-backed query object, not the reservation tx query", name)
+		}
+	}
+}
+
+func TestGenerationClearsRejectedDraftRowsBeforeRegeneration(t *testing.T) {
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := functionBody(t, string(raw), "func (s *Scheduler) generateReservedCandidate")
+	deletePos := strings.Index(body, "DeleteRecoverableArticlesForTopic")
+	generatePos := strings.Index(body, "writer.Generate")
+	if deletePos == -1 {
+		t.Fatal("reserved generation must clear rejected/generating stale articles before writing")
+	}
+	if generatePos == -1 {
+		t.Fatal("reserved generation must call writer.Generate")
+	}
+	if deletePos > generatePos {
+		t.Fatal("stale article cleanup must happen before writer.Generate to avoid the topic/kind/platform unique index collision")
+	}
+}
+
 func TestOpportunityPriorityScoreUsesP1AsHighest(t *testing.T) {
 	if got, want := priorityFromOpportunityScore(80), int32(2); got != want {
 		t.Fatalf("priorityFromOpportunityScore(80) = %d, want %d", got, want)
@@ -110,4 +157,31 @@ func TestOpportunityPriorityScoreUsesP1AsHighest(t *testing.T) {
 	if got, want := priorityFromOpportunityScore(0), int32(5); got != want {
 		t.Fatalf("priorityFromOpportunityScore(0) = %d, want %d fallback", got, want)
 	}
+}
+
+func functionBody(t *testing.T, source, marker string) string {
+	t.Helper()
+	start := strings.Index(source, marker)
+	if start == -1 {
+		t.Fatalf("missing %s", marker)
+	}
+	open := strings.Index(source[start:], "{")
+	if open == -1 {
+		t.Fatalf("missing opening brace for %s", marker)
+	}
+	pos := start + open
+	depth := 0
+	for i := pos; i < len(source); i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[pos+1 : i]
+			}
+		}
+	}
+	t.Fatalf("missing closing brace for %s", marker)
+	return ""
 }

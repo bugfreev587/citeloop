@@ -1,8 +1,8 @@
-// Package scheduler is the automatic operations core (PRD §5.4). A daily cron
-// tick, per project: hold an advisory xact lock, enforce the monthly cost
-// breaker, pick understocked topics with FOR UPDATE SKIP LOCKED, and generate
-// into the review queue. A separate publish tick auto-publishes due canonicals
-// and unlocks distributable variants (§5.6).
+// Package scheduler is the automatic operations core (PRD §5.4). A frequent
+// generation tick reserves project topics in a short advisory-lock transaction,
+// enforces the monthly cost breaker, then generates outside that transaction.
+// A separate publish tick auto-publishes due canonicals and unlocks
+// distributable variants (§5.6).
 package scheduler
 
 import (
@@ -706,91 +706,119 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		s.Log.Info("generation skipped; workflow auto advance disabled", "project", p.ID)
 		return nil
 	}
-	tx, err := s.Pool.Begin(ctx)
+	candidates, err := s.reserveGenerationCandidates(ctx, p, cfg, func(q *db.Queries) ([]db.Topic, error) {
+		// Buffer-window stocking (§5.4): keep `buffer_days` worth of content in
+		// flight. desired = cadence_per_week * buffer_days / 7 (rounded up).
+		// Generate only the deficit vs. what's already stocked.
+		desired := ceilDiv(cfg.CadencePerWeek*cfg.BufferDays, 7)
+		stocked, err := q.CountStockedCanonical(ctx, p.ID)
+		if err != nil {
+			return nil, err
+		}
+		deficit := desired - int(stocked)
+		if deficit <= 0 {
+			s.Log.Info("buffer already stocked; skipping generation", "project", p.ID, "desired", desired, "stocked", stocked)
+			return nil, nil
+		}
+		return q.SelectGenerationCandidates(ctx, db.SelectGenerationCandidatesParams{
+			ProjectID: p.ID,
+			Limit:     int32(deficit),
+		})
+	})
 	if err != nil {
 		return err
 	}
+	q := db.New(s.Pool)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	for _, t := range candidates {
+		s.generateReservedCandidate(ctx, q, p, writer, t)
+	}
+	return nil
+}
+
+func (s *Scheduler) reserveGenerationCandidates(ctx context.Context, p db.Project, cfg config.ProjectConfig, selectCandidates func(*db.Queries) ([]db.Topic, error)) ([]db.Topic, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer tx.Rollback(ctx)
 
-	// Per-project advisory lock prevents concurrent ticks double-generating.
-	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(p.ID)); err != nil {
-		return err
+	locked, err := tryProjectGenerationLock(ctx, tx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
+		s.Log.Info("generation skipped; project already reserved", "project", p.ID)
+		return nil, nil
 	}
 	q := db.New(tx)
 
 	// Cost breaker (§5.4): stop before any LLM call if month's spend >= budget.
 	spent, err := q.MonthlySpend(ctx, p.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if pgutil.Float(spent) >= cfg.MonthlyBudgetUSD {
 		s.alert(p.ID, "monthly budget reached; generation paused")
 		s.dispatchBudgetStopped(ctx, q, p.ID, pgutil.Float(spent), cfg.MonthlyBudgetUSD)
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}
 
-	// Buffer-window stocking (§5.4): keep `buffer_days` worth of content in
-	// flight. desired = cadence_per_week * buffer_days / 7 (rounded up). Generate
-	// only the deficit vs. what's already stocked, so a stocked buffer does not
-	// trigger more generation every tick.
-	desired := ceilDiv(cfg.CadencePerWeek*cfg.BufferDays, 7)
-	stocked, err := q.CountStockedCanonical(ctx, p.ID)
+	candidates, err := selectCandidates(q)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	deficit := desired - int(stocked)
-	if deficit <= 0 {
-		s.Log.Info("buffer already stocked; skipping generation", "project", p.ID, "desired", desired, "stocked", stocked)
-		return tx.Commit(ctx)
-	}
-	candidates, err := q.SelectGenerationCandidates(ctx, db.SelectGenerationCandidatesParams{
-		ProjectID: p.ID,
-		Limit:     int32(deficit),
-	})
-	if err != nil {
-		return err
-	}
-
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	reserved := make([]db.Topic, 0, len(candidates))
 	for _, t := range candidates {
-		s.generateCandidate(ctx, q, p, writer, t)
+		if generating, ok := s.reserveGenerationCandidate(ctx, q, p, t); ok {
+			reserved = append(reserved, generating)
+		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return reserved, nil
 }
 
-// generateCandidate runs one topic through generation into the review queue,
-// handling idempotency, state transition, content-action linkage, and failure
-// dispatch. Errors are logged and swallowed so one bad topic does not block the
-// rest of the batch (§5.4).
-func (s *Scheduler) generateCandidate(ctx context.Context, q *db.Queries, p db.Project, writer *agents.Writer, t db.Topic) {
+func (s *Scheduler) reserveGenerationCandidate(ctx context.Context, q *db.Queries, p db.Project, t db.Topic) (db.Topic, bool) {
 	// Idempotency: skip if a non-rejected article already exists (§5.4).
 	n, err := q.CountNonRejectedArticlesForTopic(ctx, t.ID)
 	if err != nil {
-		return
+		return db.Topic{}, false
 	}
 	if n > 0 {
 		if reconciled, changed, err := topicstate.ReconcileExistingDrafts(topicstate.Status(t.Status)); err != nil {
 			s.Log.Warn("generation candidate topic draft reconciliation rejected", "topic", t.ID, "status", t.Status, "err", err)
 		} else if changed {
-			if _, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(reconciled)}); err != nil {
+			if _, err := q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
+				ID:        t.ID,
+				ProjectID: p.ID,
+				Status:    string(reconciled),
+			}); err != nil {
 				s.Log.Warn("generation candidate topic draft reconciliation failed", "topic", t.ID, "err", err)
 			}
 		}
-		return
+		return db.Topic{}, false
 	}
 	nextStatus, err := topicstate.Transition(topicstate.Status(t.Status), topicstate.EventStartGeneration)
 	if err != nil {
 		s.Log.Warn("topic generation transition rejected", "topic", t.ID, "status", t.Status, "err", err)
-		return
+		return db.Topic{}, false
 	}
-	generatingTopic, err := q.UpdateTopicStatus(ctx, db.UpdateTopicStatusParams{ID: t.ID, Status: string(nextStatus)})
+	generatingTopic, err := q.UpdateTopicStatusForProject(ctx, db.UpdateTopicStatusForProjectParams{
+		ID:        t.ID,
+		ProjectID: p.ID,
+		Status:    string(nextStatus),
+	})
 	if err != nil {
 		s.Log.Warn("mark generating failed", "topic", t.ID, "err", err)
-		return
+		return db.Topic{}, false
 	}
-	sourceActionID := uuid.UUID{}
 	if generatingTopic.SourceContentActionID.Valid {
-		sourceActionID = uuid.UUID(generatingTopic.SourceContentActionID.Bytes)
+		sourceActionID := uuid.UUID(generatingTopic.SourceContentActionID.Bytes)
 		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
 			ID:        sourceActionID,
 			ProjectID: p.ID,
@@ -799,11 +827,30 @@ func (s *Scheduler) generateCandidate(ctx context.Context, q *db.Queries, p db.P
 			s.Log.Warn("mark content action drafting failed", "topic", t.ID, "action", sourceActionID, "err", err)
 		}
 	}
-	articles, err := writer.Generate(ctx, p.ID, generatingTopic)
+	return generatingTopic, true
+}
+
+// generateReservedCandidate runs one already-reserved topic through generation
+// into the review queue. It deliberately runs outside the advisory-lock
+// reservation transaction, so admin deletes do not wait on LLM or QA calls.
+func (s *Scheduler) generateReservedCandidate(ctx context.Context, q *db.Queries, p db.Project, writer *agents.Writer, t db.Topic) {
+	sourceActionID := uuid.UUID{}
+	if t.SourceContentActionID.Valid {
+		sourceActionID = uuid.UUID(t.SourceContentActionID.Bytes)
+	}
+	if err := q.DeleteRecoverableArticlesForTopic(ctx, db.DeleteRecoverableArticlesForTopicParams{
+		TopicID:   t.ID,
+		ProjectID: p.ID,
+	}); err != nil {
+		s.Log.Warn("clear stale draft rows before generation failed", "project", p.ID, "topic", t.ID, "err", err)
+		s.resetTopicAfterGenerationFailure(ctx, q, p.ID, t, sourceActionID)
+		return
+	}
+	articles, err := writer.Generate(ctx, p.ID, t)
 	if err != nil {
 		s.alert(p.ID, "generation failed for topic "+t.Title+": "+err.Error())
 		s.dispatchGenerationFailed(ctx, q, p.ID, "writer", t.ID.String(), t.Title, err.Error())
-		s.resetTopicAfterGenerationFailure(ctx, q, p.ID, generatingTopic, sourceActionID)
+		s.resetTopicAfterGenerationFailure(ctx, q, p.ID, t, sourceActionID)
 		return
 	}
 	if sourceActionID != uuid.Nil {
@@ -893,41 +940,18 @@ func (s *Scheduler) generateDueScheduledForProject(ctx context.Context, p db.Pro
 	if err != nil {
 		return err
 	}
-	tx, err := s.Pool.Begin(ctx)
+	due, err := s.reserveGenerationCandidates(ctx, p, cfg, func(q *db.Queries) ([]db.Topic, error) {
+		return q.SelectDueScheduledTopics(ctx, p.ID)
+	})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
-
-	// Per-project advisory lock prevents concurrent ticks double-generating.
-	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock($1)", lockKey(p.ID)); err != nil {
-		return err
-	}
-	q := db.New(tx)
-
-	// Cost breaker (§5.4): stop before any LLM call if month's spend >= budget.
-	spent, err := q.MonthlySpend(ctx, p.ID)
-	if err != nil {
-		return err
-	}
-	if pgutil.Float(spent) >= cfg.MonthlyBudgetUSD {
-		s.alert(p.ID, "monthly budget reached; scheduled generation paused")
-		s.dispatchBudgetStopped(ctx, q, p.ID, pgutil.Float(spent), cfg.MonthlyBudgetUSD)
-		return tx.Commit(ctx)
-	}
-
-	due, err := q.SelectDueScheduledTopics(ctx, p.ID)
-	if err != nil {
-		return err
-	}
-	if len(due) == 0 {
-		return tx.Commit(ctx)
-	}
+	q := db.New(s.Pool)
 	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
 	for _, t := range due {
-		s.generateCandidate(ctx, q, p, writer, t)
+		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func canonicalArticleID(articles []db.Article) uuid.UUID {
@@ -1654,6 +1678,14 @@ func (s *Scheduler) feedInventory(ctx context.Context, q *db.Queries, a db.Artic
 func lockKey(id uuid.UUID) int64 {
 	b := id[:]
 	return int64(binary.BigEndian.Uint64(b[:8]))
+}
+
+func tryProjectGenerationLock(ctx context.Context, tx pgx.Tx, projectID uuid.UUID) (bool, error) {
+	var locked bool
+	if err := tx.QueryRow(ctx, "select pg_try_advisory_xact_lock($1)", lockKey(projectID)).Scan(&locked); err != nil {
+		return false, err
+	}
+	return locked, nil
 }
 
 // LockKey exposes the scheduler's project advisory-lock key for admin cleanup
