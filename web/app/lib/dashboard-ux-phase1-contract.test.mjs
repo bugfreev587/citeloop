@@ -202,7 +202,6 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
     "Analyze opportunities",
     "Search performance snapshot",
     "Growth findings",
-    "Decision queue",
     "Loop in motion",
     "View measurement",
     "Create content task",
@@ -239,7 +238,6 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   for (const copy of [
     "Search performance snapshot",
     "Growth findings",
-    "Decision queue",
     "Loop in motion",
     "View measurement",
     "GSC Connected",
@@ -251,7 +249,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Create refresh task",
     "Create technical task",
     "Watch",
-    "View evidence",
+    "Open details",
+    "Finding details",
     "Evidence",
     "Confidence",
     "No analysis to review",
@@ -271,9 +270,19 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /Connected, low data/);
   assert.match(seo, /analysisStatus\.tone === "green"/);
   assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
-  assert.match(seo, /<details[\s\S]*View evidence/);
+  assert.match(seo, /const \[selectedOpportunityID, setSelectedOpportunityID\] = useState<string \| null>\(null\)/);
+  assert.match(seo, /const selectedOpportunity = useMemo/);
+  assert.match(seo, /setSelectedOpportunityID\(opp\.id\)/);
+  assert.match(seo, /aria-label=\{`Open finding details: \$\{opportunityTitle\(opp\)\}`\}/);
+  assert.match(seo, /role="dialog"/);
+  assert.match(seo, /aria-modal="true"/);
+  assert.match(seo, /Finding details/);
+  assert.match(seo, /Drawer actions/);
   assert.doesNotMatch(seo, /<details className="relative">/);
+  assert.doesNotMatch(seo, /<details[\s\S]*View evidence/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(seo, /Decision queue/);
+  assert.doesNotMatch(seo, /What needs approval now/);
   assert.doesNotMatch(seo, /Search data status/);
   assert.doesNotMatch(seo, /Opportunity queue/);
   assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
@@ -1025,15 +1034,16 @@ test("analysis page presents decisions and results page presents measurement dia
     "Analyze opportunities",
     "Search performance snapshot",
     "Growth findings",
-    "Decision queue",
     "Loop in motion",
     "View measurement",
     "Results",
     "Measurement and diagnostics",
     "Weekly analysis brief",
     "Create content task",
-    "Dismiss",
     "Public crawl only",
+    "Finding details",
+    "Open details",
+    "Drawer actions",
   ]) {
     assert.match(seo, new RegExp(copy));
   }
