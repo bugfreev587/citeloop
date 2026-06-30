@@ -21,8 +21,9 @@ type Querier interface {
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
 	CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
-	// publishing (not backlog, not terminal). The scheduler uses this to fill only
-	// the buffer-window deficit instead of regenerating every tick (§5.4).
+	// publishing plus topics reserved for generation before their first article
+	// exists. The scheduler uses this to fill only the buffer-window deficit
+	// instead of regenerating every tick (§5.4).
 	CountStockedCanonical(ctx context.Context, projectID uuid.UUID) (int64, error)
 	CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error)
 	CreateContentAction(ctx context.Context, arg CreateContentActionParams) (ContentAction, error)

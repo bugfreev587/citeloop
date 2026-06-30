@@ -158,15 +158,22 @@ func (q *Queries) ApproveArticleForProject(ctx context.Context, arg ApproveArtic
 }
 
 const countStockedCanonical = `-- name: CountStockedCanonical :one
-select count(*) from articles
-where project_id = $1
-  and kind = 'canonical'
-  and status in ('generating','pending_review','approved','scheduled','pending_url_verification')
+select count(*) from (
+  select articles.topic_id from articles
+  where articles.project_id = $1
+    and articles.kind = 'canonical'
+    and articles.status in ('generating','pending_review','approved','scheduled','pending_url_verification')
+  union
+  select topics.id as topic_id from topics
+  where topics.project_id = $1
+    and topics.status = 'generating'
+) stocked
 `
 
 // CountStockedCanonical counts canonical articles already in flight toward
-// publishing (not backlog, not terminal). The scheduler uses this to fill only
-// the buffer-window deficit instead of regenerating every tick (§5.4).
+// publishing plus topics reserved for generation before their first article
+// exists. The scheduler uses this to fill only the buffer-window deficit
+// instead of regenerating every tick (§5.4).
 func (q *Queries) CountStockedCanonical(ctx context.Context, projectID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countStockedCanonical, projectID)
 	var count int64
