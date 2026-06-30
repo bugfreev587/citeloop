@@ -1243,7 +1243,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </div>
                   </div>
 
-                  <div aria-label="Drawer actions" className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:justify-end">
+                  <div
+                    aria-label="Drawer actions"
+                    className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+                  >
                     <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
                       <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
                         Dismiss
