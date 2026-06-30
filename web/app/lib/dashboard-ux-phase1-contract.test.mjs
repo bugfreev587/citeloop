@@ -278,6 +278,11 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /aria-modal="true"/);
   assert.match(seo, /Finding details/);
   assert.match(seo, /Drawer actions/);
+  assert.match(seo, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(seo, /document\.body\.style\.overflow = previousBodyOverflow/);
+  assert.match(seo, /className="absolute right-0 top-0 flex h-\[100dvh\] max-h-\[100dvh\] w-full max-w-xl flex-col overflow-hidden border-l/);
+  assert.match(seo, /className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"/);
+  assert.match(seo, /aria-label="Drawer actions" className="shrink-0 flex flex-col gap-2 border-t/);
   assert.doesNotMatch(seo, /<details className="relative">/);
   assert.doesNotMatch(seo, /<details[\s\S]*View evidence/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
