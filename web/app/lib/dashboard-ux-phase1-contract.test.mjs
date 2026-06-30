@@ -326,6 +326,29 @@ test("home pipeline keeps workflow counts separate from search performance metri
   assert.doesNotMatch(workspace, /metricValue: searchDataConnected \? metric\(clicks28d\) : "-"/);
 });
 
+test("home turns Needs you into the main human action queue", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const copy of [
+    "Manual gates and setup",
+    "Blocking now",
+    "Needs review",
+    "Improves results",
+    "Confirm Context",
+    "Review analysis",
+    "Connect Search Console",
+    "View all open actions",
+  ]) {
+    assert.match(workspace, new RegExp(copy));
+  }
+
+  assert.match(workspace, /humanActionItems/);
+  assert.match(workspace, /visibleHumanActionItems/);
+  assert.match(workspace, /primaryAction = humanActionItems\[0\]/);
+  assert.doesNotMatch(workspace, /Automation warnings/);
+  assert.doesNotMatch(workspace, /Variants waiting on canonical/);
+});
+
 test("gsc oauth entry points are self-serve and action-first", () => {
   assert.equal(exists("projects/[id]/settings/gsc/callback/page.tsx"), true, "GSC callback route should exist");
   assert.equal(

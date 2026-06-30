@@ -81,17 +81,6 @@ function stageDotClass(tone: StageTone) {
   return classes[tone];
 }
 
-function needsYouCountClass(tone: StageTone) {
-  const classes: Record<StageTone, string> = {
-    green: "text-emerald-600",
-    amber: "text-amber-600",
-    blue: "text-blue-600",
-    red: "text-[#d93820]",
-    neutral: "text-slate-900",
-  };
-  return classes[tone];
-}
-
 function metricChangeClass(tone: StageTone) {
   const classes: Record<StageTone, string> = {
     green: "text-emerald-700 bg-emerald-50 ring-emerald-100",
@@ -102,6 +91,22 @@ function metricChangeClass(tone: StageTone) {
   };
   return classes[tone];
 }
+
+type HumanActionCategory = "Blocking now" | "Needs review" | "Improves results" | "Warnings";
+
+type HumanActionItem = {
+  id: string;
+  title: string;
+  detail: string;
+  href: string;
+  cta: string;
+  category: HumanActionCategory;
+  tone: StageTone;
+  priority: number;
+  count?: number;
+};
+
+const VISIBLE_HUMAN_ACTION_LIMIT = 5;
 
 export function Workspace({ projectId }: { projectId: string }) {
   const api = useApi();
@@ -275,11 +280,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     return [...articleRows].sort((a, b) => String(a.time).localeCompare(String(b.time))).slice(0, 5);
   }, [approved]);
 
-  const waitingVariants = approved.filter(
-    (article) => article.kind === "syndication_variant" && !ready.some((item) => item.article.id === article.id),
-  );
   const automationWarnings = runs.filter((run) => ["error", "failed"].includes(run.status) || Boolean(run.output?.degraded));
-  const hasBlockedDrafts = reviewArticles.some((article) => article.qa_blocking);
+  const blockedDraftCount = reviewArticles.filter((article) => article.qa_blocking || article.requires_human_decision).length;
+  const reviewDraftCount = reviewArticles.length - blockedDraftCount;
+  const hasBlockedDrafts = blockedDraftCount > 0;
 
   const opportunitiesInPlanCount = seoActions.length;
   const planItemCount = topics.length + opportunitiesInPlanCount;
@@ -293,8 +297,8 @@ export function Workspace({ projectId }: { projectId: string }) {
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
 
-  // Single primary action for the whole project, computed from real state.
-  const primaryAction = nextWorkspaceAction({
+  const contextBuildNeedsAttention = showContextBuild && contextBuild.tracks.some((track) => track.state === "attention");
+  const fallbackAction = nextWorkspaceAction({
     projectId,
     hasProfile: Boolean(profile),
     contextConfirmed,
@@ -305,6 +309,118 @@ export function Workspace({ projectId }: { projectId: string }) {
     topicsCount: topics.length,
     openOpportunityCount: seoOpportunities.length,
   });
+  const humanActionCandidates: Array<HumanActionItem | false> = [
+    contextNeedsConfirmation && {
+      id: "confirm-context",
+      title: "Confirm Context",
+      detail: "CiteLoop needs your product facts, evidence, and positioning confirmed before it plans content.",
+      href: `/projects/${projectId}/context`,
+      cta: "Review context",
+      category: "Blocking now",
+      tone: "amber",
+      priority: 10,
+    },
+    !contextNeedsConfirmation && contextBuildNeedsAttention && {
+      id: "context-build-attention",
+      title: "Check Context build",
+      detail: "One of the Context tracks needs attention before the loop can trust this project's source evidence.",
+      href: `/projects/${projectId}/context`,
+      cta: "Open Context",
+      category: "Blocking now",
+      tone: "amber",
+      priority: 15,
+    },
+    !contextNeedsConfirmation && Boolean(profile) && !contextConfirmed && {
+      id: "complete-context",
+      title: "Confirm Context",
+      detail: "The project has Context data, but the human confirmation gate is still open.",
+      href: `/projects/${projectId}/context`,
+      cta: "Review context",
+      category: "Blocking now",
+      tone: "amber",
+      priority: 20,
+    },
+    failedPublish.length > 0 && {
+      id: "publishing-failed",
+      title: "Fix publishing",
+      detail: `${failedPublish.length} ${failedPublish.length === 1 ? "article needs" : "articles need"} publishing attention before distribution continues.`,
+      href: `/projects/${projectId}/publish`,
+      cta: "Open Publish",
+      category: "Blocking now",
+      tone: "red",
+      priority: 30,
+      count: failedPublish.length,
+    },
+    blockedDraftCount > 0 && {
+      id: "blocked-drafts",
+      title: "Review blocked drafts",
+      detail: `${blockedDraftCount} ${blockedDraftCount === 1 ? "draft needs" : "drafts need"} a human positioning or quality decision.`,
+      href: `/projects/${projectId}/review`,
+      cta: "Review drafts",
+      category: "Blocking now",
+      tone: "red",
+      priority: 40,
+      count: blockedDraftCount,
+    },
+    reviewDraftCount > 0 && {
+      id: "draft-review",
+      title: "Review drafts",
+      detail: `${reviewDraftCount} ${reviewDraftCount === 1 ? "draft is" : "drafts are"} waiting at the approval gate.`,
+      href: `/projects/${projectId}/review`,
+      cta: "Open Review",
+      category: "Needs review",
+      tone: "amber",
+      priority: 50,
+      count: reviewDraftCount,
+    },
+    seoOpportunities.length > 0 && {
+      id: "analysis-review",
+      title: "Review analysis",
+      detail: `${seoOpportunities.length} ${seoOpportunities.length === 1 ? "recommendation is" : "recommendations are"} ready before CiteLoop advances the content plan.`,
+      href: `/projects/${projectId}/analysis`,
+      cta: "Review analysis",
+      category: "Needs review",
+      tone: "amber",
+      priority: 60,
+      count: seoOpportunities.length,
+    },
+    ready.length > 0 && {
+      id: "distribute-variants",
+      title: "Distribute variants",
+      detail: `${ready.length} approved ${ready.length === 1 ? "variant is" : "variants are"} ready after the canonical page went live.`,
+      href: `/projects/${projectId}/publish`,
+      cta: "Open Publish",
+      category: "Needs review",
+      tone: "blue",
+      priority: 70,
+      count: ready.length,
+    },
+    !searchDataConnected && {
+      id: "connect-gsc",
+      title: "Connect Search Console",
+      detail: "Public data works now, but traffic impact and query trends need Search Console access.",
+      href: `/projects/${projectId}/settings#search-console`,
+      cta: "Connect GSC",
+      category: "Improves results",
+      tone: "blue",
+      priority: 80,
+    },
+    automationWarnings.length > 0 && {
+      id: "automation-health",
+      title: "Check automation health",
+      detail: `${automationWarnings.length} ${automationWarnings.length === 1 ? "run has" : "runs have"} a failed or degraded status in the activity log.`,
+      href: `/projects/${projectId}/settings/activity`,
+      cta: "Open activity",
+      category: "Warnings",
+      tone: "amber",
+      priority: 90,
+      count: automationWarnings.length,
+    },
+  ];
+  const humanActionItems = humanActionCandidates.filter((item): item is HumanActionItem => Boolean(item)).sort((a, b) => a.priority - b.priority);
+  const primaryAction = humanActionItems[0] ?? fallbackAction;
+  const visibleHumanActionItems = humanActionItems.slice(0, VISIBLE_HUMAN_ACTION_LIMIT);
+  const hiddenHumanActionItems = humanActionItems.slice(VISIBLE_HUMAN_ACTION_LIMIT);
 
   const inMotionCount = opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions;
   const otherProjects = accountProjects.filter((candidate) => candidate.id !== projectId);
@@ -478,17 +594,6 @@ export function Workspace({ projectId }: { projectId: string }) {
       : null,
   });
 
-  // Compact "Needs you" list — one place for everything blocked, replacing six separate sections.
-  const needsYou = [
-    { id: "failed", label: "Publishing failed", count: failedPublish.length, href: `/projects/${projectId}/publish`, tone: "red" as const },
-    { id: "blocked", label: "Drafts blocked by QA", count: reviewArticles.filter((a) => a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "red" as const },
-    { id: "review", label: "Drafts waiting for review", count: reviewArticles.filter((a) => !a.qa_blocking).length, href: `/projects/${projectId}/review`, tone: "amber" as const },
-    { id: "opportunities", label: "Analysis to review", count: seoOpportunities.length, href: `/projects/${projectId}/analysis`, tone: "amber" as const },
-    { id: "distribute", label: "Variants ready to distribute", count: ready.length, href: `/projects/${projectId}/publish`, tone: "green" as const },
-    { id: "warnings", label: "Automation warnings", count: automationWarnings.length, href: `/projects/${projectId}/settings/activity`, tone: "amber" as const },
-    { id: "waiting-canonical", label: "Variants waiting on canonical", count: waitingVariants.length, href: `/projects/${projectId}/publish`, tone: "neutral" as const },
-  ].filter((row) => row.count > 0);
-
   return (
     <div className="space-y-6">
       {apiError && (
@@ -649,24 +754,64 @@ export function Workspace({ projectId }: { projectId: string }) {
         </div>
       </section>
 
-      {/* Everything that needs a human, in one place */}
-      {needsYou.length > 0 && (
-        <section>
-          <SectionHeader title="Needs you" eyebrow="Open gates and blockers" />
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {needsYou.map((row) => (
+      {/* Human action queue — one Home entry point for every manual gate. */}
+      <section>
+        <SectionHeader
+          title="Needs you"
+          eyebrow="Manual gates and setup"
+          action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open</Badge>}
+        />
+        {humanActionItems.length === 0 ? (
+          <EmptyState
+            title="No open actions"
+            detail="Nothing needs a manual decision right now. CiteLoop will keep planning, drafting, publishing, or measuring as the loop advances."
+          />
+        ) : (
+          <div className="grid gap-2">
+            {visibleHumanActionItems.map((item) => (
               <a
-                key={row.id}
-                href={row.href}
-                className="flex min-h-[112px] flex-col items-center rounded-xl border border-slate-200 bg-white p-4 text-center transition-colors hover:border-slate-300 hover:text-[#d93820]"
+                key={item.id}
+                href={item.href}
+                className="group grid gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
               >
-                <span className="text-sm font-bold text-slate-600">{row.label}</span>
-                <span className={cx("mt-auto pt-3 text-2xl font-bold leading-none", needsYouCountClass(row.tone))}>{row.count}</span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={item.tone}>{item.category}</Badge>
+                    {item.count != null && (
+                      <span className="inline-flex h-6 items-center rounded-md bg-slate-100 px-2 text-xs font-bold text-slate-600">
+                        {item.count}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 text-[15px] font-bold leading-5 text-slate-950">{item.title}</div>
+                  <p className="mt-1 max-w-[78ch] text-sm font-semibold leading-5 text-slate-500">{item.detail}</p>
+                </div>
+                <span className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition-colors group-hover:border-[#d93820] group-hover:text-[#d93820]">
+                  {item.cta}
+                  <ArrowRight size={14} />
+                </span>
               </a>
             ))}
+            {hiddenHumanActionItems.length > 0 && (
+              <details className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                <summary className="cursor-pointer text-sm font-bold text-slate-700">View all open actions</summary>
+                <div className="mt-3 grid gap-2">
+                  {hiddenHumanActionItems.map((item) => (
+                    <a
+                      key={item.id}
+                      href={item.href}
+                      className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm transition-colors hover:bg-white"
+                    >
+                      <span className="min-w-0 truncate font-semibold text-slate-900">{item.title}</span>
+                      <span className="shrink-0 text-xs font-bold text-slate-500">{item.cta}</span>
+                    </a>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* One merged activity timeline */}
       <section>
