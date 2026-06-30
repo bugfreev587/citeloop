@@ -33,7 +33,7 @@ const geoProviders: Array<{
     label: "Perplexity",
     keyLabel: "TokenGate key for Perplexity",
     defaultModel: "sonar-pro",
-    helper: "Phase 2 answer and citation observation. This is the provider that counts for GEO automation activation.",
+    helper: "Optional answer and citation observation through TokenGate. OpenAI or Anthropic can run GEO workflows when Perplexity is not configured.",
   },
   {
     scope: "openai",

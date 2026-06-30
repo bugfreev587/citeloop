@@ -1245,6 +1245,8 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /type AdminTabId = "runtime" \| "geo"/);
   assert.match(admin, /GEO providers/);
   assert.match(admin, /TokenGate key for Perplexity/);
+  assert.match(admin, /OpenAI or Anthropic can run GEO workflows/);
+  assert.doesNotMatch(admin, /counts for GEO automation activation/);
   assert.match(admin, /TokenGate key for OpenAI/);
   assert.match(admin, /TokenGate key for Anthropic/);
   assert.match(admin, /TokenGate key for Gemini/);
