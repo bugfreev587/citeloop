@@ -278,12 +278,19 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /aria-modal="true"/);
   assert.match(seo, /Finding details/);
   assert.match(seo, /Drawer actions/);
+  assert.match(seo, /data-analysis-growth-findings-section/);
+  assert.match(seo, /data-analysis-finding-card/);
+  assert.match(seo, /data-analysis-drawer/);
+  assert.match(seo, /animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
+  assert.match(seo, /animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(seo, /max-w-2xl/);
   assert.match(seo, /document\.body\.style\.overflow = "hidden"/);
   assert.match(seo, /document\.body\.style\.overflow = previousBodyOverflow/);
-  assert.match(seo, /className="absolute right-0 top-0 flex h-\[100dvh\] max-h-\[100dvh\] w-full max-w-xl flex-col overflow-hidden border-l/);
+  assert.match(seo, /className="absolute right-0 top-0 flex h-\[100dvh\] max-h-\[100dvh\] w-full max-w-2xl/);
   assert.match(seo, /className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"/);
   assert.match(seo, /aria-label="Drawer actions"[\s\S]*className="shrink-0 flex flex-col gap-2 border-t/);
   assert.match(seo, /pb-\[calc\(1\.5rem\+env\(safe-area-inset-bottom\)\)\]/);
+  assert.doesNotMatch(seo, /<div className="min-w-0 rounded-xl border border-slate-200 bg-white">\s*<div className="flex flex-col gap-3 border-b border-slate-100 p-4/);
   assert.doesNotMatch(seo, /<details className="relative">/);
   assert.doesNotMatch(seo, /<details[\s\S]*View evidence/);
   assert.match(seo, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
@@ -543,6 +550,21 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /Ready to approve/);
   assert.match(review, /Needs your decision/);
   assert.match(review, /CiteLoop is handling/);
+  for (const copy of [
+    "Overall Metrics",
+    "Total in review",
+    "data-review-overall-metrics",
+    "data-review-metric-card",
+    "data-review-decision-section",
+    "data-review-card",
+    "data-review-drawer",
+    "Review drawer actions",
+  ]) {
+    assert.match(review, new RegExp(copy));
+  }
+  assert.match(review, /animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
+  assert.match(review, /animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(review, /max-w-2xl/);
   assert.match(review, /No action needed/);
   assert.match(review, /Claim evidence map/);
   assert.match(review, /Asset type/);
@@ -555,8 +577,8 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.match(review, /reviewQueueSummary/);
   assert.match(review, /selectedArticleId/);
   assert.match(review, /queueArticles\.length === 0/);
-  assert.match(review, /setSelectedArticleId\(queueArticles\[0\]\.article\.id\)/);
-  assert.match(review, /Loading the first draft/);
+  assert.doesNotMatch(review, /setSelectedArticleId\(queueArticles\[0\]\.article\.id\)/);
+  assert.doesNotMatch(review, /Loading the first draft/);
   assert.match(review, /articlePreviewHref/);
   assert.equal(previewRouteExists, true);
   assert.match(review, /Edit draft/);
@@ -571,6 +593,7 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.doesNotMatch(review, /qa blocking/);
   assert.doesNotMatch(review, /Applying & re-checking/);
   assert.doesNotMatch(review, /Select a draft to see the details\./);
+  assert.doesNotMatch(review, /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(420px,0\.9fr\)\]/);
   assert.match(articleDetail, /Cannot approve:/);
   assert.doesNotMatch(articleDetail, /qa blocking/);
 });
