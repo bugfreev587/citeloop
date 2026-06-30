@@ -27,6 +27,8 @@ import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+const drawerFocusableSelector =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function metric(value: any, digits = 0) {
   const n = normalizeNumeric(value);
@@ -461,6 +463,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
+  const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const analysisDrawerRef = useRef<HTMLElement | null>(null);
+  const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -516,25 +521,59 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [selectedOpportunity, selectedOpportunityID]);
 
   useEffect(() => {
-    if (!selectedOpportunity) return;
+    if (!selectedOpportunity?.id) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedOpportunityID(null);
+      if (event.key === "Tab") {
+        const drawer = analysisDrawerRef.current;
+        if (!drawer) return;
+        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
+          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedOpportunity]);
+  }, [selectedOpportunity?.id]);
 
   useEffect(() => {
-    if (!selectedOpportunity) return;
+    if (!selectedOpportunity?.id) return;
 
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const closeButton = analysisDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
+    const firstFocusable = closeButton ?? analysisDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
+    firstFocusable?.focus();
+    if (analysisSurfaceRef.current) {
+      analysisSurfaceRef.current.setAttribute("aria-hidden", "true");
+      analysisSurfaceRef.current.inert = true;
+    }
     return () => {
       document.body.style.overflow = previousBodyOverflow;
+      if (analysisSurfaceRef.current) {
+        analysisSurfaceRef.current.removeAttribute("aria-hidden");
+        analysisSurfaceRef.current.inert = false;
+      }
+      if (analysisReturnFocusRef.current?.isConnected) {
+        analysisReturnFocusRef.current?.focus();
+      }
     };
-  }, [selectedOpportunity]);
+  }, [selectedOpportunity?.id]);
 
   const gscStatus = useMemo(() => {
     return overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
@@ -965,7 +1004,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }
 
   return (
-    <div className="space-y-7">
+    <>
+    <div ref={mode === "analysis" ? analysisSurfaceRef : undefined} className="space-y-7">
       <SectionHeader
         title={mode === "analysis" ? "Review analysis" : "Results"}
         eyebrow={mode === "analysis" ? "Analyze opportunities" : "Measurement and diagnostics"}
@@ -996,6 +1036,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       />
 
       {mode === "analysis" && (
+        <>
         <div className="space-y-5">
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -1052,7 +1093,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           data-analysis-finding-card
                           key={opp.id}
                           type="button"
-                          onClick={() => setSelectedOpportunityID(opp.id)}
+                          onClick={(event) => {
+                            analysisReturnFocusRef.current = event.currentTarget;
+                            setSelectedOpportunityID(opp.id);
+                          }}
                           aria-label={`Open finding details: ${opportunityTitle(opp)}`}
                           className={`group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 ${
                             selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
@@ -1146,128 +1190,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </aside>
             </div>
           </section>
-
-          {selectedOpportunity && (() => {
-            const addingToPlan = createActionBusy(selectedOpportunity);
-            const dismissingOpportunity = dismissBusy(selectedOpportunity);
-            const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-            const cta = actionCtaForOpportunity(selectedOpportunity);
-            const evidence = selectedOpportunity.evidence;
-            const dataSourceNotes =
-              evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
-                ? String((evidence as Record<string, any>).data_source_notes)
-                : "No additional data notes.";
-
-            return (
-              <div className="fixed inset-0 z-30">
-                <button
-                  type="button"
-                  aria-label="Close finding details"
-                  onClick={() => setSelectedOpportunityID(null)}
-                  className="absolute inset-0 animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
-                />
-                <aside
-                  data-analysis-drawer
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="finding-details-title"
-                  className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
-                >
-                  <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Finding details</div>
-                      <h3 id="finding-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
-                        {opportunityTitle(selectedOpportunity)}
-                      </h3>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <Badge tone="blue">{findingTypeLabel(selectedOpportunity)}</Badge>
-                        <Badge tone={toneForRisk(selectedOpportunity.risk_level)}>{selectedOpportunity.risk_level ?? "risk unknown"}</Badge>
-                        <Badge tone="neutral">{sourceModeForOpportunity(selectedOpportunity, overview)}</Badge>
-                        <Badge tone={toneForStatus(selectedOpportunity.status)}>{visibilityLifecycleLabel(selectedOpportunity.status)}</Badge>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      aria-label="Close finding details"
-                      onClick={() => setSelectedOpportunityID(null)}
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-
-                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
-                    <div className="space-y-5">
-                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
-                        <p className="mt-2 text-sm leading-6 text-slate-700">
-                          {selectedOpportunity.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
-                        </p>
-                      </section>
-
-                      <section className="grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-lg border border-slate-200 p-3">
-                          <div className="text-xs font-semibold uppercase text-slate-400">Score</div>
-                          <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.priority_score)}</div>
-                        </div>
-                        <div className="rounded-lg border border-slate-200 p-3">
-                          <div className="text-xs font-semibold uppercase text-slate-400">Confidence</div>
-                          <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.confidence, 2)}</div>
-                        </div>
-                      </section>
-
-                      <section className="grid gap-3 text-sm sm:grid-cols-2">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Query</div>
-                          <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.query ?? "Not query-specific"}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Effort</div>
-                          <div className="mt-1 font-medium text-slate-700">{selectedOpportunity.effort ?? "Unknown"}</div>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <div className="text-xs font-semibold uppercase text-slate-400">Source</div>
-                          <div className="mt-1 break-words font-medium text-slate-700">
-                            {selectedOpportunity.page_url ?? selectedOpportunity.normalized_page_url ?? "Project domain"}
-                          </div>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <div className="text-xs font-semibold uppercase text-slate-400">Opportunity type</div>
-                          <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.type}</div>
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-slate-200 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence</div>
-                        <p className="mt-2 text-sm leading-6 text-slate-700">{compactEvidenceText(selectedOpportunity.evidence)}</p>
-                        <div className="mt-4 border-t border-slate-100 pt-3">
-                          <div className="text-xs font-semibold uppercase text-slate-400">Data notes</div>
-                          <p className="mt-1 text-sm leading-6 text-slate-600">{dataSourceNotes}</p>
-                        </div>
-                      </section>
-                    </div>
-                  </div>
-
-                  <div
-                    aria-label="Drawer actions"
-                    className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
-                  >
-                    <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
-                      <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
-                        Dismiss
-                      </ButtonProgress>
-                    </Button>
-                    <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>
-                      <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
-                        {cta.label}
-                      </ButtonProgress>
-                    </Button>
-                  </div>
-                </aside>
-              </div>
-            );
-          })()}
         </div>
+
+        </>
       )}
 
       {mode === "results" && (
@@ -2058,5 +1983,128 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       </details>
       )}
     </div>
+    {mode === "analysis" && selectedOpportunity && (() => {
+      const addingToPlan = createActionBusy(selectedOpportunity);
+      const dismissingOpportunity = dismissBusy(selectedOpportunity);
+      const reviewingOpportunity = addingToPlan || dismissingOpportunity;
+      const cta = actionCtaForOpportunity(selectedOpportunity);
+      const evidence = selectedOpportunity.evidence;
+      const dataSourceNotes =
+        evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
+          ? String((evidence as Record<string, any>).data_source_notes)
+          : "No additional data notes.";
+
+      return (
+        <div className="fixed inset-0 z-30">
+          <button
+            type="button"
+            aria-label="Close finding details"
+            onClick={() => setSelectedOpportunityID(null)}
+            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
+          />
+          <aside
+            ref={analysisDrawerRef}
+            data-analysis-drawer
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="finding-details-title"
+            className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Finding details</div>
+                <h3 id="finding-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
+                  {opportunityTitle(selectedOpportunity)}
+                </h3>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge tone="blue">{findingTypeLabel(selectedOpportunity)}</Badge>
+                  <Badge tone={toneForRisk(selectedOpportunity.risk_level)}>{selectedOpportunity.risk_level ?? "risk unknown"}</Badge>
+                  <Badge tone="neutral">{sourceModeForOpportunity(selectedOpportunity, overview)}</Badge>
+                  <Badge tone={toneForStatus(selectedOpportunity.status)}>{visibilityLifecycleLabel(selectedOpportunity.status)}</Badge>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-drawer-close
+                aria-label="Close finding details"
+                onClick={() => setSelectedOpportunityID(null)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+              <div className="space-y-5">
+                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    {selectedOpportunity.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
+                  </p>
+                </section>
+
+                <section className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Score</div>
+                    <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.priority_score)}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Confidence</div>
+                    <div className="mt-2 font-mono text-2xl font-bold text-slate-950">{metric(selectedOpportunity.confidence, 2)}</div>
+                  </div>
+                </section>
+
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Query</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.query ?? "Not query-specific"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Effort</div>
+                    <div className="mt-1 font-medium text-slate-700">{selectedOpportunity.effort ?? "Unknown"}</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Source</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">
+                      {selectedOpportunity.page_url ?? selectedOpportunity.normalized_page_url ?? "Project domain"}
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Opportunity type</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.type}</div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">{compactEvidenceText(selectedOpportunity.evidence)}</p>
+                  <div className="mt-4 border-t border-slate-100 pt-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Data notes</div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">{dataSourceNotes}</p>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div
+              aria-label="Drawer actions"
+              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+            >
+              <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
+                <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
+                  Dismiss
+                </ButtonProgress>
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>
+                <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
+                  {cta.label}
+                </ButtonProgress>
+              </Button>
+            </div>
+          </aside>
+        </div>
+      );
+    })()}
+    </>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
@@ -21,6 +21,8 @@ import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx,
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
+const drawerFocusableSelector =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const STATE_ORDER: Record<ReviewArticleState["kind"], number> = {
   needs_human: 0,
@@ -55,6 +57,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [content, setContent] = useState("");
+  const reviewSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const reviewDrawerRef = useRef<HTMLElement | null>(null);
+  const reviewReturnFocusRef = useRef<HTMLElement | null>(null);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -112,22 +117,56 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   }, [queueArticles, selectedArticleId]);
 
   useEffect(() => {
-    if (!selectedArticle) return;
+    if (!selectedArticle?.id) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedArticleId(null);
+      if (event.key === "Tab") {
+        const drawer = reviewDrawerRef.current;
+        if (!drawer) return;
+        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
+          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedArticle]);
+  }, [selectedArticle?.id]);
 
   useEffect(() => {
-    if (!selectedArticle) return;
+    if (!selectedArticle?.id) return;
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const closeButton = reviewDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
+    const firstFocusable = closeButton ?? reviewDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
+    firstFocusable?.focus();
+    if (reviewSurfaceRef.current) {
+      reviewSurfaceRef.current.setAttribute("aria-hidden", "true");
+      reviewSurfaceRef.current.inert = true;
+    }
     return () => {
       document.body.style.overflow = previousBodyOverflow;
+      if (reviewSurfaceRef.current) {
+        reviewSurfaceRef.current.removeAttribute("aria-hidden");
+        reviewSurfaceRef.current.inert = false;
+      }
+      if (reviewReturnFocusRef.current?.isConnected) {
+        reviewReturnFocusRef.current?.focus();
+      }
     };
-  }, [selectedArticle]);
+  }, [selectedArticle?.id]);
 
   useEffect(() => {
     if (!selectedArticle) {
@@ -194,62 +233,67 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-6">
-      <SectionHeader
-        title="Review"
-        eyebrow="Mostly automatic — you only decide the rare cases"
-        action={
-          <div className="flex flex-wrap justify-end gap-2">
-            {readyArticles.length > 0 && (
-              <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
-                <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-                  Approve {readyArticles.length} ready
-                </ButtonProgress>
+      <div ref={reviewSurfaceRef} className="space-y-6">
+        <SectionHeader
+          title="Review"
+          eyebrow="Mostly automatic — you only decide the rare cases"
+          action={
+            <div className="flex flex-wrap justify-end gap-2">
+              {readyArticles.length > 0 && (
+                <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
+                  <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+                    Approve {readyArticles.length} ready
+                  </ButtonProgress>
+                </Button>
+              )}
+              <Button disabled={!!busy} size="sm" onClick={refresh}>
+                <RefreshCw size={14} />
+                Refresh
               </Button>
-            )}
-            <Button disabled={!!busy} size="sm" onClick={refresh}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
-          </div>
-        }
-      />
-
-      {summary.total === 0 ? (
-        <EmptyState
-          title="Nothing needs you"
-          detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real positioning choice or manual edit will show up here."
-        />
-      ) : (
-        <>
-          <section data-review-overall-metrics className="space-y-3">
-            <SectionHeader title="Overall Metrics" eyebrow="Review queue status" />
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <ReviewMetricCard label="Needs your decision" value={summary.needsHuman} detail="Only rare manual calls" tone="red" />
-              <ReviewMetricCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
-              <ReviewMetricCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
-              <ReviewMetricCard label="Total in review" value={summary.total} detail="Drafts currently visible here" tone="neutral" />
             </div>
-          </section>
+          }
+        />
 
-          <section data-review-decision-section className="space-y-3">
-            <SectionHeader title="Needs Your Decision" eyebrow="Open a card to inspect details and act" action={<Badge tone="neutral">{queueArticles.length}</Badge>} />
-            {queueArticles.length === 0 ? (
-              <EmptyState title="No review cards" detail="Drafts that need a decision or approval will appear here." />
-            ) : (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {queueArticles.map((item) => (
-                  <ReviewDecisionCard
-                    key={item.article.id}
-                    item={item}
-                    selected={selectedArticleId === item.article.id}
-                    onSelect={() => setSelectedArticleId(item.article.id)}
-                  />
-                ))}
+        {summary.total === 0 ? (
+          <EmptyState
+            title="Nothing needs you"
+            detail="CiteLoop drafts, checks, repairs, and—when auto-advance is on—publishes on its own. Drafts that need a real positioning choice or manual edit will show up here."
+          />
+        ) : (
+          <>
+            <section data-review-overall-metrics className="space-y-3">
+              <SectionHeader title="Overall Metrics" eyebrow="Review queue status" />
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <ReviewMetricCard label="Needs your decision" value={summary.needsHuman} detail="Only rare manual calls" tone="red" />
+                <ReviewMetricCard label="Ready to approve" value={summary.ready} detail="QA cleared these drafts" tone="green" />
+                <ReviewMetricCard label="CiteLoop is handling" value={summary.recovering} detail="Re-checking, repairing, regenerating" tone="amber" />
+                <ReviewMetricCard label="Total in review" value={summary.total} detail="Drafts currently visible here" tone="neutral" />
               </div>
-            )}
-          </section>
-        </>
-      )}
+            </section>
+
+            <section data-review-decision-section className="space-y-3">
+              <SectionHeader title="Needs Your Decision" eyebrow="Open a card to inspect details and act" action={<Badge tone="neutral">{queueArticles.length}</Badge>} />
+              {queueArticles.length === 0 ? (
+                <EmptyState title="No review cards" detail="Drafts that need a decision or approval will appear here." />
+              ) : (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {queueArticles.map((item) => (
+                    <ReviewDecisionCard
+                      key={item.article.id}
+                      item={item}
+                      selected={selectedArticleId === item.article.id}
+                      onSelect={(trigger) => {
+                        reviewReturnFocusRef.current = trigger;
+                        setSelectedArticleId(item.article.id);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </div>
 
       {selectedArticle && (
         <div className="fixed inset-0 z-30">
@@ -257,9 +301,12 @@ export function ReviewClient({ projectId }: { projectId: string }) {
             type="button"
             aria-label="Close review details"
             onClick={() => setSelectedArticleId(null)}
-            className="absolute inset-0 animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
+            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
           />
           <ReviewInspector
+            drawerRef={(node) => {
+              reviewDrawerRef.current = node;
+            }}
             article={selectedArticle}
             topicId={selectedQueueArticle?.topicId ?? selectedArticle.topic_id}
             projectId={projectId}
@@ -319,19 +366,22 @@ function ReviewDecisionCard({
 }: {
   item: QueueArticle;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (trigger: HTMLElement) => void;
 }) {
   const { article, topicId } = item;
   const state = reviewArticleState(article);
   const title = articleReviewTitle(article);
   const metadata = assetMetadata(article);
+  const titleId = `review-card-title-${article.id}`;
+  const descriptionId = `review-card-description-${article.id}`;
 
   return (
     <button
       data-review-card
       type="button"
-      onClick={onSelect}
-      aria-label={`Open review details: ${title}`}
+      onClick={(event) => onSelect(event.currentTarget)}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
       className={cx(
         "group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0",
         selected ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
@@ -343,8 +393,11 @@ function ReviewDecisionCard({
         {metadata.assetType && <Badge tone="blue">{metadata.assetTypeLabel}</Badge>}
         <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
       </div>
-      <h3 className="mt-3 text-base font-bold leading-6 text-slate-950">{title}</h3>
-      <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{state.detail}</p>
+      <h3 id={titleId} className="mt-3 text-base font-bold leading-6 text-slate-950">{title}</h3>
+      <p id={descriptionId} data-review-card-description className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">
+        {state.label}. {state.detail} {article.platform || article.kind}; topic {topicId.slice(0, 8)}; geo {formatScore(article.geo_score)}; seo{" "}
+        {formatScore(article.seo_score)}.
+      </p>
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
         {state.kind === "recovering" ? (
           <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
@@ -370,6 +423,7 @@ function StateBadge({ state }: { state: ReviewArticleState }) {
 }
 
 function ReviewInspector({
+  drawerRef,
   article,
   topicId,
   projectId,
@@ -390,6 +444,7 @@ function ReviewInspector({
   recheckBusy,
   onClose,
 }: {
+  drawerRef: (node: HTMLElement | null) => void;
   article: Article;
   topicId: string;
   projectId: string;
@@ -420,11 +475,12 @@ function ReviewInspector({
 
   return (
     <aside
+      ref={drawerRef}
       data-review-drawer
       role="dialog"
       aria-modal="true"
       aria-labelledby="review-details-title"
-      className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
+      className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
     >
       <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4">
         <div className="min-w-0">
@@ -438,6 +494,7 @@ function ReviewInspector({
         </div>
         <button
           type="button"
+          data-drawer-close
           aria-label="Close review details"
           onClick={onClose}
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"

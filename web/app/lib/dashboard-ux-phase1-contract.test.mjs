@@ -281,8 +281,16 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /data-analysis-growth-findings-section/);
   assert.match(seo, /data-analysis-finding-card/);
   assert.match(seo, /data-analysis-drawer/);
-  assert.match(seo, /animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
-  assert.match(seo, /animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(seo, /motion-safe:animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
+  assert.match(seo, /motion-safe:animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(seo, /const analysisSurfaceRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(seo, /const analysisDrawerRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(seo, /const analysisReturnFocusRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(seo, /<div ref=\{mode === "analysis" \? analysisSurfaceRef : undefined\} className="space-y-7">/);
+  assert.match(seo, /analysisSurfaceRef\.current\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(seo, /analysisReturnFocusRef\.current\?\.focus\(\)/);
+  assert.match(seo, /\}, \[selectedOpportunity\?\.id\]\)/);
+  assert.match(seo, /event\.key === "Tab"/);
   assert.match(seo, /max-w-2xl/);
   assert.match(seo, /document\.body\.style\.overflow = "hidden"/);
   assert.match(seo, /document\.body\.style\.overflow = previousBodyOverflow/);
@@ -562,8 +570,17 @@ test("review page is built around automatic recovery, not manual triage", () => 
   ]) {
     assert.match(review, new RegExp(copy));
   }
-  assert.match(review, /animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
-  assert.match(review, /animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(review, /motion-safe:animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
+  assert.match(review, /motion-safe:animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
+  assert.match(review, /const reviewSurfaceRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(review, /const reviewDrawerRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(review, /const reviewReturnFocusRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(review, /reviewSurfaceRef\.current\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(review, /reviewReturnFocusRef\.current\?\.focus\(\)/);
+  assert.match(review, /\}, \[selectedArticle\?\.id\]\)/);
+  assert.match(review, /event\.key === "Tab"/);
+  assert.match(review, /aria-describedby=\{descriptionId\}/);
+  assert.match(review, /data-review-card-description/);
   assert.match(review, /max-w-2xl/);
   assert.match(review, /No action needed/);
   assert.match(review, /Claim evidence map/);
