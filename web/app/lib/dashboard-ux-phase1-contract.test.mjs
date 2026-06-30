@@ -349,7 +349,7 @@ test("home turns Needs you into the main human action queue", () => {
   assert.doesNotMatch(workspace, /Variants waiting on canonical/);
 });
 
-test("home presents Needs you as square action tiles above the pipeline", () => {
+test("home presents Needs you as compact action tiles above the pipeline", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
   const needsYouIndex = workspace.indexOf('title="Needs you"');
@@ -362,14 +362,34 @@ test("home presents Needs you as square action tiles above the pipeline", () => 
     "humanActionTileToneClass",
     "humanActionIcon",
     "Action spotlight",
-    "aspect-[1.05/1]",
     "sm:grid-cols-2 xl:grid-cols-4",
     "border-l-4",
-    "shadow-[0_18px_38px_-28px_rgba(15,23,42,0.45)]",
+    "compactActionTileClass",
     "Where this project is in the loop",
   ]) {
     assert.match(workspace, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("home keeps Pipeline in the first desktop fold with compact metrics and actions", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const contract of [
+    "compactMetricCardClass",
+    "compactActionTileClass",
+    "lg:grid-cols-4",
+    "lg:min-h-[148px]",
+    "lg:min-h-[118px]",
+    "text-3xl",
+    "line-clamp-2",
+    "First-fold pipeline",
+  ]) {
+    assert.match(workspace, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(workspace, /lg:row-span-2/);
+  assert.doesNotMatch(workspace, /md:text-6xl/);
+  assert.doesNotMatch(workspace, /sm:aspect-\[1\.05\/1\]/);
 });
 
 test("gsc oauth entry points are self-serve and action-first", () => {
