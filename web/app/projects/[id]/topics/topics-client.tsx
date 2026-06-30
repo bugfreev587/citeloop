@@ -7,6 +7,7 @@ import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
   planHealthForTopics,
+  planPulseForTopics,
   recommendedTopicIds,
   topicCardSpanClass,
   topicPickScore,
@@ -142,6 +143,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   // queue and sit above the filters, so they derive from every backlog topic.
   const allBacklogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
   const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
+  const planPulse = useMemo(() => planPulseForTopics(topics), [topics]);
   const recommendedIds = useMemo(() => {
     return new Set(recommendedTopicIds(allBacklogTopics));
   }, [allBacklogTopics]);
@@ -407,27 +409,32 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       </section>
 
       <section>
-        <SectionHeader title="Plan health" />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase text-slate-400">Backlog</div>
-            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.backlog}</div>
-            <div className="mt-1 text-sm text-slate-500">Topics waiting for draft generation.</div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase text-slate-400">Ready to draft</div>
-            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.readyToDraft}</div>
-            <div className="mt-1 text-sm text-slate-500">Unscheduled backlog items available now.</div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase text-slate-400">Scheduled intent</div>
-            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.scheduledIntent}</div>
-            <div className="mt-1 text-sm text-slate-500">Topic dates are inherited when canonical drafts are approved.</div>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase text-slate-400">Needs priority</div>
-            <div className="mt-2 text-2xl font-bold text-slate-950">{planHealth.needsPriority}</div>
-            <div className="mt-1 text-sm text-slate-500">Use the recommendation signals when priorities are tied.</div>
+        <SectionHeader title="Plan pulse" />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <Badge tone={planPulse.tone}>{planPulse.tone === "amber" ? "Needs attention" : "Plan status"}</Badge>
+              <div className="mt-3 text-lg font-bold leading-6 text-slate-950">{planPulse.title}</div>
+              <p className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{planPulse.detail}</p>
+            </div>
+            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.backlog}</div>
+                <div className="text-xs font-semibold text-slate-500">Backlog</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.readyToDraft}</div>
+                <div className="text-xs font-semibold text-slate-500">Ready to draft</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.scheduledIntent}</div>
+                <div className="text-xs font-semibold text-slate-500">Scheduled intent</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.needsPriority}</div>
+                <div className="text-xs font-semibold text-slate-500">Needs priority</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

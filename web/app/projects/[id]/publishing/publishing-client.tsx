@@ -271,6 +271,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     () => approvedCanonicals.filter((a) => a.scheduled_at && new Date(a.scheduled_at).getTime() > Date.now()),
     [approvedCanonicals],
   );
+  const hasCanonicalPublishingWork =
+    readyCanonicals.length + scheduledCanonicals.length + published.length + inflight.length + failed.length > 0;
   const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "manual";
   const publishIntervalDays = config?.publish_interval_days ?? 2;
   const eligiblePublisherConnections = useMemo(() => connections.filter((c) => c.enabled && c.status === "connected"), [connections]);
@@ -382,7 +384,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         setMessage({ title: "Publishing checked", tone: "green" });
       }
     } catch (e: any) {
-      setMessage({ title: "Reconcile failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Status check failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -458,8 +460,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
               )}
             </div>
             <Button disabled={!!busy} size="sm" onClick={reconcile}>
-              <ButtonProgress busy={busy === "reconcile"} busyLabel="Reconciling" idleIcon={<RotateCcw size={14} />}>
-                Reconcile
+              <ButtonProgress busy={busy === "reconcile"} busyLabel="Checking status" idleIcon={<RotateCcw size={14} />}>
+                Check status
               </ButtonProgress>
             </Button>
             <Button disabled={!!busy} size="sm" onClick={refresh}>
@@ -474,190 +476,205 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         <Notice title="No enabled publisher connection" detail="Enable a connected publisher account in settings before publishing or retrying." tone="amber" />
       )}
 
-      <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
-        {/* Left column — Ready then Scheduled. */}
-        <div className="min-w-0 space-y-6">
-          <Lane
-            title="Ready to publish"
-            count={readyCanonicals.length}
-            tone="green"
-            empty={{ title: "Nothing ready", detail: "Approved drafts that are due appear here and publish on the next pass." }}
-          >
-            {readyCanonicals.map((article) => (
-              <PostCard
-                key={article.id}
-                badges={
-                  <>
-                    <Badge tone="green">ready</Badge>
-                    <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
-                  </>
-                }
-                title={articleTitle(article)}
-                meta={
-                  <span className="inline-flex items-center gap-1.5">
-                    <CalendarClock size={12} />
-                    {publishTimeLabel(article)}
-                  </span>
-                }
-                actions={
-                  <>
-                    <a
-                      href={`/projects/${projectId}/articles/${article.id}`}
-                      className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Detail
-                    </a>
-                    <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
-                      <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
-                        Publish now
-                      </ButtonProgress>
-                    </Button>
-                  </>
-                }
-              />
-            ))}
-          </Lane>
-
-          <Lane
-            title="Scheduled to publish"
-            count={scheduledCanonicals.length}
-            tone="blue"
-            empty={{ title: "Nothing scheduled", detail: "Future-dated drafts queue here and publish on the cadence set in Mode." }}
-          >
-            {scheduledCanonicals.map((article) => (
-              <PostCard
-                key={article.id}
-                badges={
-                  <>
-                    <Badge tone="blue">scheduled</Badge>
-                    <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
-                  </>
-                }
-                title={articleTitle(article)}
-                meta={
-                  <span className="inline-flex items-center gap-1.5">
-                    <CalendarClock size={12} />
-                    {publishTimeLabel(article)}
-                  </span>
-                }
-                actions={
-                  <>
-                    <a
-                      href={`/projects/${projectId}/articles/${article.id}`}
-                      className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Detail
-                    </a>
-                    <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
-                      <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
-                        Publish now
-                      </ButtonProgress>
-                    </Button>
-                  </>
-                }
-              />
-            ))}
-          </Lane>
-        </div>
-
-        {/* Right column — outcomes. */}
-        <div className="min-w-0 space-y-6">
-          <Lane
-            title="Published"
-            count={published.length + inflight.length}
-            tone="green"
-            empty={{ title: "No canonical articles published", detail: "Approved canonical articles publish automatically when due." }}
-          >
-            {inflight.map((article) => (
-              <PostCard
-                key={article.id}
-                accent="amber"
-                badges={
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700">
-                    <Loader2 size={12} className="animate-spin" />
-                    publishing · verifying live URL
-                  </span>
-                }
-                title={articleTitle(article)}
-                meta={(article.canonical_url || article.publish_path) && <span className="break-all text-amber-700">{article.canonical_url || article.publish_path}</span>}
-                actions={
-                  article.canonical_url && (
-                    <a
-                      href={article.canonical_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-amber-100"
-                    >
-                      <ExternalLink size={14} />
-                      Open URL
-                    </a>
-                  )
-                }
-              />
-            ))}
-            {published.map((article) => (
-              <PostCard
-                key={article.id}
-                badges={<Badge tone="green">published</Badge>}
-                title={articleTitle(article)}
-                meta={`Published ${formatDate(article.published_at)}`}
-                actions={
-                  article.canonical_url ? (
-                    <a
-                      href={article.canonical_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-slate-50"
-                    >
-                      <ExternalLink size={14} />
-                      Live article
-                    </a>
-                  ) : (
-                    <Badge tone="amber">missing canonical_url</Badge>
-                  )
-                }
-              />
-            ))}
-          </Lane>
-
-          <Lane
-            title="Publishing failed"
-            count={failed.length}
-            tone="red"
-            empty={{ title: "No publish failures", detail: "Failed canonical publish attempts will appear here with retry controls." }}
-          >
-            {failed.map((article) => (
-              <PostCard
-                key={article.id}
-                accent="red"
-                badges={<Badge tone="red">failed</Badge>}
-                title={articleTitle(article)}
-                meta={`attempt ${article.publish_attempts} · next retry ${formatDate(article.next_publish_retry_at)}`}
-                actions={
-                  <>
-                    <a
-                      href={`/projects/${projectId}/articles/${article.id}`}
-                      className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
-                    >
-                      Detail
-                    </a>
-                    <Button disabled={!activePublisherConnection || busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
-                      <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
-                        Retry
-                      </ButtonProgress>
-                    </Button>
-                  </>
-                }
+      {hasCanonicalPublishingWork ? (
+        <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">
+          {/* Left column — Ready then Scheduled. */}
+          <div className="min-w-0 space-y-6">
+            {readyCanonicals.length > 0 && (
+              <Lane
+                title="Ready to publish"
+                count={readyCanonicals.length}
+                tone="green"
+                empty={{ title: "Nothing ready", detail: "Approved drafts that are due appear here and publish on the next pass." }}
               >
-                <div className="mt-2 line-clamp-3 break-words text-sm leading-5 text-red-800">
-                  {article.last_publish_error || "No publish error captured."}
-                </div>
-                {article.publish_path && <div className="mt-1 break-all text-xs text-red-700">{article.publish_path}</div>}
-              </PostCard>
-            ))}
-          </Lane>
+                {readyCanonicals.map((article) => (
+                  <PostCard
+                    key={article.id}
+                    badges={
+                      <>
+                        <Badge tone="green">ready</Badge>
+                        <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
+                      </>
+                    }
+                    title={articleTitle(article)}
+                    meta={
+                      <span className="inline-flex items-center gap-1.5">
+                        <CalendarClock size={12} />
+                        {publishTimeLabel(article)}
+                      </span>
+                    }
+                    actions={
+                      <>
+                        <a
+                          href={`/projects/${projectId}/articles/${article.id}`}
+                          className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Detail
+                        </a>
+                        <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                          <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
+                            Publish now
+                          </ButtonProgress>
+                        </Button>
+                      </>
+                    }
+                  />
+                ))}
+              </Lane>
+            )}
+
+            {scheduledCanonicals.length > 0 && (
+              <Lane
+                title="Scheduled to publish"
+                count={scheduledCanonicals.length}
+                tone="blue"
+                empty={{ title: "Nothing scheduled", detail: "Future-dated drafts queue here and publish on the cadence set in Mode." }}
+              >
+                {scheduledCanonicals.map((article) => (
+                  <PostCard
+                    key={article.id}
+                    badges={
+                      <>
+                        <Badge tone="blue">scheduled</Badge>
+                        <PublishTargetPill target={publishTargetLabel(article, defaultPublishTarget)} />
+                      </>
+                    }
+                    title={articleTitle(article)}
+                    meta={
+                      <span className="inline-flex items-center gap-1.5">
+                        <CalendarClock size={12} />
+                        {publishTimeLabel(article)}
+                      </span>
+                    }
+                    actions={
+                      <>
+                        <a
+                          href={`/projects/${projectId}/articles/${article.id}`}
+                          className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Detail
+                        </a>
+                        <Button disabled={!activePublisherConnection || busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => publishNow(article)}>
+                          <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
+                            Publish now
+                          </ButtonProgress>
+                        </Button>
+                      </>
+                    }
+                  />
+                ))}
+              </Lane>
+            )}
+          </div>
+
+          {/* Right column — outcomes. */}
+          <div className="min-w-0 space-y-6">
+            {published.length + inflight.length > 0 && (
+              <Lane
+                title="Published"
+                count={published.length + inflight.length}
+                tone="green"
+                empty={{ title: "No canonical articles published", detail: "Approved canonical articles publish automatically when due." }}
+              >
+                {inflight.map((article) => (
+                  <PostCard
+                    key={article.id}
+                    accent="amber"
+                    badges={
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                        <Loader2 size={12} className="animate-spin" />
+                        publishing · verifying live URL
+                      </span>
+                    }
+                    title={articleTitle(article)}
+                    meta={(article.canonical_url || article.publish_path) && <span className="break-all text-amber-700">{article.canonical_url || article.publish_path}</span>}
+                    actions={
+                      article.canonical_url && (
+                        <a
+                          href={article.canonical_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-8 items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-amber-100"
+                        >
+                          <ExternalLink size={14} />
+                          Open URL
+                        </a>
+                      )
+                    }
+                  />
+                ))}
+                {published.map((article) => (
+                  <PostCard
+                    key={article.id}
+                    badges={<Badge tone="green">published</Badge>}
+                    title={articleTitle(article)}
+                    meta={`Published ${formatDate(article.published_at)}`}
+                    actions={
+                      article.canonical_url ? (
+                        <a
+                          href={article.canonical_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-[#d93820] hover:bg-slate-50"
+                        >
+                          <ExternalLink size={14} />
+                          Live article
+                        </a>
+                      ) : (
+                        <Badge tone="amber">missing canonical_url</Badge>
+                      )
+                    }
+                  />
+                ))}
+              </Lane>
+            )}
+
+            {failed.length > 0 && (
+              <Lane
+                title="Publishing failed"
+                count={failed.length}
+                tone="red"
+                empty={{ title: "No publish failures", detail: "Failed canonical publish attempts will appear here with retry controls." }}
+              >
+                {failed.map((article) => (
+                  <PostCard
+                    key={article.id}
+                    accent="red"
+                    badges={<Badge tone="red">failed</Badge>}
+                    title={articleTitle(article)}
+                    meta={`attempt ${article.publish_attempts} · next retry ${formatDate(article.next_publish_retry_at)}`}
+                    actions={
+                      <>
+                        <a
+                          href={`/projects/${projectId}/articles/${article.id}`}
+                          className="inline-flex h-8 items-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
+                        >
+                          Detail
+                        </a>
+                        <Button disabled={!activePublisherConnection || busy === `retry-${article.id}`} size="sm" variant="danger" onClick={() => retryPublish(article)}>
+                          <ButtonProgress busy={busy === `retry-${article.id}`} busyLabel="Retrying" idleIcon={<RotateCcw size={14} />}>
+                            Retry
+                          </ButtonProgress>
+                        </Button>
+                      </>
+                    }
+                  >
+                    <div className="mt-2 line-clamp-3 break-words text-sm leading-5 text-red-800">
+                      {article.last_publish_error || "No publish error captured."}
+                    </div>
+                    {article.publish_path && <div className="mt-1 break-all text-xs text-red-700">{article.publish_path}</div>}
+                  </PostCard>
+                ))}
+              </Lane>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <EmptyState
+          title="No publishing work is waiting"
+          detail="Approved drafts will appear here when they are ready, scheduled, publishing, live, or need a retry."
+        />
+      )}
 
       {(ready.length > 0 || waiting.length > 0) && (
         <section className="space-y-3">

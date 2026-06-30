@@ -77,6 +77,34 @@ export function planHealthForTopics(topics: ContentPlanTopic[]) {
   };
 }
 
+function countLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export function planPulseForTopics(topics: ContentPlanTopic[]) {
+  const health = planHealthForTopics(topics);
+  if (health.backlog === 0) {
+    return {
+      title: "No topics in the plan yet",
+      detail: "Review analysis recommendations or generate from domain to seed the first backlog.",
+      tone: "neutral" as const,
+    };
+  }
+
+  const readyWithoutPriority = Math.max(0, health.readyToDraft - health.needsPriority);
+  const details = [
+    readyWithoutPriority > 0 ? countLabel(readyWithoutPriority, "ready to draft", "ready to draft") : null,
+    health.scheduledIntent > 0 ? countLabel(health.scheduledIntent, "scheduled", "scheduled") : null,
+    health.needsPriority > 0 ? countLabel(health.needsPriority, "needs priority", "need priority") : null,
+  ].filter(Boolean);
+
+  return {
+    title: countLabel(health.backlog, "topic") + " in the plan",
+    detail: details.length > 0 ? `${details.join(", ")}.` : "CiteLoop is drafting from this backlog automatically.",
+    tone: health.needsPriority > 0 ? ("amber" as const) : ("green" as const),
+  };
+}
+
 export function topicCardSpanClass(view: PlanView, editing: boolean) {
   if (!editing || view === "list") return "";
   if (view === "grid") return "lg:col-span-2";
