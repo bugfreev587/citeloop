@@ -20,6 +20,8 @@ import {
   buildHomeEventStream,
   contextInventoryProgress,
   contextBuildTracks,
+  homeAICitationMetric,
+  homeInMotionMetric,
   nextWorkspaceAction,
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
@@ -468,7 +470,17 @@ export function Workspace({ projectId }: { projectId: string }) {
   const visibleHumanActionItems = humanActionItems.slice(0, VISIBLE_HUMAN_ACTION_LIMIT);
   const hiddenHumanActionItems = humanActionItems.slice(VISIBLE_HUMAN_ACTION_LIMIT);
 
-  const inMotionCount = opportunitiesInPlanCount + reviewArticles.length + ready.length + measuringActions;
+  const aiCitationMetric = homeAICitationMetric({
+    projectId,
+    citationGapCount: aiCitationSignals,
+  });
+  const inMotionMetric = homeInMotionMetric({
+    projectId,
+    analysisActionCount: opportunitiesInPlanCount,
+    reviewDraftCount: reviewArticles.length,
+    readyToPublishCount: ready.length,
+    measuringActionCount: measuringActions,
+  });
   const otherProjects = accountProjects.filter((candidate) => candidate.id !== projectId);
   const metricGridCards = [
     {
@@ -483,15 +495,15 @@ export function Workspace({ projectId }: { projectId: string }) {
       muted: !searchDataConnected,
     },
     {
-      label: "AI citations",
-      value: aiCitationSignals > 0 ? aiCitationSignals : "-",
-      detail: aiCitationSignals > 0 ? "citation opportunities detected" : "AI-answer tracking not connected yet",
-      metricChangeLabel: aiCitationSignals > 0 ? `+${aiCitationSignals} active now` : "Tracking not connected",
-      metricChangeTone: aiCitationSignals > 0 ? "green" : "neutral",
-      href: `/projects/${projectId}/results`,
+      label: aiCitationMetric.label,
+      value: aiCitationMetric.value,
+      detail: aiCitationMetric.detail,
+      metricChangeLabel: aiCitationMetric.metricChangeLabel,
+      metricChangeTone: aiCitationMetric.metricChangeTone,
+      href: aiCitationMetric.href,
       icon: Sparkles,
       featured: false,
-      muted: aiCitationSignals === 0,
+      muted: aiCitationMetric.muted,
     },
     {
       label: "Published pages",
@@ -505,15 +517,15 @@ export function Workspace({ projectId }: { projectId: string }) {
       muted: publishedThisMonth === 0,
     },
     {
-      label: "In motion",
-      value: inMotionCount,
-      detail: "planned, in review, publishing, or measuring",
-      metricChangeLabel: inMotionCount > 0 ? `+${inMotionCount} active now` : "0 active now",
-      metricChangeTone: inMotionCount > 0 ? "blue" : "neutral",
-      href: `/projects/${projectId}/plan`,
+      label: inMotionMetric.label,
+      value: inMotionMetric.value,
+      detail: inMotionMetric.detail,
+      metricChangeLabel: inMotionMetric.metricChangeLabel,
+      metricChangeTone: inMotionMetric.metricChangeTone,
+      href: inMotionMetric.href,
       icon: Search,
       featured: false,
-      muted: inMotionCount === 0,
+      muted: inMotionMetric.muted,
     },
   ] satisfies Array<{
     label: string;

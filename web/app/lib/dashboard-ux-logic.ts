@@ -42,6 +42,31 @@ export type ActionableMomentumResult = {
   emptyAction: (WorkspaceAction & { actionLabel: string }) | null;
 };
 
+export type HomeMetricTone = "green" | "amber" | "blue" | "red" | "neutral";
+
+export type HomeMetricSummary = {
+  label: string;
+  value: number | string;
+  detail: string;
+  metricChangeLabel: string;
+  metricChangeTone: HomeMetricTone;
+  href: string;
+  muted: boolean;
+};
+
+export type HomeAICitationMetricInput = {
+  projectId: string;
+  citationGapCount: number;
+};
+
+export type HomeInMotionMetricInput = {
+  projectId: string;
+  analysisActionCount: number;
+  reviewDraftCount: number;
+  readyToPublishCount: number;
+  measuringActionCount: number;
+};
+
 export type HomeEventInput = {
   projectId: string;
   liveActivities?: Array<{
@@ -305,6 +330,65 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       href: `/projects/${input.projectId}/analysis`,
       actionLabel: "Review analysis",
     },
+  };
+}
+
+function plural(count: number, singular: string, pluralValue = `${singular}s`) {
+  return count === 1 ? singular : pluralValue;
+}
+
+export function homeAICitationMetric(input: HomeAICitationMetricInput): HomeMetricSummary {
+  const count = Math.max(0, input.citationGapCount);
+  return {
+    label: "AI citation gaps",
+    value: count > 0 ? count : "-",
+    detail: count > 0 ? `${count} ${plural(count, "finding")} ready in Analysis` : "No AI citation gaps detected",
+    metricChangeLabel: count > 0 ? "Review in Analysis" : "No open gaps",
+    metricChangeTone: count > 0 ? "green" : "neutral",
+    href: `/projects/${input.projectId}/analysis`,
+    muted: count === 0,
+  };
+}
+
+export function homeInMotionMetric(input: HomeInMotionMetricInput): HomeMetricSummary {
+  const analysisActionCount = Math.max(0, input.analysisActionCount);
+  const reviewDraftCount = Math.max(0, input.reviewDraftCount);
+  const readyToPublishCount = Math.max(0, input.readyToPublishCount);
+  const measuringActionCount = Math.max(0, input.measuringActionCount);
+  const value = analysisActionCount + reviewDraftCount + readyToPublishCount + measuringActionCount;
+  const detailParts = [
+    analysisActionCount > 0 && `${analysisActionCount} analysis ${plural(analysisActionCount, "action")} already in execution`,
+    reviewDraftCount > 0 && `${reviewDraftCount} ${plural(reviewDraftCount, "draft")} in review`,
+    readyToPublishCount > 0 && `${readyToPublishCount} ready to publish`,
+    measuringActionCount > 0 && `${measuringActionCount} measuring impact`,
+  ].filter(Boolean);
+  const href = analysisActionCount > 0
+    ? `/projects/${input.projectId}/analysis`
+    : reviewDraftCount > 0
+      ? `/projects/${input.projectId}/review`
+      : readyToPublishCount > 0
+        ? `/projects/${input.projectId}/publish`
+        : measuringActionCount > 0
+          ? `/projects/${input.projectId}/results`
+          : `/projects/${input.projectId}/analysis`;
+  const metricChangeLabel = analysisActionCount > 0
+    ? "View in Analysis"
+    : reviewDraftCount > 0
+      ? "Open Review"
+      : readyToPublishCount > 0
+        ? "Open Publish"
+        : measuringActionCount > 0
+          ? "View Results"
+          : "0 active now";
+
+  return {
+    label: "In motion",
+    value,
+    detail: detailParts.length ? detailParts.join(" / ") : "No active loop work",
+    metricChangeLabel,
+    metricChangeTone: value > 0 ? "blue" : "neutral",
+    href,
+    muted: value === 0,
   };
 }
 
