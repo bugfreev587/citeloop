@@ -53,3 +53,16 @@ test("SEO autopilot panel exposes Phase 5 guarded execution controls", async () 
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
 });
+
+test("Analysis page renders Phase 5 autopilot controls before advanced diagnostics", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const autopilotIndex = source.indexOf('title="Autopilot"');
+  const diagnosticsIndex = source.indexOf("Advanced diagnostics");
+
+  assert.notEqual(autopilotIndex, -1, "seo-client.tsx missing visible Autopilot section");
+  assert.notEqual(diagnosticsIndex, -1, "seo-client.tsx missing Advanced diagnostics section");
+  assert.ok(
+    autopilotIndex < diagnosticsIndex,
+    "Autopilot controls must render before Advanced diagnostics so they are visible on the Analysis page",
+  );
+});
