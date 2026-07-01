@@ -105,6 +105,38 @@ test("buildActionableMomentum turns non-zero metrics into actions", async () => 
   assert.equal(momentum.emptyAction, null);
 });
 
+test("home AI citation metric sends opportunity counts to Analysis", async () => {
+  const { homeAICitationMetric } = await loadDashboardUXLogicModule();
+
+  const metric = homeAICitationMetric({
+    projectId: "project_1",
+    citationGapCount: 1,
+  });
+
+  assert.equal(metric.label, "AI citation gaps");
+  assert.equal(metric.value, 1);
+  assert.equal(metric.detail, "1 finding ready in Analysis");
+  assert.equal(metric.metricChangeLabel, "Review in Analysis");
+  assert.equal(metric.href, "/projects/project_1/analysis");
+});
+
+test("home in-motion metric lands analysis actions on Analysis instead of Content Plan", async () => {
+  const { homeInMotionMetric } = await loadDashboardUXLogicModule();
+
+  const metric = homeInMotionMetric({
+    projectId: "project_1",
+    analysisActionCount: 4,
+    reviewDraftCount: 0,
+    readyToPublishCount: 0,
+    measuringActionCount: 0,
+  });
+
+  assert.equal(metric.value, 4);
+  assert.equal(metric.detail, "4 analysis actions already in execution");
+  assert.equal(metric.metricChangeLabel, "View in Analysis");
+  assert.equal(metric.href, "/projects/project_1/analysis");
+});
+
 test("buildHomeEventStream orders live work, recent events, then the next scheduled event", async () => {
   const { buildHomeEventStream } = await loadDashboardUXLogicModule();
 

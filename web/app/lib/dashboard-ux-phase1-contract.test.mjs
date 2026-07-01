@@ -764,6 +764,7 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
 
 test("home leads with linked metrics instead of hero or refresh-context prompts", () => {
   const workspace = read("projects/[id]/workspace.tsx");
+  const dashboardLogic = read("lib/dashboard-ux-logic.ts");
 
   for (const copy of [
     "metricGridCards",
@@ -772,7 +773,8 @@ test("home leads with linked metrics instead of hero or refresh-context prompts"
     "otherProjects",
     "primaryAction",
     "nextWorkspaceAction",
-    "AI citations",
+    "homeAICitationMetric",
+    "homeInMotionMetric",
     "Organic traffic",
     "Published pages",
     "In motion",
@@ -780,10 +782,14 @@ test("home leads with linked metrics instead of hero or refresh-context prompts"
     assert.match(workspace, new RegExp(copy));
   }
 
+  for (const copy of ["AI citation gaps", "Review in Analysis", "View in Analysis"]) {
+    assert.match(dashboardLogic, new RegExp(copy));
+  }
+
   for (const route of [
+    "href: `/projects/${projectId}/analysis`",
     "href: `/projects/${projectId}/results`",
     "href: `/projects/${projectId}/publish`",
-    "href: `/projects/${projectId}/plan`",
   ]) {
     assert.match(workspace, new RegExp(route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -829,6 +835,7 @@ test("home removes manual planning controls and secondary growth panels", () => 
 
 test("home growth metrics are first-viewport linked cards with honest change labels", () => {
   const workspace = read("projects/[id]/workspace.tsx");
+  const dashboardLogic = read("lib/dashboard-ux-logic.ts");
 
   for (const copy of [
     "metricGridCards",
@@ -836,16 +843,19 @@ test("home growth metrics are first-viewport linked cards with honest change lab
     "metricChangeTone",
     "featured",
     "MetricIcon",
-    "AI citations",
+    "homeAICitationMetric",
+    "homeInMotionMetric",
     "Organic traffic",
     "Published pages",
     "In motion",
     "Search Console connected",
     "this month",
-    "active now",
     "View",
   ]) {
     assert.match(workspace, new RegExp(copy));
+  }
+  for (const copy of ["AI citation gaps", "already in execution", "0 active now"]) {
+    assert.match(dashboardLogic, new RegExp(copy));
   }
 
   // The decorative hardcoded SVG growth curve is removed — no fake data on Home.
