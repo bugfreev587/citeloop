@@ -201,6 +201,7 @@ func TestShouldAttemptArticleRepairHonorsPersistentLoopState(t *testing.T) {
 
 func TestShouldAttemptArticleRepairReopensEditorRepairableHumanDecision(t *testing.T) {
 	malformed := db.Article{
+		RepairAttempts:        int32(maxDraftRepairAttempts),
 		QaBlocking:            true,
 		RequiresHumanDecision: true,
 		QaFeedback: toJSON(map[string]any{
@@ -217,7 +218,7 @@ func TestShouldAttemptArticleRepairReopensEditorRepairableHumanDecision(t *testi
 		}),
 	}
 	if !shouldAttemptArticleRepair(malformed, maxDraftRepairAttempts) {
-		t.Fatal("editor-repairable human-decision rows should be reopened for AI repair")
+		t.Fatal("editor-repairable human-decision rows should be reopened for AI repair, even after the old repair cap misrouted them")
 	}
 
 	positioning := db.Article{

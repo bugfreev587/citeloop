@@ -56,6 +56,9 @@ func TestArticleRepairQueriesAreProjectScopedAndBounded(t *testing.T) {
 	if !strings.Contains(startArticleRepairForProject, "repair_attempts < $3") {
 		t.Fatal("StartArticleRepairForProject must enforce a DB-level repair attempt cap")
 	}
+	if !strings.Contains(startArticleRepairForProject, "or $4::boolean") {
+		t.Fatal("StartArticleRepairForProject must support an explicit exhausted-editor-repair override")
+	}
 	if strings.Contains(startArticleRepairForProject, "and requires_human_decision = false") {
 		t.Fatal("StartArticleRepairForProject must let the caller reopen editor-repairable human-decision rows")
 	}
