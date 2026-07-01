@@ -56,8 +56,23 @@ func TestArticleRepairQueriesAreProjectScopedAndBounded(t *testing.T) {
 	if !strings.Contains(startArticleRepairForProject, "repair_attempts < $3") {
 		t.Fatal("StartArticleRepairForProject must enforce a DB-level repair attempt cap")
 	}
+	if strings.Contains(startArticleRepairForProject, "and requires_human_decision = false") {
+		t.Fatal("StartArticleRepairForProject must let the caller reopen editor-repairable human-decision rows")
+	}
 	if !strings.Contains(startArticleRepairForProject, "requires_human_decision = false") {
-		t.Fatal("StartArticleRepairForProject must not repair drafts already escalated to human decision")
+		t.Fatal("StartArticleRepairForProject must clear stale human-decision state when repair starts")
+	}
+	if !strings.Contains(startArticleRepairForProject, "human_decision_options = '[]'") {
+		t.Fatal("StartArticleRepairForProject must clear stale human decision options when repair starts")
+	}
+}
+
+func TestReviewRecoveryQueryCanReopenStaleHumanDecisions(t *testing.T) {
+	if strings.Contains(listRecoverableArticlesForProject, "and requires_human_decision = false") {
+		t.Fatal("ListRecoverableArticlesForProject must not exclude stale editor-repairable human-decision rows")
+	}
+	if !strings.Contains(listRecoverableArticlesForProject, "order by requires_human_decision asc") {
+		t.Fatal("ListRecoverableArticlesForProject must prioritize normal recovery rows before stale human-decision rows")
 	}
 }
 

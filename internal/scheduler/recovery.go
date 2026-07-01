@@ -99,6 +99,9 @@ func (s *Scheduler) recoverReviewForProject(ctx context.Context, p db.Project) e
 func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID uuid.UUID, art db.Article, cfg config.ProjectConfig) error {
 	// QA found a real non-editorial decision a human must make — hand it over.
 	if articleNeedsHuman(art) {
+		if art.RequiresHumanDecision {
+			return nil
+		}
 		return s.escalateArticle(ctx, q, projectID, art, "QA found a positioning decision that needs human judgment.")
 	}
 	if art.RecoveryAttempts >= maxReviewRecoveryAttempts {

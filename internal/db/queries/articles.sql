@@ -102,11 +102,12 @@ update articles set
   repair_attempts = repair_attempts + 1,
   last_repair_at = now(),
   repair_status = 'repairing',
-  repair_failure_reason = null
+  repair_failure_reason = null,
+  requires_human_decision = false,
+  human_decision_options = '[]'::jsonb
 where id = $1
   and project_id = $2
   and repair_attempts < $3
-  and requires_human_decision = false
 returning *;
 
 -- name: FinishArticleRepairForProject :one
@@ -257,8 +258,7 @@ select * from articles
 where project_id = $1
   and status = 'pending_review'
   and qa_blocking = true
-  and requires_human_decision = false
-order by created_at asc
+order by requires_human_decision asc, created_at asc
 limit $2;
 
 -- ListApprovableForProject lists pending_review drafts QA has cleared, for

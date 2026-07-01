@@ -199,6 +199,44 @@ func TestShouldAttemptArticleRepairHonorsPersistentLoopState(t *testing.T) {
 	}
 }
 
+func TestShouldAttemptArticleRepairReopensEditorRepairableHumanDecision(t *testing.T) {
+	malformed := db.Article{
+		QaBlocking:            true,
+		RequiresHumanDecision: true,
+		QaFeedback: toJSON(map[string]any{
+			"qa_blocking":     true,
+			"claims":          []map[string]any{{"claim": "Hosted OAuth reduces connection work", "mapped": true}},
+			"can_auto_fix":    false,
+			"blocking_reason": "Article is truncated mid-heading",
+			"fix_instructions": []string{
+				"Complete the dangling section using supported evidence, or remove the empty heading.",
+			},
+			"human_decision_options": []map[string]string{
+				{"label": "Article is truncated", "description": "Article ends abruptly at an empty heading."},
+			},
+		}),
+	}
+	if !shouldAttemptArticleRepair(malformed, maxDraftRepairAttempts) {
+		t.Fatal("editor-repairable human-decision rows should be reopened for AI repair")
+	}
+
+	positioning := db.Article{
+		QaBlocking:            true,
+		RequiresHumanDecision: true,
+		QaFeedback: toJSON(map[string]any{
+			"qa_blocking":  true,
+			"claims":       []map[string]any{{"claim": "UniPost helps teams ship faster", "mapped": true}},
+			"can_auto_fix": false,
+			"human_decision_options": []map[string]string{
+				{"label": "Choose positioning", "description": "Pick the approved positioning before publication."},
+			},
+		}),
+	}
+	if shouldAttemptArticleRepair(positioning, maxDraftRepairAttempts) {
+		t.Fatal("genuine human positioning decisions must stay out of AI repair")
+	}
+}
+
 func TestHumanDecisionOptionsExposeFixInstructionsForApplyFix(t *testing.T) {
 	options := humanDecisionOptions(&QAOutput{
 		QABlocking:      true,

@@ -137,6 +137,22 @@ func TestArticleNeedsHumanStillAllowsTruePositioningDecisions(t *testing.T) {
 	}
 }
 
+func TestReviewRecoverySkipsAlreadyEscalatedTrueHumanDecisions(t *testing.T) {
+	source, err := os.ReadFile("recovery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"if art.RequiresHumanDecision",
+		"return nil",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("recoverArticle must no-op already escalated genuine human decisions; missing %q", want)
+		}
+	}
+}
+
 func TestEscalationOptionsFiltersContextEvidenceChoices(t *testing.T) {
 	options := escalationOptions(mustTestJSON(t, map[string]any{
 		"human_decision_options": []map[string]string{

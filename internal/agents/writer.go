@@ -636,7 +636,13 @@ func draftNeedsRepair(out *WriterOutput, qa *QAOutput, qaErr error) bool {
 }
 
 func shouldAttemptArticleRepair(art db.Article, maxAttempts int) bool {
-	return !art.RequiresHumanDecision && art.RepairAttempts < int32(maxAttempts)
+	if art.RepairAttempts >= int32(maxAttempts) {
+		return false
+	}
+	if art.RequiresHumanDecision && !QAFeedbackCanAutoFix(art.QaFeedback, art.QaBlocking) {
+		return false
+	}
+	return true
 }
 
 func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool) {
