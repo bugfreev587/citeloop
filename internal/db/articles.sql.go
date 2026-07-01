@@ -2057,18 +2057,27 @@ update articles set
   human_decision_options = '[]'::jsonb
 where id = $1
   and project_id = $2
-  and repair_attempts < $3
+  and (
+    repair_attempts < $3
+    or $4::boolean
+  )
 returning id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id
 `
 
 type StartArticleRepairForProjectParams struct {
-	ID             uuid.UUID `json:"id"`
-	ProjectID      uuid.UUID `json:"project_id"`
-	RepairAttempts int32     `json:"repair_attempts"`
+	ID                         uuid.UUID `json:"id"`
+	ProjectID                  uuid.UUID `json:"project_id"`
+	RepairAttempts             int32     `json:"repair_attempts"`
+	AllowExhaustedEditorRepair bool      `json:"allow_exhausted_editor_repair"`
 }
 
 func (q *Queries) StartArticleRepairForProject(ctx context.Context, arg StartArticleRepairForProjectParams) (Article, error) {
-	row := q.db.QueryRow(ctx, startArticleRepairForProject, arg.ID, arg.ProjectID, arg.RepairAttempts)
+	row := q.db.QueryRow(ctx, startArticleRepairForProject,
+		arg.ID,
+		arg.ProjectID,
+		arg.RepairAttempts,
+		arg.AllowExhaustedEditorRepair,
+	)
 	var i Article
 	err := row.Scan(
 		&i.ID,

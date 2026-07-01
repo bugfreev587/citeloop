@@ -107,7 +107,10 @@ update articles set
   human_decision_options = '[]'::jsonb
 where id = $1
   and project_id = $2
-  and repair_attempts < $3
+  and (
+    repair_attempts < $3
+    or sqlc.arg(allow_exhausted_editor_repair)::boolean
+  )
 returning *;
 
 -- name: FinishArticleRepairForProject :one

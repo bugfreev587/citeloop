@@ -104,7 +104,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 		}
 		return s.escalateArticle(ctx, q, projectID, art, "QA found a positioning decision that needs human judgment.")
 	}
-	if art.RecoveryAttempts >= maxReviewRecoveryAttempts {
+	if art.RecoveryAttempts >= maxReviewRecoveryAttempts && !articleShouldBypassRecoveryBudget(art) {
 		return s.escalateArticle(ctx, q, projectID, art, "CiteLoop could not automatically produce a publishable draft after several attempts.")
 	}
 
@@ -114,7 +114,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	}
 
 	switch {
-	case articleCanAutoFix(claimed) && claimed.RepairAttempts < draftRepairBudget:
+	case articleCanAutoFix(claimed) && (claimed.RepairAttempts < draftRepairBudget || articleShouldBypassRecoveryBudget(claimed)):
 		// QA evaluated the draft and flagged a safe, editor-fixable issue.
 		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
 		updated, err := writer.RepairArticle(ctx, projectID, claimed.ID)
@@ -384,6 +384,10 @@ func articleCanAutoFix(art db.Article) bool {
 		return false
 	}
 	return parseRecoveryQA(art.QaFeedback).CanAutoFix || agents.QAFeedbackCanAutoFix(art.QaFeedback, art.QaBlocking)
+}
+
+func articleShouldBypassRecoveryBudget(art db.Article) bool {
+	return art.RequiresHumanDecision && articleCanAutoFix(art)
 }
 
 // articleNeedsHuman is true only when QA actually evaluated the draft and found

@@ -156,9 +156,10 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
 	}
 	started, err := w.Q.StartArticleRepairForProject(ctx, db.StartArticleRepairForProjectParams{
-		ID:             articleID,
-		ProjectID:      projectID,
-		RepairAttempts: maxDraftRepairAttempts,
+		ID:                         articleID,
+		ProjectID:                  projectID,
+		RepairAttempts:             maxDraftRepairAttempts,
+		AllowExhaustedEditorRepair: isEditorRepairableHumanDecision(art),
 	})
 	if err != nil {
 		return w.finishRepair(ctx, art, qa, "exhausted", "repair attempt limit reached", true)
@@ -636,13 +637,18 @@ func draftNeedsRepair(out *WriterOutput, qa *QAOutput, qaErr error) bool {
 }
 
 func shouldAttemptArticleRepair(art db.Article, maxAttempts int) bool {
-	if art.RepairAttempts >= int32(maxAttempts) {
+	editorRepairableHuman := isEditorRepairableHumanDecision(art)
+	if art.RepairAttempts >= int32(maxAttempts) && !editorRepairableHuman {
 		return false
 	}
-	if art.RequiresHumanDecision && !QAFeedbackCanAutoFix(art.QaFeedback, art.QaBlocking) {
+	if art.RequiresHumanDecision && !editorRepairableHuman {
 		return false
 	}
 	return true
+}
+
+func isEditorRepairableHumanDecision(art db.Article) bool {
+	return art.RequiresHumanDecision && QAFeedbackCanAutoFix(art.QaFeedback, art.QaBlocking)
 }
 
 func repairOutcome(qa *QAOutput, attempts int32, maxAttempts int) (string, bool) {
