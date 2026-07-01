@@ -91,6 +91,35 @@ func TestArticleNeedsHumanKeepsUnsupportedClaimsAutomated(t *testing.T) {
 	}
 }
 
+func TestArticleNeedsHumanKeepsMalformedContentAutomated(t *testing.T) {
+	art := db.Article{
+		QaBlocking: true,
+		QaFeedback: mustTestJSON(t, map[string]any{
+			"claims": []map[string]any{
+				{"claim": "Hosted OAuth flows reduce platform integration work", "mapped": true, "evidence": "profile"},
+			},
+			"can_auto_fix": false,
+			"fix_instructions": []string{
+				"Complete the dangling section using supported evidence, or remove the empty heading so the draft ends cleanly.",
+			},
+			"blocking_reason": "Article is truncated mid-heading",
+			"blocking_issues": []map[string]string{
+				{"code": "malformed_content", "severity": "blocking", "message": "Article ends with a dangling empty heading."},
+			},
+			"human_decision_options": []map[string]string{
+				{"label": "Article is truncated", "description": "Article body ends abruptly at a heading with no content under it."},
+			},
+		}),
+	}
+
+	if !articleCanAutoFix(art) {
+		t.Fatal("malformed content with editor instructions should enter AI editor repair")
+	}
+	if articleNeedsHuman(art) {
+		t.Fatal("malformed content with editor instructions should not be escalated to the user")
+	}
+}
+
 func TestArticleNeedsHumanStillAllowsTruePositioningDecisions(t *testing.T) {
 	art := db.Article{
 		QaBlocking: true,

@@ -416,10 +416,29 @@ func normalizeQAOutput(out QAOutput) QAOutput {
 	}
 	normalizeUnsupportedClaimFeedback(&out)
 	ensureActionableFixInstructions(&out)
+	normalizeEditorRepairableFeedback(&out)
 	if out.QABlocking && !out.CanAutoFix && len(out.HumanDecisionOptions) == 0 && out.BlockingReason == "" && len(out.BlockingIssues) == 0 {
 		out.CanAutoFix = true
 	}
 	return out
+}
+
+// QAFeedbackCanAutoFix reuses QA normalization for persisted QA feedback. Older
+// rows may have been stored before the model learned which blockers are editor
+// work, so scheduler recovery should classify them the same way fresh QA does.
+func QAFeedbackCanAutoFix(raw json.RawMessage, qaBlocking bool) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var out QAOutput
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return false
+	}
+	if qaBlocking {
+		out.QABlocking = true
+	}
+	out = normalizeQAOutput(out)
+	return out.QABlocking && out.CanAutoFix
 }
 
 func ensureActionableFixInstructions(out *QAOutput) {
@@ -444,6 +463,89 @@ func ensureActionableFixInstructions(out *QAOutput) {
 		parts = append(parts, "Resolve the blocking QA issue using only facts already supported by the project profile and draft evidence.")
 	}
 	out.FixInstructions = []string{"Revise the draft so it passes QA: " + strings.Join(parts, " ")}
+}
+
+func normalizeEditorRepairableFeedback(out *QAOutput) {
+	if out == nil || !out.QABlocking || out.CanAutoFix {
+		return
+	}
+	if !qaOutputLooksEditorRepairable(*out) {
+		return
+	}
+	out.CanAutoFix = true
+	out.HumanDecisionOptions = editorOnlyDecisionOptions(out.HumanDecisionOptions)
+}
+
+func qaOutputLooksEditorRepairable(out QAOutput) bool {
+	if !out.QABlocking {
+		return false
+	}
+	text := qaFeedbackText(out)
+	if !containsAny(text, editorRepairSignals()) {
+		return false
+	}
+	return len(out.FixInstructions) > 0 || containsAny(text, editorRepairActionSignals())
+}
+
+func qaFeedbackText(out QAOutput) string {
+	parts := []string{out.BlockingReason}
+	parts = append(parts, out.Issues...)
+	parts = append(parts, out.FixInstructions...)
+	for _, issue := range out.BlockingIssues {
+		parts = append(parts, issue.Code, issue.Severity, issue.Message, issue.Claim)
+	}
+	for _, option := range out.HumanDecisionOptions {
+		parts = append(parts, option.Label, option.Description)
+	}
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
+func editorRepairSignals() []string {
+	return []string{
+		"malformed",
+		"truncated",
+		"cut off",
+		"cut-off",
+		"dangling",
+		"empty heading",
+		"mid-heading",
+		"no body content",
+		"no content under",
+		"ends abruptly",
+		"incomplete article",
+		"missing required seo",
+		"required seo metadata",
+		"seo_meta",
+		"meta description",
+		"missing h1",
+		"missing title",
+		"missing slug",
+		"missing target_keyword",
+		"unclosed markdown",
+		"unclosed code fence",
+	}
+}
+
+func editorRepairActionSignals() []string {
+	return []string{
+		"add ",
+		"close ",
+		"complete ",
+		"insert ",
+		"remove ",
+		"revise ",
+		"rewrite ",
+		"replace ",
+	}
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeUnsupportedClaimFeedback(out *QAOutput) {
@@ -474,6 +576,9 @@ func editorOnlyDecisionOptions(options []HumanDecisionOption) []HumanDecisionOpt
 		if asksForContextOrEvidence(option.Label) || asksForContextOrEvidence(option.Description) {
 			continue
 		}
+		if asksForDraftRepair(option.Label) || asksForDraftRepair(option.Description) {
+			continue
+		}
 		kept = append(kept, option)
 	}
 	return kept
@@ -485,6 +590,31 @@ func asksForContextOrEvidence(s string) bool {
 		return false
 	}
 	for _, token := range []string{"context", "evidence", "profile", "source"} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func asksForDraftRepair(s string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	if normalized == "" {
+		return false
+	}
+	if containsAny(normalized, editorRepairSignals()) {
+		return true
+	}
+	for _, token := range []string{
+		"apply qa fix",
+		"edit draft",
+		"fix draft",
+		"fix the draft",
+		"rewrite draft",
+		"rewrite the draft",
+		"revise draft",
+		"revise the draft",
+	} {
 		if strings.Contains(normalized, token) {
 			return true
 		}

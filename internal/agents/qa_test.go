@@ -75,6 +75,35 @@ func TestExtractQAOutputTreatsUnsupportedClaimsAsAutoEditable(t *testing.T) {
 	}
 }
 
+func TestExtractQAOutputTreatsMalformedArticleAsAutoEditable(t *testing.T) {
+	raw := `{
+		"claims":[{"claim":"Hosted OAuth flows reduce per-platform connection work","mapped":true,"evidence":"profile"}],
+		"qa_blocking":true,
+		"geo_score":0.7,
+		"seo_score":0.8,
+		"issues":["The article is truncated mid-heading with no body content under '## Key Technical C'."],
+		"blocking_issues":[{"code":"malformed_content","severity":"blocking","message":"Article ends with a dangling empty heading."}],
+		"fix_instructions":["Complete the dangling section using supported evidence, or remove the empty heading so the draft ends cleanly."],
+		"human_decision_options":[{"label":"Article is truncated","description":"Article body ends abruptly at a heading with no content under it."}],
+		"blocking_reason":"Article is truncated mid-heading",
+		"can_auto_fix":false
+	}`
+
+	out, err := extractQAOutput(raw)
+	if err != nil {
+		t.Fatalf("extractQAOutput: %v", err)
+	}
+	if !out.QABlocking {
+		t.Fatal("malformed content should still block publication")
+	}
+	if !out.CanAutoFix {
+		t.Fatal("malformed content with an editor instruction should route to the AI editor")
+	}
+	if len(out.HumanDecisionOptions) != 0 {
+		t.Fatalf("editor-repairable content issues should not become human decision options, got %#v", out.HumanDecisionOptions)
+	}
+}
+
 func TestExtractQAOutputAddsActionableFixInstructionForBlockingComments(t *testing.T) {
 	raw := `{
 		"claims":[{"claim":"UniPost is a scheduling platform","mapped":true,"evidence":"profile"}],

@@ -377,7 +377,10 @@ func articleHasClaimMap(art db.Article) bool {
 }
 
 func articleCanAutoFix(art db.Article) bool {
-	return art.QaBlocking && parseRecoveryQA(art.QaFeedback).CanAutoFix
+	if !art.QaBlocking {
+		return false
+	}
+	return parseRecoveryQA(art.QaFeedback).CanAutoFix || agents.QAFeedbackCanAutoFix(art.QaFeedback, art.QaBlocking)
 }
 
 // articleNeedsHuman is true only when QA actually evaluated the draft and found
@@ -388,10 +391,10 @@ func articleNeedsHuman(art db.Article) bool {
 	if !art.QaBlocking {
 		return false
 	}
-	view := parseRecoveryQA(art.QaFeedback)
-	if view.CanAutoFix {
+	if articleCanAutoFix(art) {
 		return false
 	}
+	view := parseRecoveryQA(art.QaFeedback)
 	hasUnmapped := false
 	for _, c := range view.Claims {
 		if !c.Mapped {

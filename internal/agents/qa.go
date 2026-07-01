@@ -52,7 +52,8 @@ Blocking standards:
 - Do not block for style preferences, internal-link opportunities, non-critical SEO improvements, generic industry advice, minor paraphrases of the profile, or competitor-specific details that are not material product claims.
 - For unsupported claims, set can_auto_fix=true and instruct the editor to remove, rewrite, or generalize the claim using confirmed profile/evidence.
 - Every blocking issue must have an editor-actionable fix_instruction. If you cannot describe a draft edit that would pass QA, do not block unless it is a genuine human positioning decision.
-- can_auto_fix=false only for malformed content the editor cannot interpret or an explicit positioning choice that cannot be resolved by editing the draft.
+- For malformed or truncated content with an editor-actionable fix (for example completing or removing a dangling heading, closing an unclosed block, or adding missing required SEO metadata), set can_auto_fix=true and send the fix_instruction to the AI editor.
+- can_auto_fix=false only for content the editor cannot interpret safely or an explicit positioning choice that cannot be resolved by editing the draft.
 - human_decision_options must never include adding, fixing, or changing Context/evidence/profile/source material.
 
 PROFILE:
