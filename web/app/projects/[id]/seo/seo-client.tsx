@@ -1282,6 +1282,90 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </aside>
             </div>
           </section>
+
+          <section data-analysis-autopilot-visible>
+            <SectionHeader
+              title="Autopilot"
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={policy?.safe_mode_enabled || safeModes.some((event) => !event.exited_at) ? "amber" : "neutral"}>
+                    L{policy?.autopilot_level ?? 0}
+                  </Badge>
+                  <Button size="sm" onClick={generatePlan} disabled={!!busy}>
+                    <ButtonProgress busy={busy === "plan"} busyLabel="Generating plan" idleIcon={<BarChart3 size={14} />}>
+                      Plan
+                    </ButtonProgress>
+                  </Button>
+                  <Button size="sm" onClick={executeLatestPlan} disabled={!!busy || !latestPortfolioPlan || !readiness?.ready_for_level_2}>
+                    <ButtonProgress busy={busy === "execute-autopilot"} busyLabel="Executing" idleIcon={<CheckCircle2 size={14} />}>
+                      Execute guarded actions
+                    </ButtonProgress>
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={enterSafeMode} disabled={!!busy}>
+                    <ButtonProgress busy={busy === "safe-mode"} busyLabel="Enabling safe mode" idleIcon={<ShieldAlert size={14} />}>
+                      Safe mode
+                    </ButtonProgress>
+                  </Button>
+                </div>
+              }
+            />
+            <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-[1fr_1.4fr]">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-bold text-slate-900">Readiness</div>
+                  <Badge tone={readinessTone}>{readiness?.ready_for_level_2 ? "Ready for Level 2" : "Blocked gates"}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-slate-500">
+                  Level 2 only runs low-risk actions after policy, publisher, notification, budget, safe mode, kill switch, and recovery gates pass.
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Blocked gates</div>
+                {blockedReadinessGates.length > 0 ? (
+                  blockedReadinessGates.slice(0, 4).map((gate) => (
+                    <div key={gate.key} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-900">{gate.label}</span>
+                        <Badge tone={toneForSetupStatus(gate.status)}>{gate.status}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">{gate.next_action}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                    Ready for Level 2
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{objectives.length}</div>
+                <p className="mt-1 text-sm text-slate-500">Objectives</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{plans.length}</div>
+                <p className="mt-1 text-sm text-slate-500">Plans</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-bold text-slate-900">{safeModes.filter((event) => !event.exited_at).length}</div>
+                <p className="mt-1 text-sm text-slate-500">Open safe mode</p>
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-bold text-slate-900">Recovery plan</div>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Manual rollback required unless publisher rollback is available. Guarded execution records recovery metadata for every executed action.
+                  </p>
+                </div>
+                <Badge tone={executionResult?.executed_actions.length ? "green" : "neutral"}>
+                  {executionResult?.executed_actions.length ?? 0} executed
+                </Badge>
+              </div>
+            </div>
+          </section>
         </div>
 
         </>
@@ -1482,90 +1566,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="text-sm font-bold text-slate-900">{assetBriefs.length}</div>
                 <p className="mt-1 text-sm text-slate-500">Asset briefs</p>
-              </div>
-            </div>
-          </section>
-
-          <section data-analysis-autopilot-visible>
-            <SectionHeader
-              title="Autopilot"
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={policy?.safe_mode_enabled || safeModes.some((event) => !event.exited_at) ? "amber" : "neutral"}>
-                    L{policy?.autopilot_level ?? 0}
-                  </Badge>
-                  <Button size="sm" onClick={generatePlan} disabled={!!busy}>
-                    <ButtonProgress busy={busy === "plan"} busyLabel="Generating plan" idleIcon={<BarChart3 size={14} />}>
-                      Plan
-                    </ButtonProgress>
-                  </Button>
-                  <Button size="sm" onClick={executeLatestPlan} disabled={!!busy || !latestPortfolioPlan || !readiness?.ready_for_level_2}>
-                    <ButtonProgress busy={busy === "execute-autopilot"} busyLabel="Executing" idleIcon={<CheckCircle2 size={14} />}>
-                      Execute guarded actions
-                    </ButtonProgress>
-                  </Button>
-                  <Button size="sm" variant="danger" onClick={enterSafeMode} disabled={!!busy}>
-                    <ButtonProgress busy={busy === "safe-mode"} busyLabel="Enabling safe mode" idleIcon={<ShieldAlert size={14} />}>
-                      Safe mode
-                    </ButtonProgress>
-                  </Button>
-                </div>
-              }
-            />
-            <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-[1fr_1.4fr]">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-sm font-bold text-slate-900">Readiness</div>
-                  <Badge tone={readinessTone}>{readiness?.ready_for_level_2 ? "Ready for Level 2" : "Blocked gates"}</Badge>
-                </div>
-                <p className="mt-2 text-sm text-slate-500">
-                  Level 2 only runs low-risk actions after policy, publisher, notification, budget, safe mode, kill switch, and recovery gates pass.
-                </p>
-              </div>
-              <div className="grid gap-2">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Blocked gates</div>
-                {blockedReadinessGates.length > 0 ? (
-                  blockedReadinessGates.slice(0, 4).map((gate) => (
-                    <div key={gate.key} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold text-slate-900">{gate.label}</span>
-                        <Badge tone={toneForSetupStatus(gate.status)}>{gate.status}</Badge>
-                      </div>
-                      <p className="mt-1 text-xs leading-5 text-slate-500">{gate.next_action}</p>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
-                    Ready for Level 2
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-sm font-bold text-slate-900">{objectives.length}</div>
-                <p className="mt-1 text-sm text-slate-500">Objectives</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-sm font-bold text-slate-900">{plans.length}</div>
-                <p className="mt-1 text-sm text-slate-500">Plans</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-sm font-bold text-slate-900">{safeModes.filter((event) => !event.exited_at).length}</div>
-                <p className="mt-1 text-sm text-slate-500">Open safe mode</p>
-              </div>
-            </div>
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-bold text-slate-900">Recovery plan</div>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Manual rollback required unless publisher rollback is available. Guarded execution records recovery metadata for every executed action.
-                  </p>
-                </div>
-                <Badge tone={executionResult?.executed_actions.length ? "green" : "neutral"}>
-                  {executionResult?.executed_actions.length ?? 0} executed
-                </Badge>
               </div>
             </div>
           </section>
