@@ -56,13 +56,26 @@ test("SEO autopilot panel exposes Phase 5 guarded execution controls", async () 
 
 test("Analysis page renders Phase 5 autopilot controls before advanced diagnostics", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
-  const autopilotIndex = source.indexOf('title="Autopilot"');
+  const analysisBranchIndex = source.indexOf('{mode === "analysis" && (');
+  const resultsBranchIndex = source.indexOf('{mode === "results" && (');
+  const autopilotIndex = source.indexOf("data-analysis-autopilot-visible");
   const diagnosticsIndex = source.indexOf("Advanced diagnostics");
 
+  assert.notEqual(analysisBranchIndex, -1, "seo-client.tsx missing Analysis render branch");
+  assert.notEqual(resultsBranchIndex, -1, "seo-client.tsx missing Results render branch");
   assert.notEqual(autopilotIndex, -1, "seo-client.tsx missing visible Autopilot section");
   assert.notEqual(diagnosticsIndex, -1, "seo-client.tsx missing Advanced diagnostics section");
+  assert.equal(
+    source.match(/data-analysis-autopilot-visible/g)?.length ?? 0,
+    1,
+    "visible Analysis Autopilot section should render only once",
+  );
+  assert.ok(
+    analysisBranchIndex < autopilotIndex && autopilotIndex < resultsBranchIndex,
+    "Autopilot controls must render inside the Analysis branch, before the Results branch starts",
+  );
   assert.ok(
     autopilotIndex < diagnosticsIndex,
-    "Autopilot controls must render before Advanced diagnostics so they are visible on the Analysis page",
+    "Autopilot controls must render before Advanced diagnostics so they are visible by default",
   );
 });
