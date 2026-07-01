@@ -6,6 +6,8 @@ import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldA
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
+  AutopilotExecuteResult,
+  AutopilotReadiness,
   GEOAssetBrief,
   GEOCompetitor,
   GEOOverview,
@@ -495,6 +497,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [actions, setActions] = useState<SEOContentAction[]>([]);
   const [resultsActions, setResultsActions] = useState<ResultsAction[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
+  const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
+  const [executionResult, setExecutionResult] = useState<AutopilotExecuteResult | null>(null);
   const [objectives, setObjectives] = useState<SEOObjective[]>([]);
   const [plans, setPlans] = useState<SEOActionPlan[]>([]);
   const [safeModes, setSafeModes] = useState<SafeModeEvent[]>([]);
@@ -529,7 +533,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, summaryData, settings, briefData, opps, actionRows, resultsRows, policyData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
+      const [overviewData, summaryData, settings, briefData, opps, actionRows, resultsRows, policyData, readinessData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
         api.getSEOSettings(projectId),
@@ -538,6 +542,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.listSEOContentActions(projectId, { limit: 50 }),
         api.listResultsActions(projectId, { limit: 50 }),
         api.getSEOPolicy(projectId),
+        api.getAutopilotReadiness(projectId),
         api.listSEOObjectives(projectId),
         api.listAutopilotPlans(projectId),
         api.listSafeModeEvents(projectId),
@@ -552,6 +557,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setActions(actionRows);
       setResultsActions(resultsRows);
       setPolicy(policyData);
+      setReadiness(readinessData);
       setObjectives(objectiveRows);
       setPlans(planRows);
       setSafeModes(safeModeRows);
@@ -652,6 +658,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
+  const readinessGates = readiness?.gates ?? [];
+  const blockedReadinessGates = readinessGates.filter((gate) => gate.blocking);
+  const readinessTone = readiness?.ready_for_level_2 ? "green" : readiness ? "amber" : "neutral";
+  const latestRecoveryPlans = executionResult?.recovery_plans ?? [];
   const summaryLoopActions = visibilitySummary?.actions_in_loop ?? [];
   const summaryLoopActionIds = new Set(summaryLoopActions.map((action) => action.id));
   const loopActions = [
@@ -1046,6 +1056,26 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setMessage({ title: "Autopilot plan generated", detail: `${result.plan?.actions?.length ?? 0} actions selected`, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not generate autopilot plan", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function executeLatestPlan() {
+    if (!latestPortfolioPlan) return;
+    setBusy("execute-autopilot");
+    setMessage(null);
+    try {
+      const result = await api.executeAutopilotPlan(projectId, latestPortfolioPlan.id);
+      setExecutionResult(result);
+      await refresh();
+      setMessage({
+        title: "Guarded execution complete",
+        detail: `${result.executed_actions.length} executed; ${result.deferred_actions.length} deferred`,
+        tone: result.executed_actions.length > 0 ? "green" : "amber",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Could not execute guarded actions", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -1910,6 +1940,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   Plan
                 </ButtonProgress>
               </Button>
+              <Button size="sm" onClick={executeLatestPlan} disabled={!!busy || !latestPortfolioPlan || !readiness?.ready_for_level_2}>
+                <ButtonProgress busy={busy === "execute-autopilot"} busyLabel="Executing" idleIcon={<CheckCircle2 size={14} />}>
+                  Execute guarded actions
+                </ButtonProgress>
+              </Button>
               <Button size="sm" variant="danger" onClick={enterSafeMode} disabled={!!busy}>
                 <ButtonProgress busy={busy === "safe-mode"} busyLabel="Enabling safe mode" idleIcon={<ShieldAlert size={14} />}>
                   Safe mode
@@ -1918,6 +1953,35 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             </div>
           }
         />
+        <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-[1fr_1.4fr]">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-sm font-bold text-slate-900">Readiness</div>
+              <Badge tone={readinessTone}>{readiness?.ready_for_level_2 ? "Ready for Level 2" : "Blocked gates"}</Badge>
+            </div>
+            <p className="mt-2 text-sm text-slate-500">
+              Level 2 only runs low-risk actions after policy, publisher, notification, budget, safe mode, kill switch, and recovery gates pass.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Blocked gates</div>
+            {blockedReadinessGates.length > 0 ? (
+              blockedReadinessGates.slice(0, 4).map((gate) => (
+                <div key={gate.key} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900">{gate.label}</span>
+                    <Badge tone={toneForSetupStatus(gate.status)}>{gate.status}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">{gate.next_action}</p>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                Ready for Level 2
+              </div>
+            )}
+          </div>
+        </div>
         <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 md:grid-cols-4">
           <Field label="Level">
             <TextInput
@@ -2005,6 +2069,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       </div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">{action.recommended_action ?? action.type}</div>
                       <div className="mt-1 text-xs text-slate-500">Measurement: {measurementLabel(action.measurement_schedule)}</div>
+                      <div className="mt-1 text-xs text-slate-500">Recovery plan: Manual rollback required unless publisher rollback is available.</div>
                     </div>
                   ))}
                   {selectedPortfolioActions(latestPortfolioPlan).length === 0 && (
@@ -2031,6 +2096,30 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+        {executionResult && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-bold text-slate-900">Recovery plan</div>
+                <p className="mt-1 text-sm text-slate-500">Guarded execution attached rollback or manual recovery metadata to each executed action.</p>
+              </div>
+              <Badge tone={executionResult.executed_actions.length > 0 ? "green" : "amber"}>
+                {executionResult.executed_actions.length} executed
+              </Badge>
+            </div>
+            <div className="mt-3 grid gap-2 text-sm text-slate-600">
+              {latestRecoveryPlans.slice(0, 3).map((plan, index) => (
+                <div key={`${plan.action_id ?? index}`} className="rounded-md border border-slate-200 px-3 py-2">
+                  <div className="font-semibold text-slate-900">
+                    {plan.manual_rollback_required ? "Manual rollback required" : "Publisher rollback available"}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{Array.isArray(plan.recovery_plan) ? plan.recovery_plan[0] : "Recovery plan recorded."}</div>
+                </div>
+              ))}
+              {latestRecoveryPlans.length === 0 && <div className="text-sm text-slate-500">No executed recovery plans in the latest run.</div>}
             </div>
           </div>
         )}
