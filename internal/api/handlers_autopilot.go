@@ -9,10 +9,58 @@ import (
 	"github.com/citeloop/citeloop/internal/autopilot"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/publisher"
+	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type AutopilotReadinessGate struct {
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	NextAction string `json:"next_action"`
+	Blocking   bool   `json:"blocking"`
+}
+
+type AutopilotReadiness struct {
+	ReadyForLevel2        bool                     `json:"ready_for_level_2"`
+	AutopilotLevel        int32                    `json:"autopilot_level"`
+	DerivedMode           string                   `json:"derived_mode"`
+	SafeModeActive        bool                     `json:"safe_mode_active"`
+	KillSwitchEnabled     bool                     `json:"kill_switch_enabled"`
+	FailedGates           []string                 `json:"failed_gates"`
+	Gates                 []AutopilotReadinessGate `json:"gates"`
+	PublisherCapabilities map[string]bool          `json:"publisher_capabilities"`
+	LowRiskActionTypes    []string                 `json:"low_risk_action_types"`
+	GeneratedAt           time.Time                `json:"generated_at"`
+}
+
+type AutopilotPlanAction struct {
+	OpportunityID       string         `json:"opportunity_id"`
+	Type                string         `json:"type"`
+	RecommendedAction   *string        `json:"recommended_action"`
+	ActionBucket        string         `json:"action_bucket"`
+	AssetType           *string        `json:"asset_type"`
+	RiskLevel           string         `json:"risk_level"`
+	RiskReasons         []string       `json:"risk_reasons"`
+	ClassifierVersion   string         `json:"classifier_version"`
+	AutoPublishAllowed  bool           `json:"auto_publish_allowed"`
+	ReviewRequired      bool           `json:"review_required"`
+	MeasurementSchedule map[string]any `json:"measurement_schedule"`
+}
+
+type AutopilotExecuteResult struct {
+	Plan            db.SeoActionPlan   `json:"plan"`
+	ExecutedActions []db.ContentAction `json:"executed_actions"`
+	DeferredActions []map[string]any   `json:"deferred_actions"`
+	Readiness       AutopilotReadiness `json:"readiness"`
+	GuardrailResult []map[string]any   `json:"guardrail_results"`
+	RecoveryPlans   []map[string]any   `json:"recovery_plans"`
+	GeneratedAt     time.Time          `json:"generated_at"`
+}
 
 func (s *Server) listSEOObjectives(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
@@ -187,6 +235,20 @@ func (s *Server) updateSEOPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, policy)
 }
 
+func (s *Server) getAutopilotReadiness(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	readiness, err := s.autopilotReadiness(r, projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, readiness)
+}
+
 func (s *Server) generateAutopilotPlan(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -271,6 +333,68 @@ func (s *Server) generateAutopilotPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"run": run, "plan": plan})
 }
 
+func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (AutopilotReadiness, error) {
+	policy, err := s.ensureSEOPolicy(r, projectID)
+	if err != nil {
+		return AutopilotReadiness{}, err
+	}
+	overview, err := s.seoService().Overview(r.Context(), projectID)
+	if err != nil {
+		return AutopilotReadiness{}, err
+	}
+	publisherConnections, err := s.Q.ListPublisherConnections(r.Context(), projectID)
+	if err != nil {
+		return AutopilotReadiness{}, err
+	}
+	notificationChannels, err := s.Q.ListNotificationChannels(r.Context(), projectID)
+	if err != nil {
+		return AutopilotReadiness{}, err
+	}
+	safeModeActive := policy.SafeModeEnabled
+	if _, err := s.Q.GetOpenSafeModeEvent(r.Context(), projectID); err == nil {
+		safeModeActive = true
+	} else if err != pgx.ErrNoRows {
+		return AutopilotReadiness{}, err
+	}
+
+	searchReady := checklistStatus(overview.SetupChecklist, "search_data") == "connected"
+	publisherReady := checklistStatus(overview.SetupChecklist, "publisher_write") == "connected"
+	notificationReady, notificationStatus := verifiedNotificationChannelStatus(notificationChannels)
+	policyConfirmed := policy.AutopilotLevel >= 2
+	budgetConfigured := pgutil.Float(policy.MonthlyBudgetLimit) > 0
+	capabilities := activePublisherCapabilities(publisherConnections)
+	rollbackOrRecoveryReady := publisherReady && (capabilities[publisher.CapabilityRollback] || manualRecoverySupported(publisherConnections))
+
+	gates := []AutopilotReadinessGate{
+		readinessGate("search_read", "Search data", searchReady, "First-party Search Console data is required before Level 2 can execute SEO changes.", "Connect Search Console or keep Autopilot below Level 2."),
+		readinessGate("publisher_write", "Publisher write", publisherReady, "A connected, enabled publisher with scoped credentials is required before Autopilot can create or update content.", "Connect and test the GitHub/Next.js publisher."),
+		readinessGateWithStatus("notification_write", "Notifications", notificationReady, notificationStatus, "Verified notifications are required so failures and approval needs reach the operator.", "Create and test a Slack or Discord notification channel."),
+		readinessGate("autopilot_policy_confirmed", "Policy confirmed", policyConfirmed, "Level 2 requires an explicit policy level so CiteLoop knows which low-risk actions may run.", "Set Autopilot level to 2 after reviewing limits and risk thresholds."),
+		readinessGate("monthly_budget_configured", "Monthly budget", budgetConfigured, "A project-level budget cap is required before automated execution can spend variable cost.", "Set a monthly Autopilot budget greater than 0."),
+		readinessGate("safe_mode_clear", "Safe mode clear", !safeModeActive, "Open safe mode blocks all automatic execution.", "Resolve the safe mode reason, then exit safe mode."),
+		readinessGate("kill_switch_clear", "Kill switch clear", !policy.KillSwitchEnabled, "The kill switch is enabled and blocks Level 2 execution.", "Turn off the kill switch only when you are ready to resume automation."),
+		readinessGate("rollback_or_recovery_ready", "Rollback or recovery ready", rollbackOrRecoveryReady, "Every Level 2 action must have publisher rollback support or a manual recovery plan.", "Connect a publisher so CiteLoop can attach manual_rollback_required recovery instructions."),
+	}
+	failed := make([]string, 0)
+	for _, gate := range gates {
+		if gate.Blocking {
+			failed = append(failed, gate.Key)
+		}
+	}
+	return AutopilotReadiness{
+		ReadyForLevel2:        len(failed) == 0,
+		AutopilotLevel:        policy.AutopilotLevel,
+		DerivedMode:           derivedMode(policy.AutopilotLevel),
+		SafeModeActive:        safeModeActive,
+		KillSwitchEnabled:     policy.KillSwitchEnabled,
+		FailedGates:           failed,
+		Gates:                 gates,
+		PublisherCapabilities: capabilities,
+		LowRiskActionTypes:    lowRiskActionTypes(),
+		GeneratedAt:           time.Now().UTC(),
+	}, nil
+}
+
 func (s *Server) listAutopilotPlans(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -283,6 +407,116 @@ func (s *Server) listAutopilotPlans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptySlice(plans))
+}
+
+func (s *Server) executeAutopilotPlan(w http.ResponseWriter, r *http.Request) {
+	projectID, planID, ok := s.seoIDs(w, r, "planID")
+	if !ok {
+		return
+	}
+	plan, err := s.Q.GetSEOActionPlanForProject(r.Context(), db.GetSEOActionPlanForProjectParams{ID: planID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "autopilot plan not found")
+		return
+	}
+	readiness, err := s.autopilotReadiness(r, projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !readiness.ReadyForLevel2 {
+		blocked, _ := s.Q.UpdateSEOActionPlanStatus(r.Context(), db.UpdateSEOActionPlanStatusParams{ID: plan.ID, ProjectID: projectID, Status: "blocked"})
+		if blocked.ID != uuid.Nil {
+			plan = blocked
+		}
+		// records autopilot_audit_events: policy_not_ready blocks guarded execution before any write.
+		_, _ = s.Q.InsertAutopilotAuditEvent(r.Context(), db.InsertAutopilotAuditEventParams{
+			ProjectID:      projectID,
+			Actor:          "autopilot",
+			EventType:      "autopilot_execute_blocked",
+			EntityType:     "seo_action_plan",
+			EntityID:       uuidToPGLocal(plan.ID),
+			BeforeSnapshot: mustJSONLocal(map[string]any{"status": plan.Status}),
+			AfterSnapshot:  mustJSONLocal(map[string]any{"reason": "policy_not_ready", "failed_gates": readiness.FailedGates}),
+		})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "policy_not_ready", "plan": plan, "readiness": readiness})
+		return
+	}
+
+	actions := selectedAutopilotPlanActions(plan.Actions)
+	policy, err := s.ensureSEOPolicy(r, projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	executed := make([]db.ContentAction, 0)
+	deferred := make([]map[string]any, 0)
+	guardrailResults := make([]map[string]any, 0, len(actions))
+	recoveryPlans := make([]map[string]any, 0)
+
+	for _, candidate := range actions {
+		allowed, reason := candidateAllowedForExecution(candidate, policy, readiness.PublisherCapabilities)
+		guardrail := map[string]any{
+			"opportunity_id":       candidate.OpportunityID,
+			"auto_publish_allowed": candidate.AutoPublishAllowed,
+			"risk_level":           candidate.RiskLevel,
+			"action_bucket":        candidate.ActionBucket,
+			"publisher_capability": requiredPublisherCapability(candidate.ActionBucket),
+			"status":               "passed",
+		}
+		if !allowed {
+			guardrail["status"] = "blocked"
+			guardrail["reason"] = reason
+			deferred = append(deferred, map[string]any{
+				"opportunity_id": candidate.OpportunityID,
+				"reason":         reason,
+				"action_bucket":  candidate.ActionBucket,
+			})
+			guardrailResults = append(guardrailResults, guardrail)
+			s.auditAutopilotAction(r, projectID, plan.ID, "autopilot_action_deferred", map[string]any{"candidate": candidate, "reason": reason})
+			continue
+		}
+		action, err := s.executeAutopilotCandidate(r, projectID, plan.ID, candidate, guardrail, now)
+		if err != nil {
+			guardrail["status"] = "blocked"
+			guardrail["reason"] = err.Error()
+			deferred = append(deferred, map[string]any{
+				"opportunity_id": candidate.OpportunityID,
+				"reason":         err.Error(),
+				"action_bucket":  candidate.ActionBucket,
+			})
+			guardrailResults = append(guardrailResults, guardrail)
+			s.auditAutopilotAction(r, projectID, plan.ID, "autopilot_action_deferred", map[string]any{"candidate": candidate, "reason": err.Error()})
+			continue
+		}
+		executed = append(executed, action)
+		guardrailResults = append(guardrailResults, guardrail)
+		recoveryPlans = append(recoveryPlans, map[string]any{
+			"action_id":                action.ID,
+			"manual_rollback_required": !readiness.PublisherCapabilities[publisher.CapabilityRollback],
+			"recovery_plan":            manualRecoveryPlan(candidate),
+		})
+		s.auditAutopilotAction(r, projectID, action.ID, "autopilot_action_executed", map[string]any{"candidate": candidate, "action_id": action.ID})
+	}
+
+	status := "blocked"
+	if len(executed) > 0 {
+		status = "executing"
+	}
+	updated, err := s.Q.UpdateSEOActionPlanStatus(r.Context(), db.UpdateSEOActionPlanStatusParams{ID: plan.ID, ProjectID: projectID, Status: status})
+	if err == nil {
+		plan = updated
+	}
+	writeJSON(w, http.StatusOK, AutopilotExecuteResult{
+		Plan:            plan,
+		ExecutedActions: executed,
+		DeferredActions: deferred,
+		Readiness:       readiness,
+		GuardrailResult: guardrailResults,
+		RecoveryPlans:   recoveryPlans,
+		GeneratedAt:     now,
+	})
 }
 
 func (s *Server) enterSafeMode(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +594,266 @@ func (s *Server) listSafeModeEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptySlice(events))
+}
+
+func readinessGate(key, label string, passed bool, reason, nextAction string) AutopilotReadinessGate {
+	status := "connected"
+	if !passed {
+		status = "blocked"
+	}
+	return readinessGateWithStatus(key, label, passed, status, reason, nextAction)
+}
+
+func readinessGateWithStatus(key, label string, passed bool, status, reason, nextAction string) AutopilotReadinessGate {
+	return AutopilotReadinessGate{
+		Key:        key,
+		Label:      label,
+		Status:     status,
+		Reason:     reason,
+		NextAction: nextAction,
+		Blocking:   !passed,
+	}
+}
+
+func checklistStatus(items []seopkg.SetupChecklistItem, key string) string {
+	for _, item := range items {
+		if item.Key == key {
+			return item.Status
+		}
+	}
+	return ""
+}
+
+func verifiedNotificationChannelStatus(channels []db.NotificationChannel) (bool, string) {
+	if len(channels) == 0 {
+		return false, "blocked"
+	}
+	for _, channel := range channels {
+		if channel.VerifiedAt.Valid {
+			return true, "connected"
+		}
+	}
+	return false, "in_progress"
+}
+
+func activePublisherCapabilities(connections []db.PublisherConnection) map[string]bool {
+	capabilities := map[string]bool{}
+	for _, connection := range connections {
+		if connection.Kind != publisher.ConnectionKindGitHubNextJS || connection.Status != "connected" || !connection.Enabled {
+			continue
+		}
+		var parsed map[string]bool
+		if err := json.Unmarshal(connection.Capabilities, &parsed); err != nil {
+			continue
+		}
+		for key, value := range parsed {
+			capabilities[key] = capabilities[key] || value
+		}
+	}
+	return capabilities
+}
+
+func manualRecoverySupported(connections []db.PublisherConnection) bool {
+	for _, connection := range connections {
+		if connection.Kind == publisher.ConnectionKindGitHubNextJS && connection.Status == "connected" && connection.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func lowRiskActionTypes() []string {
+	return []string{
+		"metadata rewrite",
+		"add internal links",
+		"refresh short paragraph with existing evidence",
+		"create supporting article draft",
+		"submit sitemap",
+		"rerun GEO observation",
+	}
+}
+
+func selectedAutopilotPlanActions(raw json.RawMessage) []AutopilotPlanAction {
+	var doc struct {
+		SelectedActions []AutopilotPlanAction `json:"selected_actions"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &doc) != nil {
+		return []AutopilotPlanAction{}
+	}
+	return doc.SelectedActions
+}
+
+func candidateAllowedForExecution(candidate AutopilotPlanAction, policy db.SeoPolicy, capabilities map[string]bool) (bool, string) {
+	if !candidate.AutoPublishAllowed {
+		return false, "auto_publish_not_allowed"
+	}
+	if strings.ToLower(strings.TrimSpace(candidate.RiskLevel)) != string(autopilot.RiskLow) {
+		return false, "risk_requires_review"
+	}
+	if !policyAllowsAction(policy.AllowedActionTypes, candidate) {
+		return false, "policy_action_type_not_allowed"
+	}
+	required := requiredPublisherCapability(candidate.ActionBucket)
+	if required != "" && !capabilities[required] {
+		return false, "publisher_capability_missing"
+	}
+	return true, "allowed"
+}
+
+func policyAllowsAction(raw json.RawMessage, candidate AutopilotPlanAction) bool {
+	allowed := stringListFromRaw(raw)
+	if len(allowed) == 0 {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(candidate.ActionBucket + " " + valueOr(candidate.RecommendedAction, candidate.Type)))
+	for _, item := range allowed {
+		normalized := strings.ToLower(strings.TrimSpace(item))
+		if normalized == "" {
+			continue
+		}
+		if strings.Contains(text, normalized) || actionSynonymAllowed(normalized, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func actionSynonymAllowed(allowed, text string) bool {
+	switch allowed {
+	case "metadata rewrite":
+		return strings.Contains(text, "title") || strings.Contains(text, "meta")
+	case "technical seo fix task":
+		return strings.Contains(text, "sitemap") || strings.Contains(text, "structured") || strings.Contains(text, "schema")
+	case "submit sitemap":
+		return strings.Contains(text, "sitemap")
+	default:
+		return false
+	}
+}
+
+func requiredPublisherCapability(actionBucket string) string {
+	switch strings.ToLower(strings.TrimSpace(actionBucket)) {
+	case "rewrite title/meta":
+		return publisher.CapabilityMetadataUpdate
+	case "add internal links", "refresh existing page":
+		return publisher.CapabilityUpdateArticle
+	case "create new asset":
+		return publisher.CapabilityCreateArticle
+	case "submit/update sitemap":
+		return publisher.CapabilityPublishMode
+	default:
+		return publisher.CapabilityCreateArticle
+	}
+}
+
+func stringListFromRaw(raw json.RawMessage) []string {
+	var values []string
+	if len(raw) == 0 || json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	return values
+}
+
+func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uuid.UUID, candidate AutopilotPlanAction, guardrail map[string]any, now time.Time) (db.ContentAction, error) {
+	opportunityID, err := uuid.Parse(strings.TrimSpace(candidate.OpportunityID))
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: opportunityID, ProjectID: projectID})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	actionType := strings.TrimSpace(valueOr(candidate.RecommendedAction, candidate.Type))
+	if actionType == "" {
+		actionType = candidate.ActionBucket
+	}
+	assetTypeValue := ""
+	if candidate.AssetType != nil {
+		assetTypeValue = strings.TrimSpace(*candidate.AssetType)
+	}
+	targetHash := (*string)(nil)
+	if opp.ArticleID.Valid {
+		article, err := s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{
+			ID:        uuid.UUID(opp.ArticleID.Bytes),
+			ProjectID: projectID,
+		})
+		if err == nil {
+			targetHash = article.ContentHash
+		}
+	}
+	action, err := s.Q.CreateContentAction(r.Context(), db.CreateContentActionParams{
+		ProjectID:               projectID,
+		OpportunityID:           opp.ID,
+		ActionType:              actionType,
+		Status:                  "approved",
+		TargetArticleID:         opp.ArticleID,
+		TargetUrl:               opp.PageUrl,
+		NormalizedTargetUrl:     strPtrFrom(opp.NormalizedPageUrl),
+		TargetContentHashBefore: targetHash,
+		BaselineWindow:          json.RawMessage(`{"days":28}`),
+		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	approvedBy := "autopilot"
+	action, err = s.Q.UpdateContentActionExecutionMetadata(r.Context(), db.UpdateContentActionExecutionMetadataParams{
+		ID:               action.ID,
+		ProjectID:        projectID,
+		AssetType:        candidate.AssetType,
+		RiskReasons:      mustJSONLocal(candidate.RiskReasons),
+		EvidenceSnapshot: contentActionEvidenceSnapshot(nil, opp),
+		InputSnapshot: mustJSONLocal(map[string]any{
+			"source":         "guarded_autopilot",
+			"plan_id":        planID,
+			"opportunity_id": opp.ID,
+			"action_bucket":  candidate.ActionBucket,
+		}),
+		OutputSnapshot: mustJSONLocal(map[string]any{
+			"guardrail_results": []map[string]any{guardrail},
+			"publisher_capability": map[string]any{
+				"required": requiredPublisherCapability(candidate.ActionBucket),
+			},
+		}),
+		DiffSnapshot: mustJSONLocal(map[string]any{
+			"manual_rollback_required": true,
+			"recovery_plan":            manualRecoveryPlan(candidate),
+			"diff_source":              "guarded_autopilot_plan",
+		}),
+		ReviewRequired:       false,
+		ApprovedBy:           &approvedBy,
+		ApprovedAt:           pgutil.TS(now),
+		VerificationSnapshot: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	_, _ = s.Q.UpdateSEOOpportunityStatus(r.Context(), db.UpdateSEOOpportunityStatusParams{ID: opp.ID, ProjectID: projectID, Status: "converted"})
+	return action, nil
+}
+
+func manualRecoveryPlan(candidate AutopilotPlanAction) []string {
+	action := strings.TrimSpace(valueOr(candidate.RecommendedAction, candidate.Type))
+	if action == "" {
+		action = candidate.ActionBucket
+	}
+	return []string{
+		"Open the publisher repository or CMS change created for this action.",
+		"Revert the metadata or content diff tied to: " + action + ".",
+		"Re-run CiteLoop publish verification after rollback.",
+	}
+}
+
+func (s *Server) auditAutopilotAction(r *http.Request, projectID, entityID uuid.UUID, eventType string, snapshot map[string]any) {
+	_, _ = s.Q.InsertAutopilotAuditEvent(r.Context(), db.InsertAutopilotAuditEventParams{
+		ProjectID:      projectID,
+		Actor:          "autopilot",
+		EventType:      eventType,
+		EntityType:     "content_action",
+		EntityID:       uuidToPGLocal(entityID),
+		BeforeSnapshot: json.RawMessage(`{}`),
+		AfterSnapshot:  mustJSONLocal(snapshot),
+	})
 }
 
 func (s *Server) ensureSEOPolicy(r *http.Request, projectID uuid.UUID) (db.SeoPolicy, error) {

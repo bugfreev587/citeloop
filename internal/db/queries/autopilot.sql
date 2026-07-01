@@ -93,6 +93,17 @@ where project_id = $1
 order by created_at desc
 limit $2;
 
+-- name: GetSEOActionPlanForProject :one
+select * from seo_action_plans
+where id = $1 and project_id = $2;
+
+-- name: UpdateSEOActionPlanStatus :one
+update seo_action_plans set
+  status = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
 -- name: EnterSafeMode :one
 insert into safe_mode_events
   (project_id, reason, trigger_source, entered_by, related_run_id, related_action_id)

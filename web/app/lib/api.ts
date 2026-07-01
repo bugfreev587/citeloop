@@ -638,6 +638,47 @@ export type SafeModeEvent = {
   exited_at?: any;
 };
 
+export type AutopilotReadinessGate = {
+  key:
+    | "search_read"
+    | "publisher_write"
+    | "notification_write"
+    | "autopilot_policy_confirmed"
+    | "monthly_budget_configured"
+    | "safe_mode_clear"
+    | "kill_switch_clear"
+    | "rollback_or_recovery_ready"
+    | string;
+  label: string;
+  status: "connected" | "in_progress" | "blocked" | "optional" | string;
+  reason: string;
+  next_action: string;
+  blocking: boolean;
+};
+
+export type AutopilotReadiness = {
+  ready_for_level_2: boolean;
+  autopilot_level: number;
+  derived_mode: string;
+  safe_mode_active: boolean;
+  kill_switch_enabled: boolean;
+  failed_gates: string[];
+  gates: AutopilotReadinessGate[];
+  publisher_capabilities: Record<string, boolean>;
+  low_risk_action_types: string[];
+  generated_at?: any;
+};
+
+export type AutopilotExecuteResult = {
+  plan: SEOActionPlan;
+  executed_actions: SEOContentAction[];
+  deferred_actions: Array<Record<string, any>>;
+  readiness: AutopilotReadiness;
+  guardrail_results: Array<Record<string, any>>;
+  recovery_plans: Array<Record<string, any>>;
+  generated_at?: any;
+};
+
 export type AICrawlerAccessSnapshot = {
   id: string;
   project_id: string;
@@ -2080,6 +2121,9 @@ export function createApi(auth?: AuthOptions) {
   updateSEOPolicy: async (id: string, body: Partial<SEOPolicy>): Promise<SEOPolicy> => {
     return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
+  getAutopilotReadiness: async (id: string): Promise<AutopilotReadiness> => {
+    return req<AutopilotReadiness>(`/projects/${id}/seo/autopilot/readiness`, undefined, auth);
+  },
   generateAutopilotPlan: async (id: string): Promise<{ plan: SEOActionPlan; run: any }> => {
     const raw = await req<any>(`/projects/${id}/seo/autopilot/plans/generate`, { method: "POST" }, auth);
     return { plan: normalizeSEOActionPlan(raw?.plan), run: raw?.run };
@@ -2087,6 +2131,10 @@ export function createApi(auth?: AuthOptions) {
   listAutopilotPlans: async (id: string): Promise<SEOActionPlan[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/plans`, undefined, auth);
     return arrayFrom(raw).map(normalizeSEOActionPlan);
+  },
+  executeAutopilotPlan: async (id: string, planID: string): Promise<AutopilotExecuteResult> => {
+    const raw = await req<any>(`/projects/${id}/seo/autopilot/plans/${planID}/execute`, { method: "POST" }, auth);
+    return { ...raw, plan: normalizeSEOActionPlan(raw?.plan) };
   },
   listSafeModeEvents: async (id: string): Promise<SafeModeEvent[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/safe-mode`, undefined, auth);

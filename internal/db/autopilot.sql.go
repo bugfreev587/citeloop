@@ -265,6 +265,41 @@ func (q *Queries) GetRiskClassificationRule(ctx context.Context, arg GetRiskClas
 	return i, err
 }
 
+const getSEOActionPlanForProject = `-- name: GetSEOActionPlanForProject :one
+select id, project_id, autopilot_run_id, objective_id, plan_window_start, plan_window_end, status, actions, expected_impact, expected_effort, aggregate_risk, risk_classifier_version, approval_required, approved_by, approved_at, created_at, updated_at from seo_action_plans
+where id = $1 and project_id = $2
+`
+
+type GetSEOActionPlanForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetSEOActionPlanForProject(ctx context.Context, arg GetSEOActionPlanForProjectParams) (SeoActionPlan, error) {
+	row := q.db.QueryRow(ctx, getSEOActionPlanForProject, arg.ID, arg.ProjectID)
+	var i SeoActionPlan
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.AutopilotRunID,
+		&i.ObjectiveID,
+		&i.PlanWindowStart,
+		&i.PlanWindowEnd,
+		&i.Status,
+		&i.Actions,
+		&i.ExpectedImpact,
+		&i.ExpectedEffort,
+		&i.AggregateRisk,
+		&i.RiskClassifierVersion,
+		&i.ApprovalRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSEOPolicy = `-- name: GetSEOPolicy :one
 select id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at from seo_policies
 where project_id = $1
@@ -591,6 +626,45 @@ func (q *Queries) ListSafeModeEvents(ctx context.Context, arg ListSafeModeEvents
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateSEOActionPlanStatus = `-- name: UpdateSEOActionPlanStatus :one
+update seo_action_plans set
+  status = $3,
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, autopilot_run_id, objective_id, plan_window_start, plan_window_end, status, actions, expected_impact, expected_effort, aggregate_risk, risk_classifier_version, approval_required, approved_by, approved_at, created_at, updated_at
+`
+
+type UpdateSEOActionPlanStatusParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) UpdateSEOActionPlanStatus(ctx context.Context, arg UpdateSEOActionPlanStatusParams) (SeoActionPlan, error) {
+	row := q.db.QueryRow(ctx, updateSEOActionPlanStatus, arg.ID, arg.ProjectID, arg.Status)
+	var i SeoActionPlan
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.AutopilotRunID,
+		&i.ObjectiveID,
+		&i.PlanWindowStart,
+		&i.PlanWindowEnd,
+		&i.Status,
+		&i.Actions,
+		&i.ExpectedImpact,
+		&i.ExpectedEffort,
+		&i.AggregateRisk,
+		&i.RiskClassifierVersion,
+		&i.ApprovalRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateSEOObjectiveStatus = `-- name: UpdateSEOObjectiveStatus :one
