@@ -153,7 +153,7 @@ func Default() ProjectConfig {
 		BufferDays:          5,
 		ChannelMix:          ChannelMix{Blog: 0.6, Syndication: 0.4},
 		MonthlyBudgetUSD:    50,
-		AutoAdvanceEnabled:  true,
+		AutoAdvanceEnabled:  false,
 		PublishMode:         PublishModeManual,
 		PublishIntervalDays: 2,
 		Crawl: CrawlConfig{

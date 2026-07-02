@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
-import { ProjectConfig, Topic, VisibilitySummary } from "../../../lib/api";
+import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, Power, RefreshCw, Wand2, X } from "lucide-react";
+import { ProjectConfig, Topic, VisibilitySummary, defaultProjectConfig } from "../../../lib/api";
 import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
@@ -88,6 +88,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
   const strategistRunning = busy === "strategist";
+  const autoToggleBusy = busy === "auto-toggle";
+  const autoEnabled = Boolean(config?.auto_advance_enabled);
 
   const refresh = useCallback(async () => {
     try {
@@ -125,14 +127,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
-    const hasPendingPlanActions = summaryPendingPlanActions > 0 && topics.length === 0;
+    const hasPendingPlanActions = autoEnabled && summaryPendingPlanActions > 0 && topics.length === 0;
     // A scheduled topic whose slot has arrived is drafted by the server's 5-minute
     // pass, transitioning scheduled → generating → drafted between client polls. Poll
     // so the plan reflects that without a manual reload (the topic then moves to the
     // review queue). Bound to ~30 min past the slot so a budget/disabled pause that
     // leaves a topic scheduled doesn't poll forever.
     const now = Date.now();
-    const hasDueScheduled = topics.some((topic) => {
+    const hasDueScheduled = autoEnabled && topics.some((topic) => {
       if (topic.status !== "scheduled" || !topic.scheduled_at) return false;
       const due = Date.parse(topic.scheduled_at);
       return Number.isFinite(due) && due <= now && now - due <= 30 * 60_000;
@@ -140,7 +142,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     if (!hasGenerating && !hasPendingPlanActions && !hasDueScheduled) return;
     const interval = window.setInterval(refresh, hasGenerating ? 10_000 : hasPendingPlanActions ? 5_000 : 30_000);
     return () => window.clearInterval(interval);
-  }, [generatingIds, refresh, summaryPendingPlanActions, topics]);
+  }, [autoEnabled, generatingIds, refresh, summaryPendingPlanActions, topics]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -201,7 +203,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   // The plan is built automatically from accepted opportunities; this banner explains
   // that flow so the manual generate button is a fallback, not the main path.
   const autoPlan: { tone: "green" | "blue" | "amber" | "neutral"; title: string; detail: string; cta: { label: string; href: string } | null } =
-    topics.length > 0
+    !autoEnabled
+      ? {
+          tone: "neutral",
+          title: "Automatic workflow paused",
+          detail:
+            "Turn Auto on to convert accepted opportunities into backlog topics and draft them on cadence. Manual domain generation and Draft now stay available.",
+          cta: summaryOpenOpportunityCount > 0 ? { label: "Review opportunities", href: `/projects/${projectId}/analysis` } : null,
+        }
+      : topics.length > 0
       ? {
           tone: "green",
           title: "Your content plan is running automatically",
@@ -246,6 +256,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Content plan generated", detail: `${next.length} topics returned.`, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Content plan failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleAutoAdvance() {
+    const nextEnabled = !autoEnabled;
+    const base = config ?? defaultProjectConfig();
+    setBusy("auto-toggle");
+    setMessage(null);
+    try {
+      const updated = await api.updateConfig(projectId, { ...base, auto_advance_enabled: nextEnabled });
+      setConfig(updated.config);
+      setMessage({
+        title: nextEnabled ? "Auto enabled" : "Automatic workflow paused",
+        detail: nextEnabled
+          ? "Accepted opportunities can become backlog topics and draft on cadence."
+          : "Accepted opportunities stay in the action handoff. Manual drafting stays available.",
+        tone: nextEnabled ? "green" : "amber",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Auto setting failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -382,6 +414,34 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     <div className="space-y-7">
       <section className="space-y-3">
         <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoEnabled}
+            aria-busy={autoToggleBusy}
+            disabled={Boolean(busy) || !config}
+            onClick={toggleAutoAdvance}
+            title="Control whether CiteLoop automatically turns accepted opportunities into planned and drafted content."
+            className={cx(
+              "inline-flex h-9 items-center gap-2 rounded-full border px-2.5 text-xs font-bold transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50",
+              autoEnabled
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950",
+            )}
+          >
+            {autoToggleBusy ? <Loader2 aria-hidden="true" className="animate-spin" size={14} /> : <Power aria-hidden="true" size={14} />}
+            <span>Auto</span>
+            <span
+              className={cx(
+                "inline-flex h-5 min-w-9 items-center justify-center rounded-full px-2 font-mono text-[11px]",
+                autoEnabled ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500",
+              )}
+            >
+              {autoEnabled ? "On" : "Off"}
+            </span>
+          </button>
+        </div>
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
             <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>

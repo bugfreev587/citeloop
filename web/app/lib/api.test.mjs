@@ -182,6 +182,29 @@ test("friendlyApiError maps missing project responses to onboarding copy", async
   assert.doesNotMatch(friendlyApiError(badProject), /400|bad project id|\{"error"/);
 });
 
+test("project config exposes content plan auto advance and defaults it off", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      { id: "manual-project", name: "Manual", slug: "manual", config: {} },
+      { id: "auto-project", name: "Auto", slug: "auto", config: { auto_advance_enabled: true } },
+    ],
+  });
+
+  try {
+    const { createApi, defaultProjectConfig } = await loadApiModule();
+    assert.equal(defaultProjectConfig().auto_advance_enabled, false);
+
+    const projects = await createApi({ token: "session-token" }).listProjects();
+    assert.equal(projects[0].config.auto_advance_enabled, false);
+    assert.equal(projects[1].config.auto_advance_enabled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("createApi normalizes TokenGate LLM credential status", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
