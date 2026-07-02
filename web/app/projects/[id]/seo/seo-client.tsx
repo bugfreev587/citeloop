@@ -303,6 +303,10 @@ function hasActionVerificationSnapshot(action: SEOContentAction | ResultsAction)
   return hasNonEmptyStructuredValue(action.verification_snapshot);
 }
 
+function hasResultsExecutionEvidence(action: SEOContentAction | ResultsAction) {
+  return Boolean(action.published_at || action.verified_at);
+}
+
 function actionWhyNowText(action: SEOContentAction | ResultsAction) {
   const input = action.input_snapshot ?? {};
   const evidence = action.evidence_snapshot ?? {};
@@ -833,22 +837,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         opportunity_recommended_action: action.action_type,
       })),
   ];
-  const measuredActions = loopActions.filter((action) =>
-    ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
-    Boolean(action.published_at || action.verified_at),
-  );
-  const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status));
-  const attributionActions = resultsActions.length ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status)) : resultActions;
+  const measuredActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
+  const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
+  const attributionActions = resultsActions.length
+    ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
+    : resultActions;
   const selectedResultAction = useMemo(
     () => attributionActions.find((action) => action.id === selectedResultActionID) ?? null,
     [attributionActions, selectedResultActionID],
   );
   const attributionMeasuredActions = resultsActions.length
-    ? resultsActions.filter(
-        (action) =>
-          ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
-          Boolean(action.published_at || action.verified_at),
-      )
+    ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
   const outcomeCounts = attributionMeasuredActions.reduce(
     (counts, action) => {
@@ -1766,7 +1765,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               }
             />
             {attributionActions.length === 0 ? (
-              <EmptyState title="No content actions are ready for verification yet" detail="Accepted, published, or URL-verified actions will appear here once they enter the loop." />
+              <EmptyState title="No published or applied actions are ready for attribution yet" detail="Published or URL-verified actions will appear here once they enter the loop." />
             ) : (
               <div className="grid gap-3">
                 {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
@@ -1798,8 +1797,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         </div>
                         <div className="flex shrink-0 items-start justify-between gap-3 text-sm text-slate-500 md:min-w-[150px]">
                           <div>
-                            <div className="font-semibold text-slate-700">Published</div>
-                            <div>{formatDate(action.published_at ?? null)}</div>
+                            <div className="font-semibold text-slate-700">Published / applied</div>
+                            <div>{formatDate(action.published_at ?? action.verified_at ?? null)}</div>
                           </div>
                           <ChevronRight className="mt-1 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                         </div>
@@ -2607,8 +2606,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <div className="space-y-5">
                 <section className="grid gap-3 text-sm sm:grid-cols-2">
                   <div className="rounded-lg border border-slate-200 p-3">
-                    <div className="text-xs font-semibold uppercase text-slate-400">Published</div>
-                    <div className="mt-1 font-medium text-slate-700">{formatDate(action.published_at ?? null)}</div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Published / applied</div>
+                    <div className="mt-1 font-medium text-slate-700">{formatDate(action.published_at ?? action.verified_at ?? null)}</div>
                   </div>
                   <div className="rounded-lg border border-slate-200 p-3">
                     <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
