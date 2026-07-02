@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2 } from "lucide-react";
 import {
+  AutopilotReadiness,
   defaultProjectConfig,
   GSCConnection,
   GitHubNextJSPublisherInput,
@@ -15,7 +16,12 @@ import {
   NotificationSubscription,
   PublisherConnection,
   ProjectConfig,
+  SafeModeEvent,
+  SEOActionPlan,
+  SEOPolicy,
+  SEOPolicyUpdateInput,
 } from "../../../lib/api";
+import { normalizeNumeric } from "../../../lib/normalize";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
@@ -177,6 +183,7 @@ const defaultPublisherDraft: GitHubNextJSPublisherInput = {
 
 type SettingsTabId =
   | "project"
+  | "automation"
   | "activity"
   | "search-console"
   | "publisher"
@@ -185,16 +192,31 @@ type SettingsTabId =
 
 const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "project", title: "Project config" },
-  { id: "activity", title: "Activity Log" },
+  { id: "automation", title: "Automation" },
   { id: "search-console", title: "Search Console connection" },
   { id: "publisher", title: "Publisher connection" },
-  { id: "crawl", title: "Crawl config" },
   { id: "notifications", title: "Notifications" },
+  { id: "crawl", title: "Crawl config" },
+  { id: "activity", title: "Activity Log" },
 ];
+
+// Deep-link anchors map to their owning tab so that /settings#automation-policy and
+// /settings#recovery-plan open the Automation panel before the browser scrolls to the anchor.
+const settingsAnchorToTab: Record<string, SettingsTabId> = {
+  project: "project",
+  automation: "automation",
+  "automation-policy": "automation",
+  "recovery-plan": "automation",
+  activity: "activity",
+  "search-console": "search-console",
+  publisher: "publisher",
+  crawl: "crawl",
+  notifications: "notifications",
+};
 
 function settingsTabFromHash(hash: string): SettingsTabId {
   const tabId = hash.replace(/^#/, "");
-  return settingsTabs.some((tab) => tab.id === tabId) ? (tabId as SettingsTabId) : "project";
+  return settingsAnchorToTab[tabId] ?? "project";
 }
 
 export function SettingsClient({ projectId }: { projectId: string }) {
@@ -221,6 +243,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
+  const [policy, setPolicy] = useState<SEOPolicy | null>(null);
+  const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
+  const [autopilotPlans, setAutopilotPlans] = useState<SEOActionPlan[]>([]);
+  const [safeModeEvents, setSafeModeEvents] = useState<SafeModeEvent[]>([]);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -360,6 +386,49 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refreshNotifications();
   }, [refreshNotifications]);
+
+  const refreshAutomation = useCallback(async () => {
+    try {
+      const [policyData, readinessData, planRows, safeModeRows] = await Promise.all([
+        api.getSEOPolicy(projectId),
+        api.getAutopilotReadiness(projectId),
+        api.listAutopilotPlans(projectId),
+        api.listSafeModeEvents(projectId),
+      ]);
+      setPolicy(policyData);
+      setReadiness(readinessData);
+      setAutopilotPlans(planRows);
+      setSafeModeEvents(safeModeRows);
+    } catch (e: any) {
+      setMessage({ title: "Automation settings unavailable", detail: e.message, tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshAutomation();
+  }, [refreshAutomation]);
+
+  async function saveAutomationPolicy(next: SEOPolicyUpdateInput) {
+    if (!policy) return;
+    setBusy(true);
+    try {
+      const saved = await api.updateSEOPolicy(projectId, { ...policy, ...next });
+      setPolicy(saved);
+      await refreshAutomation();
+      notify({ title: "Automation policy saved", tone: "green" });
+    } catch (e: any) {
+      notify({ title: "Could not save automation policy", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acknowledgeRecoveryPlan() {
+    await saveAutomationPolicy({
+      recovery_plan_acknowledged: true,
+      recovery_plan_acknowledged_by: "human",
+    });
+  }
 
   function update(next: Partial<ProjectConfig>) {
     setConfig((current) => ({ ...current, ...next }));
@@ -694,6 +763,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       ? "This owner already has the CiteLoop GitHub App installed. Reuse that installation or connect a different account."
       : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
 
+  const openSafeModeCount = safeModeEvents.filter((event) => !event.exited_at).length;
+  const latestAutopilotPlan = autopilotPlans[0] ?? null;
+  const policyBudgetLimit =
+    policy?.monthly_budget_limit != null ? normalizeNumeric(policy.monthly_budget_limit) ?? 0 : 0;
+
   return (
     <div className="space-y-7">
       <SectionHeader title="Settings" eyebrow="Project config" />
@@ -721,6 +795,109 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           ))}
         </div>
       </div>
+
+      {activeSettingsTab === "automation" && (
+      <section id="settings-panel-automation" role="tabpanel" aria-labelledby="settings-tab-automation" tabIndex={0} className="space-y-7">
+        <div id="automation">
+          <SectionHeader
+            title="Automation readiness"
+            eyebrow="System setup"
+            action={<Badge tone={readiness?.ready_for_level_2 ? "green" : "amber"}>{readiness?.ready_for_level_2 ? "Ready" : "Needs setup"}</Badge>}
+          />
+          <p className="mb-3 text-sm text-slate-600">System setup for guarded execution, policy limits, safe mode, kill switch, and recovery.</p>
+          <div className="mb-3 grid gap-3 md:grid-cols-3">
+            <div className="rounded-md border border-slate-200 bg-white p-3">
+              <div className="text-sm font-bold text-slate-950">{readiness?.failed_gates?.length ?? 0}</div>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Blocked gates</p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white p-3">
+              <div className="text-sm font-bold text-slate-950">{autopilotPlans.length}</div>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Plans</p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white p-3">
+              <div className="text-sm font-bold text-slate-950">{openSafeModeCount}</div>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Open safe mode</p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(readiness?.gates ?? []).map((gate) => (
+              <div key={gate.key} className="rounded-md border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-bold text-slate-950">{gate.label}</div>
+                  <Badge tone={gate.blocking ? "red" : "green"}>{gate.blocking ? "blocked" : "ready"}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-slate-600">{gate.reason}</p>
+                {gate.blocking && <p className="mt-2 text-xs font-semibold text-slate-700">{gate.next_action}</p>}
+              </div>
+            ))}
+          </div>
+          {latestAutopilotPlan && (
+            <p className="mt-3 text-xs font-semibold text-slate-500">Latest plan status: {latestAutopilotPlan.status}</p>
+          )}
+        </div>
+
+        <div id="automation-policy" className="rounded-xl border border-slate-200 bg-white p-4">
+          <SectionHeader title="Policy controls" eyebrow="Automation policy" />
+          <p className="mb-4 text-sm text-slate-600">Autopilot level, policy budget, safe mode, and kill switch live here. This budget edits the Autopilot policy limit, not the project config budget.</p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="block text-sm font-semibold text-slate-700">
+              Autopilot level
+              <input
+                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2"
+                type="number"
+                min={0}
+                max={2}
+                defaultValue={policy?.autopilot_level ?? 0}
+                onBlur={(event) => saveAutomationPolicy({ autopilot_level: Math.max(0, Math.min(2, Number(event.target.value) || 0)) })}
+              />
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">
+              Autopilot budget
+              <input
+                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2"
+                type="number"
+                min={0}
+                defaultValue={policyBudgetLimit}
+                onBlur={(event) => saveAutomationPolicy({ monthly_budget_limit: Math.max(0, Number(event.target.value) || 0) })}
+              />
+            </label>
+            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(policy?.kill_switch_enabled)}
+                onChange={(event) => saveAutomationPolicy({ kill_switch_enabled: event.target.checked })}
+              />
+              Kill switch enabled
+            </label>
+            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(policy?.safe_mode_enabled)}
+                onChange={(event) => saveAutomationPolicy({ safe_mode_enabled: event.target.checked })}
+              />
+              Safe mode enabled
+            </label>
+          </div>
+        </div>
+
+        <div id="recovery-plan" className="rounded-xl border border-slate-200 bg-white p-4">
+          <SectionHeader
+            title="Recovery plan"
+            eyebrow="Manual rollback"
+            action={<Badge tone={policy?.recovery_plan_acknowledged_at ? "green" : "amber"}>{policy?.recovery_plan_acknowledged_at ? "acknowledged" : "needs acknowledgement"}</Badge>}
+          />
+          <p className="mb-4 text-sm text-slate-600">Manual rollback is required unless publisher rollback is available. Acknowledgement allows CiteLoop to attach manual recovery instructions to guarded actions.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button size="sm" onClick={acknowledgeRecoveryPlan} disabled={busy}>
+              Confirm recovery plan
+            </Button>
+            <span className="text-sm text-slate-500">
+              {policy?.recovery_plan_acknowledged_at ? "Recovery acknowledgement is recorded on the Autopilot policy." : "Required when publisher rollback capability is not available."}
+            </span>
+          </div>
+        </div>
+      </section>
+      )}
 
       {activeSettingsTab === "activity" && (
       <section id="settings-panel-activity" role="tabpanel" aria-labelledby="settings-tab-activity" tabIndex={0}>
