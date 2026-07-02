@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BarChart3, CheckCircle2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -653,9 +653,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
+  const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
+  const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const resultDrawerRef = useRef<HTMLElement | null>(null);
+  const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -818,6 +822,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   );
   const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status));
   const attributionActions = resultsActions.length ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status)) : resultActions;
+  const selectedResultAction = useMemo(
+    () => attributionActions.find((action) => action.id === selectedResultActionID) ?? null,
+    [attributionActions, selectedResultActionID],
+  );
   const attributionMeasuredActions = resultsActions.length
     ? resultsActions.filter(
         (action) =>
@@ -840,6 +848,67 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { waiting: 0, too_early: 0, blocked: 0, completed: 0 },
   );
   const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
+
+  useEffect(() => {
+    if (!selectedResultActionID || selectedResultAction) return;
+    setSelectedResultActionID(null);
+  }, [selectedResultAction, selectedResultActionID]);
+
+  useEffect(() => {
+    if (!selectedResultAction?.id) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedResultActionID(null);
+      if (event.key === "Tab") {
+        const drawer = resultDrawerRef.current;
+        if (!drawer) return;
+        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
+          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedResultAction?.id]);
+
+  useEffect(() => {
+    if (!selectedResultAction?.id) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeButton = resultDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
+    const firstFocusable = closeButton ?? resultDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
+    firstFocusable?.focus();
+    if (resultsSurfaceRef.current) {
+      resultsSurfaceRef.current.setAttribute("aria-hidden", "true");
+      resultsSurfaceRef.current.inert = true;
+    }
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      if (resultsSurfaceRef.current) {
+        resultsSurfaceRef.current.removeAttribute("aria-hidden");
+        resultsSurfaceRef.current.inert = false;
+      }
+      if (resultReturnFocusRef.current?.isConnected) {
+        resultReturnFocusRef.current?.focus();
+      }
+    };
+  }, [selectedResultAction?.id]);
+
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
   loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;
@@ -1242,7 +1311,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
   return (
     <>
-    <div ref={mode === "analysis" ? analysisSurfaceRef : undefined} className="space-y-7">
+    <div ref={mode === "analysis" ? analysisSurfaceRef : mode === "results" ? resultsSurfaceRef : undefined} className="space-y-7">
       <SectionHeader
         title={mode === "analysis" ? "Opportunity Brief workspace" : "Impact Reports"}
         eyebrow={mode === "analysis" ? "Opportunity Briefs" : "Results and learning"}
@@ -1695,12 +1764,20 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
                   const state = actionMeasurementState(action);
                   const queue = measurementQueueState(action);
-                  const measurement = latestActionMeasurement(action);
-                  const before = measurementMetricText(measurement, "before");
-                  const after = measurementMetricText(measurement, "after");
-                  const confounders = actionConfounders(action);
                   return (
-                    <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <button
+                      key={action.id}
+                      type="button"
+                      data-results-action-card
+                      aria-label={`Open attribution details: ${action.action_type}`}
+                      onClick={(event) => {
+                        resultReturnFocusRef.current = event.currentTarget;
+                        setSelectedResultActionID(action.id);
+                      }}
+                      className={`group w-full rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                        selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                      }`}
+                    >
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1711,113 +1788,29 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{action.action_type}</h3>
                           <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
                         </div>
-                        <div className="shrink-0 text-sm text-slate-500">
-                          <div className="font-semibold text-slate-700">Published</div>
-                          <div>{formatDate(action.published_at ?? null)}</div>
+                        <div className="flex shrink-0 items-start justify-between gap-3 text-sm text-slate-500 md:min-w-[150px]">
+                          <div>
+                            <div className="font-semibold text-slate-700">Published</div>
+                            <div>{formatDate(action.published_at ?? null)}</div>
+                          </div>
+                          <ChevronRight className="mt-1 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                         </div>
                       </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-3 xl:grid-cols-5">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Asset</div>
-                          <div className="mt-1 font-medium text-slate-700">{action.asset_type ?? "unspecified"}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Review</div>
-                          <div className="mt-1 font-medium text-slate-700">{action.review_required === false ? "Optional" : "Required"}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
-                          <div className="mt-1 font-medium text-slate-700">
-                            {action.verified_at ? "Verified" : action.verification_snapshot ? "Needs check" : "Not started"}
-                          </div>
-                        </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-3">
                         <div>
                           <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
                           <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
-                          <div className="mt-1 font-medium text-slate-700">{queue.detail}</div>
-                        </div>
-                      </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                        </div>
-                      </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-5">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Before</div>
-                          <div className="mt-1 font-medium text-slate-700">{before}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">After</div>
-                          <div className="mt-1 font-medium text-slate-700">{after}</div>
-                        </div>
-                        <div>
                           <div className="text-xs font-semibold uppercase text-slate-400">Outcome reason</div>
-                          <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                          <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{state.detail}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Attribution confidence</div>
-                          <div className="mt-1 font-medium text-slate-700">{actionAttributionConfidence(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Confounders</div>
-                          <div className="mt-1 font-medium text-slate-700">{confounders.length ? confounders.slice(0, 2).join(" / ") : "None noted"}</div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
+                          <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{queue.detail}</div>
                         </div>
                       </div>
-                      <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                        <summary className="cursor-pointer text-sm font-semibold text-slate-700">Measurement details</summary>
-                        <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
-                          <div>
-                            <span className="font-semibold text-slate-800">Outcome</span>
-                            <br />
-                            {compactOutcomeText(action.outcome_summary)}
-                          </div>
-                          <div>
-                            <span className="font-semibold text-slate-800">Measurement window</span>
-                            <br />
-                            {measurementWindowLabel(action.measurement_window)}
-                          </div>
-                          <div>
-                            <span className="font-semibold text-slate-800">Verification</span>
-                            <br />
-                            {action.verified_at ? formatDate(action.verified_at) : compactOutcomeText(action.verification_snapshot)}
-                          </div>
-                          <div>
-                            <span className="font-semibold text-slate-800">Target URL</span>
-                            <br />
-                            {action.target_url ?? action.normalized_target_url ?? "No target URL yet."}
-                          </div>
-                        </div>
-                      </details>
-                      <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                        <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
-                          <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
-                            Manual verify
-                          </ButtonProgress>
-                        </Button>
-                        <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
-                          <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
-                            Verification failed
-                          </ButtonProgress>
-                        </Button>
-                      </div>
-                    </article>
+                    </button>
                   );
                 })}
               </div>
@@ -2551,6 +2544,182 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       </details>
       )}
     </div>
+    {mode === "results" && selectedResultAction && (() => {
+      const action = selectedResultAction;
+      const state = actionMeasurementState(action);
+      const queue = measurementQueueState(action);
+      const measurement = latestActionMeasurement(action);
+      const before = measurementMetricText(measurement, "before");
+      const after = measurementMetricText(measurement, "after");
+      const confounders = actionConfounders(action);
+
+      return (
+        <div className="fixed inset-0 z-30">
+          <button
+            type="button"
+            aria-label="Close attribution details"
+            onClick={() => setSelectedResultActionID(null)}
+            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
+          />
+          <aside
+            ref={resultDrawerRef}
+            data-results-drawer
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="result-details-title"
+            className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Attribution report</div>
+                <h3 id="result-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
+                  {action.action_type}
+                </h3>
+                <p className="mt-2 break-words text-sm leading-5 text-slate-500">
+                  {action.target_url ?? action.normalized_target_url ?? action.id}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge tone={state.tone}>{state.label}</Badge>
+                  <Badge tone={queue.tone}>{queue.label}</Badge>
+                  <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-drawer-close
+                aria-label="Close attribution details"
+                onClick={() => setSelectedResultActionID(null)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+              <div className="space-y-5">
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Published</div>
+                    <div className="mt-1 font-medium text-slate-700">{formatDate(action.published_at ?? null)}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
+                    <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
+                  </div>
+                </section>
+
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Asset</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{action.asset_type ?? "unspecified"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Review</div>
+                    <div className="mt-1 font-medium text-slate-700">{action.review_required === false ? "Optional" : "Required"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
+                    <div className="mt-1 font-medium text-slate-700">
+                      {action.verified_at ? "Verified" : action.verification_snapshot ? "Needs check" : "Not started"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{queue.detail}</div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="grid gap-4 text-sm sm:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
+                      <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
+                      <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
+                      <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
+                      <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Before</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{before}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">After</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{after}</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Outcome reason</div>
+                    <div className="mt-1 break-words font-medium leading-5 text-slate-700">{state.detail}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Attribution confidence</div>
+                    <div className="mt-1 font-medium text-slate-700">{actionAttributionConfidence(action)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Confounders</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{confounders.length ? confounders.slice(0, 3).join(" / ") : "None noted"}</div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Measurement details</div>
+                  <div className="mt-3 grid gap-3 text-sm leading-5 text-slate-600 sm:grid-cols-2">
+                    <div>
+                      <span className="font-semibold text-slate-800">Outcome</span>
+                      <br />
+                      {compactOutcomeText(action.outcome_summary)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Measurement window</span>
+                      <br />
+                      {measurementWindowLabel(action.measurement_window)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Verification</span>
+                      <br />
+                      {action.verified_at ? formatDate(action.verified_at) : compactOutcomeText(action.verification_snapshot)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">Target URL</span>
+                      <br />
+                      {action.target_url ?? action.normalized_target_url ?? "No target URL yet."}
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div
+              aria-label="Drawer actions"
+              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+            >
+              <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={busy === `verify-${action.id}-verified`}>
+                <ButtonProgress busy={busy === `verify-${action.id}-verified`} busyLabel="Verifying" idleIcon={<CheckCircle2 size={14} />}>
+                  Manual verify
+                </ButtonProgress>
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
+                <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
+                  Verification failed
+                </ButtonProgress>
+              </Button>
+            </div>
+          </aside>
+        </div>
+      );
+    })()}
     {mode === "analysis" && selectedOpportunity && (() => {
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);

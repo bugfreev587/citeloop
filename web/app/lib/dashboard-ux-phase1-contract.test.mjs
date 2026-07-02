@@ -286,7 +286,7 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /const analysisSurfaceRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(seo, /const analysisDrawerRef = useRef<HTMLElement \| null>\(null\)/);
   assert.match(seo, /const analysisReturnFocusRef = useRef<HTMLElement \| null>\(null\)/);
-  assert.match(seo, /<div ref=\{mode === "analysis" \? analysisSurfaceRef : undefined\} className="space-y-7">/);
+  assert.match(seo, /<div ref=\{mode === "analysis" \? analysisSurfaceRef : mode === "results" \? resultsSurfaceRef : undefined\} className="space-y-7">/);
   assert.match(seo, /analysisSurfaceRef\.current\.setAttribute\("aria-hidden", "true"\)/);
   assert.match(seo, /analysisReturnFocusRef\.current\?\.focus\(\)/);
   assert.match(seo, /\}, \[selectedOpportunity\?\.id\]\)/);
@@ -315,23 +315,23 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.doesNotMatch(seo, /Full signal table/);
 });
 
-test("results surface defaults to published outcomes with collapsed measurement details", () => {
+test("results surface defaults to published outcomes with card-triggered attribution details", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
   const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
   const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
+  const resultDrawerStart = seo.indexOf('{mode === "results" && selectedResultAction', resultsStart);
+  const resultDrawerEnd = seo.indexOf('{mode === "analysis" && selectedOpportunity', resultDrawerStart + 1);
+  const resultDrawerBlock = seo.slice(resultDrawerStart, resultDrawerEnd);
 
   for (const copy of [
     "Outcome summary",
     "Published work",
     "Measurement queue",
-    "Manual verify",
-    "Verification failed",
     "Waiting",
     "Positive",
     "Negative",
     "Inconclusive",
-    "Measurement details",
     "Measurement window",
     "AI citation signals",
     "No content actions are ready for verification yet",
@@ -344,9 +344,13 @@ test("results surface defaults to published outcomes with collapsed measurement 
   assert.match(seo, /const measuredActions = loopActions\.filter/);
   assert.match(seo, /const resultActions = loopActions\.filter/);
   assert.match(resultsBlock, /resultActions\.slice\(0, 12\)\.map/);
-  assert.match(resultsBlock, /verifyAction\(action, "verified"\)/);
-  assert.match(resultsBlock, /verifyAction\(action, "failed"\)/);
-  assert.match(resultsBlock, /<details[\s\S]*Measurement details/);
+  assert.match(resultsBlock, /data-results-action-card/);
+  assert.match(resultDrawerBlock, /data-results-drawer/);
+  assert.match(resultDrawerBlock, /Manual verify/);
+  assert.match(resultDrawerBlock, /Verification failed/);
+  assert.match(resultDrawerBlock, /Measurement details/);
+  assert.match(resultDrawerBlock, /verifyAction\(action, "verified"\)/);
+  assert.match(resultDrawerBlock, /verifyAction\(action, "failed"\)/);
   assert.match(resultsBlock, /<details[\s\S]*Advanced diagnostics/);
   assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
   assert.doesNotMatch(resultsBlock, /Dismiss/);
