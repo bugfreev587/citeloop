@@ -703,111 +703,111 @@ test("destructive content-plan and distribution actions confirm before running",
   assert.match(publishing, /Mark this variant as distributed\?/);
 });
 
-test("publishing schedule cards show publish time and target platform", () => {
+test("publishing first viewport is platform-first C2 instead of six operational lanes", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
 
-  assert.match(publishing, /function publishTimeLabel/);
-  assert.match(publishing, /function publishTargetLabel/);
+  assert.match(publishing, /buildPublishDestinations/);
+  assert.match(publishing, /buildPublishHeaderCta/);
+  assert.match(publishing, /buildReadyNow/);
+  assert.match(publishing, /data-publish-c2-first-viewport/);
+  assert.match(publishing, /data-publish-c2-destinations/);
+  assert.match(publishing, /title="Destinations"/);
+  assert.match(publishing, /data-publish-ready-now/);
+  assert.match(publishing, /Choose a destination\. Ship approved content\./);
+  assert.match(publishing, />\s*Schedule\s*</);
+  assert.match(publishing, />\s*View all\s*</);
 
-  const readyBlock = publishing.slice(
-    publishing.indexOf('title="Ready to publish"'),
-    publishing.indexOf('title="Scheduled to publish"'),
-  );
-  assert.match(readyBlock, /publishTimeLabel\(article\)/);
-  assert.match(readyBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
-  assert.doesNotMatch(readyBlock, /Publishing on the next pass/);
-
-  const scheduledBlock = publishing.slice(
-    publishing.indexOf('title="Scheduled to publish"'),
-    publishing.indexOf("{/* Right column"),
-  );
-  assert.match(scheduledBlock, /publishTimeLabel\(article\)/);
-  assert.match(scheduledBlock, /PublishTargetPill target=\{publishTargetLabel\(article, defaultPublishTarget\)\}/);
+  for (const oldLane of [
+    'title="Ready to publish"',
+    'title="Scheduled to publish"',
+    'title="Publishing failed"',
+    '<SectionHeader title="Syndication"',
+  ]) {
+    assert.ok(!publishing.includes(oldLane), `${oldLane} should not be a first-viewport lane`);
+  }
 });
 
-test("publishing defaults to action-only lanes instead of four empty columns", () => {
+test("publishing destination tiles replace the platform popover and keep settings as the connection boundary", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const logic = read("lib/publish-destinations-logic.ts");
+  const settings = read("projects/[id]/settings/settings-client.tsx");
 
   for (const contract of [
-    "hasCanonicalPublishingWork",
-    "No publishing work is waiting",
+    "function DestinationTile",
+    "data-publish-destination-tile",
+    "GitHub/Next.js",
+    "CMS roadmap",
+    "Manage in Settings",
+    "Retry test",
     "Check status",
     "Checking status",
-    "readyCanonicals.length > 0 &&",
-    "scheduledCanonicals.length > 0 &&",
-    "published.length + inflight.length > 0 &&",
-    "failed.length > 0 &&",
   ]) {
     assert.match(publishing, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
+  for (const contract of ["dev_to", "hashnode", "reddit", "medium", "linkedin", "hacker_news", "WordPress", "Webflow", "Shopify", "Custom CMS"]) {
+    assert.match(logic, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
   assert.doesNotMatch(publishing, />\s*Reconcile\s*</);
   assert.doesNotMatch(publishing, /busyLabel="Reconciling"/);
-});
-
-test("publishing cards constrain long titles, errors, and publish paths inside the page", () => {
-  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
-
-  const postCardBlock = publishing.slice(
-    publishing.indexOf("function PostCard"),
-    publishing.indexOf("export function PublishingClient"),
-  );
-  assert.match(postCardBlock, /flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border/);
-  assert.match(postCardBlock, /min-w-0 break-words text-\[15px\]/);
-  assert.match(postCardBlock, /mt-1\.5 min-w-0 break-words text-xs/);
-
-  assert.match(publishing, /<div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:items-start">[\s\S]*\{\/\* Left column/);
-  assert.match(publishing, /<div className="min-w-0 space-y-6">[\s\S]*title="Ready to publish"/);
-  assert.match(publishing, /<div className="min-w-0 space-y-6">[\s\S]*title="Published"/);
-
-  const failedBlock = publishing.slice(
-    publishing.indexOf('title="Publishing failed"'),
-    publishing.indexOf('<SectionHeader title="Syndication"'),
-  );
-  assert.match(failedBlock, /break-words[\s\S]*last_publish_error/);
-  assert.match(failedBlock, /mt-1 break-all text-xs text-red-700/);
-  assert.doesNotMatch(failedBlock, /mt-1 truncate text-xs text-red-700/);
-  assert.doesNotMatch(publishing, /canonical_url \|\| article\.publish_path\)[\s\S]{0,160}truncate/);
-});
-
-test("publishing platforms stay in the header popover with connection status", () => {
-  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
-  const settings = read("projects/[id]/settings/settings-client.tsx");
-
-  const publishingHeaderStart = publishing.indexOf('<SectionHeader\n        title="Publish"');
-  const headerActions = publishing.slice(
-    publishing.indexOf('<div className="flex flex-wrap items-center gap-2">', publishingHeaderStart),
-    publishing.indexOf("\n      />", publishingHeaderStart),
-  );
-  assert.ok(headerActions.indexOf("Mode") < headerActions.indexOf("Platforms"), "Platforms should follow Mode");
-  assert.ok(headerActions.indexOf("Platforms") < headerActions.indexOf("Check status"), "Platforms should precede status check");
-  assert.match(headerActions, /setPlatformsOpen\(\(open\) => !open\)/);
-  assert.match(headerActions, /loadConnections\(\)/);
-  assert.match(headerActions, /ref=\{platformsMenuRef\}/);
-  assert.match(headerActions, /<Plug size=\{14\} className="text-slate-400" \/>[\s\S]*Platforms/);
-  assert.match(headerActions, /<Badge tone=\{activePublisherConnections\.length \? "green" : "red"\}>/);
-
+  assert.doesNotMatch(publishing, /platformsOpen/);
+  assert.doesNotMatch(publishing, /platformsMenuRef/);
   assert.doesNotMatch(publishing, /drawer === "platforms"/);
   assert.doesNotMatch(publishing, /async function savePublisherConnection/);
   assert.doesNotMatch(publishing, /async function disconnectConnection/);
   assert.doesNotMatch(publishing, />\s*Publisher account\s*</i);
   assert.doesNotMatch(publishing, /<select[\s\S]*No enabled connections[\s\S]*<\/select>/);
-  assert.match(publishing, /eligiblePublisherConnections/);
-  assert.match(publishing, /platformsOpen && \(/);
-  assert.match(publishing, /connections\.map\(\(connection\) =>/);
-  assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "active" : "inactive"/);
-  assert.match(publishing, /publisherConnectionIsActive\(connection\) \? "green" : "red"/);
-  assert.match(publishing, /const platformsMenuRef = useRef<HTMLDivElement \| null>\(null\)/);
-  assert.match(publishing, /document\.addEventListener\("pointerdown", onPointerDown\)/);
-  assert.match(publishing, /document\.removeEventListener\("pointerdown", onPointerDown\)/);
-  assert.match(publishing, /platformsMenuRef\.current\?\.contains\(target\)/);
-  assert.match(publishing, /setPlatformsOpen\(false\)/);
-  assert.match(publishing, />\s*manage connections\s*</);
   assert.ok(publishing.includes('href={`/projects/${projectId}/settings#publisher`}'));
 
   assert.match(settings, /setPublisherConnectionEnabled/);
   assert.match(settings, />\s*Enable\s*</);
   assert.match(settings, />\s*Disable\s*</);
+});
+
+test("publishing Ready now strip uses publish retry and preview actions", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const logic = read("lib/publish-destinations-logic.ts");
+
+  const readyNowBlock = publishing.slice(
+    publishing.indexOf("function ReadyNowStrip"),
+    publishing.indexOf("function ManualPlatformRows"),
+  );
+
+  assert.match(readyNowBlock, /title="Ready now"/);
+  assert.match(readyNowBlock, /item\.secondaryActionLabel/);
+  assert.match(readyNowBlock, /item\.actionLabel/);
+  assert.match(readyNowBlock, /item\.action === "retry" \? "Retrying" : "Queuing"/);
+  assert.match(readyNowBlock, /line-clamp-2 break-words/);
+  assert.match(readyNowBlock, /readyNow\.emptyState\.title/);
+  assert.match(logic, /No approved posts ready/);
+  assert.doesNotMatch(readyNowBlock, />\s*Review\s*</);
+});
+
+test("publishing manual drafts and View all drawer preserve non-first-viewport states", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const logic = read("lib/publish-destinations-logic.ts");
+
+  assert.match(publishing, /data-manual-syndication-chips/);
+  assert.match(publishing, /function ManualPlatformRows/);
+  assert.match(publishing, /Copy/);
+  assert.match(publishing, /Open/);
+  assert.match(publishing, /Mark distributed/);
+  assert.match(publishing, /Unlocks after the canonical URL is published and verified\./);
+
+  const waitingRowsBlock = publishing.slice(
+    publishing.indexOf("platform.waitingRows.length > 0"),
+    publishing.indexOf("platform.readyRows.length === 0"),
+  );
+  assert.doesNotMatch(waitingRowsBlock, /onCopy/);
+  assert.doesNotMatch(waitingRowsBlock, /onMarkDistributed/);
+
+  assert.match(publishing, /data-publish-view-all-drawer/);
+  assert.match(publishing, /data-publish-operational-group/);
+  assert.match(publishing, /buildPublishingOperationalGroups/);
+  for (const group of ["Ready", "Scheduled", "Published", "Failed", "Waiting on canonical", "Ready to distribute"]) {
+    assert.match(logic, new RegExp(group.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
 
 test("renamed dashboard routes exist and legacy routes redirect", () => {
