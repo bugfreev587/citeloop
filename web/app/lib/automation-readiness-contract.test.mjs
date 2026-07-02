@@ -34,6 +34,14 @@ test("automation readiness mapper owns every gate target and priority", async ()
   assert.equal(source.includes("monthly_budget_usd"), false, "Autopilot budget must not use project monthly_budget_usd");
 });
 
+test("automation readiness mapper exposes a per-gate fix destination", async () => {
+  const source = await readFile(new URL("automation-readiness.ts", import.meta.url), "utf8");
+
+  assert.equal(source.includes("export function readinessGateActionFor"), true, "readinessGateActionFor must be exported for Settings fix links");
+  // safe mode / kill switch fixes must point at the policy controls where the toggles live
+  assert.equal(source.includes("settings#automation-policy"), true);
+});
+
 test("automation readiness mapper dedupes setup sources behind canonical gates", async () => {
   const source = await readFile(new URL("automation-readiness.ts", import.meta.url), "utf8");
 

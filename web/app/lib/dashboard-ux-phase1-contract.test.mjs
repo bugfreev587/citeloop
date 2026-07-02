@@ -1177,6 +1177,29 @@ test("settings exposes Automation as the system setup tab", () => {
   assert.doesNotMatch(settings, /#general/);
 });
 
+test("automation readiness splits blocked from ready and gives every blocked gate a fix link", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const expected of [
+    "readinessGateActionFor",
+    "const blockedGates",
+    "const readyGates",
+    "Needs setup ·",
+    "Ready ·",
+    "checks ready",
+    // blocked gates render a clickable CTA, not just instruction text
+    "href={action.href}",
+    "{action.cta}",
+    // plain-language explainer for the jargon
+    "guarded automation (Level",
+  ]) {
+    assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
+  }
+
+  // the old undifferentiated "Blocked gates / Plans / Open safe mode" stat grid is gone
+  assert.doesNotMatch(settings, /Latest plan status/);
+});
+
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 
