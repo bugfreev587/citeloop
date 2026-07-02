@@ -36,15 +36,36 @@ The top of the page uses a simple title area:
 
 - Title: `Publish`
 - Short subtitle: `Choose a destination. Ship approved content.`
-- Primary action: `Connect` or `Manage`
-- Secondary action: `Schedule`
+- Primary action is state-driven; see `Header CTA State Model`.
+- Secondary action is `Schedule` when a project has an enabled publisher or scheduled items.
 
 Below the title, the layout splits into:
 
 - `Destinations`: the primary area, using platform tiles.
 - `Ready now`: a narrow action strip for the most immediate approved canonical items and publish retries.
 
-On mobile, `Ready now` stacks below `Destinations`.
+On desktop, `Destinations` owns the larger area and `Ready now` is a narrow action strip. On mobile, keep the mental model platform-first without burying the user's next action:
+
+1. Header.
+2. Primary GitHub/Next.js destination tile.
+3. `Ready now` compact strip.
+4. Manual syndication destination tiles.
+5. Roadmap or `More` destinations.
+
+## Header CTA State Model
+
+The header action should tell users what to do next. It should not be a generic `Manage` button when a clearer action exists.
+
+| State | Primary CTA | Target |
+| --- | --- | --- |
+| No GitHub/Next.js connection | `Connect GitHub` | `/projects/:id/settings#publisher` |
+| Connected but disabled | `Enable publishing` | Settings publisher section or enable action if already loaded |
+| Connection `error` or `revoked` | `Fix connection` | `/projects/:id/settings#publisher` |
+| Publisher enabled and ready canonical items exist | `Publish next` | First ready canonical item or `Ready now` list |
+| Publisher enabled and no ready items exist | `Manage destinations` | `/projects/:id/settings#publisher` |
+| Only scheduled items exist | `View schedule` | Operational drawer filtered to `Scheduled` |
+
+`Schedule` remains a secondary control. It opens the existing cadence/mode controls and must not be confused with destination capability.
 
 ## Destination Matrix
 
@@ -98,6 +119,21 @@ Roadmap states are driven by the existing Settings roadmap list:
 - Roadmap tiles use dashed borders and muted styling.
 - Roadmap tiles must not look like publish actions.
 
+## Tile Interaction Model
+
+Every destination tile has a predictable click target. Tiles are not direct publish buttons unless the visible action says so.
+
+| Tile type | Click behavior | Primary actions inside detail |
+| --- | --- | --- |
+| GitHub/Next.js connected | Opens publisher status drawer | `Publish next`, `View schedule`, `Manage in Settings` |
+| GitHub/Next.js not connected or disabled | Opens setup/status drawer | `Connect GitHub` or `Enable publishing` |
+| GitHub/Next.js error/revoked | Opens recovery drawer | `Fix connection`, `Retry test` |
+| Manual syndication platform | Opens platform draft drawer | `Copy`, `Open compose`, `Mark distributed` |
+| More manual platforms | Opens manual platform list | Platform-specific draft counts and details |
+| CMS roadmap tile | Opens roadmap explanation | No publish action; optional `Learn more` |
+
+This keeps the first viewport simple while giving every visual object an obvious next step.
+
 ## Ready Now Strip
 
 `Ready now` stays compact so it does not turn the page into a dense workflow dashboard.
@@ -113,6 +149,12 @@ Do not use `Review` as the primary action here. Items in Publish are already pas
 
 Only a few items should show in the first viewport. Longer queues can live behind `View all` or below the fold.
 
+If there are no ready canonical items, `Ready now` shows a compact empty state:
+
+- `No approved posts ready`
+- Secondary text: `Approved canonical posts appear here after review.`
+- Optional link: `Go to Review` when pending review items exist.
+
 ## Manual Syndication Drafts
 
 Manual syndication is represented as small counts or chips after the canonical publish path:
@@ -125,17 +167,51 @@ Counts should be driven by actual unlocked `syndication_variant` rows. Manual sy
 
 For Reddit and Hacker News, the visible wording should lean toward `Submit draft` or `Pending submit` rather than implying a saved draft exists on the external platform.
 
+Manual syndication chips are interactive. Clicking a chip opens that platform's draft drawer with row-level actions:
+
+- `Copy`: copies the prepared variant.
+- `Open`: opens the platform compose URL when known.
+- `Mark distributed`: records that the user posted externally.
+
+The drawer can also show waiting variants under a separate `Waiting on canonical` group, but those rows must not expose `Copy` or `Mark distributed`.
+
 ## Scheduled, Published, And Failed States
 
 The redesign must not recreate the current six-lane first viewport.
 
 - `Failed`: retryable canonical failures can appear in `Ready now` with `Retry`.
-- `Scheduled`: appears in a below-fold queue, a `View all` drawer, or destination details.
-- `Published`: appears in below-fold history, destination details, or results/measurement surfaces.
+- `Scheduled`: appears in a unified `View all` operational drawer under `Scheduled`.
+- `Published`: appears in the same operational drawer under `Published`, with deeper outcome details staying in Results.
 - `Waiting on canonical`: appears in manual syndication details, not as a top-level first-viewport lane.
 - `Ready to distribute`: appears as manual syndication chips/counts and in a distribution detail list.
 
 This keeps the first viewport focused while preserving access to operational states.
+
+The `View all` drawer is the single home for non-first-viewport publishing state. It groups items as:
+
+- `Ready`
+- `Scheduled`
+- `Published`
+- `Failed`
+- `Waiting on canonical`
+- `Ready to distribute`
+
+The drawer can reuse existing lane semantics internally, but the first viewport must not render those groups as six visible columns.
+
+## Page States
+
+The page needs explicit loading, empty, and error states so the simplified UI does not become ambiguous.
+
+| State | UX treatment | Primary action |
+| --- | --- | --- |
+| Connections loading | Skeleton destination tiles and compact `Ready now` skeleton rows | None |
+| No publisher connection | GitHub/Next.js tile in `Not connected`; `Ready now` publish actions disabled | `Connect GitHub` |
+| Publisher disabled | GitHub/Next.js tile in `Disabled`; ready items visible but publish disabled | `Enable publishing` |
+| Publisher error/revoked | GitHub/Next.js tile in `Needs attention`; show concise inline warning | `Fix connection` |
+| No ready canonical items | Compact `Ready now` empty state | `Go to Review` only if pending review exists |
+| No unlocked syndication drafts | Manual chips hidden or show zero-state inside manual drawer | None |
+| Publish action in flight | Button-level busy state and disabled duplicate actions | None |
+| Publish failure | Item appears in `Ready now` with `Retry` and short failure reason | `Retry` |
 
 ## Settings Boundary
 
@@ -157,6 +233,8 @@ Publish may show a lightweight `Connect` or `Manage` entry point that routes to 
 - Users can distinguish canonical publishing from manual syndication without reading a paragraph.
 - Users can distinguish destination capability from project publish cadence mode.
 - Users can see whether anything is ready to publish or retry now.
+- Users can click every destination tile and understand what happened.
+- Users can access scheduled, published, failed, waiting, and ready-to-distribute items through one `View all` drawer.
 - Disabled or roadmap platforms are visibly unavailable.
 - The first viewport remains scan-friendly and avoids dense explanatory copy.
 
@@ -183,4 +261,7 @@ Frontend contract tests should assert:
 - WordPress, Webflow, Shopify, and Custom CMS map to non-active roadmap states.
 - Canonical publish action is unavailable when no enabled connected publisher exists.
 - Manual syndication variants appear in ready counts only after the canonical article is published and `canonical_url_verified_at` is set.
-- Scheduled and published items are available outside the first-viewport `Ready now` strip.
+- Header CTA state maps to connection/readiness state.
+- Destination tiles expose the expected interaction target for connected, missing, disabled, error, manual, and roadmap states.
+- Scheduled, published, failed, waiting, and ready-to-distribute items are available through the operational drawer model outside the first-viewport `Ready now` strip.
+- Mobile ordering prioritizes the primary GitHub/Next.js destination and `Ready now` before secondary/manual roadmap tiles.
