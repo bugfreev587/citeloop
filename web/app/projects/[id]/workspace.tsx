@@ -350,6 +350,11 @@ export function Workspace({ projectId }: { projectId: string }) {
   const visibilityCitationSignalCount = visibilityOpenOpportunities.filter((opportunity) =>
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
+  const highestPriorityOpportunity = [...visibilityOpenOpportunities].sort((a, b) => {
+    return (normalizeNumeric(b.priority_score) ?? 0) - (normalizeNumeric(a.priority_score) ?? 0);
+  })[0] ?? null;
+  const measurementResultNeedsAttention =
+    visibilitySummary?.top_measurement_updates.find((update) => update.status === "blocked" || update.status === "learned" || update.summary) ?? null;
 
   const contextBuildNeedsAttention = showContextBuild && contextBuild.tracks.some((track) => track.state === "attention");
   const fallbackAction = nextWorkspaceAction({
@@ -475,6 +480,62 @@ export function Workspace({ projectId }: { projectId: string }) {
   const primaryAction = humanActionItems[0] ?? fallbackAction;
   const visibleHumanActionItems = humanActionItems.slice(0, VISIBLE_HUMAN_ACTION_LIMIT);
   const hiddenHumanActionItems = humanActionItems.slice(VISIBLE_HUMAN_ACTION_LIMIT);
+  const operationsHealthBlocker = automationWarnings[0] ?? null;
+  const growthControlCards = [
+    {
+      title: "Opportunity Brief",
+      label: highestPriorityOpportunity ? "Ready to decide" : "Watching",
+      detail: highestPriorityOpportunity
+        ? opportunityTitle(highestPriorityOpportunity)
+        : "No priority brief is waiting for a human decision.",
+      href: `/projects/${projectId}/analysis`,
+      icon: Search,
+      tone: highestPriorityOpportunity ? "amber" : "neutral",
+    },
+    {
+      title: "Action Portfolio",
+      label: `${visibilityActionsInLoopCount} in loop`,
+      detail: visibilityActionsInLoopCount
+        ? "Accepted work spans content, metadata, schema, technical, and distribution actions."
+        : "Accepted actions will appear here after Analysis decisions.",
+      href: `/projects/${projectId}/plan`,
+      icon: FileText,
+      tone: visibilityActionsInLoopCount ? "blue" : "neutral",
+    },
+    {
+      title: "Impact Reports",
+      label: measurementResultNeedsAttention ? "Needs attention" : "Measuring",
+      detail: measurementResultNeedsAttention?.summary ?? "Published or applied actions are tracked against conservative outcome windows.",
+      href: `/projects/${projectId}/results`,
+      icon: BarChart3,
+      tone: measurementResultNeedsAttention ? "amber" : "neutral",
+    },
+    {
+      title: "Operations health",
+      label: operationsHealthBlocker ? "Operational blockers" : "Clear",
+      detail: operationsHealthBlocker
+        ? `${operationsHealthBlocker.agent} is ${operationsHealthBlocker.status}. Open diagnostics before relying on automation.`
+        : "Budget, publishing, quality, and notification checks have no recent blockers.",
+      href: `/projects/${projectId}/settings/activity`,
+      icon: AlertTriangle,
+      tone: operationsHealthBlocker ? "red" : "green",
+    },
+    {
+      title: "Learning signal",
+      label: "Conservative learning",
+      detail: "Completed work informs prioritization; risky behavior still waits for policy gates and review.",
+      href: `/projects/${projectId}/results`,
+      icon: Sparkles,
+      tone: "blue",
+    },
+  ] satisfies Array<{
+    title: string;
+    label: string;
+    detail: string;
+    href: string;
+    icon: typeof BarChart3;
+    tone: StageTone;
+  }>;
 
   const aiCitationMetric = homeAICitationMetric({
     projectId,
@@ -705,6 +766,41 @@ export function Workspace({ projectId }: { projectId: string }) {
             </a>
           );
         })}
+      </section>
+
+      <section>
+        <SectionHeader
+          title="Growth Control Center"
+          eyebrow="Opportunity Briefs, Action Portfolio, Impact Reports"
+          action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open gates</Badge>}
+        />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {growthControlCards.map((card) => {
+            const CardIcon = card.icon;
+            return (
+              <a
+                key={card.title}
+                href={card.href}
+                className="group flex min-h-[150px] flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-500 ring-1 ring-slate-100 transition-colors group-hover:text-[#d93820]">
+                    <CardIcon aria-hidden="true" size={17} />
+                  </span>
+                  <Badge tone={card.tone}>{card.label}</Badge>
+                </div>
+                <div className="mt-3 min-w-0">
+                  <h2 className="text-sm font-bold leading-5 text-slate-950">{card.title}</h2>
+                  <p className="mt-2 line-clamp-3 text-[13px] font-semibold leading-5 text-slate-600">{card.detail}</p>
+                </div>
+                <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-bold text-slate-400 transition-colors group-hover:text-[#d93820]">
+                  Open
+                  <ArrowRight aria-hidden="true" size={14} />
+                </span>
+              </a>
+            );
+          })}
+        </div>
       </section>
 
       {otherProjects.length > 0 && (
