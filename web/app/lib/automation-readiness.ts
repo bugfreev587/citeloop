@@ -90,8 +90,8 @@ export const READINESS_GATE_ACTIONS: Record<string, GateAction> = {
   },
   safe_mode_clear: {
     title: "Resolve safe mode",
-    cta: "Open Automation",
-    href: (projectId) => `/projects/${projectId}/settings#automation`,
+    cta: "Review safe mode",
+    href: (projectId) => `/projects/${projectId}/settings#automation-policy`,
     category: "Blocking now",
     priorityWhenLevel2: "P0",
     priorityBeforeLevel2: "P0",
@@ -99,8 +99,8 @@ export const READINESS_GATE_ACTIONS: Record<string, GateAction> = {
   },
   kill_switch_clear: {
     title: "Automation kill switch is on",
-    cta: "Open Automation",
-    href: (projectId) => `/projects/${projectId}/settings#automation`,
+    cta: "Review kill switch",
+    href: (projectId) => `/projects/${projectId}/settings#automation-policy`,
     category: "Blocking now",
     priorityWhenLevel2: "P0",
     priorityBeforeLevel2: "P0",
@@ -155,6 +155,16 @@ export function buildReadinessHumanActions(input: {
       };
     })
     .filter((item): item is ReadinessHumanAction => Boolean(item));
+}
+
+export type ReadinessGateAction = { href: string; cta: string; rank: number };
+
+// Deterministic fix destination for a single readiness gate, independent of Home priority.
+// Settings uses this to turn every blocked gate into a one-click "go fix it" link.
+export function readinessGateActionFor(key: string, projectId: string): ReadinessGateAction | null {
+  const action = READINESS_GATE_ACTIONS[key];
+  if (!action) return null;
+  return { href: action.href(projectId), cta: action.cta, rank: action.rank };
 }
 
 export function dedupeHumanActions<T extends { dedupeKey?: string; id: string }>(items: T[]): T[] {

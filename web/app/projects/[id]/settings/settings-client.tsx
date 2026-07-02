@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2 } from "lucide-react";
+import { Activity, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2 } from "lucide-react";
 import {
   AutopilotReadiness,
   defaultProjectConfig,
@@ -17,11 +17,11 @@ import {
   PublisherConnection,
   ProjectConfig,
   SafeModeEvent,
-  SEOActionPlan,
   SEOPolicy,
   SEOPolicyUpdateInput,
 } from "../../../lib/api";
 import { normalizeNumeric } from "../../../lib/normalize";
+import { readinessGateActionFor } from "../../../lib/automation-readiness";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
@@ -245,7 +245,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
   const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
-  const [autopilotPlans, setAutopilotPlans] = useState<SEOActionPlan[]>([]);
   const [safeModeEvents, setSafeModeEvents] = useState<SafeModeEvent[]>([]);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
@@ -389,15 +388,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   const refreshAutomation = useCallback(async () => {
     try {
-      const [policyData, readinessData, planRows, safeModeRows] = await Promise.all([
+      const [policyData, readinessData, safeModeRows] = await Promise.all([
         api.getSEOPolicy(projectId),
         api.getAutopilotReadiness(projectId),
-        api.listAutopilotPlans(projectId),
         api.listSafeModeEvents(projectId),
       ]);
       setPolicy(policyData);
       setReadiness(readinessData);
-      setAutopilotPlans(planRows);
       setSafeModeEvents(safeModeRows);
     } catch (e: any) {
       setMessage({ title: "Automation settings unavailable", detail: e.message, tone: "amber" });
@@ -764,9 +761,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
 
   const openSafeModeCount = safeModeEvents.filter((event) => !event.exited_at).length;
-  const latestAutopilotPlan = autopilotPlans[0] ?? null;
   const policyBudgetLimit =
     policy?.monthly_budget_limit != null ? normalizeNumeric(policy.monthly_budget_limit) ?? 0 : 0;
+  const readinessGatesAll = readiness?.gates ?? [];
+  const blockedGates = readinessGatesAll
+    .filter((gate) => gate.blocking)
+    .map((gate) => ({ gate, action: readinessGateActionFor(gate.key, projectId) }))
+    .sort((a, b) => (a.action?.rank ?? 999) - (b.action?.rank ?? 999));
+  const readyGates = readinessGatesAll.filter((gate) => !gate.blocking);
 
   return (
     <div className="space-y-7">
@@ -802,37 +804,75 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           <SectionHeader
             title="Automation readiness"
             eyebrow="System setup"
-            action={<Badge tone={readiness?.ready_for_level_2 ? "green" : "amber"}>{readiness?.ready_for_level_2 ? "Ready" : "Needs setup"}</Badge>}
+            action={
+              <Badge tone={readiness?.ready_for_level_2 ? "green" : "amber"}>
+                {readiness?.ready_for_level_2 ? "Ready" : `${blockedGates.length} to set up`}
+              </Badge>
+            }
           />
-          <p className="mb-3 text-sm text-slate-600">System setup for guarded execution, policy limits, safe mode, kill switch, and recovery.</p>
-          <div className="mb-3 grid gap-3 md:grid-cols-3">
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="text-sm font-bold text-slate-950">{readiness?.failed_gates?.length ?? 0}</div>
-              <p className="mt-1 text-xs font-semibold text-slate-500">Blocked gates</p>
-            </div>
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="text-sm font-bold text-slate-950">{autopilotPlans.length}</div>
-              <p className="mt-1 text-xs font-semibold text-slate-500">Plans</p>
-            </div>
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="text-sm font-bold text-slate-950">{openSafeModeCount}</div>
-              <p className="mt-1 text-xs font-semibold text-slate-500">Open safe mode</p>
-            </div>
+          <p className="mb-4 max-w-3xl text-sm text-slate-600">
+            When these checks pass, CiteLoop can run <span className="font-semibold text-slate-800">guarded automation (Level&nbsp;2)</span>: it
+            performs low-risk SEO work for you automatically — metadata edits, sitemap submits, and technical fix tasks — inside your budget and
+            policy limits. Medium and high-risk changes still wait for your review.
+          </p>
+
+          <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 bg-white px-4 py-3">
+            <span className="text-sm font-bold text-slate-950">
+              {readyGates.length} of {readinessGatesAll.length} checks ready
+            </span>
+            <span className="h-1.5 w-40 overflow-hidden rounded-full bg-slate-100">
+              <span
+                className="block h-full rounded-full bg-emerald-500"
+                style={{ width: `${readinessGatesAll.length ? Math.round((readyGates.length / readinessGatesAll.length) * 100) : 0}%` }}
+              />
+            </span>
+            <span className="text-xs font-semibold text-slate-500">
+              Safe mode {openSafeModeCount > 0 || policy?.safe_mode_enabled ? "active" : "clear"} · Kill switch {policy?.kill_switch_enabled ? "on" : "off"}
+            </span>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {(readiness?.gates ?? []).map((gate) => (
-              <div key={gate.key} className="rounded-md border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-bold text-slate-950">{gate.label}</div>
-                  <Badge tone={gate.blocking ? "red" : "green"}>{gate.blocking ? "blocked" : "ready"}</Badge>
-                </div>
-                <p className="mt-2 text-sm text-slate-600">{gate.reason}</p>
-                {gate.blocking && <p className="mt-2 text-xs font-semibold text-slate-700">{gate.next_action}</p>}
+
+          {blockedGates.length > 0 && (
+            <div className="mb-6">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Needs setup · {blockedGates.length}</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                {blockedGates.map(({ gate, action }) => (
+                  <div key={gate.key} className="flex flex-col rounded-lg border border-red-200 bg-red-50/40 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-bold text-slate-950">{gate.label}</div>
+                      <Badge tone="red">blocked</Badge>
+                    </div>
+                    <p className="mt-2 flex-1 text-sm text-slate-600">{gate.reason}</p>
+                    <div className="mt-3">
+                      {action ? (
+                        <Link
+                          href={action.href}
+                          className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-xs font-bold text-white transition-[filter] hover:brightness-[1.03]"
+                        >
+                          {action.cta}
+                          <ArrowRight size={14} aria-hidden="true" />
+                        </Link>
+                      ) : (
+                        <span className="text-xs font-semibold text-slate-600">{gate.next_action}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          {latestAutopilotPlan && (
-            <p className="mt-3 text-xs font-semibold text-slate-500">Latest plan status: {latestAutopilotPlan.status}</p>
+            </div>
+          )}
+
+          {readyGates.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Ready · {readyGates.length}</h3>
+              <div className="grid gap-2 md:grid-cols-2">
+                {readyGates.map((gate) => (
+                  <div key={gate.key} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
+                    <CheckCircle2 size={16} className="shrink-0 text-emerald-500" aria-hidden="true" />
+                    <span className="text-sm font-semibold text-slate-700">{gate.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
