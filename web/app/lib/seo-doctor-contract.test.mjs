@@ -38,7 +38,7 @@ test("project shell exposes Doctor under the Home section", () => {
   assert.match(shell, /href: "doctor"/);
 });
 
-test("Doctor route renders a client page with progress and AI coding report affordances", () => {
+test("Doctor route renders a client page with progress and per-finding AI repair handoff affordances", () => {
   assert.equal(exists("projects/[id]/doctor/page.tsx"), true, "doctor route should exist");
   assert.equal(exists("projects/[id]/doctor/doctor-client.tsx"), true, "doctor client should exist");
   const page = read("projects/[id]/doctor/page.tsx");
@@ -48,14 +48,22 @@ test("Doctor route renders a client page with progress and AI coding report affo
   for (const contract of [
     "progress_percent",
     "pages_checked",
-    "ai_coding_tool_report",
     "Run Doctor",
-    "AI coding report",
+    "Fix with AI",
+    "buildAIRepairPayload",
+    "copyAIRepairJSON",
+    "selectedRepairFinding",
+    "Codex",
+    "Claude Code",
+    "acceptance_tests",
+    "rerun SEO Doctor",
     "convertSEODoctorFinding",
     "dismissSEODoctorFinding",
   ]) {
     assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.doesNotMatch(client, /Structured handoff/);
+  assert.doesNotMatch(client, /title="AI coding report"/);
 });
 
 test("Home fetches and renders a first-fold Doctor module", () => {
