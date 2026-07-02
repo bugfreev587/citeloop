@@ -49,7 +49,7 @@ function isThisMonth(value: string | null) {
 }
 
 function opportunityTitle(opportunity: SEOOpportunity) {
-  return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Analysis opportunity";
+  return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Opportunity";
 }
 
 function metric(value: any, digits = 0) {
@@ -434,10 +434,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
     visibilityOpenOpportunityCount > 0 && {
       id: "analysis-review",
-      title: "Review analysis",
-      detail: `${visibilityOpenOpportunityCount} ${visibilityOpenOpportunityCount === 1 ? "recommendation is" : "recommendations are"} ready before CiteLoop advances the content plan.`,
+      title: "Review opportunities",
+      detail: `${visibilityOpenOpportunityCount} ${visibilityOpenOpportunityCount === 1 ? "opportunity is" : "opportunities are"} ready before CiteLoop advances the content plan.`,
       href: `/projects/${projectId}/analysis`,
-      cta: "Review analysis",
+      cta: "Review opportunities",
       category: "Needs review",
       tone: "amber",
       priority: 60,
@@ -483,11 +483,11 @@ export function Workspace({ projectId }: { projectId: string }) {
   const operationsHealthBlocker = automationWarnings[0] ?? null;
   const growthControlCards = [
     {
-      title: "Opportunity Brief",
+      title: "Opportunities",
       label: highestPriorityOpportunity ? "Ready to decide" : "Watching",
       detail: highestPriorityOpportunity
         ? opportunityTitle(highestPriorityOpportunity)
-        : "No priority brief is waiting for a human decision.",
+        : "No priority opportunity is waiting for a human decision.",
       href: `/projects/${projectId}/analysis`,
       icon: Search,
       tone: highestPriorityOpportunity ? "amber" : "neutral",
@@ -497,7 +497,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       label: `${visibilityActionsInLoopCount} in loop`,
       detail: visibilityActionsInLoopCount
         ? "Accepted work spans content, metadata, schema, technical, and distribution actions."
-        : "Accepted actions will appear here after Analysis decisions.",
+        : "Accepted actions will appear here after opportunity decisions.",
       href: `/projects/${projectId}/plan`,
       icon: FileText,
       tone: visibilityActionsInLoopCount ? "blue" : "neutral",
@@ -606,23 +606,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     muted: boolean;
   }>;
 
-  // Pipeline stages — same honest per-stage status logic, rendered as a compact stepper.
+  // Pipeline stages keep the daily workflow focused; Context remains a setup gate.
   const stages: Array<{ label: string; metricValue: number | string; statusLabel: string; tone: StageTone; href: string; highlight?: boolean }> = [
     {
-      label: "Context",
-      metricValue: sourcePageCount,
-      statusLabel: !profile
-        ? "Reading your site"
-        : contextNeedsConfirmation
-          ? "Needs confirmation"
-          : contextConfirmed
-            ? "Confirmed"
-            : "Incomplete",
-      tone: !profile ? "blue" : contextNeedsConfirmation ? "amber" : contextConfirmed ? "green" : "amber",
-      href: `/projects/${projectId}/context`,
-    },
-    {
-      label: "Analysis",
+      label: "Opportunities",
       metricValue: visibilityOpenOpportunityCount,
       statusLabel: !contextConfirmed
         ? "Locked until Context"
@@ -636,7 +623,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       highlight: contextConfirmed && visibilityOpenOpportunityCount > 0,
     },
     {
-      label: "Plan",
+      label: "Content Plan",
       metricValue: planItemCount,
       statusLabel: !contextConfirmed
         ? "Locked until Context"
@@ -646,13 +633,6 @@ export function Workspace({ projectId }: { projectId: string }) {
             ? "Plan ready"
             : "Waiting",
       tone: !contextConfirmed ? "neutral" : planGenerationPending ? "blue" : planItemCount > 0 ? "green" : "neutral",
-      href: `/projects/${projectId}/plan`,
-    },
-    {
-      label: "Drafts",
-      metricValue: reviewArticles.length + approved.length,
-      statusLabel: reviewArticles.length + approved.length > 0 ? "In motion" : topics.length > 0 ? "Drafting (auto)" : "Waiting",
-      tone: reviewArticles.length + approved.length > 0 ? "green" : topics.length > 0 ? "blue" : "neutral",
       href: `/projects/${projectId}/plan`,
     },
     {
@@ -670,7 +650,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       href: `/projects/${projectId}/publish`,
     },
     {
-      label: "Measurement",
+      label: "Results",
       metricValue: measuringActions,
       statusLabel: measuringActions > 0 ? "Measuring impact" : searchDataConnected ? "Ready for impact data" : "Connect for proof",
       tone: measuringActions > 0 || searchDataConnected ? "green" : "amber",
@@ -706,7 +686,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       ...visibilityOpenOpportunities.slice(0, 1).map((opportunity) => ({
         id: `opportunity-${opportunity.id}`,
         title: opportunityTitle(opportunity),
-        detail: "Analysis opportunity detected",
+        detail: "Opportunity detected",
         href: `/projects/${projectId}/analysis`,
       })),
     ],
@@ -771,7 +751,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       <section>
         <SectionHeader
           title="Growth Control Center"
-          eyebrow="Opportunity Briefs, Action Portfolio, Impact Reports"
+          eyebrow="Opportunities, content, results"
           action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open gates</Badge>}
         />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">

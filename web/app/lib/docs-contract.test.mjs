@@ -24,18 +24,19 @@ test("global docs route exists and explains the CiteLoop loop with Phase 1 IA la
     "Install and initialize",
     "On This Page",
     "How CiteLoop turns your domain into evidence-backed SEO and GEO content.",
-    "Feed analysis back into the plan",
+    "Feed opportunities back into the plan",
     "Start here",
     "Core concepts",
     "Workflow model",
     "Common states and signals",
     "Context",
-    "Analysis",
+    "Opportunities",
     "Content Plan",
     "Publish",
     "Results",
     "Settings > Activity Log",
     "Create your first project",
+    "Docs, Context, and Settings stay in the utility area.",
   ]) {
     assert.match(docs, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

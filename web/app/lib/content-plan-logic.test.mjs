@@ -122,7 +122,7 @@ test("planPulseForTopics gives calm copy for an empty plan", async () => {
 
   assert.deepEqual(planPulseForTopics([]), {
     title: "No topics in the plan yet",
-    detail: "Review analysis recommendations or generate from domain to seed the first backlog.",
+    detail: "Review opportunities or generate from domain to seed the first backlog.",
     tone: "neutral",
   });
 });

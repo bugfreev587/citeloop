@@ -60,7 +60,7 @@ test("analysis page renders loop in motion from lifecycle summary", () => {
     "added_to_plan",
     "ready_for_review",
     "published_or_applied",
-    "View measurement",
+    "View results",
     "deriveVisibilityLifecycleStage",
   ]) {
     assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

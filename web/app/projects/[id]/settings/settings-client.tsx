@@ -751,7 +751,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       <section id="settings-panel-search-console" role="tabpanel" aria-labelledby="settings-tab-search-console" tabIndex={0}>
         <SectionHeader
           title="Search Console connection"
-          eyebrow="Analysis data"
+          eyebrow="Search signal data"
           action={
             <Button size="sm" onClick={refreshGSCConnection} disabled={Boolean(gscBusy)}>
               <RefreshCw size={14} />
@@ -768,7 +768,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               <div>
                 <div className="text-sm font-bold text-slate-900">{gscCardTitle}</div>
                 <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
-                  CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Analysis and Results.
+                  CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Opportunities and Results.
                 </p>
               </div>
             </div>

@@ -61,14 +61,14 @@ const quickstartBadges = ["Dashboard-first", "Evidence-backed", "One review gate
 const loopSteps = [
   "Read your domain",
   "Build context",
-  "Review analysis",
+  "Review opportunities",
   "Plan content",
   "Generate drafts",
   "Check evidence",
   "Review once",
   "Publish and distribute",
   "Measure results",
-  "Feed analysis back into the plan",
+  "Feed opportunities back into the plan",
 ];
 
 const fourSteps = [
@@ -83,7 +83,7 @@ const fourSteps = [
     href: "/",
   },
   {
-    title: "Review analysis",
+    title: "Review opportunities",
     detail: "Keep the recommendations that should enter the plan; ignore the rest.",
     href: "/",
   },
@@ -98,7 +98,7 @@ const glanceRows = [
   ["Account owner", "You or your team, starting from one product domain."],
   ["Context source", "Public pages, confirmed facts, evidence snippets, and product rules."],
   ["Human gate", "Review is the one approval step before content can move toward publishing."],
-  ["What you get back", "Analysis recommendations, planned topics, evidence-backed drafts, canonical URLs, and variants."],
+  ["What you get back", "Opportunity recommendations, planned topics, evidence-backed drafts, canonical URLs, and variants."],
   ["Best for", "Teams that want a steady SEO and GEO content loop without inventing private metrics."],
   ["Need audit detail?", "Use Settings > Activity Log for background events, failures, and degraded checks."],
 ];
@@ -111,7 +111,7 @@ const startPaths = [
   },
   {
     title: "Create a content plan",
-    detail: "Review analysis recommendations, then turn the ones you keep into topics, schedules, and content intent.",
+    detail: "Review opportunities, then turn the ones you keep into topics, schedules, and content intent.",
     href: "/",
   },
   {
@@ -124,7 +124,7 @@ const startPaths = [
 const concepts = [
   ["Project", "The domain-level workspace CiteLoop reads, plans, reviews, publishes, and measures."],
   ["Context", "The product profile, evidence library, source pages, voice, and rules used for every draft."],
-  ["Analysis", "Decision-ready recommendations that need review before they enter the plan."],
+  ["Opportunities", "Decision-ready recommendations that need review before they enter the plan."],
   ["Content Plan", "The backlog of reviewed topics, angles, schedules, and generation intent."],
   ["Canonical", "The primary article published on your main content surface."],
   ["Variant", "A rewritten version prepared for a distribution surface after the canonical URL exists."],
@@ -137,8 +137,8 @@ const concepts = [
 const dashboardPages = [
   ["Home", "Shows the current next action, loop momentum, context health, and what needs attention now."],
   ["Context", "Shows what CiteLoop believes about your domain and the evidence behind publishable claims."],
-  ["Analysis", "Reviews automatically generated recommendations before they become content work."],
-  ["Content Plan", "Turns accepted analysis into topics, schedules, and drafting intent."],
+  ["Opportunities", "Reviews automatically generated recommendations before they become content work."],
+  ["Content Plan", "Turns accepted opportunities into topics, schedules, and drafting intent."],
   ["Review", "Groups drafts that need approval and explains evidence issues in reviewer language."],
   ["Publish", "Tracks canonical publishing, URL verification, and distribution-ready variants."],
   ["Results", "Shows measurement coverage, diagnostics, crawler access, and GEO visibility signals."],
@@ -170,7 +170,7 @@ const roles = [
 
 const structuredHandoff = `project
   -> context profile
-  -> accepted analysis
+  -> accepted opportunities
   -> content plan
   -> evidence-backed draft
   -> approved canonical article
@@ -387,7 +387,7 @@ export default function DocsPage() {
               </li>
               <li className="flex gap-2">
                 <CheckCircle2 className="mt-1 shrink-0 text-[#d93820]" size={16} />
-                <span>Review analysis before recommendations enter the Content Plan.</span>
+                <span>Review opportunities before recommendations enter the Content Plan.</span>
               </li>
             </ul>
           </Section>
@@ -425,8 +425,7 @@ export default function DocsPage() {
                 <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r">
                   <h3 className="text-base font-bold text-slate-950">Initialize from the dashboard</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Open CiteLoop, create a project, and move through Context, Analysis, Content Plan, Review,
-                    Publish, and Results in order.
+                    Open CiteLoop, create a project, then use Opportunities, Content Plan, Review, Publish, and Results for daily work.
                   </p>
                 </div>
                 <pre className="overflow-x-auto bg-slate-950 p-4 text-sm leading-6 text-slate-100">
@@ -483,7 +482,7 @@ export default function DocsPage() {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="text-sm font-bold text-slate-950">The CiteLoop loop</div>
                 <div className="rounded-md bg-white px-2 py-1 text-xs font-bold text-[#d93820] ring-1 ring-slate-200">
-                  Analysis feeds planning
+                  Opportunities feed planning
                 </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -552,7 +551,7 @@ export default function DocsPage() {
               <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="text-sm font-bold text-slate-950">After a project exists</div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  Open Context, Analysis, Content Plan, Review, Publish, Results, and Settings from the project sidebar.
+                  Use Opportunities, Content Plan, Review, Publish, and Results for daily work. Docs, Context, and Settings stay in the utility area.
                 </p>
               </div>
             </div>

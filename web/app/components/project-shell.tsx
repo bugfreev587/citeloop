@@ -54,19 +54,16 @@ const navSections = [
   {
     id: "primary",
     label: null,
-    items: [
-      { label: "Home", href: "", icon: Home },
-      { label: "Context", href: "context", icon: Database },
-    ],
+    items: [{ label: "Home", href: "", icon: Home }],
   },
   {
-    id: "intelligence",
-    label: "Intelligence",
-    items: [{ label: "Analysis", href: "analysis", icon: Target }],
+    id: "analysis",
+    label: "Analysis",
+    items: [{ label: "Opportunities", href: "analysis", icon: Target }],
   },
   {
-    id: "execution",
-    label: "Execution",
+    id: "content",
+    label: "Content",
     items: [
       { label: "Content Plan", href: "plan", icon: ListChecks },
       { label: "Review", href: "review", icon: PenLine },
@@ -74,8 +71,8 @@ const navSections = [
     ],
   },
   {
-    id: "outcomes",
-    label: "Outcomes",
+    id: "results",
+    label: "Results",
     items: [{ label: "Results", href: "results", icon: Search }],
   },
 ];
@@ -192,6 +189,18 @@ export function ProjectShell({
           </Link>
           {project && (
             <Link
+              href={`/projects/${projectId}/context`}
+              className={cx(
+                "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100",
+                isActive(pathname, projectId, "context") && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
+              )}
+            >
+              <Database size={16} />
+              Context
+            </Link>
+          )}
+          {project && (
+            <Link
               href={`/projects/${projectId}/settings`}
               className={cx(
                 "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100",
@@ -245,6 +254,17 @@ export function ProjectShell({
           >
             Docs
           </Link>
+          {project && (
+            <Link
+              href={`/projects/${projectId}/context`}
+              className={cx(
+                "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
+                isActive(pathname, projectId, "context") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+              )}
+            >
+              Context
+            </Link>
+          )}
           {project && (
             <Link
               href={`/projects/${projectId}/settings`}

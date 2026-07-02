@@ -10,9 +10,11 @@ const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath))
 test("project shell uses user-facing Phase 1 navigation and hides Runs from primary nav", () => {
   const shell = read("components/project-shell.tsx");
 
-  for (const label of ["Home", "Context", "Analysis", "Content Plan", "Review", "Publish", "Results"]) {
+  for (const label of ["Home", "Opportunities", "Content Plan", "Review", "Publish", "Results"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
   }
+  assert.match(shell, /href=\{`\/projects\/\$\{projectId\}\/context`\}/);
+  assert.match(shell, />\s*Context\s*</);
 
   for (const legacy of [
     'label: "Knowledge"',
@@ -20,14 +22,16 @@ test("project shell uses user-facing Phase 1 navigation and hides Runs from prim
     'label: "Publishing"',
     'label: "SEO"',
     'label: "Runs"',
-    'label: "Opportunities"',
     'label: "Visibility"',
     'label: "SYSTEM"',
+    'label: "Intelligence"',
+    'label: "Execution"',
+    'label: "Outcomes"',
   ]) {
     assert.doesNotMatch(shell, new RegExp(legacy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  assert.match(shell, /Docs[\s\S]*Settings/);
+  assert.match(shell, /Docs[\s\S]*Context[\s\S]*Settings/);
   assert.match(shell, /isPlatformAdmin[\s\S]*Admin/);
   assert.doesNotMatch(shell, /\/admin\?from=/);
   assert.match(shell, /\/projects\/\$\{projectId\}\/admin/);
@@ -55,14 +59,15 @@ test("project shell groups desktop navigation into SuperX-style sections", () =>
   const shell = read("components/project-shell.tsx");
 
   assert.match(shell, /const navSections = \[/);
-  assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"[\s\S]*label: "Context"/);
-  assert.match(shell, /id: "intelligence"[\s\S]*label: "Intelligence"[\s\S]*label: "Analysis"/);
-  assert.match(shell, /id: "execution"[\s\S]*label: "Execution"[\s\S]*label: "Content Plan"[\s\S]*label: "Review"[\s\S]*label: "Publish"/);
-  assert.match(shell, /id: "outcomes"[\s\S]*label: "Outcomes"[\s\S]*label: "Results"/);
-  for (const label of ["Intelligence", "Execution", "Outcomes"]) {
+  assert.match(shell, /id: "primary"[\s\S]*label: null[\s\S]*label: "Home"/);
+  assert.doesNotMatch(shell, /id: "primary"[\s\S]*label: "Context"[\s\S]*id: "analysis"/);
+  assert.match(shell, /id: "analysis"[\s\S]*label: "Analysis"[\s\S]*label: "Opportunities"/);
+  assert.match(shell, /id: "content"[\s\S]*label: "Content"[\s\S]*label: "Content Plan"[\s\S]*label: "Review"[\s\S]*label: "Publish"/);
+  assert.match(shell, /id: "results"[\s\S]*label: "Results"[\s\S]*label: "Results"/);
+  for (const label of ["Analysis", "Content", "Results"]) {
     assert.match(shell, new RegExp(`label: "${label}"`));
   }
-  for (const legacyGroup of ["ANALYZE", "CREATE", "DELIVER", "MEASURE"]) {
+  for (const legacyGroup of ["Intelligence", "Execution", "Outcomes", "ANALYZE", "CREATE", "DELIVER", "MEASURE"]) {
     assert.doesNotMatch(shell, new RegExp(`label: "${legacyGroup}"`));
   }
   assert.doesNotMatch(shell, /id: "system"/);
@@ -76,7 +81,7 @@ test("project shell keeps primary navigation labels stable without a CTA above H
   const shell = read("components/project-shell.tsx");
 
   assert.match(shell, /label: "Home"/);
-  assert.match(shell, /label: "Context"/);
+  assert.match(shell, /Docs[\s\S]*Context[\s\S]*Settings/);
   assert.match(shell, /label: "Content Plan"/);
   assert.doesNotMatch(shell, /truncate whitespace-nowrap/);
 });
@@ -198,12 +203,12 @@ test("analysis owns decisions while results owns impact reports and learning", (
   assert.match(seo, /mode="results"/);
 
   for (const copy of [
-    "Opportunity Brief workspace",
-    "Opportunity Briefs",
+    "Opportunities",
+    "Analysis",
     "Search performance snapshot",
-    "Growth findings",
+    "Opportunity queue",
     "Loop in motion",
-    "View measurement",
+    "View results",
     "Create content task",
     "Create refresh task",
     "Create technical task",
@@ -237,9 +242,9 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
 
   for (const copy of [
     "Search performance snapshot",
-    "Growth findings",
+    "Opportunity queue",
     "Loop in motion",
-    "View measurement",
+    "View results",
     "GSC Connected",
     "GSC Not connected",
     "Search Console details",
@@ -250,10 +255,10 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Create technical task",
     "Watch",
     "Open details",
-    "Finding details",
+    "Opportunity details",
     "Evidence",
     "Confidence",
-    "No analysis to review",
+    "No opportunities to review",
   ]) {
     assert.match(seo, new RegExp(copy));
   }
@@ -273,10 +278,10 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /const \[selectedOpportunityID, setSelectedOpportunityID\] = useState<string \| null>\(null\)/);
   assert.match(seo, /const selectedOpportunity = useMemo/);
   assert.match(seo, /setSelectedOpportunityID\(opp\.id\)/);
-  assert.match(seo, /aria-label=\{`Open finding details: \$\{opportunityTitle\(opp\)\}`\}/);
+  assert.match(seo, /aria-label=\{`Open opportunity details: \$\{opportunityTitle\(opp\)\}`\}/);
   assert.match(seo, /role="dialog"/);
   assert.match(seo, /aria-modal="true"/);
-  assert.match(seo, /Finding details/);
+  assert.match(seo, /Opportunity details/);
   assert.match(seo, /Drawer actions/);
   assert.match(seo, /data-analysis-growth-findings-section/);
   assert.match(seo, /data-analysis-finding-card/);
@@ -305,7 +310,6 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.doesNotMatch(seo, /Decision queue/);
   assert.doesNotMatch(seo, /What needs approval now/);
   assert.doesNotMatch(seo, /Search data status/);
-  assert.doesNotMatch(seo, /Opportunity queue/);
   assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
   assert.doesNotMatch(seo, /\{mode === "analysis" && actions\.length > 0 && \(/);
   assert.doesNotMatch(seo, /<SectionHeader title="Content actions"/);
@@ -366,7 +370,7 @@ test("Phase 5 pages separate growth operating outputs", () => {
   const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
   const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
 
-  for (const copy of ["Growth Control Center", "Opportunity Brief", "Action Portfolio", "Impact Reports", "Operations health", "Learning signal"]) {
+  for (const copy of ["Growth Control Center", "Opportunities", "Action Portfolio", "Impact Reports", "Operations health", "Learning signal"]) {
     assert.match(`${workspace}\n${seo}\n${topics}\n${activity}`, new RegExp(copy));
   }
   assert.match(workspace, /highestPriorityOpportunity/);
@@ -385,12 +389,13 @@ test("Phase 5 pages separate growth operating outputs", () => {
 
 test("home pipeline keeps workflow counts separate from search performance metrics", () => {
   const workspace = read("projects/[id]/workspace.tsx");
+  const stagesBlock = workspace.slice(workspace.indexOf("const stages:"), workspace.indexOf("const nextScheduledRow"));
 
-  assert.match(workspace, /label: "Measurement"/);
-  assert.match(workspace, /metricValue: measuringActions/);
-  assert.match(workspace, /Measuring impact/);
+  assert.match(stagesBlock, /label: "Results"/);
+  assert.match(stagesBlock, /metricValue: measuringActions/);
+  assert.match(stagesBlock, /Measuring impact/);
   assert.match(workspace, /label: "Organic traffic"[\s\S]*value: searchDataConnected \? metric\(clicks28d\) : "Limited"/);
-  assert.doesNotMatch(workspace, /label: "Results"/);
+  assert.doesNotMatch(stagesBlock, /label: "Measurement"/);
   assert.doesNotMatch(workspace, /metricValue: searchDataConnected \? metric\(clicks28d\) : "-"/);
 });
 
@@ -403,7 +408,7 @@ test("home turns Needs you into the main human action queue", () => {
     "Needs review",
     "Improves results",
     "Confirm Context",
-    "Review analysis",
+    "Review opportunities",
     "Connect Search Console",
     "View all open actions",
   ]) {
@@ -807,12 +812,11 @@ test("home leads with linked metrics instead of hero or refresh-context prompts"
     "homeInMotionMetric",
     "Organic traffic",
     "Published pages",
-    "In motion",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
 
-  for (const copy of ["AI citation gaps", "Review in Analysis", "View in Analysis"]) {
+  for (const copy of ["AI citation gaps", "Review opportunities", "View opportunities", "In motion"]) {
     assert.match(dashboardLogic, new RegExp(copy));
   }
 
@@ -877,14 +881,13 @@ test("home growth metrics are first-viewport linked cards with honest change lab
     "homeInMotionMetric",
     "Organic traffic",
     "Published pages",
-    "In motion",
     "Search Console connected",
     "this month",
     "View",
   ]) {
     assert.match(workspace, new RegExp(copy));
   }
-  for (const copy of ["AI citation gaps", "already in execution", "0 active now"]) {
+  for (const copy of ["AI citation gaps", "In motion", "already in execution", "0 active now"]) {
     assert.match(dashboardLogic, new RegExp(copy));
   }
 
@@ -917,13 +920,11 @@ test("home explains growth status and loop stages from existing product data", (
   for (const copy of [
     "Connect Search Console for traffic",
     "Connect for proof",
-    "Context",
-    "Analysis",
-    "Plan",
-    "Drafts",
+    "Opportunities",
+    "Content Plan",
     "Review",
     "Publish",
-    "Measurement",
+    "Results",
     "Needs you",
     "Activity",
   ]) {
@@ -961,33 +962,38 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /opportunitiesInPlanCount/);
   // Stage statuses are derived live from page state, not hardcoded.
   assert.match(workspace, /Generating \(auto\)/);
-  assert.match(workspace, /Drafting \(auto\)/);
+  assert.match(workspace, /Plan ready/);
   assert.match(workspace, /Needs approval/);
   assert.doesNotMatch(workspace, /Select a planned topic to create the next draft/);
 });
 
 test("home renders the loop as a single connected pipeline stepper", () => {
   const workspace = read("projects/[id]/workspace.tsx");
+  const stagesBlock = workspace.slice(workspace.indexOf("const stages:"), workspace.indexOf("const nextScheduledRow"));
 
-  // One ordered pipeline with all seven stages, each linking to its page.
-  for (const copy of [
-    "Pipeline",
-    "stages",
-    "stageDotClass",
-    "Context",
-    "Analysis",
-    "Plan",
-    "Drafts",
-    "Review",
-    "Publish",
-    "Measurement",
-    "statusLabel",
-  ]) {
+  // One ordered daily pipeline; Context stays in setup/utility surfaces.
+  for (const copy of ["Pipeline", "stageDotClass"]) {
     assert.match(workspace, new RegExp(copy));
   }
-  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/context`/);
-  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/analysis`/);
-  assert.match(workspace, /href: `\/projects\/\$\{projectId\}\/results`/);
+  for (const copy of [
+    "stages",
+    "Opportunities",
+    "Content Plan",
+    "Review",
+    "Publish",
+    "Results",
+    "statusLabel",
+  ]) {
+    assert.match(stagesBlock, new RegExp(copy));
+  }
+  for (const removedDailyStage of ['label: "Context"', 'label: "Analysis"', 'label: "Plan"', 'label: "Drafts"', 'label: "Measurement"']) {
+    assert.doesNotMatch(stagesBlock, new RegExp(removedDailyStage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(stagesBlock, /href: `\/projects\/\$\{projectId\}\/analysis`/);
+  assert.match(stagesBlock, /href: `\/projects\/\$\{projectId\}\/plan`/);
+  assert.match(stagesBlock, /href: `\/projects\/\$\{projectId\}\/review`/);
+  assert.match(stagesBlock, /href: `\/projects\/\$\{projectId\}\/publish`/);
+  assert.match(stagesBlock, /href: `\/projects\/\$\{projectId\}\/results`/);
 
   // The decorative circular loop, arrow connectors, and 3x3 grid are gone.
   assert.doesNotMatch(workspace, /loopConnectorLabels/);
@@ -1130,18 +1136,18 @@ test("analysis page presents decisions and results page presents impact reports"
   const resultsPage = read("projects/[id]/results/page.tsx");
 
   for (const copy of [
-    "Opportunity Brief workspace",
-    "Opportunity Briefs",
+    "Opportunities",
+    "Analysis",
     "Search performance snapshot",
-    "Growth findings",
+    "Opportunity queue",
     "Loop in motion",
-    "View measurement",
+    "View results",
     "Impact Reports",
     "Results and learning",
     "Weekly analysis brief",
     "Create content task",
     "Public crawl only",
-    "Finding details",
+    "Opportunity details",
     "Open details",
     "Drawer actions",
   ]) {
@@ -1152,7 +1158,6 @@ test("analysis page presents decisions and results page presents impact reports"
   assert.match(resultsPage, /ResultsClient/);
   assert.doesNotMatch(seo, /title="SEO"/);
   assert.doesNotMatch(seo, /title="Visibility overview"/);
-  assert.doesNotMatch(seo, /title="Opportunities"/);
 });
 
 test("activity log defaults to user-facing attention events and hides run internals in details", () => {
@@ -1187,7 +1192,7 @@ test("content plan treats topic generation as a per-topic background operation",
   assert.doesNotMatch(topics, /disabled=\{!!busy \|\| topic\.status === "archived"\} size="sm" variant="primary" onClick=\{\(\) => generate\(topic\)\}/);
 });
 
-test("content plan polls accepted analysis actions until topics appear", () => {
+test("content plan polls accepted opportunity actions until topics appear", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
   assert.match(topics, /api\.getVisibilitySummary\(projectId\)/);
