@@ -249,11 +249,11 @@ function actionCtaForOpportunity(opportunity: SEOOpportunity) {
   if (type === "internal_link_gap" || words.includes("internal link")) {
     return { label: "Create internal-link task", busyLabel: "Creating task" };
   }
-  if (words.includes("geo") || words.includes("citation") || words.includes("answer engine")) {
-    return { label: "Create GEO asset task", busyLabel: "Creating task" };
-  }
   if (type === "schema_gap" || type === "technical_visibility_issue" || words.includes("index") || words.includes("sitemap") || words.includes("schema") || words.includes("crawler") || words.includes("robots") || words.includes("canonical")) {
     return { label: "Create technical task", busyLabel: "Creating task" };
+  }
+  if (words.includes("geo") || words.includes("citation") || words.includes("answer engine")) {
+    return { label: "Create GEO asset task", busyLabel: "Creating task" };
   }
   if (words.includes("refresh") || words.includes("decay") || words.includes("ctr") || words.includes("title") || words.includes("meta") || words.includes("near")) {
     return { label: "Create refresh task", busyLabel: "Creating task" };

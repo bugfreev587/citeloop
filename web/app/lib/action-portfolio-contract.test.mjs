@@ -72,6 +72,19 @@ test("Analysis distinguishes multi-surface action task types", () => {
   }
 });
 
+test("Schema recommendations keep technical CTA ahead of answer-engine copy", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const match = seo.match(/function actionCtaForOpportunity[\s\S]*?function sourceModeForOpportunity/);
+  assert.ok(match, "actionCtaForOpportunity body should be readable");
+  const body = match[0];
+  const schemaIndex = body.indexOf('type === "schema_gap"');
+  const technicalIndex = body.indexOf('type === "technical_visibility_issue"');
+  const geoIndex = body.indexOf("Create GEO asset task");
+  assert.ok(schemaIndex >= 0 && technicalIndex >= 0 && geoIndex >= 0, "CTA body should include schema, technical, and GEO branches");
+  assert.ok(schemaIndex < geoIndex, "schema_gap must route to technical task before generic answer-engine GEO copy");
+  assert.ok(technicalIndex < geoIndex, "technical_visibility_issue must route to technical task before generic answer-engine GEO copy");
+});
+
 test("Action cards expose why, contribution, output type, and execution result", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   for (const snippet of [
