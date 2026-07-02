@@ -116,6 +116,30 @@ func TestUnplannedContentActionsAreRequeuedByMigration(t *testing.T) {
 	}
 }
 
+func TestFailedDirectContentActionsAreRecoveredByMigration(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0032_recover_failed_direct_content_actions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"update content_actions",
+		"status = 'ready_for_review'",
+		"status = 'failed'",
+		"approved_at is null",
+		"published_at is null",
+		"verified_at is null",
+		"metadata_rewrite",
+		"direct_patch",
+		"title",
+		"meta description",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("failed direct action recovery migration missing %q", want)
+		}
+	}
+}
+
 func TestTopicSourceContentActionContract(t *testing.T) {
 	if !strings.Contains(createTopic, "source_content_action_id") {
 		t.Fatal("CreateTopic must persist source_content_action_id")
