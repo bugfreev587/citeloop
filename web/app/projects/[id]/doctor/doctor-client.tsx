@@ -71,9 +71,96 @@ function compactRepairObject(value: Record<string, any>) {
   );
 }
 
+function parseRepairURL(value?: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function isStructuredDataIssue(finding: SEODoctorFinding) {
+  return finding.category === "structured_data" || finding.issue_type.startsWith("structured_data_") || finding.issue_type === "unsafe_mdx_detected";
+}
+
+function repairCanonicalURL(finding: SEODoctorFinding) {
+  const evidence = repairEvidence(finding);
+  return evidence.normalized_page_url ?? evidence.final_url ?? evidence.page_url ?? firstURL(finding);
+}
+
+function repairPageRole(finding: SEODoctorFinding) {
+  const url = parseRepairURL(repairCanonicalURL(finding));
+  if (url && (url.pathname === "" || url.pathname === "/")) return "homepage";
+  return "web_page";
+}
+
+function structuredDataSchemaTypes(pageRole: string) {
+  if (pageRole === "homepage") return ["WebSite", "Organization", "WebPage"];
+  return ["WebPage"];
+}
+
+function buildStructuredDataRepairContract(finding: SEODoctorFinding) {
+  if (!isStructuredDataIssue(finding)) return null;
+
+  const canonicalURL = repairCanonicalURL(finding);
+  const pageRole = repairPageRole(finding);
+
+  return {
+    page_role: pageRole,
+    canonical_url: canonicalURL,
+    schema_types: structuredDataSchemaTypes(pageRole),
+    render_requirement: "Add server-rendered JSON-LD to the initial HTML so crawlers can read it without client-side interaction.",
+    field_sources: [
+      { field: "name", source: "production site, product, or brand name for the affected page" },
+      { field: "url", source: "canonical_url from this repair contract" },
+      { field: "logo", source: "production logo asset URL that returns a 200 image response" },
+      { field: "description", source: "page meta description or approved brand/product description" },
+      { field: "sameAs", source: "official social or profile URLs if available; omit rather than invent" },
+      { field: "contactPoint", source: "public support/contact details if available; omit rather than invent" },
+      { field: "publisher", source: "the same Organization node when the page is published by the brand/site" },
+      { field: "inLanguage", source: "page html lang, locale config, or canonical locale" },
+      { field: "potentialAction", source: "site search URL template only when the site has search; omit otherwise" },
+    ],
+    canonical_rules: [
+      "Use the production canonical URL and preserve the trailing-slash format chosen by the page canonical tag and redirects.",
+      "Do not create competing /path and /path/ structured-data URLs for the same canonical page.",
+      "If this is a localized page, use the locale-specific canonical URL and language instead of the default homepage values.",
+    ],
+    validation_tools: ["Google Rich Results Test", "Schema Markup Validator"],
+    negative_checks: [
+      "Do not add placeholder JSON-LD solely to silence the warning.",
+      "Require @context to be https://schema.org and @type to match the page role.",
+      "Use absolute production URLs for url, logo, sameAs, publisher, and potentialAction targets.",
+      "Reject localhost, staging, preview, test, or dev URLs.",
+      "Remove empty, unknown, or templated fields instead of shipping blank values.",
+      "Verify logo and referenced image URLs return successful image responses.",
+    ],
+  };
+}
+
+function structuredDataAcceptanceTests(finding: SEODoctorFinding) {
+  if (!isStructuredDataIssue(finding)) return [];
+
+  const canonicalURL = repairCanonicalURL(finding);
+  const pageRole = repairPageRole(finding);
+  const schemaTypes = structuredDataSchemaTypes(pageRole);
+
+  return [
+    `Inspect the initial HTML for ${canonicalURL} and verify it contains server-rendered JSON-LD in a script[type="application/ld+json"] element that crawlers can read without client-side interaction.`,
+    "Parse every JSON-LD block from the rendered HTML and verify each block is valid JSON without template placeholders.",
+    "Validate the JSON-LD with Google Rich Results Test or Schema Markup Validator and resolve parser errors or unreadable schema warnings.",
+    pageRole === "homepage"
+      ? "For homepage pages, verify the JSON-LD models the page with WebSite, Organization, and WebPage schema types using real production brand metadata."
+      : `Verify the JSON-LD @type matches the actual page role; expected baseline schema types: ${schemaTypes.join(", ")}.`,
+    "Verify @context is https://schema.org, @type is present, all URL fields use absolute production URLs, there are no localhost, staging, preview, or dev URLs, no empty required fields, and any logo URL returns a 200 image response.",
+  ];
+}
+
 function buildAIRepairAcceptanceTests(finding: SEODoctorFinding) {
   return uniqueStrings([
     ...(finding.acceptance_tests ?? []),
+    ...structuredDataAcceptanceTests(finding),
     `After the code fix, rerun SEO Doctor or an equivalent crawler and confirm no active "${finding.issue_type}" issue appears for the same affected URLs, normalized URLs, or equivalent canonical URL variants.`,
     "Confirm the underlying page response, metadata, schema, redirect, link, or crawl behavior that produced this finding now matches the intended SEO contract, not only that the card was dismissed.",
   ]);
@@ -107,6 +194,7 @@ function buildAIRepairPayload(finding: SEODoctorFinding) {
       goal: finding.fix_intent || finding.issue_type,
       instructions: finding.developer_instructions,
       likely_surfaces: finding.likely_files_or_surfaces,
+      seo_contract: buildStructuredDataRepairContract(finding),
       risk_level: finding.risk_level,
     }),
     acceptance_tests: buildAIRepairAcceptanceTests(finding),

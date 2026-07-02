@@ -112,6 +112,43 @@ test("AI repair JSON only includes website repair context, not CiteLoop Doctor m
   assert.match(acceptanceBlock, /rerun SEO Doctor or an equivalent crawler/);
 });
 
+test("structured data AI repair JSON includes a concrete SEO schema contract", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const acceptanceBlock = client.slice(client.indexOf("function structuredDataAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
+
+  for (const contract of [
+    "seo_contract",
+    "page_role",
+    "homepage",
+    "schema_types",
+    "WebSite",
+    "Organization",
+    "WebPage",
+    "field_sources",
+    "canonical_url",
+    "render_requirement",
+    "server-rendered",
+    "Google Rich Results Test",
+    "Schema Markup Validator",
+    "@context",
+    "@type",
+    "absolute production URLs",
+    "staging",
+    "logo",
+  ]) {
+    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const acceptance of [
+    "server-rendered JSON-LD",
+    "Google Rich Results Test or Schema Markup Validator",
+    "WebSite, Organization, and WebPage",
+    "no localhost, staging, preview, or dev URLs",
+  ]) {
+    assert.match(acceptanceBlock, new RegExp(acceptance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("Fix with AI uses a dedicated colored button variant instead of outline overrides", () => {
   const ui = read("components/ui.tsx");
   const client = read("projects/[id]/doctor/doctor-client.tsx");
