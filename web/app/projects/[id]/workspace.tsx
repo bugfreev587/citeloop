@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, Search, Sparkles, Stethoscope } from "lucide-react";
 import {
   Article,
   AutopilotReadiness,
@@ -11,6 +11,7 @@ import {
   ProductProfile,
   Project,
   ReviewGroup,
+  SEODoctorReport,
   SEOOpportunity,
   SEOOverview,
   Topic,
@@ -177,6 +178,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [insightRuns, setInsightRuns] = useState<GenerationRun[]>([]);
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
+  const [doctorReport, setDoctorReport] = useState<SEODoctorReport | null>(null);
   const [accountProjects, setAccountProjects] = useState<Project[]>([]);
   const [autopilotReadiness, setAutopilotReadiness] = useState<AutopilotReadiness | null>(null);
   const { notify } = useToast();
@@ -189,7 +191,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, projectRows, readinessData] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, doctorData, projectRows, readinessData] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -203,6 +205,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listRuns(projectId, { agent: "insight", limit: 50 }).catch(() => []),
         api.getSEOOverview(projectId).catch(() => null),
         api.getVisibilitySummary(projectId).catch(() => null),
+        api.getSEODoctor(projectId).catch(() => null),
         api.listProjects().catch(() => []),
         api.getAutopilotReadiness(projectId).catch(() => null),
       ]);
@@ -219,6 +222,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setInsightRuns(insightRunRows);
       setSeoOverview(overview);
       setVisibilitySummary(summary);
+      setDoctorReport(doctorData);
       setAccountProjects(projectRows);
       setAutopilotReadiness(readinessData);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
@@ -574,6 +578,13 @@ export function Workspace({ projectId }: { projectId: string }) {
     readyToPublishCount: ready.length,
     measuringActionCount: measuringActions,
   });
+  const doctorRun = doctorReport?.run ?? null;
+  const doctorRunning = doctorRun?.status === "queued" || doctorRun?.status === "running";
+  const doctorHealthScore = doctorRun?.health_score ?? doctorReport?.human_report?.health_score ?? null;
+  const doctorCounts = doctorReport?.human_report?.issue_counts ?? {};
+  const doctorBlockingCount = Number(doctorCounts.P0 ?? 0);
+  const doctorIssueCount = Number(doctorCounts.P0 ?? 0) + Number(doctorCounts.P1 ?? 0) + Number(doctorCounts.P2 ?? 0);
+  const doctorProgress = Math.max(0, Math.min(100, Number(doctorRun?.progress_percent ?? 0)));
   const otherProjects = accountProjects.filter((candidate) => candidate.id !== projectId);
   const metricGridCards = [
     {
@@ -597,6 +608,27 @@ export function Workspace({ projectId }: { projectId: string }) {
       icon: Sparkles,
       featured: false,
       muted: aiCitationMetric.muted,
+    },
+    {
+      label: "Site health",
+      value: doctorRunning ? `${doctorProgress}%` : doctorHealthScore == null ? "Run" : doctorHealthScore,
+      detail: doctorRunning
+        ? `${doctorRun?.pages_checked ?? 0} URLs checked`
+        : doctorRun
+          ? `${doctorIssueCount} repair ${doctorIssueCount === 1 ? "item" : "items"}`
+          : "Run Doctor for crawl and index checks",
+      metricChangeLabel: doctorRunning
+        ? doctorRun?.stage ?? "Running"
+        : doctorBlockingCount > 0
+          ? `${doctorBlockingCount} blockers`
+          : doctorRun
+            ? "Report ready"
+            : "Not run yet",
+      metricChangeTone: doctorRunning ? "blue" : doctorBlockingCount > 0 ? "red" : doctorRun ? "green" : "amber",
+      href: `/projects/${projectId}/doctor`,
+      icon: Stethoscope,
+      featured: false,
+      muted: !doctorRun,
     },
     {
       label: "Published pages",

@@ -1,6 +1,8 @@
 package db
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,64 @@ func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
 		if !strings.Contains(query, want) {
 			t.Fatalf("ListLatestTechnicalChecks query missing %q in %s", want, query)
 		}
+	}
+}
+
+func TestSEODoctorSchemaDefinesRunsAndFindings(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0034_seo_doctor.sql"))
+	if err != nil {
+		t.Fatalf("read seo doctor migration: %v", err)
+	}
+	migration := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"create table if not exists seo_doctor_runs",
+		"create table if not exists seo_doctor_findings",
+		"trigger text not null",
+		"progress_percent int not null",
+		"block_reason text",
+		"finding_key text not null",
+		"developer_instructions text not null",
+		"acceptance_tests jsonb not null default '[]'",
+		"where status in ('queued','running')",
+		"where status = 'active'",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("seo doctor migration missing %q in %s", want, migration)
+		}
+	}
+}
+
+func TestSEODoctorQueriesExposeRunFindingAndFreshnessContracts(t *testing.T) {
+	queries := map[string]string{
+		"CreateSEODoctorRun":              createSEODoctorRun,
+		"GetSEODoctorRun":                 getSEODoctorRun,
+		"GetActiveSEODoctorRun":           getActiveSEODoctorRun,
+		"UpdateSEODoctorRunProgress":      updateSEODoctorRunProgress,
+		"CompleteSEODoctorRun":            completeSEODoctorRun,
+		"FailSEODoctorRun":                failSEODoctorRun,
+		"LatestSEODoctorRun":              latestSEODoctorRun,
+		"LatestCompletedSEODoctorRun":     latestCompletedSEODoctorRun,
+		"CountManualSEODoctorRunsSince":   countManualSEODoctorRunsSince,
+		"ListSEODoctorRunsDueWeekly":      listSEODoctorRunsDueWeekly,
+		"UpsertSEODoctorFinding":          upsertSEODoctorFinding,
+		"ResolveMissingSEODoctorFindings": resolveMissingSEODoctorFindings,
+		"ListSEODoctorFindingsForRun":     listSEODoctorFindingsForRun,
+		"GetSEODoctorFinding":             getSEODoctorFinding,
+		"DismissSEODoctorFinding":         dismissSEODoctorFinding,
+		"LinkSEODoctorFindingToAction":    linkSEODoctorFindingToAction,
+	}
+	for name, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			t.Fatalf("%s query should exist", name)
+		}
+	}
+	if !strings.Contains(strings.ToLower(getActiveSEODoctorRun), "status in ('queued','running')") {
+		t.Fatalf("GetActiveSEODoctorRun must dedupe queued/running runs: %s", getActiveSEODoctorRun)
+	}
+	if !strings.Contains(strings.ToLower(countManualSEODoctorRunsSince), "trigger = 'manual'") {
+		t.Fatalf("CountManualSEODoctorRunsSince must count manual runs only: %s", countManualSEODoctorRunsSince)
+	}
+	if !strings.Contains(strings.ToLower(listSEODoctorRunsDueWeekly), "interval '6 days'") {
+		t.Fatalf("ListSEODoctorRunsDueWeekly must respect manual/onboarding/weekly freshness window: %s", listSEODoctorRunsDueWeekly)
 	}
 }

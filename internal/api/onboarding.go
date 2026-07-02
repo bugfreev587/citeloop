@@ -11,6 +11,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
+	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
 )
 
@@ -122,7 +123,7 @@ func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingI
 	s.startInsightInventoryCrawl(in.ProjectID, in.SiteURL, cfg.Crawl)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
@@ -137,6 +138,14 @@ func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingI
 		runner := s.SEOOnboardingRunner
 		if runner == nil {
 			runner = s.runProjectSEOOnboarding
+		}
+		runner(ctx, in)
+	}()
+	go func() {
+		defer wg.Done()
+		runner := s.DoctorOnboardingRunner
+		if runner == nil {
+			runner = s.runProjectSEODoctorOnboarding
 		}
 		runner(ctx, in)
 	}()
@@ -164,6 +173,42 @@ func (s *Server) runProjectSEOOnboarding(ctx context.Context, in projectOnboardi
 		"project_id", in.ProjectID,
 		"sync_status", syncResult.Status,
 		"analyze_status", analyzeResult.Status,
+	)
+}
+
+func (s *Server) runProjectSEODoctorOnboarding(ctx context.Context, in projectOnboardingInput) {
+	log := s.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	if s.Q == nil {
+		log.Warn("project onboarding seo doctor skipped: database unavailable", "project_id", in.ProjectID)
+		return
+	}
+	svc := s.seoService()
+	run, created, err := svc.StartDoctorRun(ctx, seopkg.DoctorRunRequest{
+		ProjectID: in.ProjectID,
+		Trigger:   seopkg.DoctorTriggerOnboarding,
+		SiteURL:   in.SiteURL,
+	})
+	if err != nil {
+		log.Warn("project onboarding seo doctor start failed", "project_id", in.ProjectID, "err", err)
+		return
+	}
+	if !created {
+		log.Info("project onboarding seo doctor deduped", "project_id", in.ProjectID, "run_id", run.ID)
+		return
+	}
+	report, err := svc.RunDoctor(ctx, in.ProjectID, run.ID)
+	if err != nil {
+		log.Warn("project onboarding seo doctor failed", "project_id", in.ProjectID, "run_id", run.ID, "err", err)
+		return
+	}
+	log.Info(
+		"project onboarding seo doctor complete",
+		"project_id", in.ProjectID,
+		"run_id", run.ID,
+		"health_score", report.Human.HealthScore,
 	)
 }
 

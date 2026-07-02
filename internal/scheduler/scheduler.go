@@ -53,6 +53,8 @@ type seoRunner interface {
 	Sync(context.Context, uuid.UUID, string) (seopkg.SyncResult, error)
 	Analyze(context.Context, uuid.UUID) (seopkg.SyncResult, error)
 	Brief(context.Context, uuid.UUID) (seopkg.Brief, error)
+	StartDoctorRun(context.Context, seopkg.DoctorRunRequest) (db.SeoDoctorRun, bool, error)
+	RunDoctor(context.Context, uuid.UUID, uuid.UUID) (seopkg.DoctorReport, error)
 }
 
 type Scheduler struct {
@@ -769,6 +771,54 @@ func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Pr
 		"analyze_status", analyzeResult.Status,
 		"brief_mode", brief.Mode,
 		"brief_actions", len(brief.Actions),
+	)
+	return nil
+}
+
+// TickSEODoctor runs the user-facing technical SEO Doctor weekly for projects
+// that do not already have a fresh onboarding/manual/weekly/post-publish report.
+func (s *Scheduler) TickSEODoctor(ctx context.Context) {
+	q := db.New(s.Pool)
+	projects, err := q.ListSEODoctorRunsDueWeekly(ctx)
+	if err != nil {
+		s.logger().Error("list projects for seo doctor tick", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.runSEODoctorForProject(ctx, q, p); err != nil {
+			s.logger().Error("seo doctor tick failed", "project", p.ID, "err", err)
+		}
+	}
+}
+
+func (s *Scheduler) runSEODoctorForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	runner := s.newSEORunner(q)
+	siteURL := s.BlogBaseURL
+	if cfg, err := config.Parse(p.Config); err == nil && strings.TrimSpace(cfg.SiteURL) != "" {
+		siteURL = cfg.SiteURL
+	}
+	run, created, err := runner.StartDoctorRun(ctx, seopkg.DoctorRunRequest{
+		ProjectID: p.ID,
+		Trigger:   seopkg.DoctorTriggerWeekly,
+		SiteURL:   siteURL,
+	})
+	if err != nil {
+		return fmt.Errorf("seo doctor start: %w", err)
+	}
+	if !created {
+		s.logger().Info("seo doctor tick deduped active run", "project", p.ID, "run", run.ID)
+		return nil
+	}
+	report, err := runner.RunDoctor(ctx, p.ID, run.ID)
+	if err != nil {
+		return fmt.Errorf("seo doctor run: %w", err)
+	}
+	s.logger().Info(
+		"seo doctor tick complete",
+		"project", p.ID,
+		"run", run.ID,
+		"health_score", report.Human.HealthScore,
+		"findings", len(report.Findings),
 	)
 	return nil
 }

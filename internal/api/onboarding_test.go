@@ -217,8 +217,10 @@ func TestRunProjectOnboardingStartsIndependentTracksBeforeQuickProfileCompletes(
 	profileLLM := &blockingOnboardingLLM{started: make(chan struct{}, 1), release: make(chan struct{})}
 	inventoryStarted := make(chan insightInventoryInput, 1)
 	seoStarted := make(chan projectOnboardingInput, 1)
+	doctorStarted := make(chan projectOnboardingInput, 1)
 	releaseInventory := make(chan struct{})
 	releaseSEO := make(chan struct{})
+	releaseDoctor := make(chan struct{})
 	srv := &Server{
 		Q:   db.New(&onboardingDBSpy{projectID: projectID}),
 		LLM: profileLLM,
@@ -229,6 +231,10 @@ func TestRunProjectOnboardingStartsIndependentTracksBeforeQuickProfileCompletes(
 		SEOOnboardingRunner: func(ctx context.Context, in projectOnboardingInput) {
 			seoStarted <- in
 			<-releaseSEO
+		},
+		DoctorOnboardingRunner: func(ctx context.Context, in projectOnboardingInput) {
+			doctorStarted <- in
+			<-releaseDoctor
 		},
 	}
 
@@ -241,6 +247,7 @@ func TestRunProjectOnboardingStartsIndependentTracksBeforeQuickProfileCompletes(
 		close(profileLLM.release)
 		close(releaseInventory)
 		close(releaseSEO)
+		close(releaseDoctor)
 		<-done
 	}()
 
@@ -266,6 +273,18 @@ func TestRunProjectOnboardingStartsIndependentTracksBeforeQuickProfileCompletes(
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("seo onboarding should start while quick profile is still running")
+	}
+
+	select {
+	case got := <-doctorStarted:
+		if got.ProjectID != projectID {
+			t.Fatalf("doctor project id = %s, want %s", got.ProjectID, projectID)
+		}
+		if got.SiteURL != landing.URL {
+			t.Fatalf("doctor site url = %q, want %q", got.SiteURL, landing.URL)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("seo doctor onboarding should start for a URL-created project")
 	}
 }
 

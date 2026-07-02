@@ -445,6 +445,84 @@ export type SEOContentAction = {
   created_at?: any;
 };
 
+export type SEODoctorRunStatus = "queued" | "running" | "completed" | "failed" | "blocked" | string;
+export type SEODoctorStage =
+  | "queued"
+  | "discovering"
+  | "crawling"
+  | "checking"
+  | "classifying"
+  | "writing_report"
+  | "handoff"
+  | "completed"
+  | string;
+export type SEODoctorFindingSeverity = "P0" | "P1" | "P2" | "Info" | string;
+
+export type SEODoctorRun = {
+  id: string;
+  project_id?: string;
+  trigger: "onboarding" | "manual" | "weekly" | "post_publish" | string;
+  status: SEODoctorRunStatus;
+  stage: SEODoctorStage;
+  progress_percent: number;
+  message: string;
+  block_reason?: string | null;
+  pages_discovered: number;
+  pages_fetched: number;
+  pages_checked: number;
+  issues_found: number;
+  health_score?: number | null;
+  input_snapshot?: any;
+  output_summary?: any;
+  error?: string | null;
+  created_by_user_id?: string | null;
+  started_at?: any;
+  updated_at?: any;
+  finished_at?: any;
+  created_at?: any;
+};
+
+export type SEODoctorFinding = {
+  id: string;
+  project_id?: string;
+  run_id?: string;
+  finding_key: string;
+  severity: SEODoctorFindingSeverity;
+  category: string;
+  issue_type: string;
+  status: "active" | "resolved" | "dismissed" | "converted" | string;
+  affected_urls: string[];
+  normalized_urls: string[];
+  evidence: any;
+  why_it_matters: string;
+  fix_intent: string;
+  developer_instructions: string;
+  likely_files_or_surfaces: string[];
+  acceptance_tests: string[];
+  risk_level: "low" | "medium" | "high" | string;
+  review_required: boolean;
+  autofix_eligible: boolean;
+  linked_opportunity_id?: string | null;
+  linked_content_action_id?: string | null;
+  first_seen_at?: any;
+  last_seen_at?: any;
+  resolved_at?: any;
+  updated_at?: any;
+};
+
+export type SEODoctorReport = {
+  run?: SEODoctorRun | null;
+  findings: SEODoctorFinding[];
+  human_report?: {
+    health_score?: number;
+    status?: "healthy" | "needs_attention" | "blocked" | string;
+    summary?: string;
+    issue_counts?: Record<string, number>;
+    checked_urls?: number;
+  } | null;
+  ai_coding_tool_report?: any;
+};
+
 export type ActionMeasurement = {
   id: string;
   project_id: string;
@@ -1118,6 +1196,78 @@ function normalizeSEOContentAction(raw: any): SEOContentAction {
     published_at: data.published_at ?? undefined,
     outcome_summary: data.outcome_summary ?? {},
     created_at: data.created_at ?? undefined,
+  };
+}
+
+function normalizeStringArray(raw: any): string[] {
+  return arrayFrom(raw).map(String).filter((item) => item.trim() !== "");
+}
+
+function normalizeSEODoctorRun(raw: any): SEODoctorRun {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? undefined,
+    trigger: data.trigger ?? "manual",
+    status: data.status ?? "queued",
+    stage: data.stage ?? "queued",
+    progress_percent: Number(data.progress_percent ?? 0),
+    message: data.message ?? "",
+    block_reason: data.block_reason ?? null,
+    pages_discovered: Number(data.pages_discovered ?? 0),
+    pages_fetched: Number(data.pages_fetched ?? 0),
+    pages_checked: Number(data.pages_checked ?? 0),
+    issues_found: Number(data.issues_found ?? 0),
+    health_score: data.health_score == null ? null : Number(data.health_score),
+    input_snapshot: data.input_snapshot ?? {},
+    output_summary: data.output_summary ?? {},
+    error: data.error ?? null,
+    created_by_user_id: data.created_by_user_id ?? null,
+    started_at: data.started_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+    finished_at: data.finished_at ?? undefined,
+    created_at: data.created_at ?? undefined,
+  };
+}
+
+function normalizeSEODoctorFinding(raw: any): SEODoctorFinding {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? undefined,
+    run_id: data.run_id ?? undefined,
+    finding_key: data.finding_key ?? "",
+    severity: data.severity ?? "Info",
+    category: data.category ?? "",
+    issue_type: data.issue_type ?? "",
+    status: data.status ?? "active",
+    affected_urls: normalizeStringArray(data.affected_urls),
+    normalized_urls: normalizeStringArray(data.normalized_urls),
+    evidence: data.evidence ?? {},
+    why_it_matters: data.why_it_matters ?? "",
+    fix_intent: data.fix_intent ?? "",
+    developer_instructions: data.developer_instructions ?? "",
+    likely_files_or_surfaces: normalizeStringArray(data.likely_files_or_surfaces),
+    acceptance_tests: normalizeStringArray(data.acceptance_tests),
+    risk_level: data.risk_level ?? "low",
+    review_required: Boolean(data.review_required),
+    autofix_eligible: Boolean(data.autofix_eligible),
+    linked_opportunity_id: data.linked_opportunity_id ?? null,
+    linked_content_action_id: data.linked_content_action_id ?? null,
+    first_seen_at: data.first_seen_at ?? undefined,
+    last_seen_at: data.last_seen_at ?? undefined,
+    resolved_at: data.resolved_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
+  };
+}
+
+function normalizeSEODoctorReport(raw: any): SEODoctorReport {
+  const data = raw ?? {};
+  return {
+    run: data.run ? normalizeSEODoctorRun(data.run) : null,
+    findings: arrayFrom(data.findings).map(normalizeSEODoctorFinding),
+    human_report: data.human_report ?? null,
+    ai_coding_tool_report: data.ai_coding_tool_report ?? null,
   };
 }
 
@@ -1896,6 +2046,34 @@ export function createApi(auth?: AuthOptions) {
   getVisibilitySummary: async (id: string): Promise<VisibilitySummary> => {
     const raw = await req<any>(`/projects/${id}/seo/visibility/summary`, undefined, auth);
     return normalizeVisibilitySummary(raw);
+  },
+  getSEODoctor: async (id: string): Promise<SEODoctorReport> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor`, undefined, auth);
+    return normalizeSEODoctorReport(raw);
+  },
+  getLatestSEODoctor: async (id: string): Promise<SEODoctorReport> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor/latest`, undefined, auth);
+    return normalizeSEODoctorReport(raw);
+  },
+  startSEODoctorRun: async (id: string, body: { site_url?: string } = {}): Promise<SEODoctorRun> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor/runs`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return normalizeSEODoctorRun(raw);
+  },
+  getSEODoctorRun: async (id: string, runID: string): Promise<SEODoctorRun> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor/runs/${runID}`, undefined, auth);
+    return normalizeSEODoctorRun(raw);
+  },
+  listSEODoctorRunFindings: async (id: string, runID: string): Promise<SEODoctorFinding[]> => {
+    const raw = await req<any[]>(`/projects/${id}/seo/doctor/runs/${runID}/findings`, undefined, auth);
+    return arrayFrom(raw).map(normalizeSEODoctorFinding);
+  },
+  convertSEODoctorFinding: async (id: string, findingID: string): Promise<SEOContentAction> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor/findings/${findingID}/convert`, { method: "POST" }, auth);
+    return normalizeSEOContentAction(raw);
+  },
+  dismissSEODoctorFinding: async (id: string, findingID: string): Promise<SEODoctorFinding> => {
+    const raw = await req<any>(`/projects/${id}/seo/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
+    return normalizeSEODoctorFinding(raw);
   },
   syncSEO: async (id: string, siteURL?: string) => {
     return req<any>(`/projects/${id}/seo/sync`, { method: "POST", body: JSON.stringify({ site_url: siteURL ?? "" }) }, auth);
