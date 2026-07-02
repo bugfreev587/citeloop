@@ -78,3 +78,20 @@ test("Action cards expose why, contribution, output type, and execution result",
     assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
+
+test("Analysis surfaces reviewable direct actions as user-visible output", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  for (const snippet of [
+    "isDirectAction",
+    "directReviewActions",
+    "data-direct-action-queue",
+    "Direct action queue",
+    "Reviewable output",
+    "actionOutputPreviewText",
+    "actionOutputTypeLabel(action)",
+    "actionSEOContributionText(action)",
+    "actionWhyNowText(action)",
+  ]) {
+    assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
