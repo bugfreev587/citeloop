@@ -76,3 +76,45 @@ test("results measurement queue consumes visibility summary loop actions", () =>
   assert.match(seo, /Measurement queue/);
   assert.doesNotMatch(seo, /const measuredActions = actions\.filter/);
 });
+
+test("home consumes visibility summary for opportunity and loop counts", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const marker of [
+    "VisibilitySummary",
+    "getVisibilitySummary(projectId)",
+    "visibilitySummary",
+    "setVisibilitySummary",
+    "visibilityOpenOpportunityCount",
+    "visibilityActionsInLoopCount",
+    "visibilityCitationSignalCount",
+    "openOpportunityCount: visibilityOpenOpportunityCount",
+    "analysisActionCount: visibilityActionsInLoopCount",
+  ]) {
+    assert.match(workspace, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(workspace, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(workspace, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);
+  assert.doesNotMatch(workspace, /openOpportunityCount: seoOpportunities\.length/);
+});
+
+test("content plan consumes visibility summary for analysis handoff state", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  for (const marker of [
+    "VisibilitySummary",
+    "getVisibilitySummary(projectId)",
+    "visibilitySummary",
+    "setVisibilitySummary",
+    "summaryOpenOpportunityCount",
+    "summaryPendingPlanActions",
+    "action.lifecycle_stage === \"added_to_plan\"",
+  ]) {
+    assert.match(topics, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(topics, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(topics, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);
+  assert.doesNotMatch(topics, /setPendingContentActions\(actions\.filter/);
+});

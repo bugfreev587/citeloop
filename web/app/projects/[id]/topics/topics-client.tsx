@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, RefreshCw, Wand2, X } from "lucide-react";
-import { ProjectConfig, Topic } from "../../../lib/api";
+import { ProjectConfig, Topic, VisibilitySummary } from "../../../lib/api";
 import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
@@ -69,8 +69,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const setMessage = (next: Message) => {
     if (next) notify(next);
   };
-  const [openOpportunities, setOpenOpportunities] = useState(0);
-  const [pendingContentActions, setPendingContentActions] = useState(0);
+  const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
@@ -78,17 +77,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [next, opps, actions, project, review, approvedArticles] = await Promise.all([
+      const [next, summary, project, review, approvedArticles] = await Promise.all([
         api.listTopics(projectId),
-        api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
-        api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
+        api.getVisibilitySummary(projectId).catch(() => null),
         api.getProject(projectId).catch(() => null),
         api.listReview(projectId).catch(() => []),
         api.listArticles(projectId, "approved").catch(() => []),
       ]);
       setTopics(next);
-      setOpenOpportunities(opps.length);
-      setPendingContentActions(actions.filter((action) => action.status === "ready_for_review").length);
+      setVisibilitySummary(summary);
       if (project) setConfig(project.config);
       setInReview(review.reduce((sum, group) => sum + group.articles.length, 0));
       setApprovedCount(approvedArticles.length);
@@ -102,13 +99,19 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }, [api, projectId]);
 
+  const summaryOpenOpportunityCount = visibilitySummary?.open_opportunities.length ?? 0;
+  const summaryPendingPlanActions =
+    visibilitySummary?.actions_in_loop.filter(
+      (action) => action.lifecycle_stage === "added_to_plan" || (action.lifecycle_stage === "planned" && !action.topic_id),
+    ).length ?? 0;
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
-    const hasPendingPlanActions = pendingContentActions > 0 && topics.length === 0;
+    const hasPendingPlanActions = summaryPendingPlanActions > 0 && topics.length === 0;
     // A scheduled topic whose slot has arrived is drafted by the server's 5-minute
     // pass, transitioning scheduled → generating → drafted between client polls. Poll
     // so the plan reflects that without a manual reload (the topic then moves to the
@@ -123,7 +126,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     if (!hasGenerating && !hasPendingPlanActions && !hasDueScheduled) return;
     const interval = window.setInterval(refresh, hasGenerating ? 10_000 : hasPendingPlanActions ? 5_000 : 30_000);
     return () => window.clearInterval(interval);
-  }, [generatingIds, pendingContentActions, refresh, topics]);
+  }, [generatingIds, refresh, summaryPendingPlanActions, topics]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -193,17 +196,17 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             : "CiteLoop turns accepted analysis recommendations into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
           cta: null,
         }
-      : pendingContentActions > 0
+      : summaryPendingPlanActions > 0
         ? {
             tone: "blue",
             title: "Generating your content plan from accepted analysis",
             detail: "Accepted analysis recommendations are being turned into topics automatically. Topics will appear here shortly — no action needed.",
             cta: null,
           }
-        : openOpportunities > 0
+        : summaryOpenOpportunityCount > 0
           ? {
               tone: "amber",
-              title: `${openOpportunities} analysis ${openOpportunities === 1 ? "recommendation is" : "recommendations are"} waiting for review`,
+              title: `${summaryOpenOpportunityCount} analysis ${summaryOpenOpportunityCount === 1 ? "recommendation is" : "recommendations are"} waiting for review`,
               detail: "Review analysis to add useful recommendations to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
               cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
             }
