@@ -3,7 +3,7 @@ import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { ArrowLeft, Database, LogIn, PenLine, Send, UserPlus } from "lucide-react";
 import { ProjectCreateForm } from "../project-create-form";
-import { Badge, Notice } from "../components/ui";
+import { Badge, EmptyState, Notice } from "../components/ui";
 import { clerkServerAuthConfigured, requireConfiguredClerk } from "../lib/auth-config";
 import { createApi, Project } from "../lib/api";
 import { ProjectManagementClient } from "./project-management-client";
@@ -30,6 +30,7 @@ export default async function ProjectsPage() {
       error = e.message;
     }
   }
+  const projectsLoaded = !signedOut && !error;
 
   return (
     <main className="min-h-[100dvh] bg-stone-100 px-4 py-8 text-slate-950">
@@ -99,7 +100,7 @@ export default async function ProjectsPage() {
           <section className="min-w-0">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-bold leading-7 text-slate-900">Projects</h2>
-              {!signedOut && <Badge tone="neutral">{projects.length} total</Badge>}
+              {projectsLoaded && <Badge tone="neutral">{projects.length} total</Badge>}
             </div>
 
             {signedOut ? (
@@ -125,8 +126,10 @@ export default async function ProjectsPage() {
                   </Link>
                 </div>
               </div>
-            ) : (
+            ) : projectsLoaded ? (
               <ProjectManagementClient initialProjects={projects} />
+            ) : (
+              <EmptyState title="Projects could not be loaded" detail="Refresh the page when the API is reachable." />
             )}
           </section>
 

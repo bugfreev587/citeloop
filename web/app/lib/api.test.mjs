@@ -88,6 +88,33 @@ test("createApi aborts stalled backend requests before a Vercel function timeout
   }
 });
 
+test("createApi retries idempotent GET requests once after a timeout", async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    assert.ok(init.signal, "fetch should receive an AbortSignal");
+    if (calls === 1) {
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(init.signal.reason ?? new Error("aborted"));
+        });
+      });
+    }
+    return { ok: true, status: 200, json: async () => [{ id: "project-1", name: "unipost.dev", slug: "unipost-dev", config: {} }] };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const projects = await createApi({ token: "session-token", timeoutMs: 1 }).listProjects();
+
+    assert.equal(calls, 2);
+    assert.equal(projects[0].id, "project-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("admin destructive deletes use an extended timeout for cascading cleanup", async () => {
   const calls = [];
   const timeouts = [];
