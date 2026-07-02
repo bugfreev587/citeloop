@@ -107,3 +107,22 @@ func TestProjectHardDeleteIsOwnerScopedAndCascading(t *testing.T) {
 		t.Fatalf("cascade migration should add on delete cascade for every project-scoped legacy table, got %d", got)
 	}
 }
+
+func TestContentPlanAutoMigrationDisablesLegacyProjects(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0035_pause_content_plan_auto.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := strings.ToLower(string(raw))
+
+	for _, want := range []string{
+		"update projects",
+		"jsonb_set",
+		"auto_advance_enabled",
+		"false",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("content plan auto migration missing %q", want)
+		}
+	}
+}
