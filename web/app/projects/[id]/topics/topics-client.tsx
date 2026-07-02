@@ -381,7 +381,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <section className="space-y-3">
-        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" />
+        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" />
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
             <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>

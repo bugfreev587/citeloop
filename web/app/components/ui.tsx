@@ -96,16 +96,28 @@ export function SectionHeader({
   title,
   action,
   eyebrow,
+  level = "section",
 }: {
   title: string;
   action?: React.ReactNode;
   eyebrow?: string;
+  level?: "page" | "section";
 }) {
+  const Heading = level === "page" ? "h1" : "h2";
+
   return (
     <div className="mb-3 flex min-h-8 items-center justify-between gap-3">
       <div>
         {eyebrow && <div className="mb-0.5 text-[13px] font-semibold text-slate-500">{eyebrow}</div>}
-        <h2 className="text-xl font-bold leading-7 text-slate-900">{title}</h2>
+        <Heading
+          data-content-workflow-stage-title={level === "page" ? true : undefined}
+          className={cx(
+            "font-bold text-slate-900",
+            level === "page" ? "text-[26px] leading-8 tracking-tight" : "text-xl leading-7",
+          )}
+        >
+          {title}
+        </Heading>
       </div>
       {action}
     </div>
