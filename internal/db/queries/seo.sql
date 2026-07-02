@@ -636,6 +636,9 @@ where ca.project_id = $1
   and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (
     array[
       '%metadata_rewrite%',
+      '%metadata%',
+      '%title%',
+      '%meta description%',
       '%internal_link_patch%',
       '%schema_patch%',
       '%sitemap_update%',

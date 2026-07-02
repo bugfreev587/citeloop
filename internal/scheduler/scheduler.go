@@ -47,6 +47,8 @@ const (
 	reviewOverdueLimit = 100
 )
 
+var errDirectContentAction = errors.New("direct content action does not need topic planning")
+
 type seoRunner interface {
 	Sync(context.Context, uuid.UUID, string) (seopkg.SyncResult, error)
 	Analyze(context.Context, uuid.UUID) (seopkg.SyncResult, error)
@@ -539,6 +541,13 @@ func (s *Scheduler) handleOpportunityBatchCompleted(ctx context.Context, project
 			return err
 		}
 		topic, err := s.planOpportunityContentAction(ctx, q, projectID, action)
+		if errors.Is(err, errDirectContentAction) {
+			s.Log.Info("direct content action skipped from topic planning", "project", projectID, "action", action.ID)
+			if _, releaseErr := tx.Exec(ctx, releaseSQL); releaseErr != nil {
+				return releaseErr
+			}
+			continue
+		}
 		if err != nil {
 			s.Log.Warn("workflow action planning failed", "project", projectID, "action", action.ID, "err", err)
 			if _, rollbackErr := tx.Exec(ctx, rollbackSQL); rollbackErr != nil {
@@ -586,7 +595,7 @@ func (s *Scheduler) handleOpportunityBatchCompleted(ctx context.Context, project
 
 func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Queries, projectID uuid.UUID, action db.ContentAction) (db.Topic, error) {
 	if !contentActionNeedsTopic(contentActionAssetType(action), action.ActionType) {
-		return db.Topic{}, fmt.Errorf("content action %s is routed as a direct action, not a topic", action.ID)
+		return db.Topic{}, fmt.Errorf("%w: %s", errDirectContentAction, action.ID)
 	}
 	opp, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
 	if err != nil {
@@ -619,7 +628,9 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 func contentActionNeedsTopic(assetType string, actionType string) bool {
 	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
 	switch {
-	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata patch"):
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata patch") || strings.Contains(text, "metadata"):
+		return false
+	case strings.Contains(text, "title") || strings.Contains(text, "meta description"):
 		return false
 	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
 		return false
