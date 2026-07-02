@@ -9,9 +9,9 @@ import {
   planHealthForTopics,
   planPulseForTopics,
   recommendedTopicIds,
+  normalizedTopicPriority,
   topicCardSpanClass,
   topicPickScore,
-  topicPickSignal,
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
@@ -52,6 +52,20 @@ function draftFromTopic(topic: Topic): TopicDraft {
     format: topic.format ?? "",
     priority: String(topic.priority),
   };
+}
+
+function topicPriorityLabel(priority: number) {
+  const normalized = normalizedTopicPriority(priority);
+  if (normalized === 0) return "Needs priority";
+  if (normalized <= 3) return "High priority";
+  if (normalized <= 6) return "Medium priority";
+  return "Low priority";
+}
+
+function topicPriorityTone(priority: number): "red" | "amber" | "neutral" {
+  const normalized = normalizedTopicPriority(priority);
+  if (normalized === 0 || normalized <= 6) return "amber";
+  return "neutral";
 }
 
 export function TopicsClient({ projectId }: { projectId: string }) {
@@ -532,7 +546,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     {topic.status}
                   </Badge>
                   {recommended && <Badge tone="green">Recommended next</Badge>}
-                  <Badge tone={topic.priority > 0 ? "neutral" : "amber"}>priority {topic.priority}</Badge>
+                  <Badge tone={topicPriorityTone(topic.priority)}>{topicPriorityLabel(topic.priority)}</Badge>
                 </div>
                 <div data-content-plan-card-body className="mt-3 min-w-0 flex-1">
                   <div className="break-words text-base font-bold text-slate-900">{topic.title}</div>
@@ -548,10 +562,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     <div>
                       <div className="text-xs font-semibold uppercase text-slate-400">Why this exists</div>
                       <div className="mt-1 line-clamp-2 text-slate-600">{topicWhy(topic)}</div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                      <span className="text-slate-400">Pick signal</span>
-                      <span>{topicPickSignal(topic)}</span>
                     </div>
                   </div>
                 </div>

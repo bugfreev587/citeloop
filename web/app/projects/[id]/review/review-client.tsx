@@ -17,7 +17,7 @@ import {
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatScore } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -368,10 +368,9 @@ function ReviewDecisionCard({
   selected: boolean;
   onSelect: (trigger: HTMLElement) => void;
 }) {
-  const { article, topicId } = item;
+  const { article } = item;
   const state = reviewArticleState(article);
   const title = articleReviewTitle(article);
-  const metadata = assetMetadata(article);
   const titleId = `review-card-title-${article.id}`;
   const descriptionId = `review-card-description-${article.id}`;
 
@@ -390,13 +389,10 @@ function ReviewDecisionCard({
       <div className="flex flex-wrap items-center gap-2">
         <StateBadge state={state} />
         <Badge tone={article.kind === "canonical" ? "green" : "neutral"}>{article.platform || article.kind}</Badge>
-        {metadata.assetType && <Badge tone="blue">{metadata.assetTypeLabel}</Badge>}
-        <span className="text-xs font-semibold text-slate-400">Topic {topicId.slice(0, 8)}</span>
       </div>
       <h3 id={titleId} className="mt-3 text-base font-bold leading-6 text-slate-950">{title}</h3>
       <p id={descriptionId} data-review-card-description className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">
-        {state.label}. {state.detail} {article.platform || article.kind}; topic {topicId.slice(0, 8)}; geo {formatScore(article.geo_score)}; seo{" "}
-        {formatScore(article.seo_score)}.
+        {state.kind === "ready" ? "Ready for a final scan before publishing." : state.detail}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
         {state.kind === "recovering" ? (
@@ -405,11 +401,7 @@ function ReviewDecisionCard({
             {article.repair_status === "repairing" ? "Repairing draft" : "Re-checking with QA"}
           </span>
         ) : (
-          <>
-            <span>geo {formatScore(article.geo_score)}</span>
-            <span>seo {formatScore(article.seo_score)}</span>
-            {metadata.sourceEvidence.length > 0 && <span>{metadata.sourceEvidence.length} source evidence</span>}
-          </>
+          <span className="font-semibold text-slate-600">{state.kind === "ready" ? "Ready to approve" : "Decision required"}</span>
         )}
         <span className="ml-auto font-semibold text-slate-700 transition group-hover:translate-x-0.5">Open details</span>
       </div>
