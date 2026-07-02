@@ -877,6 +877,23 @@ test("content plan review and publish form one continuous workflow surface", () 
   assert.doesNotMatch(workflow, /scroll-snap|snap-y|snap-mandatory/);
 });
 
+test("content workflow scroll keeps project shell navigation active state in sync", () => {
+  const shell = read("components/project-shell.tsx");
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
+
+  assert.match(workflow, /CONTENT_WORKFLOW_PATH_CHANGE_EVENT/);
+  assert.match(workflow, /window\.dispatchEvent/);
+  assert.match(workflow, /detail: \{ pathname: nextHref \}/);
+
+  assert.match(shell, /CONTENT_WORKFLOW_PATH_CHANGE_EVENT/);
+  assert.match(shell, /const \[activePathname, setActivePathname\] = useState\(pathname\)/);
+  assert.match(shell, /setActivePathname\(pathname\)/);
+  assert.match(shell, /window\.addEventListener\(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, onContentWorkflowPathChange/);
+  assert.match(shell, /window\.removeEventListener\(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, onContentWorkflowPathChange/);
+  assert.match(shell, /isActive\(activePathname, projectId, item\.href\)/);
+  assert.doesNotMatch(shell, /isActive\(pathname, projectId, item\.href\)/);
+});
+
 test("home leads with linked metrics instead of hero or refresh-context prompts", () => {
   const workspace = read("projects/[id]/workspace.tsx");
   const dashboardLogic = read("lib/dashboard-ux-logic.ts");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import { CONTENT_WORKFLOW_PATH_CHANGE_EVENT } from "../../lib/dashboard-routing";
 import { PublishingClient } from "./publishing/publishing-client";
 import { ReviewClient } from "./review/review-client";
 import { TopicsClient } from "./topics/topics-client";
@@ -64,6 +65,7 @@ export function ContentWorkflowClient({
     const nextHref = workflowHref(projectId, nextStep);
     if (window.location.pathname !== nextHref) {
       window.history.replaceState(window.history.state, "", nextHref);
+      window.dispatchEvent(new CustomEvent(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, { detail: { pathname: nextHref } }));
     }
   }, [projectId]);
 
