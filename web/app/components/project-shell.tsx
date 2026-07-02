@@ -14,6 +14,7 @@ import {
   Search,
   Send,
   Settings2,
+  Stethoscope,
   Target,
 } from "lucide-react";
 import { ProjectAccountMenu } from "./project-account-menu";
@@ -55,7 +56,10 @@ const navSections = [
   {
     id: "primary",
     label: null,
-    items: [{ label: "Home", href: "", icon: Home }],
+    items: [
+      { label: "Home", href: "", icon: Home },
+      { label: "Doctor", href: "doctor", icon: Stethoscope },
+    ],
   },
   {
     id: "analysis",
