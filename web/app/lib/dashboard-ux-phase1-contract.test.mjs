@@ -136,7 +136,9 @@ test("missing project routes show an onboarding warning instead of rendering chi
   const shell = read("components/project-shell.tsx");
   const accountMenu = read("components/project-account-menu.tsx");
 
-  assert.match(layout, /project \? children : null/);
+  assert.match(layout, /isProjectMissingError\(error\)/);
+  assert.match(layout, /shouldRenderProjectChildren \? children : null/);
+  assert.doesNotMatch(layout, /project \? children : null/);
   assert.match(shell, /No project found/);
   assert.match(shell, /Connect your domain to create your first project\./);
   assert.match(shell, /Connect project/);
@@ -145,6 +147,16 @@ test("missing project routes show an onboarding warning instead of rendering chi
   assert.match(accountMenu, /project \? uniqueProjects\(projects, currentProject\) : projects/);
   assert.match(accountMenu, /No project found/);
   assert.doesNotMatch(accountMenu, /project \?\? \{ id: projectId/);
+});
+
+test("project layout keeps child pages available when the server project prefetch times out", () => {
+  const layout = read("projects/[id]/layout.tsx");
+
+  assert.match(layout, /function isRecoverableProjectLoadError/);
+  assert.match(layout, /CiteLoop API request timed out/);
+  assert.match(layout, /recoverableProjectLoadError = isRecoverableProjectLoadError\(error\)/);
+  assert.match(layout, /const shouldRenderProjectChildren = Boolean\(project\) \|\| recoverableProjectLoadError/);
+  assert.match(layout, /shouldRenderProjectChildren \? children : null/);
 });
 
 test("home does not show context-build progress or raw API payloads before a project exists", () => {
