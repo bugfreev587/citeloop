@@ -86,7 +86,7 @@ export function planPulseForTopics(topics: ContentPlanTopic[]) {
   if (health.backlog === 0) {
     return {
       title: "No topics in the plan yet",
-      detail: "Review analysis recommendations or generate from domain to seed the first backlog.",
+      detail: "Review opportunities or generate from domain to seed the first backlog.",
       tone: "neutral" as const,
     };
   }

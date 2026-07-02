@@ -1313,8 +1313,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     <>
     <div ref={mode === "analysis" ? analysisSurfaceRef : mode === "results" ? resultsSurfaceRef : undefined} className="space-y-7">
       <SectionHeader
-        title={mode === "analysis" ? "Opportunity Brief workspace" : "Impact Reports"}
-        eyebrow={mode === "analysis" ? "Opportunity Briefs" : "Results and learning"}
+        title={mode === "analysis" ? "Opportunities" : "Impact Reports"}
+        eyebrow={mode === "analysis" ? "Analysis" : "Results and learning"}
         action={
           <div className="flex flex-wrap gap-2">
             {mode === "analysis" && (
@@ -1373,7 +1373,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader
-              title="Growth findings"
+              title="Opportunity queue"
               eyebrow="Decision-ready recommendations"
               action={
                 <div className="flex flex-wrap gap-2">
@@ -1387,7 +1387,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <div className="min-w-0">
                 {opportunities.length === 0 ? (
                   <EmptyState
-                    title="No analysis to review"
+                    title="No opportunities to review"
                     detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
                   />
                 ) : (
@@ -1403,7 +1403,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             analysisReturnFocusRef.current = event.currentTarget;
                             setSelectedOpportunityID(opp.id);
                           }}
-                          aria-label={`Open finding details: ${opportunityTitle(opp)}`}
+                          aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
                           className={`group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 ${
                             selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
                           }`}
@@ -1418,7 +1418,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             <span className="shrink-0 font-mono text-xs font-bold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
                           </div>
                           <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">
-                            {opp.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
+                            {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
                           </p>
                           <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-500">
                             <div className="min-w-0 truncate">
@@ -1442,7 +1442,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loop in motion</div>
-                      <div className="mt-1 text-lg font-bold text-slate-950">Analysis already in execution</div>
+                      <div className="mt-1 text-lg font-bold text-slate-950">Opportunities already in execution</div>
                     </div>
                     <Badge tone={loopActiveCount ? "amber" : "neutral"}>{loopActiveCount}</Badge>
                   </div>
@@ -1455,7 +1455,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     ))}
                     {loopSummaryItems.every((item) => item.value === 0) && (
                       <div className="col-span-2 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-500">
-                        Reviewed analysis will appear here after it enters the content loop.
+                        Reviewed opportunities will appear here after they enter the content loop.
                       </div>
                     )}
                   </div>
@@ -1481,7 +1481,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     href={`/projects/${projectId}/results`}
                     className="mt-3 inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
-                    View measurement
+                    View results
                   </Link>
                 </div>
 
@@ -1703,7 +1703,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <Badge tone="blue">Prioritization input</Badge>
-                <div className="mt-3 text-lg font-bold leading-6 text-slate-950">Use measured outcomes to rank the next Opportunity Briefs.</div>
+                <div className="mt-3 text-lg font-bold leading-6 text-slate-950">Use measured outcomes to rank the next opportunities.</div>
                 <p className="mt-2 text-sm leading-5 text-slate-500">
                   Completed work can influence backlog order, expected impact, and follow-up timing.
                 </p>
@@ -2735,7 +2735,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         <div className="fixed inset-0 z-30">
           <button
             type="button"
-            aria-label="Close finding details"
+            aria-label="Close opportunity details"
             onClick={() => setSelectedOpportunityID(null)}
             className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
           />
@@ -2744,13 +2744,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             data-analysis-drawer
             role="dialog"
             aria-modal="true"
-            aria-labelledby="finding-details-title"
+            aria-labelledby="opportunity-details-title"
             className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
               <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Finding details</div>
-                <h3 id="finding-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Opportunity details</div>
+                <h3 id="opportunity-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
                   {opportunityTitle(selectedOpportunity)}
                 </h3>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -2763,7 +2763,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <button
                 type="button"
                 data-drawer-close
-                aria-label="Close finding details"
+                aria-label="Close opportunity details"
                 onClick={() => setSelectedOpportunityID(null)}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
               >
@@ -2776,7 +2776,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
                   <p className="mt-2 text-sm leading-6 text-slate-700">
-                    {selectedOpportunity.expected_impact || "Review this finding against confirmed Context before creating downstream work."}
+                    {selectedOpportunity.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
                   </p>
                 </section>
 

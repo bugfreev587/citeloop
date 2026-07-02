@@ -237,8 +237,8 @@ export function nextWorkspaceAction({
   }
   if (openOpportunityCount > 0) {
     return {
-      title: "Review analysis",
-      detail: `${openOpportunityCount} recommendations are ready to review before CiteLoop advances the content plan.`,
+      title: "Review opportunities",
+      detail: `${openOpportunityCount} opportunities are ready to review before CiteLoop advances the content plan.`,
       href: `/projects/${projectId}/analysis`,
     };
   }
@@ -278,9 +278,9 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     },
     {
       id: "opportunities-converted",
-      label: "Analysis converted",
+      label: "Opportunities converted",
       value: input.opportunitiesConvertedCount,
-      detail: "analysis work entered the loop",
+      detail: "opportunities entered the loop",
       href: `/projects/${input.projectId}/analysis`,
       actionLabel: "Review loop",
       tone: "blue",
@@ -326,9 +326,9 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
     items: [],
     emptyAction: {
       title: "Context is ready",
-      detail: "Review analysis when recommendations appear; CiteLoop will advance planning and drafting automatically after the review gate.",
+      detail: "Review opportunities when recommendations appear; CiteLoop will advance planning and drafting automatically after the review gate.",
       href: `/projects/${input.projectId}/analysis`,
-      actionLabel: "Review analysis",
+      actionLabel: "Review opportunities",
     },
   };
 }
@@ -342,8 +342,8 @@ export function homeAICitationMetric(input: HomeAICitationMetricInput): HomeMetr
   return {
     label: "AI citation gaps",
     value: count > 0 ? count : "-",
-    detail: count > 0 ? `${count} ${plural(count, "finding")} ready in Analysis` : "No AI citation gaps detected",
-    metricChangeLabel: count > 0 ? "Review in Analysis" : "No open gaps",
+    detail: count > 0 ? `${count} ${plural(count, "finding")} ready in Opportunities` : "No AI citation gaps detected",
+    metricChangeLabel: count > 0 ? "Review opportunities" : "No open gaps",
     metricChangeTone: count > 0 ? "green" : "neutral",
     href: `/projects/${input.projectId}/analysis`,
     muted: count === 0,
@@ -357,7 +357,7 @@ export function homeInMotionMetric(input: HomeInMotionMetricInput): HomeMetricSu
   const measuringActionCount = Math.max(0, input.measuringActionCount);
   const value = analysisActionCount + reviewDraftCount + readyToPublishCount + measuringActionCount;
   const detailParts = [
-    analysisActionCount > 0 && `${analysisActionCount} analysis ${plural(analysisActionCount, "action")} already in execution`,
+    analysisActionCount > 0 && `${analysisActionCount} opportunity ${plural(analysisActionCount, "action")} already in execution`,
     reviewDraftCount > 0 && `${reviewDraftCount} ${plural(reviewDraftCount, "draft")} in review`,
     readyToPublishCount > 0 && `${readyToPublishCount} ready to publish`,
     measuringActionCount > 0 && `${measuringActionCount} measuring impact`,
@@ -372,7 +372,7 @@ export function homeInMotionMetric(input: HomeInMotionMetricInput): HomeMetricSu
           ? `/projects/${input.projectId}/results`
           : `/projects/${input.projectId}/analysis`;
   const metricChangeLabel = analysisActionCount > 0
-    ? "View in Analysis"
+    ? "View opportunities"
     : reviewDraftCount > 0
       ? "Open Review"
       : readyToPublishCount > 0

@@ -184,7 +184,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
   );
 
-  // The plan is built automatically from accepted analysis recommendations; this banner explains
+  // The plan is built automatically from accepted opportunities; this banner explains
   // that flow so the manual generate button is a fallback, not the main path.
   const autoPlan: { tone: "green" | "blue" | "amber" | "neutral"; title: string; detail: string; cta: { label: string; href: string } | null } =
     topics.length > 0
@@ -193,28 +193,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title: "Your content plan is running automatically",
           detail: queuedTopics.length > 0
             ? pacingNote
-            : "CiteLoop turns accepted analysis recommendations into a topic backlog and drafts them until a review, budget, or safety gate stops it. Non-topic actions continue through the action handoff in Analysis and Results.",
+            : "CiteLoop turns accepted opportunities into a topic backlog and drafts them until a review, budget, or safety gate stops it. Non-topic actions continue through the action handoff in Analysis and Results.",
           cta: null,
         }
       : summaryPendingPlanActions > 0
         ? {
             tone: "blue",
-            title: "Generating your content plan from accepted analysis",
-            detail: "Accepted analysis recommendations are being turned into topic backlog items automatically. Direct technical, metadata, schema, and distribution work stays in the action handoff.",
+            title: "Generating your content plan from accepted opportunities",
+            detail: "Accepted opportunities are being turned into topic backlog items automatically. Direct technical, metadata, schema, and distribution work stays in the action handoff.",
             cta: null,
           }
         : summaryOpenOpportunityCount > 0
           ? {
               tone: "amber",
-              title: `${summaryOpenOpportunityCount} analysis ${summaryOpenOpportunityCount === 1 ? "recommendation is" : "recommendations are"} waiting for review`,
-              detail: "Review analysis to add useful recommendations to the plan. CiteLoop turns content recommendations into the topic backlog and routes direct work through the action handoff.",
-              cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
+              title: `${summaryOpenOpportunityCount} ${summaryOpenOpportunityCount === 1 ? "opportunity is" : "opportunities are"} waiting for review`,
+              detail: "Review opportunities to add useful recommendations to the plan. CiteLoop turns content recommendations into the topic backlog and routes direct work through the action handoff.",
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/analysis` },
             }
           : {
               tone: "neutral",
-              title: "No analysis is waiting",
-              detail: "CiteLoop plans automatically once you review analysis recommendations. You can also seed a starter topic backlog from your domain (advanced).",
-              cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
+              title: "No opportunities are waiting",
+              detail: "CiteLoop plans automatically once you review opportunities. You can also seed a starter topic backlog from your domain (advanced).",
+              cta: { label: "Review opportunities", href: `/projects/${projectId}/analysis` },
             };
   const autoPlanToneClass = {
     green: "border-emerald-200 bg-emerald-50",

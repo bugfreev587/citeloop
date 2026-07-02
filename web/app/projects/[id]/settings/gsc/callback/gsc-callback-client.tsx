@@ -116,7 +116,7 @@ export function GSCCallbackClient({
           Return to Settings
         </Link>
         <Button variant="ghost" onClick={() => window.location.assign(`/projects/${projectId}/analysis`)}>
-          Back to Analysis
+          Back to Opportunities
         </Button>
       </div>
     </div>

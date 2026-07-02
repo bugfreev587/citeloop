@@ -66,7 +66,7 @@ test("buildActionableMomentum hides zero values and returns the next useful empt
 
   assert.deepEqual(momentum.items, []);
   assert.equal(momentum.emptyAction.title, "Context is ready");
-  assert.equal(momentum.emptyAction.actionLabel, "Review analysis");
+  assert.equal(momentum.emptyAction.actionLabel, "Review opportunities");
   assert.equal(momentum.emptyAction.href, "/projects/project_1/analysis");
 });
 
@@ -85,7 +85,7 @@ test("buildActionableMomentum turns non-zero metrics into actions", async () => 
 
   assert.deepEqual(
     momentum.items.map((item) => item.label),
-    ["Ready to publish", "Published this month", "Analysis converted", "Active loop items"],
+    ["Ready to publish", "Published this month", "Opportunities converted", "Active loop items"],
   );
   assert.deepEqual(
     momentum.items.map((item) => item.href),
@@ -115,12 +115,12 @@ test("home AI citation metric sends opportunity counts to Analysis", async () =>
 
   assert.equal(metric.label, "AI citation gaps");
   assert.equal(metric.value, 1);
-  assert.equal(metric.detail, "1 finding ready in Analysis");
-  assert.equal(metric.metricChangeLabel, "Review in Analysis");
+  assert.equal(metric.detail, "1 finding ready in Opportunities");
+  assert.equal(metric.metricChangeLabel, "Review opportunities");
   assert.equal(metric.href, "/projects/project_1/analysis");
 });
 
-test("home in-motion metric lands analysis actions on Analysis instead of Content Plan", async () => {
+test("home in-motion metric lands opportunity actions on Analysis instead of Content Plan", async () => {
   const { homeInMotionMetric } = await loadDashboardUXLogicModule();
 
   const metric = homeInMotionMetric({
@@ -132,8 +132,8 @@ test("home in-motion metric lands analysis actions on Analysis instead of Conten
   });
 
   assert.equal(metric.value, 4);
-  assert.equal(metric.detail, "4 analysis actions already in execution");
-  assert.equal(metric.metricChangeLabel, "View in Analysis");
+  assert.equal(metric.detail, "4 opportunity actions already in execution");
+  assert.equal(metric.metricChangeLabel, "View opportunities");
   assert.equal(metric.href, "/projects/project_1/analysis");
 });
 
@@ -243,7 +243,7 @@ test("nextWorkspaceAction sends confirmed projects to opportunity review before 
     openOpportunityCount: 2,
   });
 
-  assert.equal(action.title, "Review analysis");
+  assert.equal(action.title, "Review opportunities");
   assert.equal(action.href, "/projects/project_1/analysis");
   assert.match(action.detail, /ready to review/i);
 });
@@ -264,7 +264,7 @@ test("nextWorkspaceAction follows opportunity review work before creating a firs
     currentPathname: "/projects/project_1/analysis",
   });
 
-  assert.equal(action.title, "Review analysis");
+  assert.equal(action.title, "Review opportunities");
   assert.equal(action.href, "/projects/project_1/analysis");
   assert.match(action.detail, /ready to review/i);
 });

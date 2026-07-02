@@ -134,7 +134,7 @@ export function StaticGSCCallbackClient({ code, state, error }: { code: string; 
         </Link>
         {projectId && (
           <Button variant="ghost" onClick={() => window.location.assign(`/projects/${projectId}/analysis`)}>
-            Back to Analysis
+            Back to Opportunities
           </Button>
         )}
       </div>
