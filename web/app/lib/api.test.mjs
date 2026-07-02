@@ -922,6 +922,33 @@ test("SEO APIs call project scoped endpoints", async () => {
   }
 });
 
+test("results action normalization does not invent verification snapshots", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      {
+        id: "action-1",
+        opportunity_id: "opp-1",
+        action_type: "Create content",
+        status: "ready_for_review",
+      },
+    ],
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const actions = await createApi().listResultsActions("project-1");
+
+    assert.equal(actions[0].verification_snapshot, null);
+    assert.equal(actions[0].verified_at, undefined);
+    assert.equal(actions[0].published_at, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GSC OAuth APIs call project scoped endpoints without exposing tokens", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

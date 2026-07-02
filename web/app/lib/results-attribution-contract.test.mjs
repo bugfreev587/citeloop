@@ -92,3 +92,28 @@ test("Results separates impact outcomes from measurement queue states", () => {
     assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
+
+test("Results does not treat empty verification snapshots as measurement evidence", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  for (const marker of [
+    "function hasActionVerificationSnapshot",
+    "hasActionVerificationSnapshot(action)",
+    'action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"',
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(
+    seo,
+    /Boolean\(action\.published_at \|\| action\.verified_at \|\| action\.verification_snapshot\)/,
+    "empty verification_snapshot objects must not make a ready_for_review action look measured",
+  );
+  assert.doesNotMatch(
+    resultsBlock,
+    /action\.verified_at \? "Verified" : action\.verification_snapshot \? "Needs check" : "Not started"/,
+    "empty verification_snapshot objects must render as not started",
+  );
+});
