@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { ProjectAccountMenu } from "./project-account-menu";
 import { Project } from "../lib/api";
+import { CONTENT_WORKFLOW_PATH_CHANGE_EVENT } from "../lib/dashboard-routing";
 import { ProjectVisitRecorder } from "../project-visit-recorder";
 import { useApi } from "../lib/use-api";
 import { cx } from "./ui";
@@ -103,8 +104,23 @@ export function ProjectShell({
 }) {
   const api = useApi();
   const pathname = usePathname();
+  const [activePathname, setActivePathname] = useState(pathname);
   const budget = project?.config?.monthly_budget_usd ?? 50;
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  useEffect(() => {
+    setActivePathname(pathname);
+  }, [pathname]);
+  useEffect(() => {
+    function onContentWorkflowPathChange(event: Event) {
+      const nextPathname = event instanceof CustomEvent && typeof event.detail?.pathname === "string"
+        ? event.detail.pathname
+        : window.location.pathname;
+      setActivePathname(nextPathname);
+    }
+
+    window.addEventListener(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, onContentWorkflowPathChange);
+    return () => window.removeEventListener(CONTENT_WORKFLOW_PATH_CHANGE_EVENT, onContentWorkflowPathChange);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     api
@@ -145,7 +161,7 @@ export function ProjectShell({
                 </div>
               )}
               {section.items.map((item) => {
-                const active = isActive(pathname, projectId, item.href);
+                const active = isActive(activePathname, projectId, item.href);
                 const Icon = item.icon;
                 return (
                   <Link
@@ -181,7 +197,7 @@ export function ProjectShell({
             href="/docs"
             className={cx(
               "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100",
-              isDocsActive(pathname, projectId) && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
+              isDocsActive(activePathname, projectId) && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
             )}
           >
             <BookOpen size={16} />
@@ -192,7 +208,7 @@ export function ProjectShell({
               href={`/projects/${projectId}/context`}
               className={cx(
                 "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100",
-                isActive(pathname, projectId, "context") && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, "context") && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
               )}
             >
               <Database size={16} />
@@ -204,7 +220,7 @@ export function ProjectShell({
               href={`/projects/${projectId}/settings`}
               className={cx(
                 "flex h-8 w-[185px] items-center gap-2 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100",
-                isActive(pathname, projectId, "settings") && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, "settings") && "bg-slate-50 font-semibold text-[#d93820] dark:bg-slate-800 dark:text-[#ff8a72]",
               )}
             >
               <Settings2 size={16} />
@@ -228,7 +244,7 @@ export function ProjectShell({
               href={projectHref(projectId, item.href)}
               className={cx(
                 "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
-                isActive(pathname, projectId, item.href) && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, item.href) && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
               )}
             >
               {item.label}
@@ -239,7 +255,7 @@ export function ProjectShell({
               href={`/projects/${projectId}/admin`}
               className={cx(
                 "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
-                isActive(pathname, projectId, "admin") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, "admin") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
               )}
             >
               Admin
@@ -249,7 +265,7 @@ export function ProjectShell({
             href="/docs"
             className={cx(
               "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
-              isDocsActive(pathname, projectId) && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+              isDocsActive(activePathname, projectId) && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
             )}
           >
             Docs
@@ -259,7 +275,7 @@ export function ProjectShell({
               href={`/projects/${projectId}/context`}
               className={cx(
                 "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
-                isActive(pathname, projectId, "context") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, "context") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
               )}
             >
               Context
@@ -270,7 +286,7 @@ export function ProjectShell({
               href={`/projects/${projectId}/settings`}
               className={cx(
                 "whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300",
-                isActive(pathname, projectId, "settings") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
+                isActive(activePathname, projectId, "settings") && "border-[#d93820] text-[#d93820] dark:text-[#ff8a72]",
               )}
             >
               Settings

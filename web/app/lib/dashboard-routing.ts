@@ -3,6 +3,7 @@ type ProjectLike = {
 };
 
 export const LAST_PROJECT_STORAGE_KEY = "citeloop:last-project-id";
+export const CONTENT_WORKFLOW_PATH_CHANGE_EVENT = "citeloop:content-workflow-path-change";
 
 export function dashboardHrefForProjects(
   projects: ProjectLike[],
