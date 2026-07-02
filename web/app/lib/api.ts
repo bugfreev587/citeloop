@@ -25,6 +25,7 @@ export type AuthOptions = {
 
 const DEFAULT_API_TIMEOUT_MS = 8000;
 const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
+const READ_TIMEOUT_RETRIES = 1;
 
 function apiTimeoutMs(auth?: AuthOptions) {
   const configured = auth?.timeoutMs ?? Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS);
@@ -34,6 +35,10 @@ function apiTimeoutMs(auth?: AuthOptions) {
 function withMinimumTimeout(auth: AuthOptions | undefined, timeoutMs: number): AuthOptions {
   if (apiTimeoutMs(auth) >= timeoutMs) return auth ?? {};
   return { ...auth, timeoutMs };
+}
+
+function isReadRequest(init?: RequestInit) {
+  return (init?.method ?? "GET").toUpperCase() === "GET";
 }
 
 function parseErrorBody(body: string): { error?: string } {
@@ -1573,24 +1578,30 @@ async function req<T>(path: string, init?: RequestInit, auth?: AuthOptions): Pro
   if (authHeader.Authorization && !headers.has("Authorization")) {
     headers.set("Authorization", authHeader.Authorization);
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), apiTimeoutMs(auth));
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/api${path}`, {
-      ...init,
-      headers,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error("CiteLoop API request timed out");
+  const attempts = isReadRequest(init) ? READ_TIMEOUT_RETRIES + 1 : 1;
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), apiTimeoutMs(auth));
+    try {
+      res = await fetch(`${BASE}/api${path}`, {
+        ...init,
+        headers,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      break;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        if (attempt < attempts - 1) continue;
+        throw new Error("CiteLoop API request timed out");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+  if (!res) throw new Error("CiteLoop API request failed");
   if (!res.ok) {
     const body = await res.text();
     throw new ApiError(res.status, body);

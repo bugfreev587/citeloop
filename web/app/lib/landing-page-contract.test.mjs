@@ -255,6 +255,15 @@ test("projects page remains request-rendered for auth-gated project management",
   assert.match(source, /auth\(/);
 });
 
+test("projects page does not render an empty project count when the API fails", async () => {
+  const source = await readFile(new URL("../projects/page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const projectsLoaded = !signedOut && !error/);
+  assert.match(source, /projectsLoaded && <Badge tone="neutral">\{projects\.length\} total<\/Badge>/);
+  assert.match(source, /projectsLoaded \? \(/);
+  assert.doesNotMatch(source, /!signedOut && <Badge tone="neutral">\{projects\.length\} total<\/Badge>/);
+});
+
 test("landing page copy avoids banned marketing phrases", async () => {
   const source = await readFile(new URL("../page.tsx", import.meta.url), "utf8");
 
