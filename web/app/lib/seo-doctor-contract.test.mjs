@@ -68,6 +68,50 @@ test("Doctor route renders a client page with progress and per-finding AI repair
   assert.match(client, /document\.execCommand\("copy"\)/);
 });
 
+test("AI repair JSON only includes website repair context, not CiteLoop Doctor metadata", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const repairPayloadBlock = client.slice(client.indexOf("function buildAIRepairPayload"), client.indexOf("async function writeClipboardText"));
+  const acceptanceBlock = client.slice(client.indexOf("function buildAIRepairAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
+
+  for (const required of [
+    "issue_type",
+    "severity",
+    "category",
+    "affected_urls",
+    "normalized_urls",
+    "problem",
+    "why_it_matters",
+    "evidence",
+    "fix",
+    "goal",
+    "instructions",
+    "likely_surfaces",
+    "acceptance_tests",
+  ]) {
+    assert.match(repairPayloadBlock, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const internalMetadata of [
+    "schema_version",
+    "intended_tools",
+    "run_id",
+    "run_status",
+    "run_stage",
+    "health_score",
+    "finding_key",
+    "id: finding.id",
+    "status: finding.status",
+    "first_seen_at",
+    "last_seen_at",
+    "review_required",
+    "autofix_eligible",
+  ]) {
+    assert.doesNotMatch(repairPayloadBlock, new RegExp(internalMetadata.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(acceptanceBlock, /finding_key/);
+  assert.match(acceptanceBlock, /rerun SEO Doctor or an equivalent crawler/);
+});
+
 test("Fix with AI uses a dedicated colored button variant instead of outline overrides", () => {
   const ui = read("components/ui.tsx");
   const client = read("projects/[id]/doctor/doctor-client.tsx");

@@ -60,48 +60,55 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
+function compactRepairObject(value: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => {
+      if (entry == null) return false;
+      if (Array.isArray(entry)) return entry.length > 0;
+      if (typeof entry === "string") return entry.trim().length > 0;
+      return true;
+    }),
+  );
+}
+
 function buildAIRepairAcceptanceTests(finding: SEODoctorFinding) {
   return uniqueStrings([
     ...(finding.acceptance_tests ?? []),
-    `After the code fix, rerun SEO Doctor for this project and confirm finding_key "${finding.finding_key}" is not returned as an active finding.`,
-    `After the code fix, rerun SEO Doctor and confirm no active "${finding.issue_type}" finding appears for the same affected URLs, normalized URLs, or equivalent canonical URL variants.`,
+    `After the code fix, rerun SEO Doctor or an equivalent crawler and confirm no active "${finding.issue_type}" issue appears for the same affected URLs, normalized URLs, or equivalent canonical URL variants.`,
     "Confirm the underlying page response, metadata, schema, redirect, link, or crawl behavior that produced this finding now matches the intended SEO contract, not only that the card was dismissed.",
   ]);
 }
 
-function buildAIRepairPayload(finding: SEODoctorFinding, run?: SEODoctorRun | null) {
+function repairEvidence(finding: SEODoctorFinding) {
+  const evidence = finding.evidence && typeof finding.evidence === "object" ? finding.evidence : {};
+  const rawDetails = evidence.raw_details && typeof evidence.raw_details === "object" ? evidence.raw_details : {};
+
+  return compactRepairObject({
+    page_url: evidence.page_url ?? firstURL(finding),
+    normalized_page_url: evidence.normalized_page_url ?? finding.normalized_urls[0] ?? null,
+    status: rawDetails.status ?? evidence.status ?? null,
+    final_url: rawDetails.final_url ?? evidence.final_url ?? null,
+  });
+}
+
+function buildAIRepairPayload(finding: SEODoctorFinding) {
   return {
-    schema_version: "seo_doctor.finding_repair.v1",
-    source: {
-      product: "CiteLoop SEO Doctor",
-      intended_tools: ["Codex", "Claude Code", "other AI coding tools"],
-      run_id: run?.id ?? finding.run_id ?? null,
-      run_status: run?.status ?? null,
-      run_stage: run?.stage ?? null,
-      health_score: run?.health_score ?? null,
-    },
-    issue: {
-      id: finding.id,
-      finding_key: finding.finding_key,
+    issue: compactRepairObject({
       severity: finding.severity,
       category: finding.category,
       issue_type: finding.issue_type,
-      status: finding.status,
       affected_urls: finding.affected_urls,
       normalized_urls: finding.normalized_urls,
-      first_seen_at: finding.first_seen_at ?? null,
-      last_seen_at: finding.last_seen_at ?? null,
       problem: finding.fix_intent || finding.issue_type,
       why_it_matters: finding.why_it_matters,
-    },
-    evidence: finding.evidence ?? {},
-    fix: {
+    }),
+    evidence: repairEvidence(finding),
+    fix: compactRepairObject({
+      goal: finding.fix_intent || finding.issue_type,
       instructions: finding.developer_instructions,
-      likely_files_or_surfaces: finding.likely_files_or_surfaces,
+      likely_surfaces: finding.likely_files_or_surfaces,
       risk_level: finding.risk_level,
-      review_required: finding.review_required,
-      autofix_eligible: finding.autofix_eligible,
-    },
+    }),
     acceptance_tests: buildAIRepairAcceptanceTests(finding),
   };
 }
@@ -184,8 +191,8 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
   const selectedRepairJSON = useMemo(() => {
-    return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding, run), null, 2) : "";
-  }, [run, selectedRepairFinding]);
+    return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding), null, 2) : "";
+  }, [selectedRepairFinding]);
 
   async function runDoctor() {
     setRunning(true);
@@ -204,7 +211,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
 
   async function copyAIRepairJSON(finding: SEODoctorFinding) {
     try {
-      await writeClipboardText(JSON.stringify(buildAIRepairPayload(finding, run), null, 2));
+      await writeClipboardText(JSON.stringify(buildAIRepairPayload(finding), null, 2));
       notify({ tone: "green", title: "Repair JSON copied" });
     } catch {
       notify({ tone: "red", title: "Could not copy repair JSON", detail: "Select the JSON in the modal and copy it manually." });
