@@ -586,6 +586,14 @@ export type SEOPolicy = {
   kill_switch_enabled: boolean;
   safe_mode_enabled: boolean;
   risk_classifier_version: string;
+  recovery_plan_acknowledged_at?: any;
+  recovery_plan_acknowledged_by?: string | null;
+  recovery_plan_acknowledged?: boolean;
+};
+
+export type SEOPolicyUpdateInput = Partial<SEOPolicy> & {
+  monthly_budget_limit?: RawPgNumeric | number;
+  min_confidence_for_auto_publish?: RawPgNumeric | number;
 };
 
 export type SEOObjective = {
@@ -2129,7 +2137,7 @@ export function createApi(auth?: AuthOptions) {
   getSEOPolicy: async (id: string): Promise<SEOPolicy> => {
     return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, undefined, auth);
   },
-  updateSEOPolicy: async (id: string, body: Partial<SEOPolicy>): Promise<SEOPolicy> => {
+  updateSEOPolicy: async (id: string, body: SEOPolicyUpdateInput): Promise<SEOPolicy> => {
     return req<SEOPolicy>(`/projects/${id}/seo/autopilot/policy`, { method: "PUT", body: JSON.stringify(body) }, auth);
   },
   getAutopilotReadiness: async (id: string): Promise<AutopilotReadiness> => {

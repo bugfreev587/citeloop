@@ -52,6 +52,14 @@ returning *;
 select * from seo_policies
 where project_id = $1;
 
+-- name: AcknowledgeSEOPolicyRecoveryPlan :one
+update seo_policies set
+  recovery_plan_acknowledged_at = now(),
+  recovery_plan_acknowledged_by = coalesce(nullif(sqlc.arg(recovery_plan_acknowledged_by)::text, ''), 'human'),
+  updated_at = now()
+where project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: UpsertRiskClassificationRule :one
 insert into risk_classification_rules
   (project_id, version, rules, created_by, retired_at)

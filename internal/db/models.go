@@ -695,6 +695,8 @@ type SeoPolicy struct {
 	RiskClassifierVersion             string             `json:"risk_classifier_version"`
 	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                         pgtype.Timestamptz `json:"updated_at"`
+	RecoveryPlanAcknowledgedAt        pgtype.Timestamptz `json:"recovery_plan_acknowledged_at"`
+	RecoveryPlanAcknowledgedBy        *string            `json:"recovery_plan_acknowledged_by"`
 }
 
 type SeoProperty struct {
