@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clipboard, Loader2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
@@ -56,6 +56,56 @@ function firstURL(finding: SEODoctorFinding) {
   return finding.affected_urls[0] || finding.normalized_urls[0] || "Project surface";
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function buildAIRepairAcceptanceTests(finding: SEODoctorFinding) {
+  return uniqueStrings([
+    ...(finding.acceptance_tests ?? []),
+    `After the code fix, rerun SEO Doctor for this project and confirm finding_key "${finding.finding_key}" is not returned as an active finding.`,
+    `After the code fix, rerun SEO Doctor and confirm no active "${finding.issue_type}" finding appears for the same affected URLs, normalized URLs, or equivalent canonical URL variants.`,
+    "Confirm the underlying page response, metadata, schema, redirect, link, or crawl behavior that produced this finding now matches the intended SEO contract, not only that the card was dismissed.",
+  ]);
+}
+
+function buildAIRepairPayload(finding: SEODoctorFinding, run?: SEODoctorRun | null) {
+  return {
+    schema_version: "seo_doctor.finding_repair.v1",
+    source: {
+      product: "CiteLoop SEO Doctor",
+      intended_tools: ["Codex", "Claude Code", "other AI coding tools"],
+      run_id: run?.id ?? finding.run_id ?? null,
+      run_status: run?.status ?? null,
+      run_stage: run?.stage ?? null,
+      health_score: run?.health_score ?? null,
+    },
+    issue: {
+      id: finding.id,
+      finding_key: finding.finding_key,
+      severity: finding.severity,
+      category: finding.category,
+      issue_type: finding.issue_type,
+      status: finding.status,
+      affected_urls: finding.affected_urls,
+      normalized_urls: finding.normalized_urls,
+      first_seen_at: finding.first_seen_at ?? null,
+      last_seen_at: finding.last_seen_at ?? null,
+      problem: finding.fix_intent || finding.issue_type,
+      why_it_matters: finding.why_it_matters,
+    },
+    evidence: finding.evidence ?? {},
+    fix: {
+      instructions: finding.developer_instructions,
+      likely_files_or_surfaces: finding.likely_files_or_surfaces,
+      risk_level: finding.risk_level,
+      review_required: finding.review_required,
+      autofix_eligible: finding.autofix_eligible,
+    },
+    acceptance_tests: buildAIRepairAcceptanceTests(finding),
+  };
+}
+
 export function DoctorClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const { notify } = useToast();
@@ -65,6 +115,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeverityFilter>("all");
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
+  const [selectedRepairFinding, setSelectedRepairFinding] = useState<SEODoctorFinding | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -100,7 +151,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }, [filter, report?.findings]);
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
-  const aiReportJSON = JSON.stringify(report?.ai_coding_tool_report ?? { findings: [] }, null, 2);
+  const selectedRepairJSON = useMemo(() => {
+    return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding, run), null, 2) : "";
+  }, [run, selectedRepairFinding]);
 
   async function runDoctor() {
     setRunning(true);
@@ -117,9 +170,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function copyAIReport() {
-    await navigator.clipboard.writeText(aiReportJSON);
-    notify({ tone: "green", title: "AI coding report copied" });
+  async function copyAIRepairJSON(finding: SEODoctorFinding) {
+    await navigator.clipboard.writeText(JSON.stringify(buildAIRepairPayload(finding, run), null, 2));
+    notify({ tone: "green", title: "Repair JSON copied" });
   }
 
   async function convertFinding(finding: SEODoctorFinding) {
@@ -266,15 +319,25 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                   <div className="text-xs font-bold uppercase text-slate-400">Developer instructions</div>
                   <p className="mt-1 text-sm font-semibold leading-5 text-slate-700">{finding.developer_instructions}</p>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void convertFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
-                    <ButtonProgress busy={busyFindingID === finding.id} busyLabel="Sending" idleIcon={<Wrench size={14} />}>
-                      Create action
-                    </ButtonProgress>
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void dismissFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
-                    <X size={14} />
-                    Dismiss
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => void convertFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
+                      <ButtonProgress busy={busyFindingID === finding.id} busyLabel="Sending" idleIcon={<Wrench size={14} />}>
+                        Create action
+                      </ButtonProgress>
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => void dismissFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
+                      <X size={14} />
+                      Dismiss
+                    </Button>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setSelectedRepairFinding(finding)}
+                    className="ml-auto border-cyan-200 bg-cyan-50 text-cyan-800 hover:border-cyan-300 hover:bg-cyan-100 hover:text-cyan-950"
+                  >
+                    <Code2 size={14} />
+                    Fix with AI
                   </Button>
                 </div>
               </article>
@@ -283,21 +346,46 @@ export function DoctorClient({ projectId }: { projectId: string }) {
         )}
       </section>
 
-      <section>
-        <SectionHeader
-          title="AI coding report"
-          eyebrow="Structured handoff"
-          action={
-            <Button size="sm" onClick={() => void copyAIReport()}>
-              <Clipboard size={14} />
-              Copy JSON
-            </Button>
-          }
-        />
-        <pre className="max-h-[420px] overflow-auto rounded-xl border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-          {aiReportJSON}
-        </pre>
-      </section>
+      {selectedRepairFinding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close repair JSON"
+            className="absolute inset-0 bg-slate-950/45"
+            onClick={() => setSelectedRepairFinding(null)}
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="seo-doctor-ai-repair-title"
+            className="relative z-10 flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase text-cyan-700">AI coding repair JSON</div>
+                <h2 id="seo-doctor-ai-repair-title" className="mt-1 text-xl font-bold leading-7 text-slate-950">
+                  Fix with AI
+                </h2>
+                <p className="mt-1 max-w-[74ch] text-sm font-semibold leading-5 text-slate-500">
+                  Copy this JSON into Codex, Claude Code, or another AI coding tool. It includes the issue, evidence, fix instructions, and
+                  acceptance tests that require you to rerun SEO Doctor and confirm this finding does not come back.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button size="sm" onClick={() => void copyAIRepairJSON(selectedRepairFinding)}>
+                  <Clipboard size={14} />
+                  Copy JSON
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedRepairFinding(null)}>
+                  <X size={14} />
+                  Close
+                </Button>
+              </div>
+            </div>
+            <pre className="max-h-[64vh] overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{selectedRepairJSON}</pre>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
