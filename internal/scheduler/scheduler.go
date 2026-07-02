@@ -585,6 +585,9 @@ func (s *Scheduler) handleOpportunityBatchCompleted(ctx context.Context, project
 }
 
 func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Queries, projectID uuid.UUID, action db.ContentAction) (db.Topic, error) {
+	if !contentActionNeedsTopic(contentActionAssetType(action), action.ActionType) {
+		return db.Topic{}, fmt.Errorf("content action %s is routed as a direct action, not a topic", action.ID)
+	}
 	opp, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
 	if err != nil {
 		return db.Topic{}, err
@@ -611,6 +614,31 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 		return db.Topic{}, err
 	}
 	return topic, nil
+}
+
+func contentActionNeedsTopic(assetType string, actionType string) bool {
+	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
+	switch {
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata patch"):
+		return false
+	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
+		return false
+	case strings.Contains(text, "schema_patch") || strings.Contains(text, "schema patch"):
+		return false
+	case strings.Contains(text, "sitemap_update") || strings.Contains(text, "technical_fix") || strings.Contains(text, "technical seo"):
+		return false
+	case strings.Contains(text, "robots") || strings.Contains(text, "canonical") || strings.Contains(text, "crawler"):
+		return false
+	default:
+		return true
+	}
+}
+
+func contentActionAssetType(action db.ContentAction) string {
+	if action.AssetType == nil {
+		return ""
+	}
+	return strings.TrimSpace(*action.AssetType)
 }
 
 func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity) db.CreateTopicParams {

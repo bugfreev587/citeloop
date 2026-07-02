@@ -398,7 +398,7 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 	if actionType == "" {
 		actionType = "technical SEO fix task"
 	}
-	assetTypeValue := strings.TrimSpace(in.AssetType)
+	assetTypeValue := inferContentActionAssetType(opp, actionType, in.AssetType)
 	var assetType *string
 	if assetTypeValue != "" {
 		assetType = &assetTypeValue
@@ -429,7 +429,7 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	reviewRequired := true
+	reviewRequired := defaultReviewRequiredForAssetType(assetTypeValue, opp.RiskLevel)
 	if in.ReviewRequired != nil {
 		reviewRequired = *in.ReviewRequired
 	}
@@ -445,8 +445,8 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
 		EvidenceSnapshot:     contentActionEvidenceSnapshot(in.EvidenceSnapshot, opp),
 		InputSnapshot:        contentActionInputSnapshot(in.InputSnapshot, opp, actionType),
-		OutputSnapshot:       rawOrDefault(in.OutputSnapshot, `{}`),
-		DiffSnapshot:         rawOrDefault(in.DiffSnapshot, `{}`),
+		OutputSnapshot:       defaultOutputSnapshotForAction(in.OutputSnapshot, assetTypeValue, actionType, opp),
+		DiffSnapshot:         defaultDiffSnapshotForAction(in.DiffSnapshot, assetTypeValue, actionType, opp),
 		ReviewRequired:       reviewRequired,
 		VerificationSnapshot: json.RawMessage(`{}`),
 	})
@@ -880,6 +880,174 @@ func contentActionInputSnapshot(raw json.RawMessage, opp db.SeoOpportunity, acti
 		payload["expected_impact"] = strings.TrimSpace(*opp.ExpectedImpact)
 	}
 	return mustJSONLocal(payload)
+}
+
+func inferContentActionAssetType(opp db.SeoOpportunity, actionType string, explicit string) string {
+	if trimmed := strings.TrimSpace(explicit); trimmed != "" {
+		return trimmed
+	}
+	text := strings.ToLower(strings.Join([]string{
+		opp.Type,
+		actionType,
+		stringPtrValueAPI(opp.RecommendedAction),
+		stringPtrValueAPI(opp.ExpectedImpact),
+		stringPtrValueAPI(opp.Query),
+	}, " "))
+	switch {
+	case strings.Contains(text, "schema") || strings.Contains(text, "json-ld") || strings.Contains(text, "structured data"):
+		return "schema_patch"
+	case strings.Contains(text, "internal link") || strings.Contains(text, "internal-link"):
+		return "internal_link_patch"
+	case strings.Contains(text, "metadata") || strings.Contains(text, "meta description") || strings.Contains(text, "title") || strings.Contains(text, "ctr"):
+		return "metadata_rewrite"
+	case strings.Contains(text, "sitemap"):
+		return "sitemap_update"
+	case strings.Contains(text, "robots") || strings.Contains(text, "canonical") || strings.Contains(text, "index") || strings.Contains(text, "crawl") || strings.Contains(text, "technical"):
+		return "technical_fix"
+	case strings.Contains(text, "geo") || strings.Contains(text, "citation") || strings.Contains(text, "answer engine"):
+		return "glossary_definition"
+	case strings.Contains(text, "comparison"):
+		return "comparison_page"
+	case strings.Contains(text, "alternative"):
+		return "alternative_page"
+	case strings.Contains(text, "template") || strings.Contains(text, "checklist"):
+		return "template_or_checklist"
+	default:
+		return "blog_post"
+	}
+}
+
+func defaultReviewRequiredForAssetType(assetType string, riskLevel string) bool {
+	if riskLevel == "high" || riskLevel == "medium" {
+		return true
+	}
+	switch assetType {
+	case "metadata_rewrite", "internal_link_patch", "sitemap_update":
+		return false
+	default:
+		return true
+	}
+}
+
+func defaultOutputSnapshotForAction(raw json.RawMessage, assetType string, actionType string, opp db.SeoOpportunity) json.RawMessage {
+	if rawHasMeaningfulJSON(raw) {
+		return raw
+	}
+	path := actionGenerationPath(assetType, actionType)
+	if path == "topic_article" {
+		return rawOrDefault(raw, `{}`)
+	}
+	return mustJSONLocal(map[string]any{
+		"output_type":          path,
+		"asset_type":           assetType,
+		"title":                actionType,
+		"target_url":           opportunityTargetURL(opp),
+		"review_state":         "ready_for_review",
+		"seo_geo_contribution": seoGeoContributionForAsset(assetType),
+		"deliverable":          directActionDeliverable(assetType),
+	})
+}
+
+func defaultDiffSnapshotForAction(raw json.RawMessage, assetType string, actionType string, opp db.SeoOpportunity) json.RawMessage {
+	if rawHasMeaningfulJSON(raw) {
+		return raw
+	}
+	path := actionGenerationPath(assetType, actionType)
+	if path == "topic_article" {
+		return rawOrDefault(raw, `{}`)
+	}
+	targetURL := opportunityTargetURL(opp)
+	if path == "technical_task" {
+		return mustJSONLocal(map[string]any{
+			"output_type": "technical_task",
+			"target_url":  targetURL,
+			"checklist": []map[string]any{
+				{
+					"task":                 actionType,
+					"seo_geo_contribution": seoGeoContributionForAsset(assetType),
+					"verification":         "verify the technical signal after the fix is applied",
+				},
+			},
+			"requires_apply_step": true,
+		})
+	}
+	return mustJSONLocal(map[string]any{
+		"output_type": "direct_patch",
+		"target_url":  targetURL,
+		"proposed_changes": []map[string]any{
+			{
+				"asset_type":            assetType,
+				"instruction":           actionType,
+				"seo_geo_contribution":  seoGeoContributionForAsset(assetType),
+				"human_review_required": true,
+			},
+		},
+		"requires_apply_step": true,
+	})
+}
+
+func actionGenerationPath(assetType string, actionType string) string {
+	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
+	switch {
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "internal_link_patch") || strings.Contains(text, "schema_patch"):
+		return "direct_patch"
+	case strings.Contains(text, "sitemap_update") || strings.Contains(text, "technical_fix") || strings.Contains(text, "technical seo") || strings.Contains(text, "robots") || strings.Contains(text, "canonical"):
+		return "technical_task"
+	default:
+		return "topic_article"
+	}
+}
+
+func rawHasMeaningfulJSON(raw json.RawMessage) bool {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return false
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "{}" && trimmed != "[]"
+}
+
+func opportunityTargetURL(opp db.SeoOpportunity) string {
+	if opp.PageUrl != nil && strings.TrimSpace(*opp.PageUrl) != "" {
+		return strings.TrimSpace(*opp.PageUrl)
+	}
+	return strings.TrimSpace(opp.NormalizedPageUrl)
+}
+
+func seoGeoContributionForAsset(assetType string) string {
+	switch assetType {
+	case "metadata_rewrite":
+		return "Improve search appearance and click-through for an existing page."
+	case "internal_link_patch":
+		return "Strengthen crawl paths and topical authority between existing pages."
+	case "schema_patch":
+		return "Make page entities and answers easier for search and answer engines to parse."
+	case "sitemap_update", "technical_fix":
+		return "Remove indexing or crawl blockers so visibility signals can be collected reliably."
+	default:
+		return "Create or refresh an owned asset that can earn search demand and AI citations."
+	}
+}
+
+func directActionDeliverable(assetType string) string {
+	switch assetType {
+	case "metadata_rewrite":
+		return "Title and meta description patch for an existing page."
+	case "internal_link_patch":
+		return "Internal link additions or edits for existing pages."
+	case "schema_patch":
+		return "Structured data patch for human review before applying."
+	case "sitemap_update", "technical_fix":
+		return "Technical task with verification steps before marking applied."
+	default:
+		return "Reviewable SEO/GEO action output."
+	}
+}
+
+func stringPtrValueAPI(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func measurementWindowForAction(assetType, actionType string) json.RawMessage {

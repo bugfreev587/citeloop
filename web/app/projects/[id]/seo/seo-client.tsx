@@ -100,14 +100,15 @@ function opportunityTitle(opportunity: SEOOpportunity) {
 
 function assetTypeForOpportunity(opportunity: SEOOpportunity) {
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
-  if (text.includes("comparison")) return "comparison_page";
-  if (text.includes("alternative")) return "alternative_page";
-  if (text.includes("template") || text.includes("checklist")) return "template_or_checklist";
   if (text.includes("schema")) return "schema_patch";
   if (text.includes("internal link")) return "internal_link_patch";
   if (text.includes("metadata") || text.includes("title") || text.includes("meta")) return "metadata_rewrite";
   if (text.includes("sitemap")) return "sitemap_update";
-  if (text.includes("geo")) return "glossary_definition";
+  if (text.includes("robots") || text.includes("canonical") || text.includes("crawler") || text.includes("technical")) return "technical_fix";
+  if (text.includes("geo") || text.includes("citation") || text.includes("answer engine")) return "glossary_definition";
+  if (text.includes("comparison")) return "comparison_page";
+  if (text.includes("alternative")) return "alternative_page";
+  if (text.includes("template") || text.includes("checklist")) return "template_or_checklist";
   return "blog_post";
 }
 
@@ -228,7 +229,13 @@ function findingTypeLabel(opportunity: SEOOpportunity) {
 
 function actionCtaForOpportunity(opportunity: SEOOpportunity) {
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase();
-  if (text.includes("index") || text.includes("sitemap") || text.includes("schema") || text.includes("internal link") || text.includes("crawler") || text.includes("robots")) {
+  if (text.includes("internal link")) {
+    return { label: "Create internal-link task", busyLabel: "Creating task" };
+  }
+  if (text.includes("geo") || text.includes("citation") || text.includes("answer engine")) {
+    return { label: "Create GEO asset task", busyLabel: "Creating task" };
+  }
+  if (text.includes("index") || text.includes("sitemap") || text.includes("schema") || text.includes("crawler") || text.includes("robots") || text.includes("canonical")) {
     return { label: "Create technical task", busyLabel: "Creating task" };
   }
   if (text.includes("refresh") || text.includes("decay") || text.includes("ctr") || text.includes("title") || text.includes("meta") || text.includes("near")) {
@@ -258,6 +265,53 @@ function compactEvidenceText(evidence: any) {
       .join(" / ");
   }
   return String(evidence);
+}
+
+function actionWhyNowText(action: SEOContentAction | ResultsAction) {
+  const input = action.input_snapshot ?? {};
+  const evidence = action.evidence_snapshot ?? {};
+  const value =
+    input.recommended_action ??
+    input.query ??
+    input.opportunity_type ??
+    evidence.recommended_action ??
+    evidence.query ??
+    evidence.intent_type ??
+    (action as ResultsAction).opportunity_recommended_action ??
+    (action as ResultsAction).opportunity_query;
+  return value ? String(value) : "Created from a reviewed visibility finding.";
+}
+
+function actionSEOContributionText(action: SEOContentAction | ResultsAction) {
+  const contribution = action.output_snapshot?.seo_geo_contribution;
+  if (contribution) return String(contribution);
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  if (assetType === "metadata_rewrite") return "Improve SERP CTR and query-page relevance without publishing a new page.";
+  if (assetType === "internal_link_patch") return "Move authority and context toward the target page so crawlers and answer engines can understand the cluster.";
+  if (assetType === "schema_patch") return "Expose structured facts that search engines and answer engines can extract.";
+  if (assetType === "sitemap_update" || assetType === "technical_fix") return "Improve crawl, indexability, and measurement reliability.";
+  if (assetType.includes("glossary") || assetType.includes("geo")) return "Create answer-ready entities and citations for AI discovery surfaces.";
+  return "Create or refresh an indexable asset that can earn rankings, citations, and downstream measurement.";
+}
+
+function actionOutputTypeLabel(action: SEOContentAction | ResultsAction) {
+  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
+  if (outputType === "direct_patch") return "Direct patch";
+  if (outputType === "technical_task") return "Technical task";
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  if (assetType.includes("patch") || assetType === "metadata_rewrite") return "Direct patch";
+  if (assetType === "sitemap_update" || assetType === "technical_fix") return "Technical task";
+  return "Topic-backed asset";
+}
+
+function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
+  if (action.status === "completed") return "Measurement complete";
+  if (action.status === "measuring") return "Measuring impact";
+  if (action.verified_at) return "Applied or published and verified";
+  if (action.status === "approved") return "Approved for execution";
+  if (action.status === "ready_for_review") return "Waiting for review";
+  if (action.published_at) return "Published and waiting for verification";
+  return action.status || "Queued";
 }
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive" | "insufficient_data";
@@ -970,12 +1024,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const action = await api.createSEOContentAction(projectId, opp.id, {
         action_type: opp.recommended_action ?? undefined,
         asset_type: assetTypeForOpportunity(opp),
-        review_required: opp.risk_level !== "low",
       });
       setOpportunities((current) => current.filter((item) => item.id !== opp.id));
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setSelectedOpportunityID(null);
-      setMessage({ title: "Content action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
+      setMessage({ title: "Visibility action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
     } finally {
@@ -1480,6 +1533,24 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div>
                           <div className="text-xs font-semibold uppercase text-slate-400">Result</div>
                           <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
                         </div>
                       </div>
                       <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-5">

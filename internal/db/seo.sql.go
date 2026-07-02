@@ -1355,6 +1355,20 @@ left join topics t
 where ca.project_id = $1
   and ca.status = 'ready_for_review'
   and t.id is null
+  and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (
+    array[
+      '%metadata_rewrite%',
+      '%internal_link_patch%',
+      '%schema_patch%',
+      '%sitemap_update%',
+      '%technical_fix%',
+      '%technical seo%',
+      '%internal link%',
+      '%robots%',
+      '%canonical%',
+      '%crawler%'
+    ]
+  )
 order by ca.created_at asc
 limit $2
 for update of ca skip locked
