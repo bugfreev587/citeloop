@@ -76,6 +76,17 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 	if !hasOpportunityType(result.Opportunities, "geo_project_mentioned_without_citation") {
 		t.Fatalf("missing mention without citation opportunity: %+v", result.Opportunities)
 	}
+	for _, opportunity := range result.Opportunities {
+		var evidence map[string]any
+		if err := json.Unmarshal(opportunity.Evidence, &evidence); err != nil {
+			t.Fatalf("unmarshal GEO opportunity evidence: %v; raw=%s", err, string(opportunity.Evidence))
+		}
+		for _, key := range []string{"source", "why_now", "scoring_method", "scoring_version", "idempotency_key"} {
+			if evidence[key] == nil || evidence[key] == "" {
+				t.Fatalf("%s evidence missing %q in %#v", opportunity.Type, key, evidence)
+			}
+		}
+	}
 }
 
 func TestAcceptAssetBriefCreatesTopic(t *testing.T) {

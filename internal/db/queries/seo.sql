@@ -248,6 +248,21 @@ on conflict (project_id, run_id, normalized_page_url) do update set
   checked_at = now()
 returning *;
 
+-- name: ListLatestTechnicalChecks :many
+select tc.*
+from technical_checks tc
+join seo_runs sr on sr.id = tc.run_id
+where tc.project_id = sqlc.arg(project_id)
+  and sr.agent = 'seo_sync'
+  and sr.started_at = (
+    select max(started_at)
+    from seo_runs
+    where project_id = sqlc.arg(project_id)
+      and agent = 'seo_sync'
+  )
+order by tc.checked_at desc
+limit sqlc.arg(limit_rows);
+
 -- name: UpsertSEOOpportunity :one
 insert into seo_opportunities
   (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,

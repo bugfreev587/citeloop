@@ -530,6 +530,14 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		result.GeneratedAnomalies += metricGenerated
 		result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("gsc_metric_opportunities:%d", metricGenerated))
 	}
+	actionableGenerated, err := s.generateActionableSEOOpportunities(ctx, projectID, run.ID, prop)
+	if err != nil {
+		return finish("error", result, err)
+	}
+	if actionableGenerated > 0 {
+		result.GeneratedAnomalies += actionableGenerated
+		result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("actionable_seo_opportunities:%d", actionableGenerated))
+	}
 	overview, err := s.Overview(ctx, projectID)
 	if err != nil {
 		return finish("error", result, err)
@@ -609,6 +617,129 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		generated++
 	}
 	return generated, nil
+}
+
+func (s Service) generateActionableSEOOpportunities(ctx context.Context, projectID uuid.UUID, runID uuid.UUID, prop db.SeoProperty) (int, error) {
+	checkRows, err := s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
+		ProjectID: projectID,
+		LimitRows: 100,
+	})
+	if err != nil {
+		return 0, err
+	}
+	inventoryRows, err := s.Q.ListInventory(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	queryRows := []db.ListSearchQueryOpportunityRollupsRow{}
+	if prop.ID != uuid.Nil {
+		queryRows, err = s.Q.ListSearchQueryOpportunityRollups(ctx, db.ListSearchQueryOpportunityRollupsParams{
+			ProjectID:  projectID,
+			PropertyID: prop.ID,
+			Limit:      80,
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+	candidates := actionableSEOOpportunityCandidates(
+		toTechnicalCheckRollups(checkRows),
+		toInventoryEvidenceRollups(inventoryRows, prop),
+		toSearchQueryRollups(queryRows),
+	)
+	generated := 0
+	for _, candidate := range candidates {
+		query := strings.TrimSpace(candidate.Query)
+		var queryPtr *string
+		if query != "" {
+			queryPtr = &query
+		}
+		pageURL := strings.TrimSpace(candidate.PageURL)
+		var pageURLPtr *string
+		if pageURL != "" {
+			pageURLPtr = &pageURL
+		}
+		action := candidate.RecommendedAction
+		impact := candidate.ExpectedImpact
+		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+			ProjectID:         projectID,
+			Type:              candidate.Type,
+			Status:            "open",
+			PriorityScore:     pgutil.Numeric(candidate.PriorityScore),
+			Confidence:        pgutil.Numeric(candidate.Confidence),
+			PageUrl:           pageURLPtr,
+			NormalizedPageUrl: candidate.NormalizedPageURL,
+			Query:             queryPtr,
+			Evidence:          mustJSON(candidate.Evidence),
+			RecommendedAction: &action,
+			ExpectedImpact:    &impact,
+			Effort:            candidate.Effort,
+			RiskLevel:         candidate.RiskLevel,
+			CreatedByRunID:    uuidToPG(runID),
+		})
+		if err != nil {
+			return generated, err
+		}
+		generated++
+	}
+	return generated, nil
+}
+
+func toTechnicalCheckRollups(rows []db.TechnicalCheck) []technicalCheckRollup {
+	out := make([]technicalCheckRollup, 0, len(rows))
+	for _, row := range rows {
+		details := map[string]any{}
+		if len(row.RawDetails) > 0 {
+			_ = json.Unmarshal(row.RawDetails, &details)
+		}
+		out = append(out, technicalCheckRollup{
+			PageURL:               row.PageUrl,
+			NormalizedPageURL:     row.NormalizedPageUrl,
+			HTTPStatus:            row.HttpStatus,
+			CanonicalStatus:       stringPtrValue(row.CanonicalStatus),
+			RobotsStatus:          stringPtrValue(row.RobotsStatus),
+			TitleStatus:           stringPtrValue(row.TitleStatus),
+			MetaDescriptionStatus: stringPtrValue(row.MetaDescriptionStatus),
+			H1Status:              stringPtrValue(row.H1Status),
+			StructuredDataStatus:  stringPtrValue(row.StructuredDataStatus),
+			SitemapStatus:         stringPtrValue(row.SitemapStatus),
+			InternalLinkCount:     row.InternalLinkCount,
+			OutboundLinkCount:     row.OutboundLinkCount,
+			RawDetails:            details,
+		})
+	}
+	return out
+}
+
+func toInventoryEvidenceRollups(rows []db.ContentInventory, prop db.SeoProperty) []inventoryEvidenceRollup {
+	out := make([]inventoryEvidenceRollup, 0, len(rows))
+	normalization := decodeNormalizationConfig(prop.UrlNormalizationConfig)
+	for _, row := range rows {
+		normalized := strings.TrimSpace(row.Url)
+		if value, err := NormalizeURL(row.Url, prop.SiteUrl, normalization); err == nil {
+			normalized = value
+		}
+		summary := stringPtrValue(row.Summary)
+		snippets := evidenceSnippets(row.EvidenceSnippets)
+		out = append(out, inventoryEvidenceRollup{
+			URL:               row.Url,
+			NormalizedURL:     normalized,
+			Title:             stringPtrValue(row.Title),
+			Summary:           summary,
+			EvidenceCount:     len(snippets),
+			SummaryWordCount:  wordCount(summary),
+			CapturedEvidence:  snippets,
+			PrimarySourceType: row.Source,
+		})
+	}
+	return out
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func toSearchQueryRollups(rows []db.ListSearchQueryOpportunityRollupsRow) []searchQueryRollup {

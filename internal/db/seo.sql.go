@@ -771,6 +771,68 @@ func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDu
 	return items, nil
 }
 
+const listLatestTechnicalChecks = `-- name: ListLatestTechnicalChecks :many
+select tc.id, tc.project_id, tc.run_id, tc.page_url, tc.normalized_page_url, tc.article_id, tc.http_status, tc.canonical_status, tc.robots_status, tc.title_status, tc.meta_description_status, tc.h1_status, tc.structured_data_status, tc.sitemap_status, tc.internal_link_count, tc.outbound_link_count, tc.content_hash, tc.unsafe_mdx_detected, tc.raw_details, tc.checked_at
+from technical_checks tc
+join seo_runs sr on sr.id = tc.run_id
+where tc.project_id = $1
+  and sr.agent = 'seo_sync'
+  and sr.started_at = (
+    select max(started_at)
+    from seo_runs
+    where project_id = $1
+      and agent = 'seo_sync'
+  )
+order by tc.checked_at desc
+limit $2
+`
+
+type ListLatestTechnicalChecksParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+func (q *Queries) ListLatestTechnicalChecks(ctx context.Context, arg ListLatestTechnicalChecksParams) ([]TechnicalCheck, error) {
+	rows, err := q.db.Query(ctx, listLatestTechnicalChecks, arg.ProjectID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TechnicalCheck
+	for rows.Next() {
+		var i TechnicalCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.ArticleID,
+			&i.HttpStatus,
+			&i.CanonicalStatus,
+			&i.RobotsStatus,
+			&i.TitleStatus,
+			&i.MetaDescriptionStatus,
+			&i.H1Status,
+			&i.StructuredDataStatus,
+			&i.SitemapStatus,
+			&i.InternalLinkCount,
+			&i.OutboundLinkCount,
+			&i.ContentHash,
+			&i.UnsafeMdxDetected,
+			&i.RawDetails,
+			&i.CheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPageDecayOpportunityRollups = `-- name: ListPageDecayOpportunityRollups :many
 select
   max(page_url)::text as page_url,

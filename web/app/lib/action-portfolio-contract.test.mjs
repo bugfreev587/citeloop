@@ -54,10 +54,19 @@ test("Analysis distinguishes multi-surface action task types", () => {
     "Create technical task",
     "Create internal-link task",
     "Create GEO asset task",
+    "Create evidence refresh task",
+    "Create consolidation task",
+    "internal_link_gap",
+    "schema_gap",
+    "thin_evidence_page",
+    "technical_visibility_issue",
+    "gsc_query_cannibalization",
     "technical_fix",
     "internal_link_patch",
     "schema_patch",
     "metadata_rewrite",
+    "Evidence gap",
+    "Cannibalization",
   ]) {
     assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

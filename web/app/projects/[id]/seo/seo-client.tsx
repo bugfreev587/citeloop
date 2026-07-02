@@ -99,16 +99,19 @@ function opportunityTitle(opportunity: SEOOpportunity) {
 }
 
 function assetTypeForOpportunity(opportunity: SEOOpportunity) {
+  const type = opportunity.type.toLowerCase();
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
-  if (text.includes("schema")) return "schema_patch";
-  if (text.includes("internal link")) return "internal_link_patch";
-  if (text.includes("metadata") || text.includes("title") || text.includes("meta")) return "metadata_rewrite";
-  if (text.includes("sitemap")) return "sitemap_update";
-  if (text.includes("robots") || text.includes("canonical") || text.includes("crawler") || text.includes("technical")) return "technical_fix";
-  if (text.includes("geo") || text.includes("citation") || text.includes("answer engine")) return "glossary_definition";
-  if (text.includes("comparison")) return "comparison_page";
-  if (text.includes("alternative")) return "alternative_page";
-  if (text.includes("template") || text.includes("checklist")) return "template_or_checklist";
+  const words = text.replace(/[_-]/g, " ");
+  if (type === "schema_gap" || words.includes("schema")) return "schema_patch";
+  if (type === "internal_link_gap" || words.includes("internal link")) return "internal_link_patch";
+  if (words.includes("metadata") || words.includes("title") || words.includes("meta")) return "metadata_rewrite";
+  if (words.includes("sitemap")) return "sitemap_update";
+  if (type === "gsc_query_cannibalization" || words.includes("cannibal") || words.includes("consolidat")) return "technical_fix";
+  if (type === "technical_visibility_issue" || words.includes("robots") || words.includes("canonical") || words.includes("crawler") || words.includes("technical")) return "technical_fix";
+  if (words.includes("geo") || words.includes("citation") || words.includes("answer engine")) return "glossary_definition";
+  if (words.includes("comparison")) return "comparison_page";
+  if (words.includes("alternative")) return "alternative_page";
+  if (words.includes("template") || words.includes("checklist")) return "template_or_checklist";
   return "blog_post";
 }
 
@@ -216,32 +219,46 @@ function analysisCapabilityBadgeLabel(overview: SEOOverview | null, analysisStat
 }
 
 function findingTypeLabel(opportunity: SEOOpportunity) {
+  const type = opportunity.type.toLowerCase();
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
-  if (text.includes("ctr") || text.includes("title") || text.includes("meta")) return "CTR opportunity";
-  if (text.includes("decay") || text.includes("refresh")) return "Refresh candidate";
-  if (text.includes("near") || text.includes("page_one") || text.includes("ranking")) return "Striking distance";
-  if (text.includes("index") || text.includes("sitemap") || text.includes("robots") || text.includes("crawler")) return "Technical finding";
-  if (text.includes("geo") || text.includes("citation")) return "AI citation gap";
-  if (text.includes("competitive") || text.includes("comparison") || text.includes("alternative")) return "Market gap";
-  if (text.includes("cold_start")) return "Cold-start finding";
+  const words = text.replace(/[_-]/g, " ");
+  if (type === "internal_link_gap" || words.includes("internal link")) return "Internal-link gap";
+  if (type === "schema_gap" || words.includes("schema")) return "Schema gap";
+  if (type === "thin_evidence_page" || words.includes("thin evidence") || words.includes("evidence block")) return "Evidence gap";
+  if (type === "gsc_query_cannibalization" || words.includes("cannibal") || words.includes("consolidat")) return "Cannibalization";
+  if (words.includes("ctr") || words.includes("title") || words.includes("meta")) return "CTR opportunity";
+  if (words.includes("decay") || words.includes("refresh")) return "Refresh candidate";
+  if (words.includes("near") || words.includes("page one") || words.includes("ranking")) return "Striking distance";
+  if (type === "technical_visibility_issue" || words.includes("index") || words.includes("sitemap") || words.includes("robots") || words.includes("crawler") || words.includes("technical")) return "Technical finding";
+  if (words.includes("geo") || words.includes("citation")) return "AI citation gap";
+  if (words.includes("competitive") || words.includes("comparison") || words.includes("alternative")) return "Market gap";
+  if (words.includes("cold start")) return "Cold-start finding";
   return "Growth finding";
 }
 
 function actionCtaForOpportunity(opportunity: SEOOpportunity) {
+  const type = opportunity.type.toLowerCase();
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase();
-  if (text.includes("internal link")) {
+  const words = text.replace(/[_-]/g, " ");
+  if (type === "gsc_query_cannibalization" || words.includes("cannibal") || words.includes("consolidat")) {
+    return { label: "Create consolidation task", busyLabel: "Creating task" };
+  }
+  if (type === "thin_evidence_page" || words.includes("thin evidence") || words.includes("evidence block") || words.includes("source backed")) {
+    return { label: "Create evidence refresh task", busyLabel: "Creating task" };
+  }
+  if (type === "internal_link_gap" || words.includes("internal link")) {
     return { label: "Create internal-link task", busyLabel: "Creating task" };
   }
-  if (text.includes("geo") || text.includes("citation") || text.includes("answer engine")) {
+  if (words.includes("geo") || words.includes("citation") || words.includes("answer engine")) {
     return { label: "Create GEO asset task", busyLabel: "Creating task" };
   }
-  if (text.includes("index") || text.includes("sitemap") || text.includes("schema") || text.includes("crawler") || text.includes("robots") || text.includes("canonical")) {
+  if (type === "schema_gap" || type === "technical_visibility_issue" || words.includes("index") || words.includes("sitemap") || words.includes("schema") || words.includes("crawler") || words.includes("robots") || words.includes("canonical")) {
     return { label: "Create technical task", busyLabel: "Creating task" };
   }
-  if (text.includes("refresh") || text.includes("decay") || text.includes("ctr") || text.includes("title") || text.includes("meta") || text.includes("near")) {
+  if (words.includes("refresh") || words.includes("decay") || words.includes("ctr") || words.includes("title") || words.includes("meta") || words.includes("near")) {
     return { label: "Create refresh task", busyLabel: "Creating task" };
   }
-  if (text.includes("watch") || text.includes("wait") || text.includes("monitor")) {
+  if (words.includes("watch") || words.includes("wait") || words.includes("monitor")) {
     return { label: "Watch", busyLabel: "Adding watch" };
   }
   return { label: "Create content task", busyLabel: "Creating task" };
