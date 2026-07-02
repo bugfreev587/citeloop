@@ -669,10 +669,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
+  const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
+  const directActionDrawerRef = useRef<HTMLElement | null>(null);
+  const directActionReturnFocusRef = useRef<HTMLElement | null>(null);
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -953,6 +956,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
     .slice(0, 6);
+  const selectedDirectAction = useMemo(
+    () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
+    [directReviewActions, selectedDirectActionID],
+  );
   const analysisDataMode = searchDataModeLabel(overview, analysisStatus);
   const analysisCapabilityMode = analysisCapabilityBadgeLabel(overview, analysisStatus, visibilityMode);
   const searchSnapshotCards = [
@@ -962,6 +969,93 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { label: "Position", value: metric(overview?.last_28_days?.position_28d, 1), detail: "Average rank" },
     { label: "Observed days", value: metric(overview?.last_28_days?.gsc_days_28d), detail: analysisDataMode },
   ];
+  const activeSafeModeCount = safeModes.filter((event) => !event.exited_at).length;
+  const analysisFocusCards = [
+    {
+      key: "direct",
+      eyebrow: "Needs review",
+      title: directReviewActions.length ? `${directReviewActions.length} direct action${directReviewActions.length === 1 ? "" : "s"}` : "No direct actions waiting",
+      detail: directReviewActions.length ? "Review direct action output before it moves toward execution." : "Reviewable patches and technical tasks will appear here.",
+      meta: "Review direct action",
+      tone: directReviewActions.length ? ("amber" as const) : ("neutral" as const),
+    },
+    {
+      key: "findings",
+      eyebrow: "New analysis",
+      title: opportunities.length ? `${opportunities.length} opportunit${opportunities.length === 1 ? "y" : "ies"} available` : "No new opportunities",
+      detail: opportunities.length ? "Inspect new findings and create only the work that is worth doing." : "Refresh or Sync after Context changes.",
+      meta: "Inspect new findings",
+      tone: opportunities.length ? ("green" as const) : ("neutral" as const),
+    },
+    {
+      key: "automation",
+      eyebrow: "Automation readiness",
+      title: readiness?.ready_for_level_2 ? "Ready for guarded execution" : `${blockedReadinessGates.length} blocked gate${blockedReadinessGates.length === 1 ? "" : "s"}`,
+      detail: activeSafeModeCount ? "Safe mode is active. Automated execution stays constrained." : "Execution stays manual until policy, publisher, notification, and rollback gates pass.",
+      meta: `L${policy?.autopilot_level ?? 0}`,
+      tone: readiness?.ready_for_level_2 ? ("green" as const) : ("amber" as const),
+    },
+  ];
+
+  useEffect(() => {
+    if (!selectedDirectActionID || selectedDirectAction) return;
+    setSelectedDirectActionID(null);
+  }, [selectedDirectAction, selectedDirectActionID]);
+
+  useEffect(() => {
+    if (!selectedDirectAction?.id) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedDirectActionID(null);
+      if (event.key === "Tab") {
+        const drawer = directActionDrawerRef.current;
+        if (!drawer) return;
+        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
+          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedDirectAction?.id]);
+
+  useEffect(() => {
+    if (!selectedDirectAction?.id) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeButton = directActionDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
+    const firstFocusable = closeButton ?? directActionDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
+    firstFocusable?.focus();
+    if (analysisSurfaceRef.current) {
+      analysisSurfaceRef.current.setAttribute("aria-hidden", "true");
+      analysisSurfaceRef.current.inert = true;
+    }
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      if (analysisSurfaceRef.current) {
+        analysisSurfaceRef.current.removeAttribute("aria-hidden");
+        analysisSurfaceRef.current.inert = false;
+      }
+      if (directActionReturnFocusRef.current?.isConnected) {
+        directActionReturnFocusRef.current?.focus();
+      }
+    };
+  }, [selectedDirectAction?.id]);
 
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
@@ -1360,31 +1454,83 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       {mode === "analysis" && (
         <>
         <div className="space-y-5">
-          <section className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Search performance snapshot</div>
-                <h3 className="mt-2 text-xl font-bold leading-7 text-slate-950">Search signals for the next growth move</h3>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  {analysisStatus.detail}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 lg:justify-end">
-                <Badge tone={analysisStatus.tone}>{analysisDataMode}</Badge>
-                <Badge tone={analysisStatus.tone === "green" && overview?.cold_start ? "amber" : analysisStatus.tone}>
-                  {analysisCapabilityMode}
-                </Badge>
-              </div>
-            </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-              {searchSnapshotCards.map((card) => (
-                <div key={card.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{card.label}</div>
-                  <div className="mt-2 font-mono text-xl font-bold text-slate-950">{card.value}</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">{card.detail}</div>
+          <section data-analysis-focus-cards className="space-y-3">
+            <SectionHeader title="What needs review next" eyebrow="Start here" />
+            <div className="grid gap-3 lg:grid-cols-3">
+              {analysisFocusCards.map((card) => (
+                <div key={card.key} data-analysis-focus-card className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{card.eyebrow}</div>
+                      <h3 className="mt-2 text-base font-bold leading-6 text-slate-950">{card.title}</h3>
+                    </div>
+                    <Badge tone={card.tone}>{card.meta}</Badge>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{card.detail}</p>
                 </div>
               ))}
             </div>
+          </section>
+
+          <section data-direct-action-queue className="space-y-3">
+            <SectionHeader
+              title="Direct action queue"
+              eyebrow="Reviewable output"
+              action={<Badge tone={directReviewActions.length ? "amber" : "neutral"}>{directReviewActions.length} to review</Badge>}
+            />
+            {directReviewActions.length === 0 ? (
+              <EmptyState title="No direct actions to review" detail="When CiteLoop creates a patch or technical task, it will appear here as a compact review card." />
+            ) : (
+              <div className="grid gap-2">
+                {directReviewActions.map((action) => {
+                  const stage = deriveVisibilityLifecycleStage(action);
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      data-direct-action-card
+                      aria-label={`Open action details: ${action.action_type}`}
+                      onClick={(event) => {
+                        directActionReturnFocusRef.current = event.currentTarget;
+                        setSelectedOpportunityID(null);
+                        setSelectedDirectActionID(action.id);
+                      }}
+                      className={`group w-full rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                        selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                      }`}
+                    >
+                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto] lg:items-center">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                            <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
+                            <Badge tone={action.review_required === false ? "neutral" : "amber"}>
+                              {action.review_required === false ? "Review optional" : "Review required"}
+                            </Badge>
+                          </div>
+                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">{action.action_type}</h3>
+                          <p className="mt-1 truncate text-sm leading-5 text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
+                        </div>
+                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
+                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Reviewable output</div>
+                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionOutputPreviewText(action)}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
+                          <span>Open details</span>
+                          <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section data-analysis-growth-findings-section className="space-y-3">
@@ -1399,183 +1545,151 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               }
             />
 
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="min-w-0">
-                {opportunities.length === 0 ? (
-                  <EmptyState
-                    title="No opportunities to review"
-                    detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
-                  />
-                ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {opportunities.slice(0, 12).map((opp) => {
-                      const cta = actionCtaForOpportunity(opp);
-                      return (
-                        <button
-                          data-analysis-finding-card
-                          key={opp.id}
-                          type="button"
-                          onClick={(event) => {
-                            analysisReturnFocusRef.current = event.currentTarget;
-                            setSelectedOpportunityID(opp.id);
-                          }}
-                          aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
-                          className={`group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 ${
-                            selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
-                          }`}
-                        >
+            {opportunities.length === 0 ? (
+              <EmptyState
+                title="No opportunities to review"
+                detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
+              />
+            ) : (
+              <div className="grid gap-2">
+                {opportunities.slice(0, 12).map((opp) => {
+                  const cta = actionCtaForOpportunity(opp);
+                  return (
+                    <button
+                      data-analysis-finding-card
+                      key={opp.id}
+                      type="button"
+                      onClick={(event) => {
+                        analysisReturnFocusRef.current = event.currentTarget;
+                        setSelectedDirectActionID(null);
+                        setSelectedOpportunityID(opp.id);
+                      }}
+                      aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
+                      className={`group w-full rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                        selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                      }`}
+                    >
+                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] lg:items-center">
+                        <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
                             <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
                             <Badge tone="neutral">{sourceModeForOpportunity(opp, overview)}</Badge>
                           </div>
-                          <div className="mt-3 flex items-start justify-between gap-3">
-                            <h3 className="min-w-0 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-                            <span className="shrink-0 font-mono text-xs font-bold uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
-                          </div>
-                          <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">
+                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-600">
                             {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
                           </p>
-                          <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-500">
-                            <div className="min-w-0 truncate">
-                              <span className="font-semibold uppercase tracking-[0.1em] text-slate-400">Signal</span>{" "}
-                              <span className="font-medium text-slate-700">{opp.query ?? opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="truncate font-medium text-slate-500">{cta.label}</span>
-                              <span className="font-semibold text-slate-700 transition group-hover:translate-x-0.5">Open details</span>
-                            </div>
+                        </div>
+                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Signal</div>
+                            <div className="mt-1 truncate font-medium text-slate-700">{opp.query ?? opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
                           </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <aside className="space-y-4">
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Loop in motion</div>
-                      <div className="mt-1 text-lg font-bold text-slate-950">Opportunities already in execution</div>
-                    </div>
-                    <Badge tone={loopActiveCount ? "amber" : "neutral"}>{loopActiveCount}</Badge>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    {loopSummaryItems.filter((item) => item.value > 0).slice(0, 6).map((item) => (
-                      <div key={item.key} className="border-t border-slate-100 pt-2">
-                        <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
-                        <div className="mt-1 text-xs font-medium text-slate-500">{item.label}</div>
-                      </div>
-                    ))}
-                    {loopSummaryItems.every((item) => item.value === 0) && (
-                      <div className="col-span-2 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-500">
-                        Reviewed opportunities will appear here after they enter the content loop.
-                      </div>
-                    )}
-                  </div>
-                  {loopPreviewActions.length > 0 && (
-                    <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">
-                      {loopPreviewActions.map((action) => {
-                        const stage = deriveVisibilityLifecycleStage(action);
-                        return (
-                          <div key={action.id} className="py-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
-                                <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
-                              </div>
-                              <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Next action</div>
+                            <div className="mt-1 truncate font-medium text-slate-700">{cta.label}</div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <Link
-                    href={`/projects/${projectId}/results`}
-                    className="mt-3 inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    View results
-                  </Link>
-                </div>
-
-                {visibilityBlockers.length > 0 && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    <div className="font-bold">Data note</div>
-                    <p className="mt-2 leading-6">
-                      Measurement signals are limited, but review can continue with context-backed findings.
-                    </p>
-                  </div>
-                )}
-              </aside>
-            </div>
-          </section>
-
-          {directReviewActions.length > 0 && (
-            <section data-direct-action-queue className="space-y-3">
-              <SectionHeader
-                title="Direct action queue"
-                eyebrow="Reviewable output"
-                action={<Badge tone="amber">{directReviewActions.length} to review</Badge>}
-              />
-              <div className="grid gap-3 xl:grid-cols-2">
-                {directReviewActions.map((action) => {
-                  const stage = deriveVisibilityLifecycleStage(action);
-                  return (
-                    <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
-                            <Badge tone={action.review_required === false ? "neutral" : "amber"}>
-                              {action.review_required === false ? "Review optional" : "Review required"}
-                            </Badge>
-                          </div>
-                          <h3 className="mt-3 text-base font-bold leading-6 text-slate-950">{action.action_type}</h3>
-                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
                         </div>
-                        <div className="shrink-0 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 font-mono text-xs font-semibold text-slate-600">
-                          {action.asset_type ?? "direct_action"}
+                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
+                          <span className="font-mono text-xs uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
+                          <span className="flex items-center gap-1">
+                            Open details
+                            <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
+                          </span>
                         </div>
                       </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                        </div>
-                      </div>
-                      <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 text-sm leading-6 text-slate-700">
-                        <div className="text-xs font-semibold uppercase text-slate-400">Reviewable output</div>
-                        <div className="mt-1 font-medium">{actionOutputPreviewText(action)}</div>
-                      </div>
-                    </article>
+                    </button>
                   );
                 })}
               </div>
-            </section>
-          )}
+            )}
+          </section>
+
+          <section data-analysis-loop-strip className="space-y-3">
+            <SectionHeader
+              title="Loop in motion"
+              eyebrow="Where reviewed opportunities are now"
+              action={
+                <Link
+                  href={`/projects/${projectId}/results`}
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  View results
+                </Link>
+              }
+            />
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+                {loopSummaryItems.map((item) => (
+                  <div key={item.key} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+                    <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
+                    <div className="mt-1 truncate text-xs font-semibold text-slate-500">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+              {loopPreviewActions.length > 0 ? (
+                <div className="mt-3 grid gap-2 lg:grid-cols-3">
+                  {loopPreviewActions.map((action) => {
+                    const stage = deriveVisibilityLifecycleStage(action);
+                    return (
+                      <div key={action.id} className="rounded-md border border-slate-100 px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
+                            <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
+                          </div>
+                          <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed opportunities will appear here after they enter the content loop.</p>
+              )}
+            </div>
+          </section>
+
+          <section data-analysis-search-signal className="space-y-3">
+            <SectionHeader
+              title="Search performance snapshot"
+              eyebrow="Search signals for prioritization"
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={analysisStatus.tone}>{analysisDataMode}</Badge>
+                  <Badge tone={analysisStatus.tone === "green" && overview?.cold_start ? "amber" : analysisStatus.tone}>
+                    {analysisCapabilityMode}
+                  </Badge>
+                </div>
+              }
+            />
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {searchSnapshotCards.map((card) => (
+                  <div key={card.label} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{card.label}</div>
+                    <div className="mt-2 font-mono text-xl font-bold text-slate-950">{card.value}</div>
+                    <div className="mt-1 truncate text-xs leading-5 text-slate-500">{card.detail}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">{analysisStatus.detail}</p>
+              {visibilityBlockers.length > 0 && (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <span className="font-bold">Data note: </span>
+                  Measurement signals are limited, but review can continue with context-backed findings.
+                </div>
+              )}
+            </div>
+          </section>
 
           <section data-analysis-autopilot-visible>
             <SectionHeader
-              title="Autopilot"
+              title="Automation readiness"
               action={
                 <div className="flex flex-wrap gap-2">
-                  <Badge tone={policy?.safe_mode_enabled || safeModes.some((event) => !event.exited_at) ? "amber" : "neutral"}>
+                  <Badge tone={policy?.safe_mode_enabled || activeSafeModeCount ? "amber" : "neutral"}>
                     L{policy?.autopilot_level ?? 0}
                   </Badge>
                   <Button size="sm" onClick={generatePlan} disabled={!!busy}>
@@ -1635,7 +1749,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <p className="mt-1 text-sm text-slate-500">Plans</p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-sm font-bold text-slate-900">{safeModes.filter((event) => !event.exited_at).length}</div>
+                <div className="text-sm font-bold text-slate-900">{activeSafeModeCount}</div>
                 <p className="mt-1 text-sm text-slate-500">Open safe mode</p>
               </div>
             </div>
@@ -2736,6 +2850,132 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         </div>
       );
     })()}
+    {mode === "analysis" && selectedDirectAction && (() => {
+      const action = selectedDirectAction;
+      const stage = deriveVisibilityLifecycleStage(action);
+      const markAppliedBusy = busy === `verify-${action.id}-verified`;
+      const needsRevisionBusy = busy === `verify-${action.id}-failed`;
+
+      return (
+        <div className="fixed inset-0 z-30">
+          <button
+            type="button"
+            aria-label="Close action details"
+            onClick={() => setSelectedDirectActionID(null)}
+            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
+          />
+          <aside
+            ref={directActionDrawerRef}
+            data-direct-action-drawer
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="direct-action-details-title"
+            className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Review action details</div>
+                <h3 id="direct-action-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
+                  {action.action_type}
+                </h3>
+                <p className="mt-2 break-words text-sm leading-5 text-slate-500">
+                  {action.target_url ?? action.normalized_target_url ?? action.id}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                  <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
+                  <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
+                  <Badge tone={action.review_required === false ? "neutral" : "amber"}>
+                    {action.review_required === false ? "Review optional" : "Review required"}
+                  </Badge>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-drawer-close
+                aria-label="Close action details"
+                onClick={() => setSelectedDirectActionID(null)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+              <div className="space-y-5">
+                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewable output</div>
+                  <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{actionOutputPreviewText(action)}</p>
+                </section>
+
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Asset type</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{action.asset_type ?? "direct_action"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Execution context</div>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Target URL</div>
+                      <div className="mt-1 break-words font-medium text-slate-700">{action.target_url ?? action.normalized_target_url ?? "No target URL yet."}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
+                      <div className="mt-1 font-medium text-slate-700">
+                        {action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Baseline</div>
+                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.baseline_window)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Measurement</div>
+                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div
+              aria-label="Drawer actions"
+              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+            >
+              <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
+                <ButtonProgress busy={markAppliedBusy} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
+                  Mark applied
+                </ButtonProgress>
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={!!busy}>
+                <ButtonProgress busy={needsRevisionBusy} busyLabel="Marking revision" idleIcon={null}>
+                  Needs revision
+                </ButtonProgress>
+              </Button>
+            </div>
+          </aside>
+        </div>
+      );
+    })()}
     {mode === "analysis" && selectedOpportunity && (() => {
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);
@@ -2751,7 +2991,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         <div className="fixed inset-0 z-30">
           <button
             type="button"
-            aria-label="Close opportunity details"
+            aria-label="Close finding details"
             onClick={() => setSelectedOpportunityID(null)}
             className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
           />
@@ -2779,7 +3019,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <button
                 type="button"
                 data-drawer-close
-                aria-label="Close opportunity details"
+                aria-label="Close finding details"
                 onClick={() => setSelectedOpportunityID(null)}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
               >
@@ -2845,7 +3085,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             >
               <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
                 <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
-                  Dismiss
+                  Dismiss finding
                 </ButtonProgress>
               </Button>
               <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>

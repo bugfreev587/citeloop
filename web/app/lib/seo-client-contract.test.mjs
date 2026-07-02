@@ -79,3 +79,60 @@ test("Analysis page renders Phase 5 autopilot controls before advanced diagnosti
     "Autopilot controls must render before Advanced diagnostics so they are visible by default",
   );
 });
+
+test("Analysis page leads with compact review cards instead of deep data panels", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "data-analysis-focus-cards",
+    "data-analysis-focus-card",
+    "What needs review next",
+    "Review direct action",
+    "Inspect new findings",
+    "Automation readiness",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+
+  const focusIndex = source.indexOf("data-analysis-focus-cards");
+  const directQueueIndex = source.indexOf("data-direct-action-queue");
+  const growthIndex = source.indexOf("data-analysis-growth-findings-section");
+  const searchIndex = source.indexOf("data-analysis-search-signal");
+  const autopilotIndex = source.indexOf("data-analysis-autopilot-visible");
+
+  assert.ok(focusIndex < directQueueIndex, "priority cards should appear before the direct action queue");
+  assert.ok(directQueueIndex < growthIndex, "reviewable direct actions should appear before new findings");
+  assert.ok(growthIndex < searchIndex, "search metrics should be supporting context after decisions");
+  assert.ok(searchIndex < autopilotIndex, "automation readiness should stay after decision context");
+});
+
+test("Analysis direct actions open a reusable right drawer for review", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "selectedDirectActionID",
+    "selectedDirectAction",
+    "directActionDrawerRef",
+    "data-direct-action-card",
+    "data-direct-action-drawer",
+    "Review action details",
+    "Close action details",
+    "Mark applied",
+    "Needs revision",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+});
+
+test("Analysis loop progress is a strip and finding dismissal is explicit", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  assert.equal(source.includes("data-analysis-loop-strip"), true, "analysis loop progress should render as a horizontal strip");
+  assert.equal(
+    source.includes("xl:grid-cols-[minmax(0,1fr)_320px]"),
+    false,
+    "growth findings should not reserve a persistent right-side loop rail",
+  );
+  assert.equal(source.includes("Dismiss finding"), true, "dismiss action must make the destructive operation explicit");
+  assert.equal(source.includes("Close finding details"), true, "finding drawer needs a separate close affordance");
+});
