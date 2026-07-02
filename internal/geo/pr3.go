@@ -239,6 +239,14 @@ func (s Service) createAssetBrief(ctx context.Context, projectID, runID, opportu
 
 func observationEvidence(observation db.GeoObservation) map[string]any {
 	return map[string]any{
+		"source":                 "geo_observations",
+		"reason":                 "geo_citation_source_gap",
+		"why_now":                "A recorded answer-engine observation shows citation coverage missing or weaker than competitor/source evidence.",
+		"scoring_method":         "geo_gap = competitor citations or brand mention observed while project citation count is zero",
+		"scoring_version":        "geo_observation_v1",
+		"expected_impact_range":  "medium",
+		"data_source_notes":      []string{"geo_observations", "answer_engine_observation"},
+		"idempotency_key":        strings.Join([]string{"geo_observations", observation.Engine, observation.ID.String()}, "|"),
 		"observation_id":         observation.ID,
 		"engine":                 observation.Engine,
 		"source_type":            observation.SourceType,

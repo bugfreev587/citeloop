@@ -27,3 +27,18 @@ func TestUpsertSEOOpportunityUsesConsistentProjectIDParameterType(t *testing.T) 
 		t.Fatal("UpsertSEOOpportunity must derive the opportunity hash from project_id as uuid text")
 	}
 }
+
+func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
+	query := strings.ToLower(listLatestTechnicalChecks)
+	for _, want := range []string{
+		"from technical_checks tc",
+		"join seo_runs sr on sr.id = tc.run_id",
+		"agent = 'seo_sync'",
+		"max(started_at)",
+		"limit $2",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("ListLatestTechnicalChecks query missing %q in %s", want, query)
+		}
+	}
+}
