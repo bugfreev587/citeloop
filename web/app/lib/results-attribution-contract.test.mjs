@@ -117,3 +117,34 @@ test("Results does not treat empty verification snapshots as measurement evidenc
     "empty verification_snapshot objects must render as not started",
   );
 });
+
+test("Results attribution only shows published or applied actions", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  for (const marker of [
+    "function hasResultsExecutionEvidence",
+    "Boolean(action.published_at || action.verified_at)",
+    '!["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action)',
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const marker of [
+    "Published / applied",
+  ]) {
+    assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(
+    resultsBlock,
+    /resultsActions\.length \? resultsActions\.filter\(\(action\) => !\["archived", "dismissed"\]\.includes\(action\.status\)\) : resultActions/,
+    "Results attribution must not show status-only actions that have no publish or applied timestamp",
+  );
+  assert.doesNotMatch(
+    resultsBlock,
+    /<div className="font-semibold text-slate-700">Published<\/div>\s*<div>{formatDate\(action\.published_at \?\? null\)}<\/div>/,
+    "date label should make clear direct actions may be applied rather than published",
+  );
+});

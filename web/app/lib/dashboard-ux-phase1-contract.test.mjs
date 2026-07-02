@@ -357,7 +357,8 @@ test("results surface defaults to published outcomes with card-triggered attribu
     "Inconclusive",
     "Measurement window",
     "AI citation signals",
-    "No content actions are ready for verification yet",
+    "Published / applied",
+    "No published or applied actions are ready for attribution yet",
     "Advanced diagnostics",
   ]) {
     assert.match(resultsBlock, new RegExp(copy));
