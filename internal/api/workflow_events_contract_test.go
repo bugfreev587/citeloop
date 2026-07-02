@@ -77,3 +77,29 @@ func TestApplyFixAutoApprovesAndEnqueuesDraftApproved(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateConfigRequeuesWorkflowWhenAutoAdvanceTurnsOn(t *testing.T) {
+	source, err := os.ReadFile("handlers_projects.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (s *Server) updateConfig")
+	end := strings.Index(body, "func (s *Server) getProfile")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("could not locate updateConfig body")
+	}
+	handler := body[start:end]
+	for _, want := range []string{
+		"previousCfg.AutoAdvanceEnabled",
+		"cfg.AutoAdvanceEnabled",
+		"workflow.EventOpportunityReviewed",
+		"workflow.EventContentPlanCreated",
+		"s.enqueueWorkflowEvent",
+		`"source": "auto_toggle"`,
+	} {
+		if !strings.Contains(handler, want) {
+			t.Fatalf("updateConfig must wake workflow when Auto is turned on; missing %q", want)
+		}
+	}
+}

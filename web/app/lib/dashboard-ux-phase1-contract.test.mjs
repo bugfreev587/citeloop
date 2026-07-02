@@ -1402,6 +1402,20 @@ test("content plan shows visible feedback while strategist is running", () => {
   assert.doesNotMatch(topics, /Running strategist/);
 });
 
+test("content plan exposes an Auto switch for the automatic workflow", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /auto_advance_enabled/);
+  assert.match(topics, /const autoEnabled = Boolean\(config\?\.auto_advance_enabled\)/);
+  assert.match(topics, /toggleAutoAdvance/);
+  assert.match(topics, /role="switch"/);
+  assert.match(topics, /aria-checked=\{autoEnabled\}/);
+  assert.match(topics, />Auto<\/span>/);
+  assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
+  assert.match(topics, /Automatic workflow paused/);
+  assert.match(topics, /Turn Auto on to convert accepted opportunities into backlog topics and draft them on cadence/);
+});
+
 test("content plan treats topic generation as a per-topic background operation", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
@@ -1418,7 +1432,8 @@ test("content plan polls accepted opportunity actions until topics appear", () =
   assert.match(topics, /summaryPendingPlanActions/);
   assert.match(topics, /action\.lifecycle_stage === "added_to_plan"/);
   assert.match(topics, /hasPendingPlanActions/);
-  assert.match(topics, /topics\.length === 0/);
+  assert.match(topics, /autoEnabled && summaryPendingPlanActions > 0 && topics\.length === 0/);
+  assert.match(topics, /const hasDueScheduled = autoEnabled && topics\.some/);
   assert.match(topics, /window\.setInterval\(refresh, hasGenerating \? 10_000 : hasPendingPlanActions \? 5_000 : 30_000\)/);
   assert.doesNotMatch(topics, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
   assert.doesNotMatch(topics, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);

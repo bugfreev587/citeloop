@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
@@ -159,12 +160,38 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	previousCfg := config.Default()
+	if existing, err := s.Q.GetProject(r.Context(), id); err == nil {
+		parsed, err := config.Parse(existing.Config)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		previousCfg = parsed
+	}
 	p, err := s.Q.UpdateProjectConfigForOwner(r.Context(), db.UpdateProjectConfigForOwnerParams{
 		ID: id, Config: cfg.JSON(), OwnerID: s.ownerID(r),
 	})
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if !previousCfg.AutoAdvanceEnabled && cfg.AutoAdvanceEnabled {
+		runKey := time.Now().UTC().Format(time.RFC3339Nano)
+		if err := s.enqueueWorkflowEvent(r.Context(), id, workflow.EventOpportunityReviewed, "project", id, workflowDedupeKey(workflow.EventOpportunityReviewed, id, "auto_toggle", runKey), map[string]any{
+			"source": "auto_toggle",
+			"status": "enabled",
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.enqueueWorkflowEvent(r.Context(), id, workflow.EventContentPlanCreated, "project", id, workflowDedupeKey(workflow.EventContentPlanCreated, id, "auto_toggle", runKey), map[string]any{
+			"source": "auto_toggle",
+			"status": "enabled",
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, 200, p)
 }

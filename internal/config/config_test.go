@@ -41,8 +41,8 @@ func TestParseDefaults(t *testing.T) {
 	if c.BufferDays != 5 || c.Crawl.MaxPages != 200 {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
-	if !c.AutoAdvanceEnabled {
-		t.Fatal("auto_advance_enabled should default to true")
+	if c.AutoAdvanceEnabled {
+		t.Fatal("auto_advance_enabled should default to false")
 	}
 	if c.PublishMode != PublishModeManual {
 		t.Fatalf("publish_mode default = %q, want manual", c.PublishMode)
@@ -100,6 +100,16 @@ func TestParseExplicitAutoAdvanceDisabled(t *testing.T) {
 	}
 	if c.AutoAdvanceEnabled {
 		t.Fatal("auto_advance_enabled:false should disable workflow advancement")
+	}
+}
+
+func TestParseExplicitAutoAdvanceEnabled(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"auto_advance_enabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AutoAdvanceEnabled {
+		t.Fatal("auto_advance_enabled:true should enable workflow advancement")
 	}
 }
 
