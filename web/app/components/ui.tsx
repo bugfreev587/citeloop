@@ -6,7 +6,7 @@ export function cx(...values: Array<string | false | null | undefined>) {
 }
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "outline" | "ghost" | "danger";
+  variant?: "primary" | "outline" | "ghost" | "danger" | "ai";
   size?: "sm" | "md";
 };
 
@@ -17,6 +17,7 @@ export function Button({ className, variant = "outline", size = "md", ...props }
     outline: "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950",
     ghost: "border-transparent bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-950",
     danger: "border-red-200 bg-white text-red-700 hover:bg-red-50",
+    ai: "border-cyan-300 bg-cyan-100 text-cyan-900 hover:border-cyan-400 hover:bg-cyan-200 hover:text-cyan-950",
   };
   const sizes = {
     sm: "h-8 rounded-lg px-3 text-xs",

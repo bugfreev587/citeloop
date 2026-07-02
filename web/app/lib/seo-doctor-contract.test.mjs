@@ -68,6 +68,16 @@ test("Doctor route renders a client page with progress and per-finding AI repair
   assert.match(client, /document\.execCommand\("copy"\)/);
 });
 
+test("Fix with AI uses a dedicated colored button variant instead of outline overrides", () => {
+  const ui = read("components/ui.tsx");
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+
+  assert.match(ui, /variant\?: "primary" \| "outline" \| "ghost" \| "danger" \| "ai"/);
+  assert.match(ui, /ai:\s*"[^"]*border-cyan-300[^"]*bg-cyan-100[^"]*text-cyan-900/);
+  assert.match(client, /variant="ai"[\s\S]*Fix with AI/);
+  assert.doesNotMatch(client, /className="ml-auto border-cyan/);
+});
+
 test("Home fetches and renders a first-fold Doctor module", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 

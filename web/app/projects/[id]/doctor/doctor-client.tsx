@@ -369,8 +369,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                   </div>
                   <Button
                     size="sm"
+                    variant="ai"
                     onClick={() => setSelectedRepairFinding(finding)}
-                    className="ml-auto border-cyan-200 bg-cyan-50 text-cyan-800 hover:border-cyan-300 hover:bg-cyan-100 hover:text-cyan-950"
+                    className="ml-auto"
                   >
                     <Code2 size={14} />
                     Fix with AI
