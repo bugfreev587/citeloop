@@ -921,6 +921,9 @@ test("content workflow stages expose page-level identity above module headings",
   }
 
   assert.match(workflow, /title: "Content Plan"[\s\S]*title: "Review"[\s\S]*title: "Publish"/);
+  assert.match(workflow, /toneClass: "border-sky-200 bg-sky-100\/70"/);
+  assert.match(workflow, /toneClass: "border-amber-200 bg-amber-100\/70"/);
+  assert.match(workflow, /toneClass: "border-emerald-200 bg-emerald-100\/70"/);
   assert.match(ui, /level = "section"/);
   assert.match(ui, /data-content-workflow-stage-title/);
   assert.match(ui, /<Heading[\s\S]*\{title\}[\s\S]*<\/Heading>/);
@@ -1404,12 +1407,22 @@ test("content plan shows visible feedback while strategist is running", () => {
 
 test("content plan exposes an Auto switch for the automatic workflow", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
+  const headerStart = topics.indexOf('title="Content Plan"');
+  const contentPlanHeader = topics.slice(Math.max(0, headerStart - 120), headerStart + 360);
 
+  assert.ok(headerStart >= 0, "Content Plan page header should exist");
+  assert.match(contentPlanHeader, /action=\{autoSwitch\}/);
   assert.match(topics, /auto_advance_enabled/);
   assert.match(topics, /const autoEnabled = Boolean\(config\?\.auto_advance_enabled\)/);
   assert.match(topics, /toggleAutoAdvance/);
+  assert.match(topics, /const autoSwitch = \(/);
   assert.match(topics, /role="switch"/);
   assert.match(topics, /aria-checked=\{autoEnabled\}/);
+  assert.match(topics, /aria-describedby="content-plan-auto-help"/);
+  assert.match(topics, /id="content-plan-auto-help"/);
+  assert.match(topics, /group-hover:opacity-100/);
+  assert.match(topics, /Auto On: accepted opportunities become backlog topics and drafts on cadence\./);
+  assert.match(topics, /Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available\./);
   assert.match(topics, />Auto<\/span>/);
   assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
   assert.match(topics, /Automatic workflow paused/);
