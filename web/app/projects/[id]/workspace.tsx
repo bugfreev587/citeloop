@@ -10,10 +10,10 @@ import {
   ProductProfile,
   Project,
   ReviewGroup,
-  SEOContentAction,
   SEOOpportunity,
   SEOOverview,
   Topic,
+  VisibilitySummary,
   friendlyApiError,
 } from "../../lib/api";
 import {
@@ -25,6 +25,7 @@ import {
   nextWorkspaceAction,
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
+import { visibilityLifecycleCounts } from "../../lib/visibility-lifecycle";
 import { useApi } from "../../lib/use-api";
 import { useToast } from "../../components/toast-provider";
 import { Badge, EmptyState, Notice, SectionHeader, cx, formatDate, formatScore } from "../../components/ui";
@@ -170,8 +171,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [insightRuns, setInsightRuns] = useState<GenerationRun[]>([]);
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
-  const [seoOpportunities, setSeoOpportunities] = useState<SEOOpportunity[]>([]);
-  const [seoActions, setSeoActions] = useState<SEOContentAction[]>([]);
+  const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [accountProjects, setAccountProjects] = useState<Project[]>([]);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
@@ -183,7 +183,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, opportunities, actions, projectRows] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, projectRows] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -196,8 +196,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listRuns(projectId, { limit: 5 }),
         api.listRuns(projectId, { agent: "insight", limit: 50 }).catch(() => []),
         api.getSEOOverview(projectId).catch(() => null),
-        api.listSEOOpportunities(projectId, { status: "open", limit: 50 }).catch(() => []),
-        api.listSEOContentActions(projectId, { limit: 50 }).catch(() => []),
+        api.getVisibilitySummary(projectId).catch(() => null),
         api.listProjects().catch(() => []),
       ]);
       setProject(p);
@@ -212,8 +211,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setRuns(runRows);
       setInsightRuns(insightRunRows);
       setSeoOverview(overview);
-      setSeoOpportunities(opportunities);
-      setSeoActions(actions);
+      setVisibilitySummary(summary);
       setAccountProjects(projectRows);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
@@ -333,15 +331,23 @@ export function Workspace({ projectId }: { projectId: string }) {
   const reviewDraftCount = reviewArticles.length - blockedDraftCount;
   const hasBlockedDrafts = blockedDraftCount > 0;
 
-  const opportunitiesInPlanCount = seoActions.length;
+  const visibilityOpenOpportunities = visibilitySummary?.open_opportunities ?? [];
+  const visibilityActionsInLoop = visibilitySummary?.actions_in_loop ?? [];
+  const visibilityLifecycleCountsForSummary = visibilitySummary?.lifecycle_counts ?? visibilityLifecycleCounts();
+  const visibilityOpenOpportunityCount = visibilityOpenOpportunities.length;
+  const visibilityActionsInLoopCount = visibilityActionsInLoop.length;
+  const visibilityPlanHandoffCount = (visibilityLifecycleCountsForSummary.added_to_plan ?? 0) + (visibilityLifecycleCountsForSummary.planned ?? 0);
+  const opportunitiesInPlanCount = visibilityPlanHandoffCount;
   const planItemCount = topics.length + opportunitiesInPlanCount;
-  const planGenerationPending = opportunitiesInPlanCount > 0 && topics.length === 0;
+  const planGenerationPending = visibilityPlanHandoffCount > 0 && topics.length === 0;
   const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
   const searchDataConnected = hasConnectedSearchData(seoOverview);
   const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
   const impressions28d = normalizeNumeric(seoOverview?.last_28_days?.impressions_28d ?? null);
-  const measuringActions = sumCounts(seoOverview?.actions_by_status, ["published", "measuring", "completed"]);
-  const aiCitationSignals = seoOpportunities.filter((opportunity) =>
+  const measuringActions = visibilitySummary
+    ? (visibilityLifecycleCountsForSummary.published_or_applied ?? 0) + (visibilityLifecycleCountsForSummary.measuring ?? 0) + (visibilityLifecycleCountsForSummary.learned ?? 0)
+    : sumCounts(seoOverview?.actions_by_status, ["published", "measuring", "completed"]);
+  const visibilityCitationSignalCount = visibilityOpenOpportunities.filter((opportunity) =>
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
 
@@ -355,7 +361,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     reviewCount: reviewArticles.length,
     readyCount: ready.length,
     topicsCount: topics.length,
-    openOpportunityCount: seoOpportunities.length,
+    openOpportunityCount: visibilityOpenOpportunityCount,
   });
   const humanActionCandidates: Array<HumanActionItem | false> = [
     contextNeedsConfirmation && {
@@ -421,16 +427,16 @@ export function Workspace({ projectId }: { projectId: string }) {
       priority: 50,
       count: reviewDraftCount,
     },
-    seoOpportunities.length > 0 && {
+    visibilityOpenOpportunityCount > 0 && {
       id: "analysis-review",
       title: "Review analysis",
-      detail: `${seoOpportunities.length} ${seoOpportunities.length === 1 ? "recommendation is" : "recommendations are"} ready before CiteLoop advances the content plan.`,
+      detail: `${visibilityOpenOpportunityCount} ${visibilityOpenOpportunityCount === 1 ? "recommendation is" : "recommendations are"} ready before CiteLoop advances the content plan.`,
       href: `/projects/${projectId}/analysis`,
       cta: "Review analysis",
       category: "Needs review",
       tone: "amber",
       priority: 60,
-      count: seoOpportunities.length,
+      count: visibilityOpenOpportunityCount,
     },
     ready.length > 0 && {
       id: "distribute-variants",
@@ -472,11 +478,11 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   const aiCitationMetric = homeAICitationMetric({
     projectId,
-    citationGapCount: aiCitationSignals,
+    citationGapCount: visibilityCitationSignalCount,
   });
   const inMotionMetric = homeInMotionMetric({
     projectId,
-    analysisActionCount: opportunitiesInPlanCount,
+    analysisActionCount: visibilityActionsInLoopCount,
     reviewDraftCount: reviewArticles.length,
     readyToPublishCount: ready.length,
     measuringActionCount: measuringActions,
@@ -556,17 +562,17 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
     {
       label: "Analysis",
-      metricValue: seoOpportunities.length,
+      metricValue: visibilityOpenOpportunityCount,
       statusLabel: !contextConfirmed
         ? "Locked until Context"
-        : seoOpportunities.length > 0
+        : visibilityOpenOpportunityCount > 0
           ? "Ready to review"
-          : opportunitiesInPlanCount > 0
+          : visibilityActionsInLoopCount > 0
             ? "Reviewed"
             : "Scanning",
-      tone: !contextConfirmed ? "neutral" : seoOpportunities.length > 0 ? "amber" : "green",
+      tone: !contextConfirmed ? "neutral" : visibilityOpenOpportunityCount > 0 ? "amber" : "green",
       href: `/projects/${projectId}/analysis`,
-      highlight: contextConfirmed && seoOpportunities.length > 0,
+      highlight: contextConfirmed && visibilityOpenOpportunityCount > 0,
     },
     {
       label: "Plan",
@@ -636,7 +642,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         detail: formatDate(article.reviewed_at),
         href: `/projects/${projectId}/publish`,
       })),
-      ...seoOpportunities.slice(0, 1).map((opportunity) => ({
+      ...visibilityOpenOpportunities.slice(0, 1).map((opportunity) => ({
         id: `opportunity-${opportunity.id}`,
         title: opportunityTitle(opportunity),
         detail: "Analysis opportunity detected",

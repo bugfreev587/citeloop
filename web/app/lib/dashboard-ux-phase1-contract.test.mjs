@@ -904,11 +904,13 @@ test("home explains growth status and loop stages from existing product data", (
     "api.getProfile(projectId)",
     "api.listInventory(projectId)",
     "api.getSEOOverview(projectId)",
-    'api.listSEOOpportunities(projectId, { status: "open", limit: 50 })',
-    "api.listSEOContentActions(projectId, { limit: 50 })",
+    "api.getVisibilitySummary(projectId)",
   ]) {
     assert.match(workspace, new RegExp(apiCall.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+
+  assert.doesNotMatch(workspace, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(workspace, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);
 
   assert.doesNotMatch(workspace, /Results \/ Momentum/);
   assert.doesNotMatch(workspace, /Actionable momentum/);
@@ -923,7 +925,8 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /window\.addEventListener\("focus", refresh\)/);
   assert.match(workspace, /window\.addEventListener\("pageshow", refreshOnPageShow\)/);
   assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
-  assert.match(workspace, /seoActions/);
+  assert.match(workspace, /visibilityActionsInLoopCount/);
+  assert.match(workspace, /visibilityOpenOpportunityCount/);
   assert.match(workspace, /planItemCount/);
   assert.match(workspace, /opportunitiesInPlanCount/);
   // Stage statuses are derived live from page state, not hardcoded.
@@ -1157,11 +1160,14 @@ test("content plan treats topic generation as a per-topic background operation",
 test("content plan polls accepted analysis actions until topics appear", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
-  assert.match(topics, /pendingContentActions/);
-  assert.match(topics, /status === "ready_for_review"/);
+  assert.match(topics, /api\.getVisibilitySummary\(projectId\)/);
+  assert.match(topics, /summaryPendingPlanActions/);
+  assert.match(topics, /action\.lifecycle_stage === "added_to_plan"/);
   assert.match(topics, /hasPendingPlanActions/);
   assert.match(topics, /topics\.length === 0/);
   assert.match(topics, /window\.setInterval\(refresh, hasGenerating \? 10_000 : hasPendingPlanActions \? 5_000 : 30_000\)/);
+  assert.doesNotMatch(topics, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
+  assert.doesNotMatch(topics, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);
 });
 
 test("content plan backlog excludes drafted topics", () => {
