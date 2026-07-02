@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { allowUnconfiguredClerkBypass, clerkServerAuthConfigured } from "./app/lib/auth-config";
+import { canonicalAppURLForRequest } from "./app/lib/canonical-origin";
 
 const isPublicRoute = createRouteMatcher(["/", "/docs(.*)", "/privacy(.*)", "/terms(.*)", "/sign-in(.*)", "/sign-up(.*)"]);
 
@@ -11,14 +12,24 @@ const protectedMiddleware = clerkMiddleware(async (auth, req) => {
   }
 });
 
+function canonicalOriginRedirect(req: NextRequest) {
+  const canonicalUrl = canonicalAppURLForRequest(req.url);
+  if (!canonicalUrl) return null;
+  return NextResponse.redirect(canonicalUrl);
+}
+
 function configuredMiddleware(req: NextRequest, event: NextFetchEvent) {
+  const redirect = canonicalOriginRedirect(req);
+  if (redirect) return redirect;
   if (isPublicRoute(req)) {
     return NextResponse.next();
   }
   return protectedMiddleware(req, event);
 }
 
-function unconfiguredMiddleware(_req: NextRequest) {
+function unconfiguredMiddleware(req: NextRequest) {
+  const redirect = canonicalOriginRedirect(req);
+  if (redirect) return redirect;
   if (!allowUnconfiguredClerkBypass) {
     return new NextResponse("Clerk server authentication is not configured.", { status: 503 });
   }
