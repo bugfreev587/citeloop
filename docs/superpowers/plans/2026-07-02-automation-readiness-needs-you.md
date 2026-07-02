@@ -426,6 +426,18 @@ go test ./internal/db -run Test -count=1
 
 Expected: the readiness contract passes. The db command exits 0 even if there are no package-specific tests.
 
+- [ ] **Step 7b: Verify the migration applies cleanly (idempotent)**
+
+The other Task 2 tests are source-grep and `go test`; none applies the SQL. Apply the migration against a throwaway/local Postgres to prove it runs and is idempotent (the `add column if not exists` clauses must survive a double-apply):
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f internal/migrations/0033_seo_policy_recovery_ack.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f internal/migrations/0033_seo_policy_recovery_ack.sql
+psql "$DATABASE_URL" -c "\d seo_policies" | grep -E "recovery_plan_acknowledged_(at|by)"
+```
+
+Expected: both applies exit 0 (second is a no-op), and both new columns appear on `seo_policies`. If no local Postgres is available, this check is deferred to the deploy step, but must be logged as deferred so it is not silently skipped.
+
 - [ ] **Step 8: Commit backend recovery acknowledgement**
 
 Run:
@@ -1293,17 +1305,36 @@ Expected: PR is open against `origin/main`.
 
 - [ ] **Step 8: Merge, deploy, and production verify**
 
-After checks pass, merge the PR. Wait for the production deployment triggered by the merge commit, then verify the same three production URLs:
+After checks pass, merge the PR. Wait for the production deployment triggered by the merge commit, then verify.
+
+Concrete production verification (this machine is logged into both CLIs; repo is `railway link`ed to citeloop/production/citeloop-api):
+
+```bash
+# 1. Backend deployed and healthy (Railway auto-deploys from main)
+curl -fsS https://citeloop-api-production.up.railway.app/healthz   # -> ok
+railway logs -d --lines 200 | grep -Ei "migrat|0033|recovery_plan_acknowledged|listen|scheduler"
+
+# 2. Migration 0033 actually applied in prod Postgres (public proxy URL, internal URL is unreachable here)
+PUB=$(railway variables -s Postgres --json | python3 -c "import sys,json;print(json.load(sys.stdin)['DATABASE_PUBLIC_URL'])")
+psql "$PUB" -c "\d seo_policies" | grep -E "recovery_plan_acknowledged_(at|by)"
+
+# 3. Frontend deployed (Vercel auto-deploys from main); match created time to merge time
+vercel inspect https://citeloop.vercel.app
+```
+
+Then load the three production surfaces in the browser (Clerk-authenticated) and confirm:
 
 ```text
-/projects/:id
-/projects/:id/settings#automation
-/projects/:id/analysis
+https://citeloop.vercel.app/projects/:id
+https://citeloop.vercel.app/projects/:id/settings#automation
+https://citeloop.vercel.app/projects/:id/analysis
 ```
 
 Expected:
 
-- Production Home shows all actionable human gates in `Needs you`.
-- Settings Automation deep links resolve to live controls.
-- Analysis focuses on opportunity review and no longer shows the readiness panel.
+- `/healthz` returns `ok` and Railway logs show the new deploy started (and migration 0033 ran).
+- `seo_policies` in prod has `recovery_plan_acknowledged_at` and `recovery_plan_acknowledged_by`.
+- Production Home shows all actionable human gates in `Needs you` with correct P0/P1/P2 stripes.
+- Settings Automation deep links (`#automation`, `#automation-policy`, `#recovery-plan`) resolve to live controls; the Autopilot budget editor writes `monthly_budget_limit`.
+- Analysis focuses on opportunity review and no longer shows the readiness panel; the lightweight Settings bridge appears only when readiness is incomplete.
 - The PR link is available for the final status report.
