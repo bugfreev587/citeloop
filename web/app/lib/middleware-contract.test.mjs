@@ -28,3 +28,14 @@ test("middleware fails closed when Clerk is not configured in production", async
   assert.equal(source.includes("allowUnconfiguredClerkBypass"), true);
   assert.equal(source.includes("status: 503"), true);
 });
+
+test("middleware canonicalizes production aliases before Clerk auth redirects", async () => {
+  const source = await readFile(new URL("../../middleware.ts", import.meta.url), "utf8");
+
+  assert.match(source, /canonicalAppURLForRequest/);
+  assert.match(source, /NextResponse\.redirect\(canonicalUrl\)/);
+  assert.ok(
+    source.indexOf("canonicalAppURLForRequest") < source.indexOf("auth.protect"),
+    "alias canonicalization must happen before Clerk turns the GitHub callback into /sign-in?redirect_url=...",
+  );
+});
