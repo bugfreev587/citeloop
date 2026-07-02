@@ -52,6 +52,7 @@ test("Doctor route renders a client page with progress and per-finding AI repair
     "Fix with AI",
     "buildAIRepairPayload",
     "copyAIRepairJSON",
+    "writeClipboardText",
     "selectedRepairFinding",
     "Codex",
     "Claude Code",
@@ -64,6 +65,7 @@ test("Doctor route renders a client page with progress and per-finding AI repair
   }
   assert.doesNotMatch(client, /Structured handoff/);
   assert.doesNotMatch(client, /title="AI coding report"/);
+  assert.match(client, /document\.execCommand\("copy"\)/);
 });
 
 test("Home fetches and renders a first-fold Doctor module", () => {

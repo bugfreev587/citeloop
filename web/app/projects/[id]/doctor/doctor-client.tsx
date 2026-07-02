@@ -106,6 +106,38 @@ function buildAIRepairPayload(finding: SEODoctorFinding, run?: SEODoctorRun | nu
   };
 }
 
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea fallback for browsers that block async clipboard writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  activeElement?.focus();
+
+  if (!copied) {
+    throw new Error("Clipboard write failed.");
+  }
+}
+
 export function DoctorClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const { notify } = useToast();
@@ -171,8 +203,12 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }
 
   async function copyAIRepairJSON(finding: SEODoctorFinding) {
-    await navigator.clipboard.writeText(JSON.stringify(buildAIRepairPayload(finding, run), null, 2));
-    notify({ tone: "green", title: "Repair JSON copied" });
+    try {
+      await writeClipboardText(JSON.stringify(buildAIRepairPayload(finding, run), null, 2));
+      notify({ tone: "green", title: "Repair JSON copied" });
+    } catch {
+      notify({ tone: "red", title: "Could not copy repair JSON", detail: "Select the JSON in the modal and copy it manually." });
+    }
   }
 
   async function convertFinding(finding: SEODoctorFinding) {
