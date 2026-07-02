@@ -88,12 +88,6 @@ function toneForConfidence(confidence?: string): "green" | "amber" | "red" | "ne
   return "neutral";
 }
 
-function capabilityLabel(mode?: string) {
-  if (mode === "customer_site_connected" || mode === "managed_content_connected") return "Connected";
-  if (mode === "customer_site_pending_verification") return "Limited";
-  return "Public crawl only";
-}
-
 function opportunityTitle(opportunity: SEOOpportunity) {
   return opportunity.recommended_action || opportunity.query || opportunity.page_url || opportunity.type || "Visibility opportunity";
 }
@@ -212,12 +206,6 @@ function searchDataModeLabel(overview: SEOOverview | null, status: ReturnType<ty
   return "Public crawl only";
 }
 
-function analysisCapabilityBadgeLabel(overview: SEOOverview | null, analysisStatus: ReturnType<typeof analysisSearchDataStatus>, visibilityMode: string) {
-  if (analysisStatus.tone === "green" && overview?.cold_start) return "Connected, low data";
-  if (analysisStatus.tone === "green") return "Connected";
-  return capabilityLabel(visibilityMode);
-}
-
 function findingTypeLabel(opportunity: SEOOpportunity) {
   const type = opportunity.type.toLowerCase();
   const text = `${opportunity.type} ${opportunity.recommended_action ?? ""}`.toLowerCase();
@@ -262,6 +250,22 @@ function actionCtaForOpportunity(opportunity: SEOOpportunity) {
     return { label: "Watch", busyLabel: "Adding watch" };
   }
   return { label: "Create content task", busyLabel: "Creating task" };
+}
+
+function opportunityPriorityLabel(opportunity: SEOOpportunity) {
+  const score = normalizeNumeric(opportunity.priority_score);
+  if (score == null) return "Review priority";
+  if (score >= 75) return "High priority";
+  if (score >= 40) return "Medium priority";
+  return "Low priority";
+}
+
+function toneForOpportunityPriority(opportunity: SEOOpportunity): "green" | "amber" | "red" | "neutral" {
+  const score = normalizeNumeric(opportunity.priority_score);
+  if (score == null) return "neutral";
+  if (score >= 75) return "red";
+  if (score >= 40) return "amber";
+  return "neutral";
 }
 
 function sourceModeForOpportunity(opportunity: SEOOpportunity, overview: SEOOverview | null) {
@@ -807,12 +811,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const geoCoverage = normalizeNumeric(geoOverview?.score?.coverage);
   const geoScoreValue = normalizeNumeric(geoOverview?.score?.score);
   const showGeoScore = Boolean(geoOverview?.score && geoCoverage != null && geoCoverage >= 0.3 && geoOverview.score.confidence !== "insufficient_data");
-  const visibilityMode = overview?.capability_mode ?? "public_only";
-  const visibilityBlockers = [
-    ...(overview?.data_source_warnings ?? []),
-    ...(brief?.blockers ?? []),
-    ...(brief?.geo_blockers ?? []),
-  ].slice(0, 4);
   const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
@@ -960,15 +958,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
     [directReviewActions, selectedDirectActionID],
   );
-  const analysisDataMode = searchDataModeLabel(overview, analysisStatus);
-  const analysisCapabilityMode = analysisCapabilityBadgeLabel(overview, analysisStatus, visibilityMode);
-  const searchSnapshotCards = [
-    { label: "Clicks", value: metric(overview?.last_28_days?.clicks_28d), detail: "Last 28 days" },
-    { label: "Impressions", value: metric(overview?.last_28_days?.impressions_28d), detail: "Last 28 days" },
-    { label: "CTR", value: percent(overview?.last_28_days?.ctr_28d), detail: "Average click-through" },
-    { label: "Position", value: metric(overview?.last_28_days?.position_28d, 1), detail: "Average rank" },
-    { label: "Observed days", value: metric(overview?.last_28_days?.gsc_days_28d), detail: analysisDataMode },
-  ];
   const activeSafeModeCount = safeModes.filter((event) => !event.exited_at).length;
   const analysisFocusCards = [
     {
@@ -1573,28 +1562,24 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
-                            <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
-                            <Badge tone="neutral">{sourceModeForOpportunity(opp, overview)}</Badge>
+                            <Badge tone={toneForOpportunityPriority(opp)}>{opportunityPriorityLabel(opp)}</Badge>
+                            <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
                           </div>
                           <h3 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
                           <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
                             {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
                           </p>
                         </div>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                        <div className="grid gap-2 text-sm">
                           <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Signal</div>
-                            <div className="mt-1 truncate font-medium text-slate-700">{opp.query ?? opp.page_url ?? opp.normalized_page_url ?? "Project domain"}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Next action</div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Recommended action</div>
                             <div className="mt-1 truncate font-medium text-slate-700">{cta.label}</div>
                           </div>
                         </div>
                         <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                          <span className="font-mono text-xs uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
+                          <span className="text-xs text-slate-400">Open to review the details</span>
                           <span className="flex items-center gap-1">
-                            Open details
+                            Review
                             <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                           </span>
                         </div>
@@ -1647,39 +1632,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </div>
               ) : (
                 <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed opportunities will appear here after they enter the content loop.</p>
-              )}
-            </div>
-          </section>
-
-          <section data-analysis-search-signal className="space-y-3">
-            <SectionHeader
-              title="Search performance snapshot"
-              eyebrow="Search signals for prioritization"
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={analysisStatus.tone}>{analysisDataMode}</Badge>
-                  <Badge tone={analysisStatus.tone === "green" && overview?.cold_start ? "amber" : analysisStatus.tone}>
-                    {analysisCapabilityMode}
-                  </Badge>
-                </div>
-              }
-            />
-            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                {searchSnapshotCards.map((card) => (
-                  <div key={card.label} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{card.label}</div>
-                    <div className="mt-2 font-mono text-xl font-bold text-slate-950">{card.value}</div>
-                    <div className="mt-1 truncate text-xs leading-5 text-slate-500">{card.detail}</div>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">{analysisStatus.detail}</p>
-              {visibilityBlockers.length > 0 && (
-                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                  <span className="font-bold">Data note: </span>
-                  Measurement signals are limited, but review can continue with context-backed findings.
-                </div>
               )}
             </div>
           </section>

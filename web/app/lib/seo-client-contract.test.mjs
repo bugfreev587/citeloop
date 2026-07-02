@@ -97,13 +97,13 @@ test("Analysis page leads with compact review cards instead of deep data panels"
   const focusIndex = source.indexOf("data-analysis-focus-cards");
   const directQueueIndex = source.indexOf("data-direct-action-queue");
   const growthIndex = source.indexOf("data-analysis-growth-findings-section");
-  const searchIndex = source.indexOf("data-analysis-search-signal");
   const autopilotIndex = source.indexOf("data-analysis-autopilot-visible");
 
   assert.ok(focusIndex < directQueueIndex, "priority cards should appear before the direct action queue");
   assert.ok(directQueueIndex < growthIndex, "reviewable direct actions should appear before new findings");
-  assert.ok(growthIndex < searchIndex, "search metrics should be supporting context after decisions");
-  assert.ok(searchIndex < autopilotIndex, "automation readiness should stay after decision context");
+  assert.ok(growthIndex < autopilotIndex, "automation readiness should stay after decision cards");
+  assert.equal(source.includes("data-analysis-search-signal"), false, "Analysis should not show search metrics as a first-level panel");
+  assert.equal(source.includes("Search performance snapshot"), false, "Home owns the search-performance KPI snapshot");
 });
 
 test("Analysis direct actions open a reusable right drawer for review", async () => {
@@ -150,4 +150,8 @@ test("Opportunity queue lays finding cards out as responsive rectangles with thr
   assert.equal(queueSource.includes("xl:grid-cols-3"), true, "opportunity queue should cap wide layouts at three cards per row");
   assert.equal(queueSource.includes("min-h-[220px]"), true, "opportunity cards should keep a rectangular card footprint");
   assert.equal(queueSource.includes("lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto]"), false, "finding cards should not keep the old full-row internal layout");
+  assert.equal(queueSource.includes("risk_level"), false, "risk level is an internal judgment and belongs in the drawer");
+  assert.equal(queueSource.includes("sourceModeForOpportunity"), false, "source mode is diagnostic context and belongs in the drawer");
+  assert.equal(queueSource.includes("priority_score"), false, "raw priority scores should not appear on first-level cards");
+  assert.equal(queueSource.includes("Signal"), false, "first-level cards should avoid backend signal labels");
 });

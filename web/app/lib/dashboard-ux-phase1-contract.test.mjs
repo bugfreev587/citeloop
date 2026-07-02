@@ -217,7 +217,6 @@ test("analysis owns decisions while results owns impact reports and learning", (
   for (const copy of [
     "Opportunities",
     "Analysis",
-    "Search performance snapshot",
     "Opportunity queue",
     "Loop in motion",
     "View results",
@@ -253,7 +252,6 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   const seo = read("projects/[id]/seo/seo-client.tsx");
 
   for (const copy of [
-    "Search performance snapshot",
     "Opportunity queue",
     "Loop in motion",
     "View results",
@@ -270,6 +268,9 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Opportunity details",
     "Evidence",
     "Confidence",
+    "High priority",
+    "Medium priority",
+    "Low priority",
     "No opportunities to review",
   ]) {
     assert.match(seo, new RegExp(copy));
@@ -283,9 +284,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /gscMenuRef\.current\?\.contains\(target\)/);
   assert.match(seo, /setGSCMenuOpen\(false\)/);
   assert.match(seo, /function actionCtaForOpportunity/);
-  assert.match(seo, /function analysisCapabilityBadgeLabel/);
-  assert.match(seo, /Connected, low data/);
-  assert.match(seo, /analysisStatus\.tone === "green"/);
+  assert.match(seo, /function opportunityPriorityLabel/);
+  assert.match(seo, /function toneForOpportunityPriority/);
   assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
   assert.match(seo, /const \[selectedOpportunityID, setSelectedOpportunityID\] = useState<string \| null>\(null\)/);
   assert.match(seo, /const selectedOpportunity = useMemo/);
@@ -298,6 +298,11 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /data-analysis-growth-findings-section/);
   assert.match(seo, /data-analysis-finding-card/);
   assert.match(seo, /data-analysis-drawer/);
+  const opportunityCardBlock = seo.slice(seo.indexOf("data-analysis-finding-card"), seo.indexOf("data-analysis-loop-strip"));
+  assert.doesNotMatch(opportunityCardBlock, /risk_level/);
+  assert.doesNotMatch(opportunityCardBlock, /sourceModeForOpportunity/);
+  assert.doesNotMatch(opportunityCardBlock, /Score \{metric\(opp\.priority_score\)\}/);
+  assert.doesNotMatch(opportunityCardBlock, />Signal</);
   assert.match(seo, /motion-safe:animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
   assert.match(seo, /motion-safe:animate-\[citeloop-drawer-scrim-in_180ms_ease-out\]/);
   assert.match(seo, /const analysisSurfaceRef = useRef<HTMLDivElement \| null>\(null\)/);
@@ -322,6 +327,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.doesNotMatch(seo, /Decision queue/);
   assert.doesNotMatch(seo, /What needs approval now/);
   assert.doesNotMatch(seo, /Search data status/);
+  assert.doesNotMatch(seo, /Search performance snapshot/);
+  assert.doesNotMatch(seo, /data-analysis-search-signal/);
   assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
   assert.doesNotMatch(seo, /\{mode === "analysis" && actions\.length > 0 && \(/);
   assert.doesNotMatch(seo, /<SectionHeader title="Content actions"/);
@@ -1150,7 +1157,6 @@ test("analysis page presents decisions and results page presents impact reports"
   for (const copy of [
     "Opportunities",
     "Analysis",
-    "Search performance snapshot",
     "Opportunity queue",
     "Loop in motion",
     "View results",
@@ -1236,10 +1242,14 @@ test("content plan helps users choose from backlog topics and supports density v
     "Needs priority",
     "Recommended next",
     "Why this exists",
-    "Pick signal",
+    "High priority",
+    "Medium priority",
+    "Low priority",
   ]) {
     assert.match(topics, new RegExp(copy));
   }
+  assert.doesNotMatch(topics, /Pick signal/);
+  assert.doesNotMatch(topics, /priority \{topic\.priority\}/);
 
   assert.match(topics, /PlanView/);
   assert.match(topics, /setView\("list"\)/);
@@ -1287,6 +1297,19 @@ test("content plan topic cards separate top chips, body copy, and footer actions
   assert.ok(footerIndex < scheduleIndex, "schedule controls should live inside the card footer");
   assert.ok(footerIndex < actionsIndex, "edit, generate, and archive controls should live inside the card footer");
   assert.ok(actionsIndex > scheduleIndex, "actions should sit after the schedule control in the footer row");
+});
+
+test("review cards keep QA and score details inside the drawer", () => {
+  const review = read("projects/[id]/review/review-client.tsx");
+  const cardBlock = review.slice(review.indexOf("function ReviewDecisionCard"), review.indexOf("function StateBadge"));
+
+  assert.match(cardBlock, /data-review-card/);
+  assert.match(cardBlock, /Open details/);
+  assert.doesNotMatch(cardBlock, /formatScore/);
+  assert.doesNotMatch(cardBlock, /source evidence/);
+  assert.doesNotMatch(cardBlock, /Topic \{topicId\.slice/);
+  assert.match(review, /Claim evidence map/);
+  assert.match(review, /SEO contribution/);
 });
 
 test("blocking mutations expose button-level progress and keep opportunity review local", () => {
