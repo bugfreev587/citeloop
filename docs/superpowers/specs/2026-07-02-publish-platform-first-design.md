@@ -238,6 +238,29 @@ Publish may show a lightweight `Connect` or `Manage` entry point that routes to 
 - Disabled or roadmap platforms are visibly unavailable.
 - The first viewport remains scan-friendly and avoids dense explanatory copy.
 
+## Section-Level Acceptance Criteria
+
+Each product section has its own acceptance criteria so implementation does not rely only on the global UX bar.
+
+| PRD section | Acceptance criteria |
+| --- | --- |
+| Goal | A first-time user can identify the page as destination-based publishing within a few seconds; the first viewport prioritizes destination choice and immediate publish/retry actions over operational metrics or long explanatory text. |
+| Product Decision | The implemented page follows C2 `Catalog + Action Strip`: destination tiles are primary, `Ready now` is secondary, and detailed readiness/operations content is accessible through drawers, details, or Settings rather than first-viewport prose. |
+| Domain Terms | UI labels map cleanly to `canonical` and `syndication_variant`; `Copy draft` and `Submit draft` do not create separate backend flows; implementation documentation preserves the mapping between UI language and existing article status/action names. |
+| First Viewport | Desktop shows title, short subtitle, state-driven primary CTA, optional `Schedule`, destination tiles, and compact `Ready now`; mobile order is Header, GitHub/Next.js tile, `Ready now`, manual tiles, roadmap/More; first viewport does not show the old six-lane operations layout. |
+| Header CTA State Model | Exactly one primary CTA is shown; CTA label and target match the connection/readiness state table; `Schedule` remains secondary and never replaces destination capability labels. |
+| Destination Matrix | GitHub/Next.js, V1 default syndication platforms, optional More/manual platforms, and CMS roadmap destinations derive from their stated sources of truth; Medium/LinkedIn/Hacker News are not promoted into first-viewport tiles unless variants exist; roadmap CMS platforms are not active publish destinations. |
+| Tile State Rules | GitHub/Next.js maps to `Auto publish`, `Not connected`, `Disabled`, or `Needs attention` from connection fields; `Auto publish` is visually and semantically separate from project publish mode; manual and roadmap states are derived from the platform registry and roadmap list. |
+| Tile Interaction Model | Every visible tile is keyboard/click accessible; each tile opens the specified drawer/detail target; direct publishing only happens from explicit `Publish`/`Publish next` actions; roadmap tiles expose no publish action. |
+| Ready Now Strip | Shows only compact approved canonical publish items and retryable failures; uses `Publish`, `Retry`, and optional `Preview`; shows the compact empty state when no approved posts are ready; does not use `Review` as a primary action. |
+| Manual Syndication Drafts | Counts come only from unlocked `syndication_variant` rows; waiting variants do not expose `Copy` or `Mark distributed`; platform drawer rows expose `Copy`, `Open`, and `Mark distributed` only when the variant is ready. |
+| Scheduled, Published, And Failed States | Non-first-viewport publishing states are available through one `View all` drawer grouped as Ready, Scheduled, Published, Failed, Waiting on canonical, and Ready to distribute; deeper outcome analysis stays in Results. |
+| Page States | Loading, no publisher, disabled publisher, publisher error/revoked, no ready canonical items, no unlocked syndication drafts, in-flight publish, and publish failure each render the specified treatment and primary action without blank or ambiguous UI. |
+| Settings Boundary | Credential and repository configuration remain in Settings; Publish only links or routes to `/projects/:id/settings#publisher`; no raw credential form appears in Publish. |
+| Non-Goals | Implementation does not add automatic posting for manual/roadmap platforms, does not make roadmap tiles look active, does not add first-viewport readiness prose, and does not recreate six visible operational lanes. |
+| UX Acceptance Criteria | The global UX criteria are satisfied by the section-level behavior and verified through design review plus the pure-logic contract tests described below. |
+| Implementation Shape For Testing | Publish destination, ready-now, and manual syndication behavior are testable through pure logic functions; contract tests cover state mapping, CTA mapping, interaction targets, drawer grouping, unlock rules, and mobile ordering. |
+
 ## Implementation Shape For Testing
 
 This repo's frontend contract tests use Node `node:test` with pure logic modules, not DOM rendering tests. The Publish redesign should expose a pure logic module, for example `web/app/lib/publish-destinations-logic.ts`, and have the component render from that output.
