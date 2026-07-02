@@ -36,6 +36,7 @@ type Server struct {
 	OnboardingRunner         projectOnboardingRunner
 	InsightInventoryRunner   insightInventoryRunner
 	SEOOnboardingRunner      seoOnboardingRunner
+	DoctorOnboardingRunner   projectOnboardingRunner
 	ContextOpportunityRunner contextOpportunityRunner
 
 	// emailResolver is a test seam for resolving a Clerk subject to its email;
@@ -151,6 +152,13 @@ func (s *Server) Router() http.Handler {
 				})
 				r.Post("/actions/{actionID}/verify", s.verifySEOContentAction)
 				r.Get("/briefs/latest", s.getSEOBrief)
+				r.Get("/doctor", s.getSEODoctor)
+				r.Post("/doctor/runs", s.createSEODoctorRun)
+				r.Get("/doctor/runs/{runID}", s.getSEODoctorRun)
+				r.Get("/doctor/runs/{runID}/findings", s.listSEODoctorRunFindings)
+				r.Get("/doctor/latest", s.getLatestSEODoctor)
+				r.Post("/doctor/findings/{findingID}/convert", s.convertSEODoctorFinding)
+				r.Post("/doctor/findings/{findingID}/dismiss", s.dismissSEODoctorFinding)
 				r.Get("/settings", s.getSEOSettings)
 				r.Put("/settings", s.updateSEOSettings)
 				r.Get("/gsc/connection", s.getGSCConnection)

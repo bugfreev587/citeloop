@@ -585,6 +585,59 @@ type SeoAssetType struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SeoDoctorFinding struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	RunID                 uuid.UUID          `json:"run_id"`
+	FindingKey            string             `json:"finding_key"`
+	Severity              string             `json:"severity"`
+	Category              string             `json:"category"`
+	IssueType             string             `json:"issue_type"`
+	Status                string             `json:"status"`
+	AffectedUrls          json.RawMessage    `json:"affected_urls"`
+	NormalizedUrls        json.RawMessage    `json:"normalized_urls"`
+	Evidence              json.RawMessage    `json:"evidence"`
+	WhyItMatters          string             `json:"why_it_matters"`
+	FixIntent             string             `json:"fix_intent"`
+	DeveloperInstructions string             `json:"developer_instructions"`
+	LikelyFilesOrSurfaces json.RawMessage    `json:"likely_files_or_surfaces"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	RiskLevel             string             `json:"risk_level"`
+	ReviewRequired        bool               `json:"review_required"`
+	AutofixEligible       bool               `json:"autofix_eligible"`
+	LinkedOpportunityID   pgtype.UUID        `json:"linked_opportunity_id"`
+	LinkedContentActionID pgtype.UUID        `json:"linked_content_action_id"`
+	FirstSeenAt           pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt            pgtype.Timestamptz `json:"last_seen_at"`
+	ResolvedAt            pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SeoDoctorRun struct {
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Trigger         string             `json:"trigger"`
+	Status          string             `json:"status"`
+	Stage           string             `json:"stage"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Message         string             `json:"message"`
+	BlockReason     *string            `json:"block_reason"`
+	PagesDiscovered int32              `json:"pages_discovered"`
+	PagesFetched    int32              `json:"pages_fetched"`
+	PagesChecked    int32              `json:"pages_checked"`
+	IssuesFound     int32              `json:"issues_found"`
+	HealthScore     *int32             `json:"health_score"`
+	InputSnapshot   json.RawMessage    `json:"input_snapshot"`
+	OutputSummary   json.RawMessage    `json:"output_summary"`
+	Error           *string            `json:"error"`
+	CreatedByUserID *string            `json:"created_by_user_id"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type SeoExperiment struct {
 	ID               uuid.UUID          `json:"id"`
 	ProjectID        uuid.UUID          `json:"project_id"`

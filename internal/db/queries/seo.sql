@@ -248,6 +248,210 @@ on conflict (project_id, run_id, normalized_page_url) do update set
   checked_at = now()
 returning *;
 
+-- name: CreateSEODoctorRun :one
+insert into seo_doctor_runs
+  (project_id, trigger, status, stage, progress_percent, message, input_snapshot, created_by_user_id, started_at)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(trigger),
+  sqlc.arg(status),
+  sqlc.arg(stage),
+  sqlc.arg(progress_percent),
+  sqlc.arg(message),
+  sqlc.arg(input_snapshot)::jsonb,
+  sqlc.narg(created_by_user_id),
+  sqlc.narg(started_at)
+)
+returning *;
+
+-- name: GetSEODoctorRun :one
+select * from seo_doctor_runs
+where id = $1 and project_id = $2;
+
+-- name: GetActiveSEODoctorRun :one
+select * from seo_doctor_runs
+where project_id = $1
+  and status in ('queued','running')
+order by created_at desc
+limit 1;
+
+-- name: UpdateSEODoctorRunProgress :one
+update seo_doctor_runs set
+  status = sqlc.arg(status),
+  stage = sqlc.arg(stage),
+  progress_percent = sqlc.arg(progress_percent),
+  message = sqlc.arg(message),
+  block_reason = sqlc.narg(block_reason),
+  pages_discovered = sqlc.arg(pages_discovered),
+  pages_fetched = sqlc.arg(pages_fetched),
+  pages_checked = sqlc.arg(pages_checked),
+  issues_found = sqlc.arg(issues_found),
+  started_at = coalesce(started_at, sqlc.narg(started_at)),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: CompleteSEODoctorRun :one
+update seo_doctor_runs set
+  status = 'completed',
+  stage = 'completed',
+  progress_percent = 100,
+  message = sqlc.arg(message),
+  block_reason = null,
+  pages_discovered = sqlc.arg(pages_discovered),
+  pages_fetched = sqlc.arg(pages_fetched),
+  pages_checked = sqlc.arg(pages_checked),
+  issues_found = sqlc.arg(issues_found),
+  health_score = sqlc.arg(health_score),
+  output_summary = sqlc.arg(output_summary)::jsonb,
+  error = null,
+  updated_at = now(),
+  finished_at = sqlc.arg(finished_at)
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: FailSEODoctorRun :one
+update seo_doctor_runs set
+  status = sqlc.arg(status),
+  stage = sqlc.arg(stage),
+  progress_percent = sqlc.arg(progress_percent),
+  message = sqlc.arg(message),
+  block_reason = sqlc.narg(block_reason),
+  error = sqlc.narg(error),
+  output_summary = sqlc.arg(output_summary)::jsonb,
+  updated_at = now(),
+  finished_at = sqlc.arg(finished_at)
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: LatestSEODoctorRun :one
+select * from seo_doctor_runs
+where project_id = $1
+order by created_at desc
+limit 1;
+
+-- name: LatestCompletedSEODoctorRun :one
+select * from seo_doctor_runs
+where project_id = $1
+  and status = 'completed'
+order by finished_at desc nulls last, updated_at desc
+limit 1;
+
+-- name: CountManualSEODoctorRunsSince :one
+select count(*)::bigint from seo_doctor_runs
+where project_id = $1
+  and trigger = 'manual'
+  and created_at >= $2;
+
+-- name: ListSEODoctorRunsDueWeekly :many
+select p.* from projects p
+where not exists (
+  select 1
+  from seo_doctor_runs r
+  where r.project_id = p.id
+    and r.status = 'completed'
+    and r.trigger in ('onboarding','manual','weekly','post_publish')
+    and coalesce(r.finished_at, r.updated_at, r.created_at) >= now() - interval '6 days'
+)
+order by p.created_at asc;
+
+-- name: UpsertSEODoctorFinding :one
+insert into seo_doctor_findings
+  (project_id, run_id, finding_key, severity, category, issue_type, status,
+   affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
+   developer_instructions, likely_files_or_surfaces, acceptance_tests,
+   risk_level, review_required, autofix_eligible, linked_opportunity_id,
+   linked_content_action_id, first_seen_at, last_seen_at)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(run_id),
+  sqlc.arg(finding_key),
+  sqlc.arg(severity),
+  sqlc.arg(category),
+  sqlc.arg(issue_type),
+  'active',
+  sqlc.arg(affected_urls)::jsonb,
+  sqlc.arg(normalized_urls)::jsonb,
+  sqlc.arg(evidence)::jsonb,
+  sqlc.arg(why_it_matters),
+  sqlc.arg(fix_intent),
+  sqlc.arg(developer_instructions),
+  sqlc.arg(likely_files_or_surfaces)::jsonb,
+  sqlc.arg(acceptance_tests)::jsonb,
+  sqlc.arg(risk_level),
+  sqlc.arg(review_required),
+  sqlc.arg(autofix_eligible),
+  sqlc.narg(linked_opportunity_id),
+  sqlc.narg(linked_content_action_id),
+  sqlc.arg(seen_at),
+  sqlc.arg(seen_at)
+)
+on conflict (project_id, finding_key) where status = 'active' do update set
+  run_id = excluded.run_id,
+  severity = excluded.severity,
+  category = excluded.category,
+  issue_type = excluded.issue_type,
+  affected_urls = excluded.affected_urls,
+  normalized_urls = excluded.normalized_urls,
+  evidence = excluded.evidence,
+  why_it_matters = excluded.why_it_matters,
+  fix_intent = excluded.fix_intent,
+  developer_instructions = excluded.developer_instructions,
+  likely_files_or_surfaces = excluded.likely_files_or_surfaces,
+  acceptance_tests = excluded.acceptance_tests,
+  risk_level = excluded.risk_level,
+  review_required = excluded.review_required,
+  autofix_eligible = excluded.autofix_eligible,
+  linked_opportunity_id = coalesce(excluded.linked_opportunity_id, seo_doctor_findings.linked_opportunity_id),
+  linked_content_action_id = coalesce(excluded.linked_content_action_id, seo_doctor_findings.linked_content_action_id),
+  last_seen_at = excluded.last_seen_at,
+  resolved_at = null,
+  updated_at = now()
+returning *;
+
+-- name: ResolveMissingSEODoctorFindings :exec
+update seo_doctor_findings set
+  status = 'resolved',
+  resolved_at = sqlc.arg(resolved_at),
+  updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and status = 'active'
+  and run_id <> sqlc.arg(run_id)
+  and not (finding_key = any(sqlc.arg(active_keys)::text[]));
+
+-- name: ListSEODoctorFindingsForRun :many
+select * from seo_doctor_findings
+where project_id = $1
+  and run_id = $2
+order by
+  case severity
+    when 'P0' then 0
+    when 'P1' then 1
+    when 'P2' then 2
+    else 3
+  end,
+  updated_at desc;
+
+-- name: GetSEODoctorFinding :one
+select * from seo_doctor_findings
+where id = $1 and project_id = $2;
+
+-- name: DismissSEODoctorFinding :one
+update seo_doctor_findings set
+  status = 'dismissed',
+  updated_at = now()
+where id = $1 and project_id = $2
+returning *;
+
+-- name: LinkSEODoctorFindingToAction :one
+update seo_doctor_findings set
+  status = 'converted',
+  linked_opportunity_id = sqlc.arg(linked_opportunity_id),
+  linked_content_action_id = sqlc.arg(linked_content_action_id),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: ListLatestTechnicalChecks :many
 select tc.*
 from technical_checks tc

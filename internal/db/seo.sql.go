@@ -13,6 +13,79 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeSEODoctorRun = `-- name: CompleteSEODoctorRun :one
+update seo_doctor_runs set
+  status = 'completed',
+  stage = 'completed',
+  progress_percent = 100,
+  message = $1,
+  block_reason = null,
+  pages_discovered = $2,
+  pages_fetched = $3,
+  pages_checked = $4,
+  issues_found = $5,
+  health_score = $6,
+  output_summary = $7::jsonb,
+  error = null,
+  updated_at = now(),
+  finished_at = $8
+where id = $9 and project_id = $10
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+`
+
+type CompleteSEODoctorRunParams struct {
+	Message         string             `json:"message"`
+	PagesDiscovered int32              `json:"pages_discovered"`
+	PagesFetched    int32              `json:"pages_fetched"`
+	PagesChecked    int32              `json:"pages_checked"`
+	IssuesFound     int32              `json:"issues_found"`
+	HealthScore     *int32             `json:"health_score"`
+	OutputSummary   json.RawMessage    `json:"output_summary"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODoctorRunParams) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, completeSEODoctorRun,
+		arg.Message,
+		arg.PagesDiscovered,
+		arg.PagesFetched,
+		arg.PagesChecked,
+		arg.IssuesFound,
+		arg.HealthScore,
+		arg.OutputSummary,
+		arg.FinishedAt,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const contentActionCounts = `-- name: ContentActionCounts :many
 select status, count(*)::bigint as count
 from content_actions
@@ -44,6 +117,25 @@ func (q *Queries) ContentActionCounts(ctx context.Context, projectID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const countManualSEODoctorRunsSince = `-- name: CountManualSEODoctorRunsSince :one
+select count(*)::bigint from seo_doctor_runs
+where project_id = $1
+  and trigger = 'manual'
+  and created_at >= $2
+`
+
+type CountManualSEODoctorRunsSinceParams struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countManualSEODoctorRunsSince, arg.ProjectID, arg.CreatedAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countOpenSEOOpportunities = `-- name: CountOpenSEOOpportunities :one
@@ -137,6 +229,189 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 	return i, err
 }
 
+const createSEODoctorRun = `-- name: CreateSEODoctorRun :one
+insert into seo_doctor_runs
+  (project_id, trigger, status, stage, progress_percent, message, input_snapshot, created_by_user_id, started_at)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7::jsonb,
+  $8,
+  $9
+)
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+`
+
+type CreateSEODoctorRunParams struct {
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Trigger         string             `json:"trigger"`
+	Status          string             `json:"status"`
+	Stage           string             `json:"stage"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Message         string             `json:"message"`
+	InputSnapshot   json.RawMessage    `json:"input_snapshot"`
+	CreatedByUserID *string            `json:"created_by_user_id"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+}
+
+func (q *Queries) CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRunParams) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, createSEODoctorRun,
+		arg.ProjectID,
+		arg.Trigger,
+		arg.Status,
+		arg.Stage,
+		arg.ProgressPercent,
+		arg.Message,
+		arg.InputSnapshot,
+		arg.CreatedByUserID,
+		arg.StartedAt,
+	)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const dismissSEODoctorFinding = `-- name: DismissSEODoctorFinding :one
+update seo_doctor_findings set
+  status = 'dismissed',
+  updated_at = now()
+where id = $1 and project_id = $2
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+`
+
+type DismissSEODoctorFindingParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoctorFindingParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, dismissSEODoctorFinding, arg.ID, arg.ProjectID)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const failSEODoctorRun = `-- name: FailSEODoctorRun :one
+update seo_doctor_runs set
+  status = $1,
+  stage = $2,
+  progress_percent = $3,
+  message = $4,
+  block_reason = $5,
+  error = $6,
+  output_summary = $7::jsonb,
+  updated_at = now(),
+  finished_at = $8
+where id = $9 and project_id = $10
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+`
+
+type FailSEODoctorRunParams struct {
+	Status          string             `json:"status"`
+	Stage           string             `json:"stage"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Message         string             `json:"message"`
+	BlockReason     *string            `json:"block_reason"`
+	Error           *string            `json:"error"`
+	OutputSummary   json.RawMessage    `json:"output_summary"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunParams) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, failSEODoctorRun,
+		arg.Status,
+		arg.Stage,
+		arg.ProgressPercent,
+		arg.Message,
+		arg.BlockReason,
+		arg.Error,
+		arg.OutputSummary,
+		arg.FinishedAt,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const finishSEORun = `-- name: FinishSEORun :one
 update seo_runs set
   status = $3,
@@ -180,6 +455,43 @@ func (q *Queries) FinishSEORun(ctx context.Context, arg FinishSEORunParams) (Seo
 		&i.Input,
 		&i.Output,
 		&i.Error,
+	)
+	return i, err
+}
+
+const getActiveSEODoctorRun = `-- name: GetActiveSEODoctorRun :one
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+where project_id = $1
+  and status in ('queued','running')
+order by created_at desc
+limit 1
+`
+
+func (q *Queries) GetActiveSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, getActiveSEODoctorRun, projectID)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -411,6 +723,89 @@ func (q *Queries) GetResultsActionRow(ctx context.Context, arg GetResultsActionR
 	return i, err
 }
 
+const getSEODoctorFinding = `-- name: GetSEODoctorFinding :one
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+where id = $1 and project_id = $2
+`
+
+type GetSEODoctorFindingParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetSEODoctorFinding(ctx context.Context, arg GetSEODoctorFindingParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, getSEODoctorFinding, arg.ID, arg.ProjectID)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSEODoctorRun = `-- name: GetSEODoctorRun :one
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+where id = $1 and project_id = $2
+`
+
+type GetSEODoctorRunParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetSEODoctorRun(ctx context.Context, arg GetSEODoctorRunParams) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, getSEODoctorRun, arg.ID, arg.ProjectID)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getSEOOpportunity = `-- name: GetSEOOpportunity :one
 select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from seo_opportunities
 where id = $1 and project_id = $2
@@ -517,6 +912,135 @@ func (q *Queries) InsertSEORun(ctx context.Context, arg InsertSEORunParams) (Seo
 		&i.Input,
 		&i.Output,
 		&i.Error,
+	)
+	return i, err
+}
+
+const latestCompletedSEODoctorRun = `-- name: LatestCompletedSEODoctorRun :one
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+where project_id = $1
+  and status = 'completed'
+order by finished_at desc nulls last, updated_at desc
+limit 1
+`
+
+func (q *Queries) LatestCompletedSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, latestCompletedSEODoctorRun, projectID)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const latestSEODoctorRun = `-- name: LatestSEODoctorRun :one
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+where project_id = $1
+order by created_at desc
+limit 1
+`
+
+func (q *Queries) LatestSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, latestSEODoctorRun, projectID)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const linkSEODoctorFindingToAction = `-- name: LinkSEODoctorFindingToAction :one
+update seo_doctor_findings set
+  status = 'converted',
+  linked_opportunity_id = $1,
+  linked_content_action_id = $2,
+  updated_at = now()
+where id = $3 and project_id = $4
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+`
+
+type LinkSEODoctorFindingToActionParams struct {
+	LinkedOpportunityID   pgtype.UUID `json:"linked_opportunity_id"`
+	LinkedContentActionID pgtype.UUID `json:"linked_content_action_id"`
+	ID                    uuid.UUID   `json:"id"`
+	ProjectID             uuid.UUID   `json:"project_id"`
+}
+
+func (q *Queries) LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEODoctorFindingToActionParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, linkSEODoctorFindingToAction,
+		arg.LinkedOpportunityID,
+		arg.LinkedContentActionID,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1193,6 +1717,113 @@ func (q *Queries) ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
 	return items, nil
 }
 
+const listSEODoctorFindingsForRun = `-- name: ListSEODoctorFindingsForRun :many
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+where project_id = $1
+  and run_id = $2
+order by
+  case severity
+    when 'P0' then 0
+    when 'P1' then 1
+    when 'P2' then 2
+    else 3
+  end,
+  updated_at desc
+`
+
+type ListSEODoctorFindingsForRunParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	RunID     uuid.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListSEODoctorFindingsForRun(ctx context.Context, arg ListSEODoctorFindingsForRunParams) ([]SeoDoctorFinding, error) {
+	rows, err := q.db.Query(ctx, listSEODoctorFindingsForRun, arg.ProjectID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeoDoctorFinding
+	for rows.Next() {
+		var i SeoDoctorFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.FindingKey,
+			&i.Severity,
+			&i.Category,
+			&i.IssueType,
+			&i.Status,
+			&i.AffectedUrls,
+			&i.NormalizedUrls,
+			&i.Evidence,
+			&i.WhyItMatters,
+			&i.FixIntent,
+			&i.DeveloperInstructions,
+			&i.LikelyFilesOrSurfaces,
+			&i.AcceptanceTests,
+			&i.RiskLevel,
+			&i.ReviewRequired,
+			&i.AutofixEligible,
+			&i.LinkedOpportunityID,
+			&i.LinkedContentActionID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSEODoctorRunsDueWeekly = `-- name: ListSEODoctorRunsDueWeekly :many
+select p.id, p.owner_id, p.name, p.slug, p.config, p.created_at, p.updated_at from projects p
+where not exists (
+  select 1
+  from seo_doctor_runs r
+  where r.project_id = p.id
+    and r.status = 'completed'
+    and r.trigger in ('onboarding','manual','weekly','post_publish')
+    and coalesce(r.finished_at, r.updated_at, r.created_at) >= now() - interval '6 days'
+)
+order by p.created_at asc
+`
+
+func (q *Queries) ListSEODoctorRunsDueWeekly(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listSEODoctorRunsDueWeekly)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSEOIntegrations = `-- name: ListSEOIntegrations :many
 select id, project_id, provider, status, credential_ref, last_verified_at, last_error, created_at, updated_at from seo_integrations
 where project_id = $1
@@ -1829,6 +2460,34 @@ func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkCon
 	return i, err
 }
 
+const resolveMissingSEODoctorFindings = `-- name: ResolveMissingSEODoctorFindings :exec
+update seo_doctor_findings set
+  status = 'resolved',
+  resolved_at = $1,
+  updated_at = now()
+where project_id = $2
+  and status = 'active'
+  and run_id <> $3
+  and not (finding_key = any($4::text[]))
+`
+
+type ResolveMissingSEODoctorFindingsParams struct {
+	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	RunID      uuid.UUID          `json:"run_id"`
+	ActiveKeys []string           `json:"active_keys"`
+}
+
+func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error {
+	_, err := q.db.Exec(ctx, resolveMissingSEODoctorFindings,
+		arg.ResolvedAt,
+		arg.ProjectID,
+		arg.RunID,
+		arg.ActiveKeys,
+	)
+	return err
+}
+
 const revokeSEOOAuthToken = `-- name: RevokeSEOOAuthToken :one
 update seo_oauth_tokens set
   revoked_at = now(),
@@ -2218,6 +2877,80 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 	return i, err
 }
 
+const updateSEODoctorRunProgress = `-- name: UpdateSEODoctorRunProgress :one
+update seo_doctor_runs set
+  status = $1,
+  stage = $2,
+  progress_percent = $3,
+  message = $4,
+  block_reason = $5,
+  pages_discovered = $6,
+  pages_fetched = $7,
+  pages_checked = $8,
+  issues_found = $9,
+  started_at = coalesce(started_at, $10),
+  updated_at = now()
+where id = $11 and project_id = $12
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+`
+
+type UpdateSEODoctorRunProgressParams struct {
+	Status          string             `json:"status"`
+	Stage           string             `json:"stage"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Message         string             `json:"message"`
+	BlockReason     *string            `json:"block_reason"`
+	PagesDiscovered int32              `json:"pages_discovered"`
+	PagesFetched    int32              `json:"pages_fetched"`
+	PagesChecked    int32              `json:"pages_checked"`
+	IssuesFound     int32              `json:"issues_found"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) UpdateSEODoctorRunProgress(ctx context.Context, arg UpdateSEODoctorRunProgressParams) (SeoDoctorRun, error) {
+	row := q.db.QueryRow(ctx, updateSEODoctorRunProgress,
+		arg.Status,
+		arg.Stage,
+		arg.ProgressPercent,
+		arg.Message,
+		arg.BlockReason,
+		arg.PagesDiscovered,
+		arg.PagesFetched,
+		arg.PagesChecked,
+		arg.IssuesFound,
+		arg.StartedAt,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SeoDoctorRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Trigger,
+		&i.Status,
+		&i.Stage,
+		&i.ProgressPercent,
+		&i.Message,
+		&i.BlockReason,
+		&i.PagesDiscovered,
+		&i.PagesFetched,
+		&i.PagesChecked,
+		&i.IssuesFound,
+		&i.HealthScore,
+		&i.InputSnapshot,
+		&i.OutputSummary,
+		&i.Error,
+		&i.CreatedByUserID,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateSEOOAuthSelectedProperty = `-- name: UpdateSEOOAuthSelectedProperty :one
 update seo_oauth_tokens set
   selected_property = $3,
@@ -2540,6 +3273,139 @@ func (q *Queries) UpsertSEOAssetType(ctx context.Context, arg UpsertSEOAssetType
 		&i.RequiresEvidence,
 		&i.RequiresReviewByDefault,
 		&i.DefaultGenerationPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertSEODoctorFinding = `-- name: UpsertSEODoctorFinding :one
+insert into seo_doctor_findings
+  (project_id, run_id, finding_key, severity, category, issue_type, status,
+   affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
+   developer_instructions, likely_files_or_surfaces, acceptance_tests,
+   risk_level, review_required, autofix_eligible, linked_opportunity_id,
+   linked_content_action_id, first_seen_at, last_seen_at)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  'active',
+  $7::jsonb,
+  $8::jsonb,
+  $9::jsonb,
+  $10,
+  $11,
+  $12,
+  $13::jsonb,
+  $14::jsonb,
+  $15,
+  $16,
+  $17,
+  $18,
+  $19,
+  $20,
+  $20
+)
+on conflict (project_id, finding_key) where status = 'active' do update set
+  run_id = excluded.run_id,
+  severity = excluded.severity,
+  category = excluded.category,
+  issue_type = excluded.issue_type,
+  affected_urls = excluded.affected_urls,
+  normalized_urls = excluded.normalized_urls,
+  evidence = excluded.evidence,
+  why_it_matters = excluded.why_it_matters,
+  fix_intent = excluded.fix_intent,
+  developer_instructions = excluded.developer_instructions,
+  likely_files_or_surfaces = excluded.likely_files_or_surfaces,
+  acceptance_tests = excluded.acceptance_tests,
+  risk_level = excluded.risk_level,
+  review_required = excluded.review_required,
+  autofix_eligible = excluded.autofix_eligible,
+  linked_opportunity_id = coalesce(excluded.linked_opportunity_id, seo_doctor_findings.linked_opportunity_id),
+  linked_content_action_id = coalesce(excluded.linked_content_action_id, seo_doctor_findings.linked_content_action_id),
+  last_seen_at = excluded.last_seen_at,
+  resolved_at = null,
+  updated_at = now()
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+`
+
+type UpsertSEODoctorFindingParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	RunID                 uuid.UUID          `json:"run_id"`
+	FindingKey            string             `json:"finding_key"`
+	Severity              string             `json:"severity"`
+	Category              string             `json:"category"`
+	IssueType             string             `json:"issue_type"`
+	AffectedUrls          json.RawMessage    `json:"affected_urls"`
+	NormalizedUrls        json.RawMessage    `json:"normalized_urls"`
+	Evidence              json.RawMessage    `json:"evidence"`
+	WhyItMatters          string             `json:"why_it_matters"`
+	FixIntent             string             `json:"fix_intent"`
+	DeveloperInstructions string             `json:"developer_instructions"`
+	LikelyFilesOrSurfaces json.RawMessage    `json:"likely_files_or_surfaces"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	RiskLevel             string             `json:"risk_level"`
+	ReviewRequired        bool               `json:"review_required"`
+	AutofixEligible       bool               `json:"autofix_eligible"`
+	LinkedOpportunityID   pgtype.UUID        `json:"linked_opportunity_id"`
+	LinkedContentActionID pgtype.UUID        `json:"linked_content_action_id"`
+	SeenAt                pgtype.Timestamptz `json:"seen_at"`
+}
+
+func (q *Queries) UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODoctorFindingParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, upsertSEODoctorFinding,
+		arg.ProjectID,
+		arg.RunID,
+		arg.FindingKey,
+		arg.Severity,
+		arg.Category,
+		arg.IssueType,
+		arg.AffectedUrls,
+		arg.NormalizedUrls,
+		arg.Evidence,
+		arg.WhyItMatters,
+		arg.FixIntent,
+		arg.DeveloperInstructions,
+		arg.LikelyFilesOrSurfaces,
+		arg.AcceptanceTests,
+		arg.RiskLevel,
+		arg.ReviewRequired,
+		arg.AutofixEligible,
+		arg.LinkedOpportunityID,
+		arg.LinkedContentActionID,
+		arg.SeenAt,
+	)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

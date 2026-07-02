@@ -18,7 +18,9 @@ type Querier interface {
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)
 	ClaimPendingWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error)
+	CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODoctorRunParams) (SeoDoctorRun, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
+	CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error)
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
 	CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
@@ -37,6 +39,7 @@ type Querier interface {
 	CreateNotificationDelivery(ctx context.Context, arg CreateNotificationDeliveryParams) (NotificationDelivery, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSEOActionPlan(ctx context.Context, arg CreateSEOActionPlanParams) (SeoActionPlan, error)
+	CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRunParams) (SeoDoctorRun, error)
 	CreateSEOObjective(ctx context.Context, arg CreateSEOObjectiveParams) (SeoObjective, error)
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
@@ -49,6 +52,7 @@ type Querier interface {
 	// recovery loop can regenerate a fresh canonical/variant without colliding with
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
+	DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoctorFindingParams) (SeoDoctorFinding, error)
 	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	// EscalateArticleToHumanForProject flips a draft into the genuine human-decision
@@ -56,6 +60,7 @@ type Querier interface {
 	// claim a human must resolve.
 	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
+	FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunParams) (SeoDoctorRun, error)
 	// FindReusableGitHubInstallation returns a GitHub App installation_id already
 	// linked by ANOTHER project of the SAME owner. A GitHub App installs once per
 	// account, so a second project can reuse the existing installation instead of
@@ -68,6 +73,7 @@ type Querier interface {
 	GetActiveProfile(ctx context.Context, projectID uuid.UUID) (ProductProfile, error)
 	GetActivePublisherCredential(ctx context.Context, arg GetActivePublisherCredentialParams) (PublisherCredential, error)
 	GetActivePublisherCredentialForConnection(ctx context.Context, arg GetActivePublisherCredentialForConnectionParams) (PublisherCredential, error)
+	GetActiveSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
 	GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOAuthTokenParams) (SeoOauthToken, error)
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 	GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error)
@@ -90,6 +96,8 @@ type Querier interface {
 	GetResultsActionRow(ctx context.Context, arg GetResultsActionRowParams) (GetResultsActionRowRow, error)
 	GetRiskClassificationRule(ctx context.Context, arg GetRiskClassificationRuleParams) (RiskClassificationRule, error)
 	GetSEOActionPlanForProject(ctx context.Context, arg GetSEOActionPlanForProjectParams) (SeoActionPlan, error)
+	GetSEODoctorFinding(ctx context.Context, arg GetSEODoctorFindingParams) (SeoDoctorFinding, error)
+	GetSEODoctorRun(ctx context.Context, arg GetSEODoctorRunParams) (SeoDoctorRun, error)
 	GetSEOOpportunity(ctx context.Context, arg GetSEOOpportunityParams) (SeoOpportunity, error)
 	GetSEOPolicy(ctx context.Context, projectID uuid.UUID) (SeoPolicy, error)
 	GetSEOPropertyForProject(ctx context.Context, projectID uuid.UUID) (SeoProperty, error)
@@ -106,6 +114,9 @@ type Querier interface {
 	// taken by a project's canonical articles (scheduled or published), so a new
 	// approval can be staggered after it instead of publishing immediately.
 	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
+	LatestCompletedSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
+	LatestSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
+	LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEODoctorFindingToActionParams) (SeoDoctorFinding, error)
 	ListActionMeasurementsForAction(ctx context.Context, arg ListActionMeasurementsForActionParams) ([]ActionMeasurement, error)
 	ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
@@ -155,6 +166,8 @@ type Querier interface {
 	ListResultsActionRows(ctx context.Context, arg ListResultsActionRowsParams) ([]ListResultsActionRowsRow, error)
 	ListSEOActionPlans(ctx context.Context, arg ListSEOActionPlansParams) ([]SeoActionPlan, error)
 	ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
+	ListSEODoctorFindingsForRun(ctx context.Context, arg ListSEODoctorFindingsForRunParams) ([]SeoDoctorFinding, error)
+	ListSEODoctorRunsDueWeekly(ctx context.Context) ([]Project, error)
 	ListSEOIntegrations(ctx context.Context, projectID uuid.UUID) ([]SeoIntegration, error)
 	ListSEOObjectives(ctx context.Context, arg ListSEOObjectivesParams) ([]SeoObjective, error)
 	ListSEOOpportunities(ctx context.Context, arg ListSEOOpportunitiesParams) ([]SeoOpportunity, error)
@@ -192,6 +205,7 @@ type Querier interface {
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
+	ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error
 	RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (NotificationDelivery, error)
 	RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error)
 	RetryWorkflowEvent(ctx context.Context, arg RetryWorkflowEventParams) (WorkflowEvent, error)
@@ -242,6 +256,7 @@ type Querier interface {
 	UpdateProjectConfig(ctx context.Context, arg UpdateProjectConfigParams) (Project, error)
 	UpdateProjectConfigForOwner(ctx context.Context, arg UpdateProjectConfigForOwnerParams) (Project, error)
 	UpdateSEOActionPlanStatus(ctx context.Context, arg UpdateSEOActionPlanStatusParams) (SeoActionPlan, error)
+	UpdateSEODoctorRunProgress(ctx context.Context, arg UpdateSEODoctorRunProgressParams) (SeoDoctorRun, error)
 	UpdateSEOOAuthSelectedProperty(ctx context.Context, arg UpdateSEOOAuthSelectedPropertyParams) (SeoOauthToken, error)
 	UpdateSEOObjectiveStatus(ctx context.Context, arg UpdateSEOObjectiveStatusParams) (SeoObjective, error)
 	UpdateSEOOpportunityStatus(ctx context.Context, arg UpdateSEOOpportunityStatusParams) (SeoOpportunity, error)
@@ -261,6 +276,7 @@ type Querier interface {
 	UpsertPublisherCredential(ctx context.Context, arg UpsertPublisherCredentialParams) (PublisherCredential, error)
 	UpsertRiskClassificationRule(ctx context.Context, arg UpsertRiskClassificationRuleParams) (RiskClassificationRule, error)
 	UpsertSEOAssetType(ctx context.Context, arg UpsertSEOAssetTypeParams) (SeoAssetType, error)
+	UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODoctorFindingParams) (SeoDoctorFinding, error)
 	UpsertSEOIntegration(ctx context.Context, arg UpsertSEOIntegrationParams) (SeoIntegration, error)
 	UpsertSEOOAuthToken(ctx context.Context, arg UpsertSEOOAuthTokenParams) (SeoOauthToken, error)
 	UpsertSEOOpportunity(ctx context.Context, arg UpsertSEOOpportunityParams) (SeoOpportunity, error)
