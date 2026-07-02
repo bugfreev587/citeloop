@@ -109,30 +109,90 @@ overstating causality:
   does not perform a live URL test.
   Source: https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect
 
-## 6. Users and Jobs
+## 6. Codebase Baseline and Reuse Contract
 
-### 6.1 New SaaS User
+SEO Doctor must be a user-facing diagnosis and repair layer on top of existing
+CiteLoop infrastructure, not a second crawler or second SEO operations system.
+
+Existing infrastructure to reuse:
+
+- `internal/crawl/` for bounded fetching, robots handling, sitemap discovery, URL
+  normalization, and article/page discovery.
+- `technical_checks` for page-level raw observations: HTTP status, canonical,
+  robots, title, meta description, H1, structured data, sitemap status, internal
+  link count, outbound link count, content hash, unsafe MDX, raw details, and
+  check time.
+- `seo_runs` for broad SEO audit logging where a Doctor run also needs to be
+  correlated with existing sync/analyze/brief activity.
+- `seo_opportunities` and `content_actions` for action handoff. Doctor findings
+  must not create a separate execution queue.
+- Scheduler patterns from `TickGEO` and `TickContextRefresh` for weekly project
+  sweeps and "skip when recently completed" behavior.
+
+New Doctor-owned objects are limited to product-layer needs that existing tables
+do not model cleanly:
+
+- user-visible run progress;
+- report history;
+- grouped findings;
+- new/persistent/resolved comparison across runs;
+- AI-coding-tool repair contracts;
+- links back to opportunities and actions.
+
+### 6.1 Reuse vs New Collection
+
+Most V1 checks are report grouping on top of existing page observations. Doctor
+should call or share the same low-level page check code used for
+`technical_checks`, then group raw observations into findings with severity,
+repair instructions, and acceptance tests.
+
+Doctor must not duplicate requests made by an immediately adjacent SEO sync. If a
+fresh technical observation exists for the same normalized URL and compatible
+scope, Doctor may reuse it instead of refetching the page. "Fresh" means checked
+within the last 24 hours for manual/onboarding runs and within the same weekly
+run window for scheduled runs, unless the run was explicitly forced.
+
+New collection logic is required only for checks that cannot be represented by a
+single existing page observation:
+
+- URL variant probes for `http`/`https`, `www`/non-`www`, trailing slash, and
+  locale-format variants.
+- Soft 404 probes using intentionally missing URLs.
+- Redirect chain and redirect loop tracing with hop details.
+- Social preview image fetches for `og:image` and similar image references.
+- JSON-LD parse validation, unresolved-template detection, and structured-data
+  reference checks.
+
+Phase 1 implementation must split these into two sub-milestones:
+
+1. Reuse existing crawl/check observations and produce Doctor findings/report.
+2. Add the new active probes above, each with focused tests and crawler budget
+   accounting.
+
+## 7. Users and Jobs
+
+### 7.1 New SaaS User
 
 The user enters a product URL and expects CiteLoop to explain whether the site is
 ready for SEO/GEO operations. The user should not need to understand Search
 Console, GA4, sitemap syntax, redirect status codes, schema validation, or
 canonicalization before receiving useful feedback.
 
-### 6.2 Internal Growth Operator
+### 7.2 Internal Growth Operator
 
 The operator wants a weekly list of the most important technical blockers across
 owned and managed content surfaces. The operator needs a short report for review
 and structured tasks that can be passed to an AI coding agent or developer.
 
-### 6.3 Developer or AI Coding Tool
+### 7.3 Developer or AI Coding Tool
 
 The developer or AI coding tool needs deterministic instructions: reproduce the
 problem, locate the likely implementation surface, apply a fix, and run
 acceptance checks.
 
-## 7. User Experience
+## 8. User Experience
 
-### 7.1 Onboarding
+### 8.1 Onboarding
 
 During project creation, the current setup flow should change from a generic
 visibility baseline to a visible SEO Doctor step:
@@ -145,7 +205,7 @@ visibility baseline to a visible SEO Doctor step:
 If the first Doctor run is still active when the project opens, Home shows a
 compact progress module and a link to the Doctor page.
 
-### 7.2 Home Entry
+### 8.2 Home Entry
 
 Home must contain a clear entry point under the Home context. The entry should be
 a first-fold module, not buried in Settings or Analysis.
@@ -174,7 +234,7 @@ Navigation placement:
 - It must not replace Analysis. Analysis remains the review queue for accepted
   opportunities and action creation.
 
-### 7.3 Doctor Page
+### 8.3 Doctor Page
 
 The Doctor page is the user-facing report and run control surface.
 
@@ -191,23 +251,35 @@ Required sections:
 9. History: previous Doctor runs with status, duration, health score, and issue
    counts.
 
-### 7.4 Progress Indicator
+### 8.4 Progress Indicator
 
 Doctor run progress must not be a spinner alone. It should expose stages and
 percentage where possible.
 
 Stages:
 
-| Stage | Weight | Description |
-|---|---:|---|
-| `queued` | 0 | Run request accepted, waiting for worker. |
-| `discovering` | 10 | Resolve canonical host, robots, sitemap, URL variants. |
-| `crawling` | 35 | Fetch bounded page set and generated URL set. |
-| `checking` | 60 | Evaluate HTTP, redirect, canonical, robots, metadata, schema, links, sitemap, social previews. |
-| `classifying` | 78 | Group raw checks into prioritized findings. |
-| `writing_report` | 90 | Create human report and AI-fixable report. |
-| `handoff` | 96 | Upsert opportunities and action candidates. |
-| `completed` | 100 | Report ready. |
+| Stage | Start | End | Description |
+|---|---:|---:|---|
+| `queued` | 0 | 0 | Run request accepted, waiting for worker. |
+| `discovering` | 1 | 10 | Resolve canonical host, robots, sitemap, URL variants. |
+| `crawling` | 10 | 35 | Fetch bounded page set and generated URL set. |
+| `checking` | 35 | 78 | Evaluate HTTP, redirect, canonical, robots, metadata, schema, links, sitemap, social previews. |
+| `classifying` | 78 | 90 | Group raw checks into prioritized findings. |
+| `writing_report` | 90 | 96 | Create human report and AI-fixable report. |
+| `handoff` | 96 | 99 | Upsert opportunities and action candidates. |
+| `completed` | 100 | 100 | Report ready. |
+
+`progress_percent` is not just the stage start value. Within `crawling` and
+`checking`, it must interpolate using `pages_fetched / pages_discovered` and
+`pages_checked / pages_discovered` where those denominators are known:
+
+```text
+progress_percent = stage_start + floor(stage_span * stage_unit_progress)
+```
+
+If the denominator is unknown, progress can advance to the stage midpoint and
+then hold until the next stage starts. The UI must show page counts beside the
+bar so a long checking stage still feels alive.
 
 Each progress response should include:
 
@@ -232,7 +304,7 @@ Frontend polling cadence:
 - Poll every 5 seconds after 60 seconds of runtime.
 - Stop polling when status is `completed`, `failed`, or `cancelled`.
 
-## 8. Scan Scope
+## 9. Scan Scope
 
 Doctor V1 must scan a bounded but useful page set:
 
@@ -255,9 +327,9 @@ The report must label coverage explicitly:
 - `fetch_failed`
 - `requires_gsc_connection`
 
-## 9. V1 Checks
+## 10. V1 Checks
 
-### 9.1 URL and Canonical Health
+### 10.1 URL and Canonical Health
 
 Checks:
 
@@ -281,7 +353,7 @@ Initial issue types:
 - `canonical_target_invalid`
 - `sitemap_canonical_mismatch`
 
-### 9.2 HTTP, Redirect, and Soft 404
+### 10.2 HTTP, Redirect, and Soft 404
 
 Checks:
 
@@ -300,7 +372,32 @@ Initial issue types:
 - `redirect_loop`
 - `temporary_redirect_for_permanent_url`
 
-### 9.3 Crawl and Index Controls
+Soft 404 V1 algorithm:
+
+1. Generate two same-origin missing paths using a per-run random token:
+   `/citeloop-doctor-missing-{token}` and
+   `/citeloop-doctor-missing-{token}/nested`.
+2. Fetch the canonical homepage and both missing paths with the same user agent,
+   redirect policy, timeout, and body limit.
+3. A high-confidence `soft_404` requires both missing probes to return `2xx`,
+   HTML content, no `noindex`, and either:
+   - final URL equals the canonical homepage URL; or
+   - stripped-body token similarity to the homepage is at least `0.85`.
+4. A medium-confidence soft 404 candidate requires one missing probe to return
+   `2xx` with similarity at least `0.75`, or both probes to return `2xx` with
+   similarity between `0.65` and `0.85`.
+5. If the page visibly communicates a not-found state in title, H1, canonical
+   content, or robots meta, downgrade to P2 or Info unless the response is also
+   canonicalized to the homepage.
+6. P0 severity is allowed only for high-confidence soft 404 on canonical host
+   variants or generated-content paths. Medium-confidence cases default to P1 or
+   P2 with lower confidence.
+
+Similarity can be implemented with normalized token sets, shingles, or SimHash.
+The implementation must store the chosen method and threshold in finding
+evidence.
+
+### 10.3 Crawl and Index Controls
 
 Checks:
 
@@ -318,7 +415,7 @@ Initial issue types:
 - `robots_used_as_index_control`
 - `canonical_noindex_conflict`
 
-### 9.4 Metadata and Social Preview
+### 10.4 Metadata and Social Preview
 
 Checks:
 
@@ -338,7 +435,7 @@ Initial issue types:
 - `h1_multiple`
 - `social_preview_image_broken`
 
-### 9.5 Structured Data
+### 10.5 Structured Data
 
 Checks:
 
@@ -358,7 +455,7 @@ Initial issue types:
 - `structured_data_reference_broken`
 - `structured_data_type_mismatch`
 
-### 9.6 Sitemap and Internal Links
+### 10.6 Sitemap and Internal Links
 
 Checks:
 
@@ -379,7 +476,7 @@ Initial issue types:
 - `internal_link_gap`
 - `orphan_generated_page`
 
-### 9.7 GSC-Connected Enhancements
+### 10.7 GSC-Connected Enhancements
 
 When Search Console is connected, Doctor may include:
 
@@ -391,7 +488,7 @@ When Search Console is connected, Doctor may include:
 These checks must be labeled as GSC-backed and must not run or display fake
 metrics in `public_only` mode.
 
-## 10. Issue Severity
+## 11. Issue Severity and Health Score
 
 Severity must be deterministic and explainable.
 
@@ -416,9 +513,57 @@ priority_score =
 
 The score is used for ordering only. It must not claim impact magnitude.
 
-## 11. Report Contracts
+### 11.1 Health Score
 
-### 11.1 Human Report
+`health_score` is a product health indicator, not an SEO outcome forecast. It
+answers "how cleanly can CiteLoop crawl, understand, and verify this site right
+now?"
+
+V1 score formula:
+
+```text
+raw_deduction =
+  sum(P0 findings * 20 * importance_multiplier * confidence_multiplier) +
+  sum(P1 findings * 8  * importance_multiplier * confidence_multiplier) +
+  sum(P2 findings * 2  * importance_multiplier * confidence_multiplier)
+
+health_score = max(0, round(100 - min(raw_deduction, 100)))
+```
+
+Multipliers:
+
+- `importance_multiplier = 1.25` for homepage, pricing, docs-critical, legal, or
+  top generated-content hub pages.
+- `importance_multiplier = 1.15` for CiteLoop-generated or recently changed
+  URLs.
+- `importance_multiplier = 1.0` for ordinary pages.
+- `confidence_multiplier = 1.0` for confidence `>= 80`.
+- `confidence_multiplier = 0.75` for confidence `60-79`.
+- `confidence_multiplier = 0.5` for confidence `< 60`.
+
+Score caps:
+
+- Any active P0 caps health score at `69`.
+- Any active P1 caps health score at `84`.
+- A failed run with no usable latest completed report has no health score and
+  renders as `blocked`.
+
+Home/report display states:
+
+| Display State | Derivation |
+|---|---|
+| `never_run` | No active run and no completed Doctor run exists. |
+| `running` | Any run has status `queued` or `running`. |
+| `blocked` | Latest run failed with `block_reason`, and there is no usable completed report newer than the failure. |
+| `healthy` | Latest completed run has score `>= 90` and no active P0/P1 findings. |
+| `needs_attention` | Latest completed run has score `< 90` or any active P0/P1 finding. |
+
+`blocked` is a presentation state derived from run status and `block_reason`; it
+is not a separate run status.
+
+## 12. Report Contracts
+
+### 12.1 Human Report
 
 The human report includes:
 
@@ -440,7 +585,7 @@ The human report includes:
 }
 ```
 
-### 11.2 AI Coding Tool Report
+### 12.2 AI Coding Tool Report
 
 Every finding must have a machine-friendly repair contract:
 
@@ -463,12 +608,12 @@ Every finding must have a machine-friendly repair contract:
     "Change the temporary redirect for this canonical route to a permanent redirect.",
     "Ensure the canonical tag and sitemap use the same final URL."
   ],
+  "repo_context_available": false,
   "likely_files_or_surfaces": [
-    "next.config.mjs",
-    "vercel.json",
-    "middleware.ts",
+    "hosting redirect rules",
+    "framework redirect configuration",
     "CMS redirect settings",
-    "hosting redirect rules"
+    "edge middleware"
   ],
   "acceptance_tests": [
     "curl -I http://www.example.com/en returns 301 or 308.",
@@ -487,13 +632,17 @@ Rules:
 - The AI report must be downloadable or copyable as JSON.
 - Markdown export may be added, but JSON is the source of truth.
 - Instructions must be concrete enough for a coding agent but must not invent
-  repository-specific file paths unless CiteLoop has publisher/repo context.
+  repository-specific file paths unless CiteLoop has publisher/repo context. If
+  repo context is unavailable, `likely_files_or_surfaces` must use generic
+  surfaces such as "hosting redirect rules" or "CMS template settings". If repo
+  context is available, findings may add a separate `repo_hints` array with
+  concrete paths and confidence.
 - Each issue must include acceptance tests.
 - Each issue must include evidence collected by Doctor, not LLM-only reasoning.
 
-## 12. Data Model
+## 13. Data Model
 
-### 12.1 Recommended Tables
+### 13.1 Recommended Tables
 
 `seo_doctor_runs`
 
@@ -504,7 +653,9 @@ Rules:
 - `stage`
 - `progress_percent`
 - `message`
+- `block_reason`
 - `pages_discovered`
+- `pages_fetched`
 - `pages_checked`
 - `issues_found`
 - `started_at`
@@ -515,6 +666,12 @@ Rules:
 - `output_summary`
 - `error`
 - `created_by_user_id`
+
+V1 accepts storing progress and final summary fields in `seo_doctor_runs` to keep
+the contract simple. To limit write churn, workers should persist progress only
+when the stage changes, the integer percentage changes, or at least 2 seconds
+have elapsed since the previous progress write. If Doctor volume grows, progress
+can later move to a separate append-only table without changing the public API.
 
 `seo_doctor_findings`
 
@@ -549,9 +706,17 @@ Rules:
 project_id + issue_type + normalized_primary_url + normalized_evidence_target
 ```
 
-This allows weekly reports to show new, persistent, and resolved findings.
+The normalization used for `finding_key` must reuse the same URL normalization
+path used by crawl/check logic. Doctor is specifically looking for
+scheme/host/trailing-slash/canonical problems, so the key must preserve the
+variant that is evidence for the issue while normalizing irrelevant fragments,
+tracking query parameters, default ports, and percent-encoding consistently.
 
-### 12.2 Relationship to Existing Tables
+This allows weekly reports to show new, persistent, and resolved findings. A
+repeated unfixed issue must be marked persistent on the second run rather than
+appearing as a new issue.
+
+### 13.2 Relationship to Existing Tables
 
 - `seo_runs` remains the broad SEO sync/analyze/brief audit log.
 - `technical_checks` continues to store page-level raw technical observations.
@@ -565,7 +730,7 @@ Do not model Doctor as only another `seo_opportunities` query. Users need report
 history, progress, coverage, and resolved-versus-new comparisons that do not fit
 the opportunity table cleanly.
 
-## 13. APIs
+## 14. APIs
 
 Required endpoints:
 
@@ -593,13 +758,22 @@ Behavior:
 
 - If a run is active, `POST /runs` returns the active run instead of starting a
   duplicate.
-- Manual runs are rate-limited per project to prevent accidental crawler load.
+- An active run is any run for the same project with status `queued` or
+  `running`, regardless of trigger.
+- Manual runs are rate-limited to 3 started runs per project per hour. Returning
+  an already-active run does not count against this rate limit.
+- If onboarding auto-starts a run and the user clicks `Run Doctor`, the manual
+  request returns the onboarding run.
+- If a weekly run is active and the user clicks `Run Doctor`, the request returns
+  the weekly run.
+- If a manual run completes successfully, the weekly scheduler treats it as a
+  fresh Doctor run and skips automatic weekly Doctor for the next 6 days.
 - The endpoint should return immediately with run status; scanning happens in a
   background worker or workflow.
 - Latest report endpoint returns the most recent completed run plus active run
   progress if one exists.
 
-## 14. Scheduler and Triggers
+## 15. Scheduler and Triggers
 
 Triggers:
 
@@ -621,10 +795,11 @@ V1 optional:
 - `post_publish`
 
 Weekly scheduling should reuse the scheduler infrastructure and avoid starting a
-Doctor run if one completed successfully in the last 6 days unless the user
-manually starts one.
+Doctor run if any onboarding, manual, weekly, or post-publish Doctor run
+completed successfully in the last 6 days. Manual runs are still allowed during
+that window, subject to active-run dedupe and rate limits.
 
-## 15. Action Handoff
+## 16. Action Handoff
 
 Doctor findings should feed the existing action system:
 
@@ -638,6 +813,14 @@ Doctor findings should feed the existing action system:
 | Social preview broken | `technical_visibility_issue` | Create technical task |
 | Soft 404 | `technical_visibility_issue` | Create technical task |
 
+Current migrations do not constrain `seo_opportunities.type` with a database
+enum, but implementation must still preserve existing analyzer and UI routing
+for `technical_visibility_issue`, `schema_gap`, `internal_link_gap`, and GSC
+metric opportunity types. If `sitemap_gap` or metadata-specific routing is not
+yet implemented when Doctor starts, Doctor must either add the routing in the
+same phase or map the finding to `technical_visibility_issue` with explicit
+evidence.
+
 Conversion rules:
 
 - P0 findings should appear as high-priority opportunities by default.
@@ -648,7 +831,7 @@ Conversion rules:
 - Findings converted to opportunities retain `doctor_run_id` and `finding_id` in
   evidence snapshots.
 
-## 16. Permissions and Safety
+## 17. Permissions and Safety
 
 Doctor can always run in `public_only` mode against public URLs within crawl
 bounds. More powerful checks require permissions:
@@ -671,7 +854,7 @@ High-risk actions always require review:
 - large content rewrites;
 - product claim changes.
 
-## 17. Error Handling
+## 18. Error Handling
 
 Run statuses:
 
@@ -700,8 +883,13 @@ The UI must distinguish partial success from total failure:
 - A run that cannot fetch the canonical homepage is `failed`.
 - A run blocked by robots should be `completed` or `failed` based on whether any
   allowed pages were checked, but the report must clearly identify the blocker.
+- `block_reason` stores the machine-readable root cause for failed or degraded
+  runs, such as `homepage_fetch_failed`, `robots_disallowed_all`,
+  `missing_site_url`, `dns_failure`, or `tls_failure`.
+- Home's `blocked` state is derived from `status=failed` plus `block_reason`
+  when no usable completed report is newer than that failed run.
 
-## 18. Measurement and Results
+## 19. Measurement and Results
 
 Doctor findings are not impact reports. Doctor verifies whether a technical state
 changed.
@@ -717,23 +905,29 @@ Do not claim a Doctor fix caused rankings to improve unless the Results
 attribution layer has enough evidence and still labels confidence and
 confounders.
 
-## 19. UI Requirements
+For findings converted to actions, post-publish or post-apply verification should
+run a targeted Doctor check against the affected URL and directly related
+sitemap/canonical references. This targeted check can mark the finding resolved
+before the next weekly full Doctor run.
 
-### 19.1 Doctor Page First Fold
+## 20. UI Requirements
+
+### 20.1 Doctor Page First Fold
 
 At desktop 1440x900:
 
 - health score, P0/P1 count, last run, next run, and `Run Doctor` control visible
   without scrolling;
 - active progress visible without scrolling;
-- first priority issue visible within the first viewport.
+- first priority issue title row visible within the first viewport.
 
 At mobile 390x844:
 
 - health score and active progress visible in the first viewport;
-- issue list begins within 1.4 viewport heights.
+- issue list begins within 1.4 viewport heights, with at least the first issue
+  title row visible.
 
-### 19.2 Progress UI
+### 20.2 Progress UI
 
 Progress must show:
 
@@ -744,7 +938,7 @@ Progress must show:
 - elapsed time;
 - a link to run history once complete.
 
-### 19.3 Issue UI
+### 20.3 Issue UI
 
 Each issue row must show:
 
@@ -766,7 +960,7 @@ Issue detail drawer must show:
 - source notes;
 - linked opportunity/action if converted.
 
-## 20. Phased Delivery
+## 21. Phased Delivery
 
 ### Phase 0: PRD and Contract Tests
 
@@ -782,6 +976,9 @@ Exit criteria:
 2. Contract tests assert the required progress stages.
 3. Contract tests assert AI report findings include evidence, instructions, and
    acceptance tests.
+4. Contract tests assert health score thresholds and display-state derivation.
+5. Contract tests assert soft 404 high-confidence and medium-confidence
+   classification behavior.
 
 ### Phase 1: Backend Doctor Run and Report
 
@@ -790,8 +987,10 @@ Scope:
 - Add Doctor tables/migrations.
 - Add run creation and latest report APIs.
 - Add progress persistence.
-- Add bounded crawl and page checks for V1 public checks.
+- Reuse existing crawl/check observations for V1 checks already represented by
+  `technical_checks`.
 - Add finding grouping and stable finding keys.
+- Add active-run dedupe, manual rate limit, and weekly freshness skip.
 
 Exit criteria:
 
@@ -800,6 +999,29 @@ Exit criteria:
 3. Weekly scheduler can enqueue Doctor run.
 4. Report includes coverage, issue counts, findings, and AI report JSON.
 5. Re-running Doctor marks persistent, new, and resolved findings.
+6. Existing `technical_checks` observations can feed Doctor findings without a
+   duplicate fetch.
+7. Progress percent interpolates within crawl/check stages when page totals are
+   known.
+
+### Phase 1B: New Active Probes
+
+Scope:
+
+- Add URL variant probes.
+- Add soft 404 probes and similarity evidence.
+- Add redirect chain/loop tracing.
+- Add social preview image checks.
+- Add JSON-LD parse/template/reference validation.
+
+Exit criteria:
+
+1. New probes share crawl timeout, rate limit, robots, and request-budget
+   controls.
+2. Soft 404 only emits P0 for high-confidence cases.
+3. Redirect findings include hop evidence.
+4. Social image findings include fetched status and content type.
+5. Structured data findings include parse or template evidence.
 
 ### Phase 2: Doctor Page and Home Entry
 
@@ -850,7 +1072,7 @@ Exit criteria:
 3. Newly published CiteLoop URL gets checked after publish/verify.
 4. Weekly report highlights new, resolved, and repeated issues.
 
-## 21. Acceptance Criteria
+## 22. Acceptance Criteria
 
 1. A new project created from URL triggers an onboarding Doctor run.
 2. A dedicated Doctor page exists at `/projects/{projectID}/doctor`.
@@ -873,8 +1095,12 @@ Exit criteria:
 14. Resolved findings are marked resolved instead of disappearing silently.
 15. Production verification confirms onboarding run, manual run, progress polling,
    weekly scheduling configuration, and report rendering.
+16. The same unresolved finding appears as persistent on the next run, not new.
+17. Manual run completion resets the weekly freshness window.
+18. Active-run dedupe returns the existing run for simultaneous onboarding,
+   manual, or weekly requests.
 
-## 22. V1 Decisions
+## 23. V1 Decisions
 
 These decisions are fixed for V1:
 
