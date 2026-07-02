@@ -45,3 +45,36 @@ test("SEO dashboard renders action portfolio groups", () => {
     assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
+
+test("Analysis distinguishes multi-surface action task types", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  for (const snippet of [
+    "Create content task",
+    "Create refresh task",
+    "Create technical task",
+    "Create internal-link task",
+    "Create GEO asset task",
+    "technical_fix",
+    "internal_link_patch",
+    "schema_patch",
+    "metadata_rewrite",
+  ]) {
+    assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("Action cards expose why, contribution, output type, and execution result", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  for (const snippet of [
+    "actionWhyNowText",
+    "actionSEOContributionText",
+    "actionOutputTypeLabel",
+    "actionPostExecutionText",
+    "Why now",
+    "SEO/GEO contribution",
+    "Output type",
+    "After execution",
+  ]) {
+    assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});

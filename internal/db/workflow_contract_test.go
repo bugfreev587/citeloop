@@ -87,6 +87,11 @@ func TestOpportunityPlanningQueriesExposeBatchInputs(t *testing.T) {
 	if !strings.Contains(listUnplannedContentActions, "for update") || !strings.Contains(listUnplannedContentActions, "skip locked") {
 		t.Fatal("ListUnplannedContentActions must use skip locked inside the workflow transaction")
 	}
+	for _, direct := range []string{"metadata_rewrite", "internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"} {
+		if !strings.Contains(listUnplannedContentActions, direct) {
+			t.Fatalf("ListUnplannedContentActions must exclude direct action asset %q from topic planning", direct)
+		}
+	}
 }
 
 func TestUnplannedContentActionsAreRequeuedByMigration(t *testing.T) {

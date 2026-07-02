@@ -26,7 +26,7 @@ func TestCreateSEOContentActionAcceptsMultiSurfaceMetadata(t *testing.T) {
 		"ReviewRequired",
 		"`json:\"review_required\"`",
 		"UpdateContentActionExecutionMetadata",
-		"reviewRequired := true",
+		"defaultReviewRequiredForAssetType",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("createSEOContentAction missing %q", want)
