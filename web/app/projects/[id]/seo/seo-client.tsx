@@ -1551,7 +1551,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
               />
             ) : (
-              <div className="grid gap-2">
+              <div data-analysis-finding-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {opportunities.slice(0, 12).map((opp) => {
                   const cta = actionCtaForOpportunity(opp);
                   return (
@@ -1565,19 +1565,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         setSelectedOpportunityID(opp.id);
                       }}
                       aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
-                      className={`group w-full rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
                         selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
                       }`}
                     >
-                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] lg:items-center">
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
                             <Badge tone={toneForRisk(opp.risk_level)}>{opp.risk_level ?? "risk unknown"}</Badge>
                             <Badge tone="neutral">{sourceModeForOpportunity(opp, overview)}</Badge>
                           </div>
-                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-                          <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-600">
+                          <h3 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
                             {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
                           </p>
                         </div>
@@ -1591,7 +1591,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             <div className="mt-1 truncate font-medium text-slate-700">{cta.label}</div>
                           </div>
                         </div>
-                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
                           <span className="font-mono text-xs uppercase text-slate-400">Score {metric(opp.priority_score)}</span>
                           <span className="flex items-center gap-1">
                             Open details

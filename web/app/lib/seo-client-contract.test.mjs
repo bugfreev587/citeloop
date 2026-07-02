@@ -136,3 +136,18 @@ test("Analysis loop progress is a strip and finding dismissal is explicit", asyn
   assert.equal(source.includes("Dismiss finding"), true, "dismiss action must make the destructive operation explicit");
   assert.equal(source.includes("Close finding details"), true, "finding drawer needs a separate close affordance");
 });
+
+test("Opportunity queue lays finding cards out as responsive rectangles with three per row at most", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const queueStart = source.indexOf("data-analysis-growth-findings-section");
+  const queueEnd = source.indexOf("data-analysis-loop-strip");
+  const queueSource = source.slice(queueStart, queueEnd);
+
+  assert.notEqual(queueStart, -1, "seo-client.tsx missing opportunity queue section");
+  assert.notEqual(queueEnd, -1, "seo-client.tsx missing loop strip section after opportunity queue");
+  assert.equal(queueSource.includes("data-analysis-finding-grid"), true, "opportunity queue should expose its responsive card grid");
+  assert.equal(queueSource.includes("md:grid-cols-2"), true, "opportunity queue should place cards horizontally on medium screens");
+  assert.equal(queueSource.includes("xl:grid-cols-3"), true, "opportunity queue should cap wide layouts at three cards per row");
+  assert.equal(queueSource.includes("min-h-[220px]"), true, "opportunity cards should keep a rectangular card footprint");
+  assert.equal(queueSource.includes("lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto]"), false, "finding cards should not keep the old full-row internal layout");
+});
