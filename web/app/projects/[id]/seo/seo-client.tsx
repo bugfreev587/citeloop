@@ -304,6 +304,14 @@ function actionOutputTypeLabel(action: SEOContentAction | ResultsAction) {
   return "Topic-backed asset";
 }
 
+const directActionAssetTypes = new Set(["metadata_rewrite", "internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
+
+function isDirectAction(action: SEOContentAction | ResultsAction) {
+  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  return outputType === "direct_patch" || outputType === "technical_task" || directActionAssetTypes.has(assetType);
+}
+
 function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
   if (action.status === "completed") return "Measurement complete";
   if (action.status === "measuring") return "Measuring impact";
@@ -312,6 +320,35 @@ function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
   if (action.status === "ready_for_review") return "Waiting for review";
   if (action.published_at) return "Published and waiting for verification";
   return action.status || "Queued";
+}
+
+function actionOutputPreviewText(action: SEOContentAction | ResultsAction) {
+  const output = action.output_snapshot ?? {};
+  const diff = action.diff_snapshot ?? {};
+  const directValue = output.deliverable ?? output.summary ?? output.title ?? output.proposed_copy ?? output.recommended_copy;
+  if (directValue) return String(directValue);
+
+  const proposedChanges = diff.proposed_changes;
+  if (Array.isArray(proposedChanges) && proposedChanges.length > 0) {
+    const change = proposedChanges[0];
+    if (typeof change === "string") return change;
+    if (change?.instruction) return String(change.instruction);
+    if (change?.field && change?.after) return `${change.field}: ${change.after}`;
+    if (change?.selector && change?.after) return `${change.selector}: ${change.after}`;
+    return compactOutcomeText(change);
+  }
+
+  const checklist = diff.checklist ?? output.checklist;
+  if (Array.isArray(checklist) && checklist.length > 0) {
+    const item = checklist[0];
+    if (typeof item === "string") return item;
+    if (item?.task) return String(item.task);
+    if (item?.instruction) return String(item.instruction);
+    return compactOutcomeText(item);
+  }
+
+  const target = action.target_url ?? action.normalized_target_url;
+  return target ? `Review proposed changes for ${target}.` : "Review the generated output before execution.";
 }
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive" | "insufficient_data";
@@ -776,6 +813,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const loopPreviewActions = loopActions
     .filter((action) => !["learned"].includes(deriveVisibilityLifecycleStage(action)))
     .slice(0, 3);
+  const directReviewActions = actions
+    .filter((action) => isDirectAction(action))
+    .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
+    .slice(0, 6);
   const analysisDataMode = searchDataModeLabel(overview, analysisStatus);
   const analysisCapabilityMode = analysisCapabilityBadgeLabel(overview, analysisStatus, visibilityMode);
   const searchSnapshotCards = [
@@ -1335,6 +1376,63 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </aside>
             </div>
           </section>
+
+          {directReviewActions.length > 0 && (
+            <section data-direct-action-queue className="space-y-3">
+              <SectionHeader
+                title="Direct action queue"
+                eyebrow="Reviewable output"
+                action={<Badge tone="amber">{directReviewActions.length} to review</Badge>}
+              />
+              <div className="grid gap-3 xl:grid-cols-2">
+                {directReviewActions.map((action) => {
+                  const stage = deriveVisibilityLifecycleStage(action);
+                  return (
+                    <article key={action.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                            <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
+                            <Badge tone={action.review_required === false ? "neutral" : "amber"}>
+                              {action.review_required === false ? "Review optional" : "Review required"}
+                            </Badge>
+                          </div>
+                          <h3 className="mt-3 text-base font-bold leading-6 text-slate-950">{action.action_type}</h3>
+                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
+                        </div>
+                        <div className="shrink-0 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 font-mono text-xs font-semibold text-slate-600">
+                          {action.asset_type ?? "direct_action"}
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
+                          <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 text-sm leading-6 text-slate-700">
+                        <div className="text-xs font-semibold uppercase text-slate-400">Reviewable output</div>
+                        <div className="mt-1 font-medium">{actionOutputPreviewText(action)}</div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           <section data-analysis-autopilot-visible>
             <SectionHeader
