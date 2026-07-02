@@ -839,6 +839,44 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
   }
 });
 
+test("content plan review and publish form one continuous workflow surface", () => {
+  assert.equal(exists("projects/[id]/content-workflow-client.tsx"), true, "content workflow wrapper should exist");
+
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
+  const plan = read("projects/[id]/plan/page.tsx");
+  const reviewPage = read("projects/[id]/review/page.tsx");
+  const publishPage = read("projects/[id]/publish/page.tsx");
+
+  for (const route of [
+    [plan, 'initialStep="plan"'],
+    [reviewPage, 'initialStep="review"'],
+    [publishPage, 'initialStep="publish"'],
+  ]) {
+    assert.match(route[0], /ContentWorkflowClient/);
+    assert.match(route[0], new RegExp(route[1]));
+  }
+
+  for (const contract of [
+    "ContentWorkflowClient",
+    "TopicsClient",
+    "ReviewClient",
+    "PublishingClient",
+    "content-workflow-plan",
+    "content-workflow-review",
+    "content-workflow-publish",
+    "data-content-workflow-section",
+    "scrollToStep(initialStep",
+    "window.history.replaceState",
+    "window.addEventListener(\"scroll\"",
+  ]) {
+    assert.match(workflow, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(workflow, /workflowHref\(projectId, nextStep\)/);
+  assert.match(workflow, /window\.location\.pathname !== nextHref/);
+  assert.doesNotMatch(workflow, /scroll-snap|snap-y|snap-mandatory/);
+});
+
 test("home leads with linked metrics instead of hero or refresh-context prompts", () => {
   const workspace = read("projects/[id]/workspace.tsx");
   const dashboardLogic = read("lib/dashboard-ux-logic.ts");
