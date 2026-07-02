@@ -368,10 +368,17 @@ function actionOutputPreviewText(action: SEOContentAction | ResultsAction) {
   return target ? `Review proposed changes for ${target}.` : "Review the generated output before execution.";
 }
 
-type ActionMeasurementKey = "waiting" | "positive" | "negative" | "inconclusive" | "insufficient_data";
+type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
 type ActionMeasurementState = {
   key: ActionMeasurementKey;
-  label: "Waiting" | "Positive" | "Negative" | "Inconclusive" | "Insufficient data";
+  label: "Waiting" | "Positive" | "Negative" | "Mixed" | "Inconclusive" | "Insufficient data";
+  tone: "green" | "amber" | "red" | "neutral";
+  detail: string;
+};
+type MeasurementQueueKey = "waiting" | "too_early" | "blocked" | "completed";
+type MeasurementQueueState = {
+  key: MeasurementQueueKey;
+  label: "Waiting" | "Too early" | "Blocked" | "Completed";
   tone: "green" | "amber" | "red" | "neutral";
   detail: string;
 };
@@ -435,6 +442,9 @@ function actionMeasurementState(action: SEOContentAction | ResultsAction): Actio
   if (["worsened", "negative", "lost", "down"].includes(rawResult) || ["failed", "verification_failed", "recovery_required"].includes(action.status)) {
     return { key: "negative", label: "Negative", tone: "red", detail: actionOutcomeReason(action, "The result needs follow-up before it can be treated as a win.") };
   }
+  if (["mixed", "partial", "split"].includes(rawResult)) {
+    return { key: "mixed", label: "Mixed", tone: "amber", detail: actionOutcomeReason(action, "Some measured signals moved in different directions.") };
+  }
   if (["inconclusive", "neutral", "flat"].includes(rawResult) || action.status === "completed") {
     return { key: "inconclusive", label: "Inconclusive", tone: "amber", detail: actionOutcomeReason(action, "The measurement window closed without a clear positive or negative signal.") };
   }
@@ -442,6 +452,23 @@ function actionMeasurementState(action: SEOContentAction | ResultsAction): Actio
     return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Action is waiting for publish or URL verification before measurement starts." };
   }
   return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Published work is still inside the measurement window." };
+}
+
+function measurementQueueState(action: SEOContentAction | ResultsAction): MeasurementQueueState {
+  const measurement = latestActionMeasurement(action);
+  const rawResult = String(
+    measurement?.outcome_label ?? action.outcome_summary?.outcome_label ?? action.outcome_summary?.result ?? action.outcome_summary?.state ?? "",
+  ).toLowerCase();
+  if (["failed", "verification_failed", "recovery_required"].includes(action.status)) {
+    return { key: "blocked", label: "Blocked", tone: "red", detail: "Measurement is blocked by execution, verification, or recovery work." };
+  }
+  if (measurement || rawResult || action.status === "completed") {
+    return { key: "completed", label: "Completed", tone: "green", detail: "At least one measurement checkpoint has been computed." };
+  }
+  if (["published", "measuring"].includes(action.status) || Boolean(action.published_at || action.verified_at)) {
+    return { key: "too_early", label: "Too early", tone: "amber", detail: "Published or applied work is still waiting for its first due checkpoint." };
+  }
+  return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Action is waiting for publish or URL verification before measurement starts." };
 }
 
 function lifecycleStageLabel(stage: string) {
@@ -803,9 +830,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       counts[actionMeasurementState(action).key] += 1;
       return counts;
     },
-    { waiting: 0, positive: 0, negative: 0, inconclusive: 0, insufficient_data: 0 },
+    { waiting: 0, positive: 0, negative: 0, mixed: 0, inconclusive: 0, insufficient_data: 0 },
   );
-  const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
+  const measurementQueueCounts = attributionActions.reduce(
+    (counts, action) => {
+      counts[measurementQueueState(action).key] += 1;
+      return counts;
+    },
+    { waiting: 0, too_early: 0, blocked: 0, completed: 0 },
+  );
+  const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
   loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;
@@ -1551,11 +1585,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </Badge>
               }
             />
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               {[
                 { label: "Waiting", value: outcomeCounts.waiting, tone: "neutral" as const, detail: "Inside measurement window" },
                 { label: "Positive", value: outcomeCounts.positive, tone: "green" as const, detail: "Signals improved" },
                 { label: "Negative", value: outcomeCounts.negative, tone: "red" as const, detail: "Needs follow-up" },
+                { label: "Mixed", value: outcomeCounts.mixed, tone: "amber" as const, detail: "Signals are split" },
                 { label: "Insufficient data", value: outcomeCounts.insufficient_data, tone: "amber" as const, detail: "insufficient_data" },
                 { label: "Inconclusive", value: outcomeCounts.inconclusive, tone: "amber" as const, detail: "No clear signal yet" },
               ].map((item) => (
@@ -1570,8 +1605,30 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
           <section>
             <SectionHeader
+              title="Measurement queue"
+              eyebrow="Checkpoint status"
+              action={<Badge tone={measurementQueueCounts.blocked ? "red" : measurementQueueCounts.completed ? "green" : "neutral"}>{attributionActions.length}</Badge>}
+            />
+            <div className="grid gap-3 md:grid-cols-4">
+              {[
+                { label: "Waiting", value: measurementQueueCounts.waiting, tone: "neutral" as const, detail: "Not published or verified yet" },
+                { label: "Too early", value: measurementQueueCounts.too_early, tone: "amber" as const, detail: "Published, checkpoint not due" },
+                { label: "Blocked", value: measurementQueueCounts.blocked, tone: "red" as const, detail: "Execution or verification issue" },
+                { label: "Completed", value: measurementQueueCounts.completed, tone: "green" as const, detail: "Checkpoint computed" },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border border-slate-200 bg-white p-4">
+                  <Badge tone={item.tone}>{item.label}</Badge>
+                  <div className="mt-3 text-2xl font-bold text-slate-950">{item.value}</div>
+                  <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader
               title="Action-level attribution"
-              eyebrow="Measurement queue"
+              eyebrow="Impact reports"
               action={
                 <div className="flex items-center gap-2">
                   <Badge tone="neutral">{attributionActions.length}</Badge>
@@ -1606,6 +1663,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <div className="grid gap-3">
                 {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
                   const state = actionMeasurementState(action);
+                  const queue = measurementQueueState(action);
                   const measurement = latestActionMeasurement(action);
                   const before = measurementMetricText(measurement, "before");
                   const after = measurementMetricText(measurement, "after");
@@ -1616,6 +1674,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={state.tone}>{state.label}</Badge>
+                            <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
                           </div>
                           <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{action.action_type}</h3>
@@ -1646,8 +1705,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Result</div>
-                          <div className="mt-1 font-medium text-slate-700">{state.detail}</div>
+                          <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
+                          <div className="mt-1 font-medium text-slate-700">{queue.detail}</div>
                         </div>
                       </div>
                       <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-2 xl:grid-cols-4">

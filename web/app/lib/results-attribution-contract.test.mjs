@@ -46,3 +46,29 @@ test("Results page renders action-level attribution rows", () => {
     assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
+
+test("Results separates impact outcomes from measurement queue states", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  for (const marker of [
+    'type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data"',
+    'if (["mixed"',
+    "measurementQueueState(action)",
+    'type MeasurementQueueKey = "waiting" | "too_early" | "blocked" | "completed"',
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const marker of [
+    '{ label: "Mixed"',
+    'label: "Too early"',
+    'label: "Blocked"',
+    'label: "Completed"',
+    'title="Measurement queue"',
+    'title="Action-level attribution"',
+  ]) {
+    assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
