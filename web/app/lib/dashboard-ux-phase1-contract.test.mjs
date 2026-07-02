@@ -441,6 +441,29 @@ test("home turns Needs you into the main human action queue", () => {
   assert.doesNotMatch(workspace, /Variants waiting on canonical/);
 });
 
+test("home global action queue fetches readiness and uses explicit P0 P1 P2 priorities", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+
+  for (const expected of [
+    'type HumanActionPriority = "P0" | "P1" | "P2"',
+    "rank: number",
+    "tone: StageTone",
+    "api.getAutopilotReadiness(projectId).catch(() => null)",
+    "buildReadinessHumanActions",
+    "priorityOrder",
+    "P0",
+    "P1",
+    "P2",
+    "border-l-[#f87171]",
+    "border-l-[#f59e0b]",
+    "border-l-[#7dd3fc]",
+  ]) {
+    assert.equal(workspace.includes(expected), true, `workspace.tsx missing ${expected}`);
+  }
+
+  assert.doesNotMatch(workspace, /sort\(\(a, b\) => a\.priority - b\.priority\)/);
+});
+
 test("home presents Needs you as compact action tiles above the pipeline", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
@@ -451,7 +474,7 @@ test("home presents Needs you as compact action tiles above the pipeline", () =>
   assert.ok(needsYouIndex < pipelineIndex, "Needs you should appear before Pipeline on Home");
 
   for (const contract of [
-    "humanActionTileToneClass",
+    "humanPriorityStyles",
     "humanActionIcon",
     "Action spotlight",
     "sm:grid-cols-2 xl:grid-cols-4",
@@ -1089,6 +1112,31 @@ test("settings deep links open the matching configuration tab", () => {
   assert.match(settings, /window\.history\.replaceState/);
   assert.match(settings, /#\$\{tabId\}/);
   assert.match(settings, /onClick=\{\(\) => activateSettingsTab\(tab\.id\)\}/);
+});
+
+test("settings exposes Automation as the system setup tab", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const expected of [
+    '| "automation"',
+    'id: "automation", title: "Automation"',
+    'activeSettingsTab === "automation" && (',
+    'id="settings-panel-automation"',
+    'id="automation"',
+    'id="automation-policy"',
+    'id="recovery-plan"',
+    "settingsAnchorToTab",
+    '"automation-policy": "automation"',
+    '"recovery-plan": "automation"',
+    "monthly_budget_limit",
+    "Autopilot budget",
+    "Recovery plan",
+  ]) {
+    assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
+  }
+
+  assert.doesNotMatch(settings, /id="general"/);
+  assert.doesNotMatch(settings, /#general/);
 });
 
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {

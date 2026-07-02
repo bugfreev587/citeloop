@@ -43,3 +43,25 @@ func TestAutopilotReadinessContractMentionsPhase5Gates(t *testing.T) {
 		}
 	}
 }
+
+func TestAutopilotReadinessContractUsesPolicyBudgetAndRecoveryAcknowledgement(t *testing.T) {
+	raw, err := os.ReadFile("handlers_autopilot.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		"policy.MonthlyBudgetLimit",
+		"monthly_budget_configured",
+		"RecoveryPlanAcknowledgedAt",
+		"recovery_plan_acknowledged",
+		"rollback_or_recovery_ready",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("readiness contract missing %q", want)
+		}
+	}
+	if strings.Contains(body, "MonthlyBudgetUsd") || strings.Contains(body, "monthly_budget_usd") {
+		t.Fatalf("Autopilot readiness must not use project monthly_budget_usd")
+	}
+}

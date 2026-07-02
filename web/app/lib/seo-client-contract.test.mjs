@@ -54,29 +54,20 @@ test("SEO autopilot panel exposes Phase 5 guarded execution controls", async () 
   }
 });
 
-test("Analysis page renders Phase 5 autopilot controls before advanced diagnostics", async () => {
+test("Analysis page does not render Automation readiness as a primary module", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const analysisBranchIndex = source.indexOf('{mode === "analysis" && (');
   const resultsBranchIndex = source.indexOf('{mode === "results" && (');
-  const autopilotIndex = source.indexOf("data-analysis-autopilot-visible");
-  const diagnosticsIndex = source.indexOf("Advanced diagnostics");
 
   assert.notEqual(analysisBranchIndex, -1, "seo-client.tsx missing Analysis render branch");
   assert.notEqual(resultsBranchIndex, -1, "seo-client.tsx missing Results render branch");
-  assert.notEqual(autopilotIndex, -1, "seo-client.tsx missing visible Autopilot section");
-  assert.notEqual(diagnosticsIndex, -1, "seo-client.tsx missing Advanced diagnostics section");
-  assert.equal(
-    source.match(/data-analysis-autopilot-visible/g)?.length ?? 0,
-    1,
-    "visible Analysis Autopilot section should render only once",
-  );
+  assert.equal(source.includes("data-analysis-autopilot-visible"), false);
+  assert.equal(source.includes('title="Automation readiness"'), false);
+  assert.equal(source.includes("Finish automation setup in Settings"), true);
   assert.ok(
-    analysisBranchIndex < autopilotIndex && autopilotIndex < resultsBranchIndex,
-    "Autopilot controls must render inside the Analysis branch, before the Results branch starts",
-  );
-  assert.ok(
-    autopilotIndex < diagnosticsIndex,
-    "Autopilot controls must render before Advanced diagnostics so they are visible by default",
+    analysisBranchIndex < source.indexOf("Finish automation setup in Settings") &&
+      source.indexOf("Finish automation setup in Settings") < resultsBranchIndex,
+    "the lightweight setup bridge should stay inside the Analysis branch",
   );
 });
 
@@ -89,7 +80,6 @@ test("Analysis page leads with compact review cards instead of deep data panels"
     "What needs review next",
     "Review direct action",
     "Inspect new findings",
-    "Automation readiness",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
@@ -97,11 +87,12 @@ test("Analysis page leads with compact review cards instead of deep data panels"
   const focusIndex = source.indexOf("data-analysis-focus-cards");
   const directQueueIndex = source.indexOf("data-direct-action-queue");
   const growthIndex = source.indexOf("data-analysis-growth-findings-section");
-  const autopilotIndex = source.indexOf("data-analysis-autopilot-visible");
 
   assert.ok(focusIndex < directQueueIndex, "priority cards should appear before the direct action queue");
   assert.ok(directQueueIndex < growthIndex, "reviewable direct actions should appear before new findings");
-  assert.ok(growthIndex < autopilotIndex, "automation readiness should stay after decision cards");
+  assert.equal(source.includes("data-analysis-autopilot-visible"), false);
+  assert.equal(source.includes("Automation readiness"), false);
+  assert.equal(source.includes("Finish automation setup in Settings"), true);
   assert.equal(source.includes("data-analysis-search-signal"), false, "Analysis should not show search metrics as a first-level panel");
   assert.equal(source.includes("Search performance snapshot"), false, "Home owns the search-performance KPI snapshot");
 });

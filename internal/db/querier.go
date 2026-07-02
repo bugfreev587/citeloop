@@ -12,6 +12,7 @@ import (
 )
 
 type Querier interface {
+	AcknowledgeSEOPolicyRecoveryPlan(ctx context.Context, arg AcknowledgeSEOPolicyRecoveryPlanParams) (SeoPolicy, error)
 	ApproveArticle(ctx context.Context, arg ApproveArticleParams) (Article, error)
 	ApproveArticleForProject(ctx context.Context, arg ApproveArticleForProjectParams) (Article, error)
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)

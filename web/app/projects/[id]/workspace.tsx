@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Circle, FileText, Loader2, Search, Sparkles } from "lucide-react";
 import {
   Article,
+  AutopilotReadiness,
   DistributeItem,
   GenerationRun,
   InventoryItem,
@@ -16,6 +17,7 @@ import {
   VisibilitySummary,
   friendlyApiError,
 } from "../../lib/api";
+import { buildReadinessHumanActions, dedupeHumanActions } from "../../lib/automation-readiness";
 import {
   buildHomeEventStream,
   contextInventoryProgress,
@@ -103,36 +105,39 @@ function compactMetricCardClass(featured: boolean) {
 }
 
 type HumanActionCategory = "Blocking now" | "Needs review" | "Improves results" | "Warnings";
+type HumanActionPriority = "P0" | "P1" | "P2";
 
 type HumanActionItem = {
   id: string;
+  dedupeKey?: string;
   title: string;
   detail: string;
   href: string;
   cta: string;
   category: HumanActionCategory;
   tone: StageTone;
-  priority: number;
+  priority: HumanActionPriority;
+  rank: number;
   count?: number;
 };
 
 const VISIBLE_HUMAN_ACTION_LIMIT = 4;
 
-function humanActionTileToneClass(tone: StageTone) {
-  const classes: Record<StageTone, string> = {
-    green: "border-l-4 border-slate-200 border-l-green-500 bg-green-50/40 hover:border-green-300 hover:border-l-green-500",
-    amber: "border-l-4 border-slate-200 border-l-amber-500 bg-amber-50/50 hover:border-amber-300 hover:border-l-amber-500",
-    blue: "border-l-4 border-slate-200 border-l-sky-500 bg-sky-50/45 hover:border-sky-300 hover:border-l-sky-500",
-    red: "border-l-4 border-slate-200 border-l-[#d93820] bg-red-50/55 hover:border-red-300 hover:border-l-[#d93820]",
-    neutral: "border-l-4 border-slate-200 border-l-slate-300 bg-white hover:border-slate-300 hover:border-l-slate-400",
-  };
-  return classes[tone];
-}
+// Business priority drives the card's left stripe and light surface. P0 reads as light red,
+// P1 keeps the existing amber, P2 is pale blue. `rank` is only a stable within-priority tiebreak.
+const priorityOrder: Record<HumanActionPriority, number> = { P0: 0, P1: 1, P2: 2 };
+const humanPriorityStyles: Record<HumanActionPriority, { stripe: string; surface: string }> = {
+  P0: { stripe: "border-l-[#f87171]", surface: "bg-[#fff7f5]" },
+  P1: { stripe: "border-l-[#f59e0b]", surface: "bg-[#fffbeb]" },
+  P2: { stripe: "border-l-[#7dd3fc]", surface: "bg-[#f0f9ff]" },
+};
 
-function compactActionTileClass(tone: StageTone) {
+function compactActionTileClass(item: HumanActionItem) {
+  const style = humanPriorityStyles[item.priority];
   return cx(
-    "group flex min-h-[116px] flex-col justify-between overflow-hidden rounded-xl border border-slate-200 p-3 shadow-[0_14px_30px_-26px_rgba(15,23,42,0.45)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 lg:min-h-[118px]",
-    humanActionTileToneClass(tone),
+    "group flex min-h-[116px] flex-col justify-between overflow-hidden rounded-xl border border-slate-200 border-l-4 p-3 shadow-[0_14px_30px_-26px_rgba(15,23,42,0.45)] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 lg:min-h-[118px]",
+    style.stripe,
+    style.surface,
   );
 }
 
@@ -173,6 +178,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [accountProjects, setAccountProjects] = useState<Project[]>([]);
+  const [autopilotReadiness, setAutopilotReadiness] = useState<AutopilotReadiness | null>(null);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -183,7 +189,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, projectRows] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, projectRows, readinessData] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -198,6 +204,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.getSEOOverview(projectId).catch(() => null),
         api.getVisibilitySummary(projectId).catch(() => null),
         api.listProjects().catch(() => []),
+        api.getAutopilotReadiness(projectId).catch(() => null),
       ]);
       setProject(p);
       setProfile(profileRow);
@@ -213,6 +220,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setSeoOverview(overview);
       setVisibilitySummary(summary);
       setAccountProjects(projectRows);
+      setAutopilotReadiness(readinessData);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
       setApiError(friendlyApiError(e));
@@ -375,9 +383,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       detail: "CiteLoop needs your product facts, evidence, and positioning confirmed before it plans content.",
       href: `/projects/${projectId}/context`,
       cta: "Review context",
-      category: "Blocking now",
+      category: "Needs review",
       tone: "amber",
-      priority: 10,
+      priority: "P1",
+      rank: 50,
     },
     !contextNeedsConfirmation && contextBuildNeedsAttention && {
       id: "context-build-attention",
@@ -385,9 +394,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       detail: "One of the Context tracks needs attention before the loop can trust this project's source evidence.",
       href: `/projects/${projectId}/context`,
       cta: "Open Context",
-      category: "Blocking now",
+      category: "Needs review",
       tone: "amber",
-      priority: 15,
+      priority: "P1",
+      rank: 52,
     },
     !contextNeedsConfirmation && Boolean(profile) && !contextConfirmed && {
       id: "complete-context",
@@ -395,9 +405,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       detail: "The project has Context data, but the human confirmation gate is still open.",
       href: `/projects/${projectId}/context`,
       cta: "Review context",
-      category: "Blocking now",
+      category: "Needs review",
       tone: "amber",
-      priority: 20,
+      priority: "P1",
+      rank: 54,
     },
     failedPublish.length > 0 && {
       id: "publishing-failed",
@@ -407,7 +418,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Open Publish",
       category: "Blocking now",
       tone: "red",
-      priority: 30,
+      priority: "P0",
+      rank: 20,
       count: failedPublish.length,
     },
     blockedDraftCount > 0 && {
@@ -418,7 +430,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Review drafts",
       category: "Blocking now",
       tone: "red",
-      priority: 40,
+      priority: "P0",
+      rank: 40,
       count: blockedDraftCount,
     },
     reviewDraftCount > 0 && {
@@ -429,7 +442,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Open Review",
       category: "Needs review",
       tone: "amber",
-      priority: 50,
+      priority: "P1",
+      rank: 55,
       count: reviewDraftCount,
     },
     visibilityOpenOpportunityCount > 0 && {
@@ -440,7 +454,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Review opportunities",
       category: "Needs review",
       tone: "amber",
-      priority: 60,
+      priority: "P1",
+      rank: 60,
       count: visibilityOpenOpportunityCount,
     },
     ready.length > 0 && {
@@ -451,7 +466,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Open Publish",
       category: "Needs review",
       tone: "blue",
-      priority: 70,
+      priority: "P2",
+      rank: 70,
       count: ready.length,
     },
     !searchDataConnected && {
@@ -462,7 +478,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       cta: "Connect GSC",
       category: "Improves results",
       tone: "blue",
-      priority: 80,
+      priority: "P2",
+      rank: 80,
     },
     automationWarnings.length > 0 && {
       id: "automation-health",
@@ -471,12 +488,21 @@ export function Workspace({ projectId }: { projectId: string }) {
       href: `/projects/${projectId}/settings/activity`,
       cta: "Open activity",
       category: "Warnings",
-      tone: "amber",
-      priority: 90,
+      tone: "blue",
+      priority: "P2",
+      rank: 90,
       count: automationWarnings.length,
     },
   ];
-  const humanActionItems = humanActionCandidates.filter((item): item is HumanActionItem => Boolean(item)).sort((a, b) => a.priority - b.priority);
+  const readinessHumanActions = buildReadinessHumanActions({
+    projectId,
+    readiness: autopilotReadiness,
+    canAccessSettings: true,
+  }).map((item): HumanActionItem => ({ ...item, tone: item.tone as StageTone }));
+  const humanActionItems = dedupeHumanActions([
+    ...humanActionCandidates.filter((item): item is HumanActionItem => Boolean(item)),
+    ...readinessHumanActions,
+  ]).sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || a.rank - b.rank);
   const primaryAction = humanActionItems[0] ?? fallbackAction;
   const visibleHumanActionItems = humanActionItems.slice(0, VISIBLE_HUMAN_ACTION_LIMIT);
   const hiddenHumanActionItems = humanActionItems.slice(VISIBLE_HUMAN_ACTION_LIMIT);
@@ -880,7 +906,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 <a
                   key={item.id}
                   href={item.href}
-                  className={compactActionTileClass(item.tone)}
+                  className={compactActionTileClass(item)}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <span className={cx("inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset", humanActionIconToneClass(item.tone))}>

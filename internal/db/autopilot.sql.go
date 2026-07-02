@@ -13,6 +13,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acknowledgeSEOPolicyRecoveryPlan = `-- name: AcknowledgeSEOPolicyRecoveryPlan :one
+update seo_policies set
+  recovery_plan_acknowledged_at = now(),
+  recovery_plan_acknowledged_by = coalesce(nullif($1::text, ''), 'human'),
+  updated_at = now()
+where project_id = $2
+returning id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at, recovery_plan_acknowledged_at, recovery_plan_acknowledged_by
+`
+
+type AcknowledgeSEOPolicyRecoveryPlanParams struct {
+	RecoveryPlanAcknowledgedBy string    `json:"recovery_plan_acknowledged_by"`
+	ProjectID                  uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) AcknowledgeSEOPolicyRecoveryPlan(ctx context.Context, arg AcknowledgeSEOPolicyRecoveryPlanParams) (SeoPolicy, error) {
+	row := q.db.QueryRow(ctx, acknowledgeSEOPolicyRecoveryPlan, arg.RecoveryPlanAcknowledgedBy, arg.ProjectID)
+	var i SeoPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.AutopilotLevel,
+		&i.WeeklyActionLimit,
+		&i.MonthlyBudgetLimit,
+		&i.AllowedActionTypes,
+		&i.BlockedUrlPatterns,
+		&i.RequiresReviewActionTypes,
+		&i.MaxAutoChangesPerPagePerMonth,
+		&i.LowTrafficClicks28dThreshold,
+		&i.LowTrafficImpressions28dThreshold,
+		&i.MinConfidenceForAutoPublish,
+		&i.QuietHoursStart,
+		&i.QuietHoursEnd,
+		&i.QuietHoursTimezone,
+		&i.QuietHoursBehavior,
+		&i.KillSwitchEnabled,
+		&i.SafeModeEnabled,
+		&i.RiskClassifierVersion,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RecoveryPlanAcknowledgedAt,
+		&i.RecoveryPlanAcknowledgedBy,
+	)
+	return i, err
+}
+
 const createSEOActionPlan = `-- name: CreateSEOActionPlan :one
 insert into seo_action_plans
   (project_id, autopilot_run_id, objective_id, plan_window_start, plan_window_end,
@@ -301,7 +346,7 @@ func (q *Queries) GetSEOActionPlanForProject(ctx context.Context, arg GetSEOActi
 }
 
 const getSEOPolicy = `-- name: GetSEOPolicy :one
-select id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at from seo_policies
+select id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at, recovery_plan_acknowledged_at, recovery_plan_acknowledged_by from seo_policies
 where project_id = $1
 `
 
@@ -330,6 +375,8 @@ func (q *Queries) GetSEOPolicy(ctx context.Context, projectID uuid.UUID) (SeoPol
 		&i.RiskClassifierVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecoveryPlanAcknowledgedAt,
+		&i.RecoveryPlanAcknowledgedBy,
 	)
 	return i, err
 }
@@ -769,7 +816,7 @@ on conflict (project_id) do update set
   safe_mode_enabled = excluded.safe_mode_enabled,
   risk_classifier_version = excluded.risk_classifier_version,
   updated_at = now()
-returning id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at
+returning id, project_id, autopilot_level, weekly_action_limit, monthly_budget_limit, allowed_action_types, blocked_url_patterns, requires_review_action_types, max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold, low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior, kill_switch_enabled, safe_mode_enabled, risk_classifier_version, created_at, updated_at, recovery_plan_acknowledged_at, recovery_plan_acknowledged_by
 `
 
 type UpsertSEOPolicyParams struct {
@@ -837,6 +884,8 @@ func (q *Queries) UpsertSEOPolicy(ctx context.Context, arg UpsertSEOPolicyParams
 		&i.RiskClassifierVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecoveryPlanAcknowledgedAt,
+		&i.RecoveryPlanAcknowledgedBy,
 	)
 	return i, err
 }

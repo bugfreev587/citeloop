@@ -170,6 +170,8 @@ func (s *Server) updateSEOPolicy(w http.ResponseWriter, r *http.Request) {
 		KillSwitchEnabled             bool            `json:"kill_switch_enabled"`
 		SafeModeEnabled               bool            `json:"safe_mode_enabled"`
 		RiskClassifierVersion         string          `json:"risk_classifier_version"`
+		RecoveryPlanAcknowledged      bool            `json:"recovery_plan_acknowledged"`
+		RecoveryPlanAcknowledgedBy    string          `json:"recovery_plan_acknowledged_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -232,6 +234,20 @@ func (s *Server) updateSEOPolicy(w http.ResponseWriter, r *http.Request) {
 		Rules:     json.RawMessage(`{"source":"deterministic_default"}`),
 		CreatedBy: "system",
 	})
+	if in.RecoveryPlanAcknowledged {
+		ackBy := strings.TrimSpace(in.RecoveryPlanAcknowledgedBy)
+		if ackBy == "" {
+			ackBy = "human"
+		}
+		policy, err = s.Q.AcknowledgeSEOPolicyRecoveryPlan(r.Context(), db.AcknowledgeSEOPolicyRecoveryPlanParams{
+			ProjectID:                  projectID,
+			RecoveryPlanAcknowledgedBy: ackBy,
+		})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, policy)
 }
 
@@ -363,7 +379,8 @@ func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (Autop
 	policyConfirmed := policy.AutopilotLevel >= 2
 	budgetConfigured := pgutil.Float(policy.MonthlyBudgetLimit) > 0
 	capabilities := activePublisherCapabilities(publisherConnections)
-	rollbackOrRecoveryReady := publisherReady && (capabilities[publisher.CapabilityRollback] || manualRecoverySupported(publisherConnections))
+	recoveryAcknowledged := policy.RecoveryPlanAcknowledgedAt.Valid
+	rollbackOrRecoveryReady := publisherReady && (capabilities[publisher.CapabilityRollback] || recoveryAcknowledged)
 
 	gates := []AutopilotReadinessGate{
 		readinessGate("search_read", "Search data", searchReady, "First-party Search Console data is required before Level 2 can execute SEO changes.", "Connect Search Console or keep Autopilot below Level 2."),
@@ -373,7 +390,7 @@ func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (Autop
 		readinessGate("monthly_budget_configured", "Monthly budget", budgetConfigured, "A project-level budget cap is required before automated execution can spend variable cost.", "Set a monthly Autopilot budget greater than 0."),
 		readinessGate("safe_mode_clear", "Safe mode clear", !safeModeActive, "Open safe mode blocks all automatic execution.", "Resolve the safe mode reason, then exit safe mode."),
 		readinessGate("kill_switch_clear", "Kill switch clear", !policy.KillSwitchEnabled, "The kill switch is enabled and blocks Level 2 execution.", "Turn off the kill switch only when you are ready to resume automation."),
-		readinessGate("rollback_or_recovery_ready", "Rollback or recovery ready", rollbackOrRecoveryReady, "Every Level 2 action must have publisher rollback support or a manual recovery plan.", "Connect a publisher so CiteLoop can attach manual_rollback_required recovery instructions."),
+		readinessGate("rollback_or_recovery_ready", "Rollback or recovery ready", rollbackOrRecoveryReady, "Every Level 2 action must have publisher rollback support or an acknowledged manual recovery plan.", "Open Settings Automation and acknowledge the manual recovery plan."),
 	}
 	failed := make([]string, 0)
 	for _, gate := range gates {
