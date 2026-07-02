@@ -29,6 +29,10 @@ type TopicDraft = {
   priority: string;
 };
 
+const AUTO_WORKFLOW_HELP =
+  "Auto On: accepted opportunities become backlog topics and drafts on cadence. " +
+  "Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available.";
+
 function toDateTimeLocal(value: string | null) {
   if (!value) return "";
   const date = new Date(value);
@@ -410,38 +414,51 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  const autoSwitch = (
+    <div className="group relative inline-flex">
+      <span id="content-plan-auto-help" className="sr-only">
+        {AUTO_WORKFLOW_HELP}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={autoEnabled}
+        aria-busy={autoToggleBusy}
+        aria-describedby="content-plan-auto-help"
+        disabled={Boolean(busy) || !config}
+        onClick={toggleAutoAdvance}
+        title={AUTO_WORKFLOW_HELP}
+        className={cx(
+          "inline-flex h-9 items-center gap-2 rounded-full border px-2.5 text-xs font-bold transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50",
+          autoEnabled
+            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950",
+        )}
+      >
+        {autoToggleBusy ? <Loader2 aria-hidden="true" className="animate-spin" size={14} /> : <Power aria-hidden="true" size={14} />}
+        <span>Auto</span>
+        <span
+          className={cx(
+            "inline-flex h-5 min-w-9 items-center justify-center rounded-full px-2 font-mono text-[11px]",
+            autoEnabled ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500",
+          )}
+        >
+          {autoEnabled ? "On" : "Off"}
+        </span>
+      </button>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute right-0 top-11 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-slate-950 px-3 py-2 text-left text-xs font-semibold leading-5 text-white opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {AUTO_WORKFLOW_HELP}
+      </span>
+    </div>
+  );
+
   return (
     <div className="space-y-7">
       <section className="space-y-3">
-        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" />
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoEnabled}
-            aria-busy={autoToggleBusy}
-            disabled={Boolean(busy) || !config}
-            onClick={toggleAutoAdvance}
-            title="Control whether CiteLoop automatically turns accepted opportunities into planned and drafted content."
-            className={cx(
-              "inline-flex h-9 items-center gap-2 rounded-full border px-2.5 text-xs font-bold transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50",
-              autoEnabled
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950",
-            )}
-          >
-            {autoToggleBusy ? <Loader2 aria-hidden="true" className="animate-spin" size={14} /> : <Power aria-hidden="true" size={14} />}
-            <span>Auto</span>
-            <span
-              className={cx(
-                "inline-flex h-5 min-w-9 items-center justify-center rounded-full px-2 font-mono text-[11px]",
-                autoEnabled ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500",
-              )}
-            >
-              {autoEnabled ? "On" : "Off"}
-            </span>
-          </button>
-        </div>
+        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" action={autoSwitch} />
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
             <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>
