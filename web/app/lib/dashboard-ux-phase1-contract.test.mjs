@@ -774,7 +774,7 @@ test("publishing platforms stay in the header popover with connection status", (
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
   const settings = read("projects/[id]/settings/settings-client.tsx");
 
-  const publishingHeaderStart = publishing.indexOf('<SectionHeader\n        title="Publishing"');
+  const publishingHeaderStart = publishing.indexOf('<SectionHeader\n        title="Publish"');
   const headerActions = publishing.slice(
     publishing.indexOf('<div className="flex flex-wrap items-center gap-2">', publishingHeaderStart),
     publishing.indexOf("\n      />", publishingHeaderStart),
@@ -872,9 +872,84 @@ test("content plan review and publish form one continuous workflow surface", () 
     assert.match(workflow, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  assert.match(workflow, /workflowHref\(projectId, nextStep\)/);
+  assert.match(workflow, /syncPathToStep\(nextStep\)/);
   assert.match(workflow, /window\.location\.pathname !== nextHref/);
   assert.doesNotMatch(workflow, /scroll-snap|snap-y|snap-mandatory/);
+});
+
+test("content workflow PRD defines stage identity and click acceptance criteria", () => {
+  assert.equal(
+    exists("../../docs/PRD-CiteLoop-Content-Workflow-Section-Identity.md"),
+    true,
+    "focused PRD should document the Content workflow stage identity work",
+  );
+
+  const prd = read("../../docs/PRD-CiteLoop-Content-Workflow-Section-Identity.md");
+
+  for (const copy of [
+    "Content Plan is Step 1 of 3",
+    "Review is Step 2 of 3",
+    "Publish is Step 3 of 3",
+    "clicking Review left the Review section lower than the top of the work area",
+    "clicking Publish could still show Content Plan selected and visible",
+    "Clicking the left navigation `Review` entry lands the Review stage at the",
+    "Clicking the left navigation `Publish` entry lands the Publish stage at",
+    "No `scroll-snap` or mandatory snapping styles are introduced",
+  ]) {
+    assert.match(prd, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("content workflow stages expose page-level identity above module headings", () => {
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
+  const ui = read("components/ui.tsx");
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const review = read("projects/[id]/review/review-client.tsx");
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+
+  for (const contract of [
+    "STAGE_META",
+    "Step 1 of 3",
+    "Step 2 of 3",
+    "Step 3 of 3",
+    "data-content-workflow-stage-shell",
+    "data-content-workflow-stage-accent",
+    "data-content-workflow-stage-step",
+    "data-content-workflow-stage-body",
+  ]) {
+    assert.match(workflow, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(workflow, /title: "Content Plan"[\s\S]*title: "Review"[\s\S]*title: "Publish"/);
+  assert.match(ui, /level = "section"/);
+  assert.match(ui, /data-content-workflow-stage-title/);
+  assert.match(ui, /<Heading[\s\S]*\{title\}[\s\S]*<\/Heading>/);
+  assert.match(topics, /title="Content Plan"[\s\S]*level="page"/);
+  assert.match(review, /title="Review"[\s\S]*level="page"/);
+  assert.match(publishing, /title="Publish"/);
+  assert.match(publishing, /title="Publish"[\s\S]*level="page"/);
+  assert.doesNotMatch(publishing, /title="Publishing"/);
+});
+
+test("content workflow route clicks retry target alignment while content settles", () => {
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
+
+  for (const contract of [
+    "TARGET_TOP_OFFSET",
+    "TARGET_ALIGNMENT_TOLERANCE",
+    "TARGET_SETTLE_TIMEOUT_MS",
+    "pendingTargetRef",
+    "pendingStartedAtRef",
+    "isStepAligned",
+    "window.requestAnimationFrame(settleTarget)",
+    "pendingTargetRef.current = initialStep",
+  ]) {
+    assert.match(workflow, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(workflow, /if \(pendingTargetRef\.current[\s\S]*return/);
+  assert.match(workflow, /scrollToStep\(initialStep, "auto"\)/);
+  assert.match(workflow, /window\.dispatchEvent\(new CustomEvent\(CONTENT_WORKFLOW_PATH_CHANGE_EVENT/);
 });
 
 test("content workflow scroll keeps project shell navigation active state in sync", () => {

@@ -393,8 +393,9 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-6">
       <SectionHeader
-        title="Publishing"
+        title="Publish"
         eyebrow="Canonical and syndication lanes"
+        level="page"
         action={
           <div className="flex flex-wrap items-center gap-2">
             <button
