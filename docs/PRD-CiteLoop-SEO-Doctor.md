@@ -541,6 +541,17 @@ Multipliers:
 - `confidence_multiplier = 0.75` for confidence `60-79`.
 - `confidence_multiplier = 0.5` for confidence `< 60`.
 
+Confidence mapping:
+
+- `high` confidence maps to numeric confidence `90`.
+- `medium` confidence maps to numeric confidence `70`.
+- `low` confidence maps to numeric confidence `50`.
+- Direct deterministic checks from a successfully fetched page default to `90`
+  unless the check uses an inferred heuristic.
+- Heuristic checks such as soft 404 similarity, duplicate-title grouping, or
+  page-importance inference must write both the label and numeric confidence into
+  finding evidence.
+
 Score caps:
 
 - Any active P0 caps health score at `69`.
@@ -569,9 +580,9 @@ The human report includes:
 
 ```json
 {
-  "health_score": 72,
+  "health_score": 58,
   "status": "needs_attention",
-  "summary": "6 issues found across 24 checked URLs",
+  "summary": "6 actionable issues found across 24 checked URLs; 4 info observations excluded from issue total",
   "issue_counts": {
     "P0": 1,
     "P1": 3,
@@ -584,6 +595,10 @@ The human report includes:
   "data_source_notes": []
 }
 ```
+
+`summary` issue totals count actionable P0/P1/P2 findings. `Info` rows are
+reported in `issue_counts` and the detail view, but excluded from the actionable
+issue total unless the summary explicitly says "observations".
 
 ### 12.2 AI Coding Tool Report
 
