@@ -182,7 +182,7 @@ test("home shows parallel context-building tracks during onboarding", () => {
   assert.doesNotMatch(workspace, /Estimated progress/);
 });
 
-test("analysis owns decisions while results owns measurement diagnostics", () => {
+test("analysis owns decisions while results owns impact reports and learning", () => {
   assert.equal(exists("projects/[id]/analysis/page.tsx"), true, "analysis route should exist");
   assert.equal(exists("projects/[id]/results/page.tsx"), true, "results route should exist");
 
@@ -198,8 +198,8 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   assert.match(seo, /mode="results"/);
 
   for (const copy of [
-    "Review analysis",
-    "Analyze opportunities",
+    "Opportunity Brief workspace",
+    "Opportunity Briefs",
     "Search performance snapshot",
     "Growth findings",
     "Loop in motion",
@@ -210,7 +210,7 @@ test("analysis owns decisions while results owns measurement diagnostics", () =>
   ]) {
     assert.match(seo, new RegExp(copy));
   }
-  for (const copy of ["Results", "Measurement and diagnostics", "GEO visibility"]) {
+  for (const copy of ["Impact Reports", "Results and learning", "GEO visibility"]) {
     assert.match(seo, new RegExp(copy));
   }
   assert.doesNotMatch(analysisPage, /ResultsClient/);
@@ -351,6 +351,32 @@ test("results surface defaults to published outcomes with collapsed measurement 
   assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
   assert.doesNotMatch(resultsBlock, /Dismiss/);
   assert.doesNotMatch(resultsBlock, /Opportunity queue/);
+});
+
+test("Phase 5 pages separate growth operating outputs", () => {
+  const workspace = read("projects/[id]/workspace.tsx");
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const activity = read("projects/[id]/settings/activity/page.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
+  const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
+
+  for (const copy of ["Growth Control Center", "Opportunity Brief", "Action Portfolio", "Impact Reports", "Operations health", "Learning signal"]) {
+    assert.match(`${workspace}\n${seo}\n${topics}\n${activity}`, new RegExp(copy));
+  }
+  assert.match(workspace, /highestPriorityOpportunity/);
+  assert.match(workspace, /measurementResultNeedsAttention/);
+  assert.match(resultsBlock, /title="Impact Reports"/);
+  assert.match(resultsBlock, /title="Learning signal"/);
+  assert.match(resultsBlock, /Conservative learning/);
+  assert.match(activity, /Operations health/);
+  assert.match(activity, /Operational blockers/);
+  assert.match(activity, /Diagnostics/);
+  assert.match(topics, /topic backlog/i);
+  assert.match(topics, /action handoff/i);
+  assert.doesNotMatch(`${workspace}\n${seo}\n${topics}\n${activity}`, /content pipeline/i);
+  assert.doesNotMatch(resultsBlock, /Measurement and diagnostics/);
 });
 
 test("home pipeline keeps workflow counts separate from search performance metrics", () => {
@@ -1094,20 +1120,20 @@ test("connected context keeps update action top-right and crawl freshness at the
   assert.doesNotMatch(connectedPanel, /Updated \{formatDate\(updatedAt\)\}/);
 });
 
-test("analysis page presents decisions and results page presents measurement diagnostics", () => {
+test("analysis page presents decisions and results page presents impact reports", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const analysisPage = read("projects/[id]/analysis/page.tsx");
   const resultsPage = read("projects/[id]/results/page.tsx");
 
   for (const copy of [
-    "Review analysis",
-    "Analyze opportunities",
+    "Opportunity Brief workspace",
+    "Opportunity Briefs",
     "Search performance snapshot",
     "Growth findings",
     "Loop in motion",
     "View measurement",
-    "Results",
-    "Measurement and diagnostics",
+    "Impact Reports",
+    "Results and learning",
     "Weekly analysis brief",
     "Create content task",
     "Public crawl only",

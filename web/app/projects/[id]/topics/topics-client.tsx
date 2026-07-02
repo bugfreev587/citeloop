@@ -193,27 +193,27 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           title: "Your content plan is running automatically",
           detail: queuedTopics.length > 0
             ? pacingNote
-            : "CiteLoop turns accepted analysis recommendations into topics and drafts them until a review, budget, or safety gate stops it. No action needed here.",
+            : "CiteLoop turns accepted analysis recommendations into a topic backlog and drafts them until a review, budget, or safety gate stops it. Non-topic actions continue through the action handoff in Analysis and Results.",
           cta: null,
         }
       : summaryPendingPlanActions > 0
         ? {
             tone: "blue",
             title: "Generating your content plan from accepted analysis",
-            detail: "Accepted analysis recommendations are being turned into topics automatically. Topics will appear here shortly — no action needed.",
+            detail: "Accepted analysis recommendations are being turned into topic backlog items automatically. Direct technical, metadata, schema, and distribution work stays in the action handoff.",
             cta: null,
           }
         : summaryOpenOpportunityCount > 0
           ? {
               tone: "amber",
               title: `${summaryOpenOpportunityCount} analysis ${summaryOpenOpportunityCount === 1 ? "recommendation is" : "recommendations are"} waiting for review`,
-              detail: "Review analysis to add useful recommendations to the plan. CiteLoop turns each one you keep into topics and drafts automatically.",
+              detail: "Review analysis to add useful recommendations to the plan. CiteLoop turns content recommendations into the topic backlog and routes direct work through the action handoff.",
               cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
             }
           : {
               tone: "neutral",
               title: "No analysis is waiting",
-              detail: "CiteLoop plans automatically once you review analysis recommendations. You can also seed a starter backlog from your domain (advanced).",
+              detail: "CiteLoop plans automatically once you review analysis recommendations. You can also seed a starter topic backlog from your domain (advanced).",
               cta: { label: "Review analysis", href: `/projects/${projectId}/analysis` },
             };
   const autoPlanToneClass = {
@@ -367,7 +367,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-7">
       <section className="space-y-3">
-        <SectionHeader title="Content Plan" eyebrow="Planned automatically from accepted analysis" />
+        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" />
         <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
           <div className="min-w-0">
             <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>

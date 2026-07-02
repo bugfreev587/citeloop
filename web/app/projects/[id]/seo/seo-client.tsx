@@ -1244,8 +1244,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     <>
     <div ref={mode === "analysis" ? analysisSurfaceRef : undefined} className="space-y-7">
       <SectionHeader
-        title={mode === "analysis" ? "Review analysis" : "Results"}
-        eyebrow={mode === "analysis" ? "Analyze opportunities" : "Measurement and diagnostics"}
+        title={mode === "analysis" ? "Opportunity Brief workspace" : "Impact Reports"}
+        eyebrow={mode === "analysis" ? "Opportunity Briefs" : "Results and learning"}
         action={
           <div className="flex flex-wrap gap-2">
             {mode === "analysis" && (
@@ -1577,8 +1577,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         <div className="space-y-7" data-results-actions={resultsActions.length}>
           <section>
             <SectionHeader
-              title="Outcome summary"
-              eyebrow="Published work"
+              title="Impact Reports"
+              eyebrow="Outcome summary - Published work"
               action={
                 <Badge tone={measurementExceptions.length ? "amber" : attributionMeasuredActions.length ? "green" : "neutral"}>
                   {attributionMeasuredActions.length}
@@ -1622,6 +1622,37 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   <p className="mt-1 text-sm leading-5 text-slate-500">{item.detail}</p>
                 </div>
               ))}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeader
+              title="Learning signal"
+              eyebrow="Conservative learning"
+              action={<Badge tone={measurementExceptions.length ? "amber" : "neutral"}>Policy-gated</Badge>}
+            />
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <Badge tone="blue">Prioritization input</Badge>
+                <div className="mt-3 text-lg font-bold leading-6 text-slate-950">Use measured outcomes to rank the next Opportunity Briefs.</div>
+                <p className="mt-2 text-sm leading-5 text-slate-500">
+                  Completed work can influence backlog order, expected impact, and follow-up timing.
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <Badge tone={measurementExceptions.length ? "amber" : "green"}>{measurementExceptions.length}</Badge>
+                <div className="mt-3 text-lg font-bold leading-6 text-slate-950">Results needing attention</div>
+                <p className="mt-2 text-sm leading-5 text-slate-500">
+                  Negative, mixed, inconclusive, or insufficient data outcomes stay visible for review before the next action.
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <Badge tone="neutral">No auto-risk</Badge>
+                <div className="mt-3 text-lg font-bold leading-6 text-slate-950">Policy gates still decide execution.</div>
+                <p className="mt-2 text-sm leading-5 text-slate-500">
+                  Conservative learning informs prioritization, but it does not auto-change risky behavior without review gates.
+                </p>
+              </div>
             </div>
           </section>
 
