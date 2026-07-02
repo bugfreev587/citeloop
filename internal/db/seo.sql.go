@@ -1028,6 +1028,17 @@ left join articles a
 where ca.project_id = $1
   and ($2::text = '' or ca.status = $2)
   and ($3::timestamptz is null or ca.updated_at < $3)
+  and (
+    ca.status in ('published','measuring','completed','verification_failed','recovery_required')
+    or ca.published_at is not null
+    or ca.verified_at is not null
+    or exists (
+      select 1
+      from action_measurements am
+      where am.project_id = ca.project_id
+        and am.content_action_id = ca.id
+    )
+  )
 order by coalesce(ca.published_at, ca.verified_at, ca.updated_at) desc, ca.created_at desc
 limit $4
 `

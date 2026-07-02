@@ -567,6 +567,17 @@ left join articles a
 where ca.project_id = sqlc.arg(project_id)
   and (sqlc.arg(status)::text = '' or ca.status = sqlc.arg(status))
   and (sqlc.arg(cursor_updated_at)::timestamptz is null or ca.updated_at < sqlc.arg(cursor_updated_at))
+  and (
+    ca.status in ('published','measuring','completed','verification_failed','recovery_required')
+    or ca.published_at is not null
+    or ca.verified_at is not null
+    or exists (
+      select 1
+      from action_measurements am
+      where am.project_id = ca.project_id
+        and am.content_action_id = ca.id
+    )
+  )
 order by coalesce(ca.published_at, ca.verified_at, ca.updated_at) desc, ca.created_at desc
 limit sqlc.arg(limit_rows);
 

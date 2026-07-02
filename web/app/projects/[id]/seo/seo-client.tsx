@@ -284,6 +284,21 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
+function hasNonEmptyStructuredValue(value: any) {
+  if (!value) return false;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed !== "" && trimmed !== "{}" && trimmed !== "[]" && trimmed !== "null";
+  }
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function hasActionVerificationSnapshot(action: SEOContentAction | ResultsAction) {
+  return hasNonEmptyStructuredValue(action.verification_snapshot);
+}
+
 function actionWhyNowText(action: SEOContentAction | ResultsAction) {
   const input = action.input_snapshot ?? {};
   const evidence = action.evidence_snapshot ?? {};
@@ -426,8 +441,9 @@ function actionMeasurementState(action: SEOContentAction | ResultsAction): Actio
     measurement?.outcome_label ?? action.outcome_summary?.outcome_label ?? action.outcome_summary?.result ?? action.outcome_summary?.state ?? "",
   ).toLowerCase();
   const hasMeasurementSignal =
+    Boolean(measurement) ||
     ["published", "measuring", "completed", "failed", "verification_failed", "recovery_required"].includes(action.status) ||
-    Boolean(action.published_at || action.verified_at || action.verification_snapshot);
+    Boolean(action.published_at || action.verified_at || hasActionVerificationSnapshot(action));
   if (rawResult === "insufficient_data") {
     return {
       key: "insufficient_data",
@@ -2620,7 +2636,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   <div>
                     <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
                     <div className="mt-1 font-medium text-slate-700">
-                      {action.verified_at ? "Verified" : action.verification_snapshot ? "Needs check" : "Not started"}
+                      {action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"}
                     </div>
                   </div>
                   <div>
@@ -2689,7 +2705,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     <div>
                       <span className="font-semibold text-slate-800">Verification</span>
                       <br />
-                      {action.verified_at ? formatDate(action.verified_at) : compactOutcomeText(action.verification_snapshot)}
+                      {action.verified_at ? formatDate(action.verified_at) : hasActionVerificationSnapshot(action) ? compactOutcomeText(action.verification_snapshot) : "Not started"}
                     </div>
                     <div>
                       <span className="font-semibold text-slate-800">Target URL</span>

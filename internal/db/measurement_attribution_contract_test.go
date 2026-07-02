@@ -40,3 +40,28 @@ func TestActionMeasurementsSchemaAndQueriesExist(t *testing.T) {
 		}
 	}
 }
+
+func TestResultsActionRowsOnlyReturnActionsWithExecutionEvidence(t *testing.T) {
+	queries, err := os.ReadFile("queries/seo.sql")
+	if err != nil {
+		t.Fatalf("read seo queries: %v", err)
+	}
+	source := string(queries)
+	start := strings.Index(source, "-- name: ListResultsActionRows :many")
+	if start < 0 {
+		t.Fatal("ListResultsActionRows query missing")
+	}
+	block := source[start:]
+	for _, want := range []string{
+		"ca.status in ('published','measuring','completed','verification_failed','recovery_required')",
+		"ca.published_at is not null",
+		"ca.verified_at is not null",
+		"exists (",
+		"from action_measurements am",
+		"am.content_action_id = ca.id",
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("ListResultsActionRows must exclude unexecuted ready_for_review actions; missing %q", want)
+		}
+	}
+}
