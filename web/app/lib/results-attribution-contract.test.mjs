@@ -47,6 +47,26 @@ test("Results page renders action-level attribution rows", () => {
   }
 });
 
+test("Results action attribution opens compact cards into a detail drawer", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  for (const marker of [
+    "selectedResultActionID",
+    "resultDrawerRef",
+    "resultReturnFocusRef",
+    "data-results-action-card",
+    "data-results-drawer",
+    "aria-label={`Open attribution details: ${action.action_type}`}",
+    "Measurement details",
+    "Manual verify",
+    "Verification failed",
+  ]) {
+    assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("Results separates impact outcomes from measurement queue states", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
