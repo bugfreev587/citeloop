@@ -177,11 +177,11 @@ test("buildReadyNow shows due approved canonicals and retryable failures without
   });
 
   assert.deepEqual(
-    readyNow.items.map((item) => [item.articleId, item.actionLabel, item.destinationLabel]),
+    readyNow.items.map((item) => [item.articleId, item.actionLabel, item.destinationLabel, item.destinationActionLabel, item.timingActionLabel]),
     [
-      ["due", "Publish", "Canonical / GitHub/Next.js"],
-      ["unscheduled", "Publish", "Canonical / GitHub/Next.js"],
-      ["failed", "Retry", "Canonical / GitHub/Next.js"],
+      ["due", "Publish", "GitHub/Next.js", "Destination", "Timing"],
+      ["unscheduled", "Publish", "GitHub/Next.js", "Destination", "Timing"],
+      ["failed", "Retry", "GitHub/Next.js", "Destination", "Timing"],
     ],
   );
   assert.equal(readyNow.items.some((item) => item.articleId === "future"), false);

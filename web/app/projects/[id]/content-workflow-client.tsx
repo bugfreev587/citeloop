@@ -46,7 +46,7 @@ const STAGE_META = {
   publish: {
     stepLabel: "Step 3 of 3",
     title: "Publish",
-    eyebrow: "Choose a destination. Ship approved content.",
+    eyebrow: "Ready content first. Choose where and when per post.",
     toneClass: "border-emerald-200 bg-emerald-100/70",
     accentClass: "bg-emerald-500",
   },
