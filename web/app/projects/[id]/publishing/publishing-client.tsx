@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  Eye,
   ExternalLink,
   Loader2,
   Plug,
@@ -46,7 +47,7 @@ function articleTitle(article: Article) {
 }
 
 function publishTimeLabel(article: Article) {
-  return article.scheduled_at ? `Publishes ${formatDate(article.scheduled_at)}` : "Ready when you publish";
+  return article.scheduled_at ? `Publishes ${formatDate(article.scheduled_at)}` : "Manual: when you publish";
 }
 
 function connectionTargetLabel(connection: PublisherConnection | null) {
@@ -159,7 +160,7 @@ function DestinationTile({
       className={cx(
         "group flex min-w-0 flex-col items-stretch rounded-lg border bg-white p-4 text-left transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#d93820]/30",
         destination.kind === "roadmap" ? "border-dashed border-slate-300" : "border-slate-200",
-        featured ? "sm:col-span-2" : "",
+        featured ? "sm:col-span-2 xl:col-span-1" : "",
       )}
     >
       <span className="flex min-w-0 items-start justify-between gap-3">
@@ -193,6 +194,8 @@ function ReadyNowStrip({
   activePublisherConnection,
   onPublish,
   onRetry,
+  onDestination,
+  onTiming,
 }: {
   className?: string;
   projectId: string;
@@ -201,33 +204,54 @@ function ReadyNowStrip({
   activePublisherConnection: PublisherConnection | null;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
+  onDestination: () => void;
+  onTiming: () => void;
 }) {
   const visibleItems = readyNow.items.slice(0, 4);
 
   return (
-    <section data-publish-ready-now className={cx("min-w-0 space-y-3", className)}>
-      <SectionHeader title="Ready now" action={<Badge tone={visibleItems.length ? "green" : "neutral"}>{readyNow.items.length}</Badge>} />
+    <section data-publish-ready-to-post className={cx("min-w-0 space-y-3", className)}>
+      <SectionHeader title="Ready to post" action={<Badge tone={visibleItems.length ? "green" : "neutral"}>{readyNow.items.length}</Badge>} />
       {visibleItems.length === 0 ? (
         <EmptyState title={readyNow.emptyState.title} detail={readyNow.emptyState.detail} />
       ) : (
         <div className="grid min-w-0 gap-3">
           {visibleItems.map((item) => (
-            <div key={item.id} className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+            <div key={item.id} className="min-w-0 rounded-lg border border-slate-200 bg-white p-4">
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="break-words text-sm font-bold leading-5 text-slate-900">{item.title}</div>
-                  <div className="mt-1 text-xs font-semibold text-slate-500">{item.destinationLabel}</div>
+                  <div className="line-clamp-2 break-words text-base font-bold leading-6 text-slate-950">{item.title}</div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">Canonical content</div>
                 </div>
                 <Badge tone={item.action === "retry" ? "red" : "green"}>{item.actionLabel}</Badge>
+              </div>
+              <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
+                <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">Where</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{item.destinationLabel}</div>
+                </div>
+                <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+                  <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">When</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{publishTimeLabel(item.article)}</div>
+                </div>
               </div>
               {item.failureReason && <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700">{item.failureReason}</div>}
               <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
                 <a
                   href={`/projects/${projectId}/articles/${item.articleId}`}
-                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
+                  <Eye size={14} />
                   {item.secondaryActionLabel}
                 </a>
+                <Button size="sm" onClick={onDestination}>
+                  <Plug size={14} />
+                  {item.destinationActionLabel}
+                </Button>
+                <Button size="sm" title={publishTimeLabel(item.article)} onClick={onTiming}>
+                  <CalendarClock size={14} />
+                  {item.timingActionLabel}
+                </Button>
                 <Button
                   disabled={!activePublisherConnection || busy === `${item.action}-${item.articleId}`}
                   size="sm"
@@ -747,7 +771,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     <div className="space-y-6">
       <SectionHeader
         title="Publish"
-        eyebrow="Choose a destination. Ship approved content."
+        eyebrow="Ready content first. Choose where and when per post."
         level="page"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -785,30 +809,31 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         <Notice title="No publisher connection" detail="GitHub/Next.js is the canonical publish destination. Connect it in Settings before publishing." tone="amber" />
       )}
       {destinations.github.state === "disabled" && (
-        <Notice title="Publisher disabled" detail="Ready items stay visible, but publish actions are disabled until the destination is enabled." tone="amber" />
+        <Notice title="Publisher disabled" detail="Ready posts stay visible, but publish actions are disabled until the destination is enabled." tone="amber" />
       )}
       {destinations.github.state === "needs_attention" && (
         <Notice title="Publisher needs attention" detail={destinations.github.connection?.last_error || "Fix the GitHub/Next.js connection in Settings."} tone="red" />
       )}
 
-      <div data-publish-c2-first-viewport className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] xl:items-start">
+      <div data-publish-c2-first-viewport className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.46fr)] xl:items-start">
+        <ReadyNowStrip
+          projectId={projectId}
+          readyNow={readyNow}
+          busy={busy}
+          activePublisherConnection={activePublisherConnection}
+          onPublish={publishNow}
+          onRetry={retryPublish}
+          onDestination={() => setDrawer("github")}
+          onTiming={() => setDrawer("schedule")}
+        />
+
         <section data-publish-c2-destinations className="min-w-0 space-y-3">
-          <SectionHeader title="Destinations" action={<Badge tone="neutral">{destinations.firstViewport.length} visible</Badge>} />
+          <SectionHeader title="Publish destinations" action={<Badge tone="neutral">{destinations.firstViewport.length} visible</Badge>} />
           {connectionsLoading ? (
             <DestinationSkeleton />
           ) : (
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <DestinationTile destination={destinations.github} featured onOpen={() => setDrawer("github")} />
-
-              <ReadyNowStrip
-                className="sm:col-span-2 xl:hidden"
-                projectId={projectId}
-                readyNow={readyNow}
-                busy={busy}
-                activePublisherConnection={activePublisherConnection}
-                onPublish={publishNow}
-                onRetry={retryPublish}
-              />
 
               <div data-publish-manual-destination-tiles className="contents">
                 {destinations.firstViewport
@@ -846,23 +871,13 @@ export function PublishingClient({ projectId }: { projectId: string }) {
               >
                 More
                 <span className="text-slate-400">Medium · LinkedIn · Hacker News</span>
-              </button>
-            )}
-          </div>
-        </section>
-
-        <ReadyNowStrip
-          className="hidden xl:block"
-          projectId={projectId}
-          readyNow={readyNow}
-          busy={busy}
-          activePublisherConnection={activePublisherConnection}
-          onPublish={publishNow}
-          onRetry={retryPublish}
-        />
+            </button>
+          )}
+        </div>
+      </section>
       </div>
 
-      {loading && <EmptyState title="Loading publishing state" detail="Destination and draft status is loading." />}
+      {loading && <EmptyState title="Loading publishing state" detail="Ready content and destination status is loading." />}
 
       <Drawer
         open={drawer === "github"}

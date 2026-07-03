@@ -704,19 +704,26 @@ test("destructive content-plan and distribution actions confirm before running",
   assert.match(publishing, /Mark this variant as distributed\?/);
 });
 
-test("publishing first viewport is platform-first C2 instead of six operational lanes", () => {
+test("publishing first viewport is content-first Manual publish instead of platform-first C2", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
 
   assert.match(publishing, /buildPublishDestinations/);
   assert.match(publishing, /buildPublishHeaderCta/);
   assert.match(publishing, /buildReadyNow/);
   assert.match(publishing, /data-publish-c2-first-viewport/);
+  assert.match(publishing, /data-publish-ready-to-post/);
   assert.match(publishing, /data-publish-c2-destinations/);
-  assert.match(publishing, /title="Destinations"/);
-  assert.match(publishing, /data-publish-ready-now/);
-  assert.match(publishing, /Choose a destination\. Ship approved content\./);
+  assert.match(publishing, /title="Ready to post"/);
+  assert.match(publishing, /title="Publish destinations"/);
+  assert.match(publishing, /Ready content first\. Choose where and when per post\./);
+  assert.match(publishing, /onDestination=\{\(\) => setDrawer\("github"\)\}/);
+  assert.match(publishing, /onTiming=\{\(\) => setDrawer\("schedule"\)\}/);
   assert.match(publishing, />\s*Schedule\s*</);
   assert.match(publishing, />\s*View all\s*</);
+  assert.ok(
+    publishing.indexOf("data-publish-ready-to-post") < publishing.indexOf("data-publish-c2-destinations"),
+    "Ready content should appear before destinations in the first viewport source order",
+  );
 
   for (const oldLane of [
     'title="Ready to publish"',
@@ -775,8 +782,11 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
     publishing.indexOf("function ManualPlatformRows"),
   );
 
-  assert.match(readyNowBlock, /title="Ready now"/);
+  assert.match(readyNowBlock, /title="Ready to post"/);
   assert.match(readyNowBlock, /item\.secondaryActionLabel/);
+  assert.match(readyNowBlock, /item\.destinationActionLabel/);
+  assert.match(readyNowBlock, /item\.timingActionLabel/);
+  assert.match(readyNowBlock, /publishTimeLabel\(item\.article\)/);
   assert.match(readyNowBlock, /item\.actionLabel/);
   assert.match(readyNowBlock, /item\.action === "retry" \? "Retrying" : "Queuing"/);
   assert.match(readyNowBlock, /line-clamp-2 break-words/);

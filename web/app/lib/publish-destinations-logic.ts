@@ -63,7 +63,9 @@ export type ReadyNowItem = {
   action: ReadyNowAction;
   actionLabel: "Publish" | "Retry";
   secondaryActionLabel: "Preview";
-  destinationLabel: "Canonical / GitHub/Next.js";
+  destinationLabel: "GitHub/Next.js";
+  destinationActionLabel: "Destination";
+  timingActionLabel: "Timing";
   disabled: boolean;
   disabledReason?: string;
   failureReason?: string;
@@ -368,7 +370,9 @@ export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
     action: "publish",
     actionLabel: "Publish",
     secondaryActionLabel: "Preview",
-    destinationLabel: "Canonical / GitHub/Next.js",
+    destinationLabel: "GitHub/Next.js",
+    destinationActionLabel: "Destination",
+    timingActionLabel: "Timing",
     disabled: !active,
     disabledReason: active ? undefined : "Connect GitHub before publishing.",
     article,
@@ -380,7 +384,9 @@ export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
     action: "retry",
     actionLabel: "Retry",
     secondaryActionLabel: "Preview",
-    destinationLabel: "Canonical / GitHub/Next.js",
+    destinationLabel: "GitHub/Next.js",
+    destinationActionLabel: "Destination",
+    timingActionLabel: "Timing",
     disabled: !active,
     disabledReason: active ? undefined : "Connect GitHub before retrying.",
     failureReason: article.last_publish_error || undefined,
