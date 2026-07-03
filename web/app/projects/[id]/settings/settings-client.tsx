@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
   AutopilotReadiness,
   defaultProjectConfig,
@@ -219,6 +219,105 @@ function settingsTabFromHash(hash: string): SettingsTabId {
   return settingsAnchorToTab[tabId] ?? "project";
 }
 
+function automationCheckIdFromHash(hash: string): string | null {
+  const anchor = hash.replace(/^#/, "");
+  if (anchor === "automation-policy") return "autopilot_policy_confirmed";
+  if (anchor === "recovery-plan") return "rollback_or_recovery_ready";
+  return null;
+}
+
+type PolicyDraft = {
+  autopilot_level: number;
+  monthly_budget_limit: number;
+  kill_switch_enabled: boolean;
+  safe_mode_enabled: boolean;
+};
+
+const defaultPolicyDraft: PolicyDraft = {
+  autopilot_level: 0,
+  monthly_budget_limit: 0,
+  kill_switch_enabled: false,
+  safe_mode_enabled: false,
+};
+
+const automationPolicyLevels = [
+  {
+    value: 0,
+    title: "Level 0 Manual",
+    mode: "Observe",
+    detail: "CiteLoop shows data and recommendations. Every action is completed by a person.",
+    available: true,
+  },
+  {
+    value: 1,
+    title: "Level 1 Assistive",
+    mode: "Draft",
+    detail: "CiteLoop creates opportunities and drafts. A person still approves and publishes every change.",
+    available: true,
+  },
+  {
+    value: 2,
+    title: "Level 2 Guarded execution",
+    mode: "Guarded",
+    detail: "CiteLoop can execute low-risk actions inside policy and budget limits. Medium and high-risk work still waits for review.",
+    available: true,
+  },
+  {
+    value: 3,
+    title: "Level 3 Future",
+    mode: "Portfolio",
+    detail: "Future mode for weekly portfolio selection. It is visible here for context, not selectable yet.",
+    available: false,
+  },
+  {
+    value: 4,
+    title: "Level 4 Future",
+    mode: "Full autopilot",
+    detail: "Future mode for broader autonomous optimization with audit, budget, and emergency controls.",
+    available: false,
+  },
+];
+
+function automationGateTitle(key: string, fallback: string) {
+  const titles: Record<string, string> = {
+    search_read: "Search data",
+    publisher_write: "Publisher access",
+    notification_write: "Notifications",
+    autopilot_policy_confirmed: "Automation Policy",
+    monthly_budget_configured: "Autopilot budget",
+    safe_mode_clear: "Safe mode",
+    kill_switch_clear: "Emergency stop",
+    rollback_or_recovery_ready: "Recovery plan",
+  };
+  return titles[key] ?? fallback;
+}
+
+function automationGateSummary(key: string, blocked: boolean) {
+  if (key === "kill_switch_clear") return blocked ? "Emergency stop is on" : "Emergency stop is off";
+  if (key === "safe_mode_clear") return blocked ? "Safe mode is active" : "Safe mode is clear";
+  if (key === "autopilot_policy_confirmed") return blocked ? "Review policy before guarded execution" : "Policy confirmed";
+  if (key === "monthly_budget_configured") return blocked ? "Set an Autopilot budget limit" : "Budget limit is set";
+  if (key === "notification_write") return blocked ? "Add a verified notification channel" : "Notification channel ready";
+  if (key === "rollback_or_recovery_ready") return blocked ? "Confirm recovery before writes" : "Recovery plan confirmed";
+  if (key === "publisher_write") return blocked ? "Connect a publisher target" : "Publisher access ready";
+  if (key === "search_read") return blocked ? "Connect first-party search data" : "Search data ready";
+  return blocked ? "Needs attention" : "Ready";
+}
+
+function automationGateImpact(key: string) {
+  const copy: Record<string, string> = {
+    search_read: "CiteLoop needs first-party search data before it can choose low-risk SEO actions from real query and page signals.",
+    publisher_write: "Guarded automation needs a scoped place to create or update content. Without it, CiteLoop can only prepare drafts.",
+    notification_write: "Failures, approval requests, safe mode alerts, and delivery problems should reach an operator before Level 2 runs.",
+    autopilot_policy_confirmed: "Automation Policy defines how much autonomy CiteLoop has, what budget it can use, and when it must stop.",
+    monthly_budget_configured: "The Autopilot budget is the spending boundary for guarded execution. It is separate from the project cadence budget.",
+    safe_mode_clear: "Safe mode pauses automation after degraded or risky conditions. It must be clear before guarded execution resumes.",
+    kill_switch_clear: "Emergency stop immediately pauses automation. Turn it off only when you want CiteLoop to resume eligible work.",
+    rollback_or_recovery_ready: "Every guarded action needs either publisher rollback support or a confirmed manual recovery plan.",
+  };
+  return copy[key] ?? "This check protects guarded execution before CiteLoop changes anything automatically.";
+}
+
 export function SettingsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [config, setConfig] = useState<ProjectConfig>(defaultProjectConfig());
@@ -244,8 +343,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
+  const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
   const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
   const [safeModeEvents, setSafeModeEvents] = useState<SafeModeEvent[]>([]);
+  const [selectedAutomationCheck, setSelectedAutomationCheck] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return automationCheckIdFromHash(window.location.hash);
+  });
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -258,6 +362,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     function syncTabFromHash() {
       setActiveSettingsTab(settingsTabFromHash(window.location.hash));
+      setSelectedAutomationCheck(automationCheckIdFromHash(window.location.hash));
     }
 
     syncTabFromHash();
@@ -265,9 +370,34 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("hashchange", syncTabFromHash);
   }, []);
 
+  useEffect(() => {
+    if (!policy) return;
+    setPolicyDraft({
+      autopilot_level: Math.max(0, Math.min(2, policy.autopilot_level ?? 0)),
+      monthly_budget_limit: policy.monthly_budget_limit != null ? normalizeNumeric(policy.monthly_budget_limit) ?? 0 : 0,
+      kill_switch_enabled: Boolean(policy.kill_switch_enabled),
+      safe_mode_enabled: Boolean(policy.safe_mode_enabled),
+    });
+  }, [policy]);
+
   function activateSettingsTab(tabId: SettingsTabId) {
     setActiveSettingsTab(tabId);
+    setSelectedAutomationCheck(null);
     window.history.replaceState(null, "", `#${tabId}`);
+  }
+
+  function openSettingsAnchor(target: string) {
+    const nextHash = target.includes("#") ? `#${target.split("#").pop()}` : target.startsWith("#") ? target : `#${target}`;
+    setActiveSettingsTab(settingsTabFromHash(nextHash));
+    setSelectedAutomationCheck(automationCheckIdFromHash(nextHash));
+    window.history.replaceState(null, "", nextHash);
+    window.requestAnimationFrame(() => {
+      document.getElementById(nextHash.replace(/^#/, ""))?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
+  function openAutomationCheck(checkId: string) {
+    setSelectedAutomationCheck(checkId);
   }
 
   const refresh = useCallback(async () => {
@@ -425,6 +555,69 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       recovery_plan_acknowledged: true,
       recovery_plan_acknowledged_by: "human",
     });
+    setSelectedAutomationCheck(null);
+  }
+
+  async function savePolicyDraft() {
+    await saveAutomationPolicy({
+      autopilot_level: Math.max(0, Math.min(2, policyDraft.autopilot_level)),
+      monthly_budget_limit: Math.max(0, policyDraft.monthly_budget_limit),
+      kill_switch_enabled: policyDraft.kill_switch_enabled,
+      safe_mode_enabled: policyDraft.safe_mode_enabled,
+    });
+    setSelectedAutomationCheck(null);
+  }
+
+  async function exitOpenSafeModeEvents() {
+    const openEvents = safeModeEvents.filter((event) => !event.exited_at);
+    setBusy(true);
+    try {
+      await Promise.all(
+        openEvents.map((event) =>
+          api.exitSafeMode(projectId, event.id, {
+            exited_by: "human",
+            exit_reason: "confirmed from Automation readiness",
+          }),
+        ),
+      );
+      if (policy?.safe_mode_enabled) {
+        const saved = await api.updateSEOPolicy(projectId, { ...policy, safe_mode_enabled: false });
+        setPolicy(saved);
+      }
+      await refreshAutomation();
+      notify({
+        title: "Safe mode cleared",
+        detail:
+          openEvents.length > 0
+            ? `${openEvents.length} open safe mode event${openEvents.length === 1 ? "" : "s"} exited.`
+            : "Safe mode policy is clear.",
+        tone: "green",
+      });
+      setSelectedAutomationCheck(null);
+    } catch (e: any) {
+      notify({ title: "Could not clear safe mode", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAutomationCheckAction(checkId: string, href?: string) {
+    if (checkId === "kill_switch_clear") {
+      await saveAutomationPolicy({ kill_switch_enabled: false });
+      setSelectedAutomationCheck(null);
+      return;
+    }
+    if (checkId === "safe_mode_clear") {
+      await exitOpenSafeModeEvents();
+      return;
+    }
+    if (checkId === "rollback_or_recovery_ready") {
+      await acknowledgeRecoveryPlan();
+      return;
+    }
+    if (href) {
+      openSettingsAnchor(href);
+    }
   }
 
   function update(next: Partial<ProjectConfig>) {
@@ -760,15 +953,32 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       ? "This owner already has the CiteLoop GitHub App installed. Reuse that installation or connect a different account."
       : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
 
-  const openSafeModeCount = safeModeEvents.filter((event) => !event.exited_at).length;
-  const policyBudgetLimit =
-    policy?.monthly_budget_limit != null ? normalizeNumeric(policy.monthly_budget_limit) ?? 0 : 0;
+  const openSafeModeEvents = safeModeEvents.filter((event) => !event.exited_at);
+  const openSafeModeCount = openSafeModeEvents.length;
   const readinessGatesAll = readiness?.gates ?? [];
   const blockedGates = readinessGatesAll
     .filter((gate) => gate.blocking)
     .map((gate) => ({ gate, action: readinessGateActionFor(gate.key, projectId) }))
     .sort((a, b) => (a.action?.rank ?? 999) - (b.action?.rank ?? 999));
   const readyGates = readinessGatesAll.filter((gate) => !gate.blocking);
+  const automationReadinessCards = readinessGatesAll
+    .map((gate) => {
+      const action = readinessGateActionFor(gate.key, projectId);
+      return {
+        id: gate.key,
+        title: automationGateTitle(gate.key, gate.label),
+        summary: automationGateSummary(gate.key, gate.blocking),
+        impact: automationGateImpact(gate.key),
+        reason: gate.reason,
+        nextAction: gate.next_action,
+        blocked: gate.blocking,
+        action,
+      };
+    })
+    .sort((a, b) => (a.action?.rank ?? 999) - (b.action?.rank ?? 999));
+  const selectedAutomationCard = selectedAutomationCheck
+    ? automationReadinessCards.find((card) => card.id === selectedAutomationCheck) ?? null
+    : null;
 
   return (
     <div className="space-y-7">
@@ -800,7 +1010,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
       {activeSettingsTab === "automation" && (
       <section id="settings-panel-automation" role="tabpanel" aria-labelledby="settings-tab-automation" tabIndex={0} className="space-y-7">
-        <div id="automation">
+        <div id="automation" className="space-y-6">
           <SectionHeader
             title="Automation readiness"
             eyebrow="System setup"
@@ -816,126 +1026,269 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             policy limits. Medium and high-risk changes still wait for your review.
           </p>
 
-          <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 bg-white px-4 py-3">
-            <span className="text-sm font-bold text-slate-950">
-              {readyGates.length} of {readinessGatesAll.length} checks ready
-            </span>
-            <span className="h-1.5 w-40 overflow-hidden rounded-full bg-slate-100">
-              <span
-                className="block h-full rounded-full bg-emerald-500"
-                style={{ width: `${readinessGatesAll.length ? Math.round((readyGates.length / readinessGatesAll.length) * 100) : 0}%` }}
-              />
-            </span>
-            <span className="text-xs font-semibold text-slate-500">
-              Safe mode {openSafeModeCount > 0 || policy?.safe_mode_enabled ? "active" : "clear"} · Kill switch {policy?.kill_switch_enabled ? "on" : "off"}
-            </span>
-          </div>
-
-          {blockedGates.length > 0 && (
-            <div className="mb-6">
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Needs setup · {blockedGates.length}</h3>
-              <div className="grid gap-3 md:grid-cols-2">
-                {blockedGates.map(({ gate, action }) => (
-                  <div key={gate.key} className="flex flex-col rounded-lg border border-red-200 bg-red-50/40 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-bold text-slate-950">{gate.label}</div>
-                      <Badge tone="red">blocked</Badge>
-                    </div>
-                    <p className="mt-2 flex-1 text-sm text-slate-600">{gate.reason}</p>
-                    <div className="mt-3">
-                      {action ? (
-                        <Link
-                          href={action.href}
-                          className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-xs font-bold text-white transition-[filter] hover:brightness-[1.03]"
-                        >
-                          {action.cta}
-                          <ArrowRight size={14} aria-hidden="true" />
-                        </Link>
-                      ) : (
-                        <span className="text-xs font-semibold text-slate-600">{gate.next_action}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {readyGates.length > 0 && (
+          <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Ready · {readyGates.length}</h3>
-              <div className="grid gap-2 md:grid-cols-2">
-                {readyGates.map((gate) => (
-                  <div key={gate.key} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
-                    <CheckCircle2 size={16} className="shrink-0 text-emerald-500" aria-hidden="true" />
-                    <span className="text-sm font-semibold text-slate-700">{gate.label}</span>
-                  </div>
-                ))}
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">
+                {readyGates.length} of {readinessGatesAll.length} checks ready
               </div>
             </div>
-          )}
-        </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Policy level</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">Level {policy?.autopilot_level ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Safe mode</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">
+                {openSafeModeCount > 0 || policy?.safe_mode_enabled ? "Active" : "Clear"}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Emergency stop</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">{policy?.kill_switch_enabled ? "On" : "Off"}</div>
+            </div>
+          </div>
 
-        <div id="automation-policy" className="rounded-xl border border-slate-200 bg-white p-4">
-          <SectionHeader title="Policy controls" eyebrow="Automation policy" />
-          <p className="mb-4 text-sm text-slate-600">Autopilot level, policy budget, safe mode, and kill switch live here. This budget edits the Autopilot policy limit, not the project config budget.</p>
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="block text-sm font-semibold text-slate-700">
-              Autopilot level
-              <input
-                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2"
-                type="number"
-                min={0}
-                max={2}
-                defaultValue={policy?.autopilot_level ?? 0}
-                onBlur={(event) => saveAutomationPolicy({ autopilot_level: Math.max(0, Math.min(2, Number(event.target.value) || 0)) })}
-              />
-            </label>
-            <label className="block text-sm font-semibold text-slate-700">
-              Autopilot budget
-              <input
-                className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2"
-                type="number"
-                min={0}
-                defaultValue={policyBudgetLimit}
-                onBlur={(event) => saveAutomationPolicy({ monthly_budget_limit: Math.max(0, Number(event.target.value) || 0) })}
-              />
-            </label>
-            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
-              <input
-                type="checkbox"
-                checked={Boolean(policy?.kill_switch_enabled)}
-                onChange={(event) => saveAutomationPolicy({ kill_switch_enabled: event.target.checked })}
-              />
-              Kill switch enabled
-            </label>
-            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
-              <input
-                type="checkbox"
-                checked={Boolean(policy?.safe_mode_enabled)}
-                onChange={(event) => saveAutomationPolicy({ safe_mode_enabled: event.target.checked })}
-              />
-              Safe mode enabled
-            </label>
+          <div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-950">Readiness checks</h3>
+                <p className="mt-1 text-sm text-slate-500">Open a square check card to understand the blocker, confirm the policy, or jump to the right setup surface.</p>
+              </div>
+              <Badge tone={blockedGates.length > 0 ? "red" : "green"}>
+                {blockedGates.length > 0 ? `${blockedGates.length} blocked` : "Ready for Level 2"}
+              </Badge>
+            </div>
+            <span id="automation-policy" className="sr-only" aria-hidden="true" />
+            <span id="recovery-plan" className="sr-only" aria-hidden="true" />
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {automationReadinessCards.map((card) => (
+                <button
+                  type="button"
+                  key={card.id}
+                  id={`automation-card-${card.id}`}
+                  onClick={() => openAutomationCheck(card.id)}
+                  aria-label={`Open ${card.title} details`}
+                  className={cx(
+                    "aspect-square rounded-lg border p-4 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-300",
+                    card.blocked
+                      ? "border-red-200 bg-red-50 text-red-950"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-950",
+                  )}
+                >
+                  <div className="flex h-full flex-col justify-between">
+                    <div className="flex items-start justify-between gap-3">
+                      <span
+                        className={cx(
+                          "inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white/80",
+                          card.blocked ? "text-red-700" : "text-emerald-700",
+                        )}
+                      >
+                        {card.blocked ? <AlertTriangle size={18} aria-hidden="true" /> : <CheckCircle2 size={18} aria-hidden="true" />}
+                      </span>
+                      <Badge tone={card.blocked ? "red" : "green"}>{card.blocked ? "Blocked" : "Done"}</Badge>
+                    </div>
+                    <div>
+                      <div className="text-base font-bold leading-5">{card.title}</div>
+                      <p className="mt-2 text-sm leading-5 opacity-80">{card.summary}</p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div id="recovery-plan" className="rounded-xl border border-slate-200 bg-white p-4">
-          <SectionHeader
-            title="Recovery plan"
-            eyebrow="Manual rollback"
-            action={<Badge tone={policy?.recovery_plan_acknowledged_at ? "green" : "amber"}>{policy?.recovery_plan_acknowledged_at ? "acknowledged" : "needs acknowledgement"}</Badge>}
-          />
-          <p className="mb-4 text-sm text-slate-600">Manual rollback is required unless publisher rollback is available. Acknowledgement allows CiteLoop to attach manual recovery instructions to guarded actions.</p>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" onClick={acknowledgeRecoveryPlan} disabled={busy}>
-              Confirm recovery plan
-            </Button>
-            <span className="text-sm text-slate-500">
-              {policy?.recovery_plan_acknowledged_at ? "Recovery acknowledgement is recorded on the Autopilot policy." : "Required when publisher rollback capability is not available."}
-            </span>
+        {selectedAutomationCard && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="automation-check-modal-title"
+              aria-describedby="automation-check-modal-detail"
+              className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Automation check details</div>
+                  <h3 id="automation-check-modal-title" className="mt-1 text-xl font-bold text-slate-950">
+                    {selectedAutomationCard.title}
+                  </h3>
+                  <p id="automation-check-modal-detail" className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+                    {selectedAutomationCard.summary}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAutomationCheck(null)}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                  aria-label="Close automation check details"
+                >
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto px-5 py-4">
+                {selectedAutomationCard.id === "autopilot_policy_confirmed" || selectedAutomationCard.id === "monthly_budget_configured" ? (
+                  <div className="space-y-5">
+                    <Notice
+                      tone={selectedAutomationCard.blocked ? "amber" : "green"}
+                      title="Automation Policy"
+                      detail="Policy level, Autopilot budget, safe mode, and emergency stop decide what CiteLoop can do without asking first."
+                    />
+
+                    <div>
+                      <div className="mb-2 text-sm font-bold text-slate-950">Policy level</div>
+                      <div className="grid gap-2">
+                        {automationPolicyLevels.map((level) => {
+                          const selected = policyDraft.autopilot_level === level.value;
+                          return (
+                            <button
+                              type="button"
+                              key={level.value}
+                              disabled={!level.available || busy}
+                              onClick={() => setPolicyDraft((current) => ({ ...current, autopilot_level: level.value }))}
+                              className={cx(
+                                "rounded-lg border px-3 py-3 text-left transition-colors",
+                                selected ? "border-[#d93820] bg-red-50" : "border-slate-200 bg-white hover:bg-slate-50",
+                                !level.available && "cursor-not-allowed opacity-55",
+                              )}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm font-bold text-slate-950">{level.title}</span>
+                                <Badge tone={level.available ? "neutral" : "amber"}>{level.mode}</Badge>
+                              </div>
+                              <p className="mt-1 text-sm leading-5 text-slate-500">{level.detail}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field label="Autopilot budget" helper="This edits the Autopilot policy limit, not the project config budget.">
+                        <TextInput
+                          type="number"
+                          min={0}
+                          value={policyDraft.monthly_budget_limit}
+                          onChange={(event) =>
+                            setPolicyDraft((current) => ({ ...current, monthly_budget_limit: Math.max(0, Number(event.target.value) || 0) }))
+                          }
+                        />
+                      </Field>
+                      <div className="grid gap-2">
+                        <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={policyDraft.kill_switch_enabled}
+                            disabled={busy}
+                            onChange={(event) => setPolicyDraft((current) => ({ ...current, kill_switch_enabled: event.target.checked }))}
+                          />
+                          <span>
+                            <span className="block font-bold text-slate-900">Emergency stop</span>
+                            <span className="mt-1 block text-slate-500">
+                              {policyDraft.kill_switch_enabled ? "Emergency stop is on. Automation is paused." : "Emergency stop is off. Eligible automation may run."}
+                            </span>
+                          </span>
+                        </label>
+                        <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={policyDraft.safe_mode_enabled}
+                            disabled={busy}
+                            onChange={(event) => setPolicyDraft((current) => ({ ...current, safe_mode_enabled: event.target.checked }))}
+                          />
+                          <span>
+                            <span className="block font-bold text-slate-900">Safe mode</span>
+                            <span className="mt-1 block text-slate-500">
+                              {policyDraft.safe_mode_enabled ? "Safe mode is active. CiteLoop pauses guarded execution." : "Safe mode is clear."}
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <Notice
+                      title="Review and save policy changes"
+                      detail="Nothing in this modal saves until you press Save policy. The board refreshes after the backend confirms the policy."
+                    />
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why this matters</div>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{selectedAutomationCard.impact}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current status</div>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{selectedAutomationCard.reason}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next step</div>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{selectedAutomationCard.nextAction}</p>
+                    </div>
+                    {selectedAutomationCard.id === "safe_mode_clear" && (openSafeModeEvents.length > 0 || policy?.safe_mode_enabled) && (
+                      <div className="rounded-lg border border-slate-200 bg-white p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Open safe mode events</div>
+                        {openSafeModeEvents.length > 0 ? (
+                          <div className="mt-3 grid gap-2">
+                            {openSafeModeEvents.map((event) => (
+                              <div key={event.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                                <div className="font-bold text-slate-900">{event.reason || "Safe mode is active"}</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {event.trigger_source || "manual"} · entered {formatDate(event.entered_at)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            No open safe mode events remain. The policy-level safe mode switch is still on.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+                <Button variant="ghost" onClick={() => setSelectedAutomationCheck(null)} disabled={busy}>
+                  Close
+                </Button>
+                {selectedAutomationCard.id === "autopilot_policy_confirmed" || selectedAutomationCard.id === "monthly_budget_configured" ? (
+                  <Button variant="primary" onClick={savePolicyDraft} disabled={busy || !policy}>
+                    <ButtonProgress busy={busy} busyLabel="Saving policy" idleIcon={<Save size={16} />}>
+                      Save policy
+                    </ButtonProgress>
+                  </Button>
+                ) : selectedAutomationCard.blocked ? (
+                  <Button
+                    variant="primary"
+                    onClick={() => handleAutomationCheckAction(selectedAutomationCard.id, selectedAutomationCard.action?.href)}
+                    disabled={busy}
+                  >
+                    <ButtonProgress busy={busy} busyLabel="Updating" idleIcon={<ArrowRight size={16} />}>
+                      {selectedAutomationCard.id === "kill_switch_clear"
+                        ? "Turn off emergency stop"
+                        : selectedAutomationCard.id === "safe_mode_clear"
+                          ? "Exit safe mode"
+                          : selectedAutomationCard.id === "rollback_or_recovery_ready"
+                            ? "Confirm recovery plan"
+                            : selectedAutomationCard.action?.cta ?? "Fix check"}
+                    </ButtonProgress>
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={() => setSelectedAutomationCheck(null)}>
+                    Confirm
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </section>
       )}
 
@@ -1451,7 +1804,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
       {activeSettingsTab === "notifications" && (
       <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0} className="space-y-7">
-        <div>
+        <div id="notifications">
           <SectionHeader
             title="Subscriptions"
             eyebrow="Operations"
@@ -1464,6 +1817,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           />
 
         <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-sm font-bold text-slate-950">Set notifications</div>
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-600">
+              Automation needs a notification channel. Failures, approval requests, safe mode alerts, and delivery problems should reach an operator.
+              Add a Slack or Discord webhook, then send a test notification to verify it.
+            </p>
+          </div>
+
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <Bell size={16} />
             Channels
@@ -1508,8 +1869,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           </div>
 
           {channels.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-5 text-sm font-semibold text-slate-500">
-              No channels
+            <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-5 text-sm">
+              <div className="font-bold text-slate-900">Automation needs a notification channel</div>
+              <p className="mt-1 max-w-2xl leading-5 text-slate-500">
+                Failures, approval requests, safe mode alerts, and delivery problems should reach an operator. Add a Slack or Discord webhook, then
+                send a test notification to verify it.
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-slate-200">
