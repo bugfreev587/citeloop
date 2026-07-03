@@ -350,6 +350,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     if (typeof window === "undefined") return null;
     return automationCheckIdFromHash(window.location.hash);
   });
+  const [reviewedRecoveryPlan, setReviewedRecoveryPlan] = useState(false);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -362,6 +363,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     function syncTabFromHash() {
       setActiveSettingsTab(settingsTabFromHash(window.location.hash));
+      setReviewedRecoveryPlan(false);
       setSelectedAutomationCheck(automationCheckIdFromHash(window.location.hash));
     }
 
@@ -382,13 +384,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   function activateSettingsTab(tabId: SettingsTabId) {
     setActiveSettingsTab(tabId);
-    setSelectedAutomationCheck(null);
+    closeAutomationCheck();
     window.history.replaceState(null, "", `#${tabId}`);
   }
 
   function openSettingsAnchor(target: string) {
     const nextHash = target.includes("#") ? `#${target.split("#").pop()}` : target.startsWith("#") ? target : `#${target}`;
     setActiveSettingsTab(settingsTabFromHash(nextHash));
+    setReviewedRecoveryPlan(false);
     setSelectedAutomationCheck(automationCheckIdFromHash(nextHash));
     window.history.replaceState(null, "", nextHash);
     window.requestAnimationFrame(() => {
@@ -397,7 +400,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   function openAutomationCheck(checkId: string) {
+    setReviewedRecoveryPlan(false);
     setSelectedAutomationCheck(checkId);
+  }
+
+  function closeAutomationCheck() {
+    setReviewedRecoveryPlan(false);
+    setSelectedAutomationCheck(null);
   }
 
   const refresh = useCallback(async () => {
@@ -553,11 +562,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   async function acknowledgeRecoveryPlan() {
+    if (!reviewedRecoveryPlan) {
+      setReviewedRecoveryPlan(true);
+      return;
+    }
     const saved = await saveAutomationPolicy({
       recovery_plan_acknowledged: true,
       recovery_plan_acknowledged_by: "human",
     });
-    if (saved) setSelectedAutomationCheck(null);
+    if (saved) closeAutomationCheck();
   }
 
   async function savePolicyDraft() {
@@ -567,12 +580,26 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       kill_switch_enabled: policyDraft.kill_switch_enabled,
       safe_mode_enabled: policyDraft.safe_mode_enabled,
     });
-    if (saved) setSelectedAutomationCheck(null);
+    if (saved) closeAutomationCheck();
   }
 
   function openPolicyCheck(nextDraft: Partial<PolicyDraft> = {}) {
     setPolicyDraft((current) => ({ ...current, ...nextDraft }));
+    setReviewedRecoveryPlan(false);
     setSelectedAutomationCheck("autopilot_policy_confirmed");
+  }
+
+  function reviewRecoveryPlan() {
+    setReviewedRecoveryPlan(true);
+    window.requestAnimationFrame(() => {
+      document.getElementById("recovery-plan-review")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
+
+  function returnToRecoveryCheck() {
+    window.requestAnimationFrame(() => {
+      document.getElementById("recovery-plan-return")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
   }
 
   async function exitOpenSafeModeEvents() {
@@ -602,7 +629,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       if (policy?.safe_mode_enabled) {
         openPolicyCheck({ safe_mode_enabled: false });
       } else {
-        setSelectedAutomationCheck(null);
+        closeAutomationCheck();
       }
     } catch (e: any) {
       notify({ title: "Could not clear safe mode", detail: friendlyError(e.message), tone: "red" });
@@ -621,6 +648,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       return;
     }
     if (checkId === "rollback_or_recovery_ready") {
+      if (!reviewedRecoveryPlan) {
+        reviewRecoveryPlan();
+        return;
+      }
       await acknowledgeRecoveryPlan();
       return;
     }
@@ -1129,7 +1160,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedAutomationCheck(null)}
+                  onClick={closeAutomationCheck}
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
                   aria-label="Close automation check details"
                 >
@@ -1242,6 +1273,47 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next step</div>
                       <p className="mt-2 text-sm leading-6 text-slate-700">{selectedAutomationCard.nextAction}</p>
                     </div>
+                    {selectedAutomationCard.id === "rollback_or_recovery_ready" && (
+                      <>
+                        <div id="recovery-plan-return" className="rounded-lg border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Settings - automation - recovery plan</div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            Review the manual recovery plan before acknowledging it. The confirmation stays in this dialog so you can return here
+                            after review and complete the check.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={reviewRecoveryPlan}
+                            className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                          >
+                            Review recovery plan
+                            <ArrowRight size={15} aria-hidden="true" />
+                          </button>
+                        </div>
+                        {reviewedRecoveryPlan && (
+                          <div id="recovery-plan-review" className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Manual recovery plan</div>
+                            <div className="mt-3 grid gap-3 text-sm leading-6 text-slate-700">
+                              <p>
+                                If a guarded action causes a publishing issue, pause automation, use the publisher history or repository history to
+                                identify the change, then revert the affected file or page before resuming automation.
+                              </p>
+                              <p>
+                                Keep the related action, run, and notification records open while recovering so the operator can verify what changed
+                                and record the recovery result.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={returnToRecoveryCheck}
+                              className="mt-3 inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                              Return to recovery check
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
                     {selectedAutomationCard.id === "safe_mode_clear" && (openSafeModeEvents.length > 0 || policy?.safe_mode_enabled) && (
                       <div className="rounded-lg border border-slate-200 bg-white p-4">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Open safe mode events</div>
@@ -1268,7 +1340,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </div>
 
               <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
-                <Button variant="ghost" onClick={() => setSelectedAutomationCheck(null)} disabled={busy}>
+                <Button variant="ghost" onClick={closeAutomationCheck} disabled={busy}>
                   Close
                 </Button>
                 {selectedAutomationCard.id === "autopilot_policy_confirmed" || selectedAutomationCard.id === "monthly_budget_configured" ? (
@@ -1286,15 +1358,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                     <ButtonProgress busy={busy} busyLabel="Updating" idleIcon={<ArrowRight size={16} />}>
                       {selectedAutomationCard.id === "kill_switch_clear"
                         ? "Review emergency stop"
-                        : selectedAutomationCard.id === "safe_mode_clear"
-                          ? "Exit safe mode"
-                          : selectedAutomationCard.id === "rollback_or_recovery_ready"
-                            ? "Confirm recovery plan"
-                            : selectedAutomationCard.action?.cta ?? "Fix check"}
+                          : selectedAutomationCard.id === "safe_mode_clear"
+                            ? "Exit safe mode"
+                            : selectedAutomationCard.id === "rollback_or_recovery_ready"
+                              ? reviewedRecoveryPlan
+                                ? "Confirm recovery plan"
+                                : "Review recovery plan"
+                              : selectedAutomationCard.action?.cta ?? "Fix check"}
                     </ButtonProgress>
                   </Button>
                 ) : (
-                  <Button variant="primary" onClick={() => setSelectedAutomationCheck(null)}>
+                  <Button variant="primary" onClick={closeAutomationCheck}>
                     Confirm
                   </Button>
                 )}

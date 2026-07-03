@@ -1361,6 +1361,27 @@ test("automation policy is edited from a confirmable modal instead of auto-savin
   assert.doesNotMatch(settings, />\s*Turn off emergency stop\s*</);
 });
 
+test("recovery plan check requires review before acknowledgement", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const expected of [
+    "reviewedRecoveryPlan",
+    "Review recovery plan",
+    "Manual recovery plan",
+    "Return to recovery check",
+    "Settings - automation - recovery plan",
+    "recovery-plan-review",
+    "recovery-plan-return",
+    "recovery_plan_acknowledged",
+  ]) {
+    assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
+  }
+
+  assert.match(settings, /selectedAutomationCard\.id === "rollback_or_recovery_ready"[\s\S]*reviewedRecoveryPlan/);
+  assert.match(settings, /Confirm recovery plan/);
+  assert.doesNotMatch(settings, /selectedAutomationCard\.id === "rollback_or_recovery_ready"\s*\?\s*"Confirm recovery plan"/);
+});
+
 test("notifications setup has an empty state that explains the automation gate", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   const notificationsPanel = settings.slice(settings.indexOf('id="settings-panel-notifications"'));
