@@ -1335,10 +1335,17 @@ test("automation policy is edited from a confirmable modal instead of auto-savin
     "Save policy",
     "Review and save policy changes",
     "Emergency stop is on",
-    "Turn off emergency stop",
+    "Review emergency stop",
+    "openPolicyCheck",
+    'setSelectedAutomationCheck("autopilot_policy_confirmed")',
+    "Promise<boolean>",
+    "return true",
+    "return false",
     "exitOpenSafeModeEvents",
     "api.exitSafeMode",
     "Open safe mode events",
+    "Safe mode policy switch is on",
+    "open safe mode event",
   ]) {
     assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
   }
@@ -1349,6 +1356,9 @@ test("automation policy is edited from a confirmable modal instead of auto-savin
   assert.doesNotMatch(settings, /onBlur=\{\(event\) => saveAutomationPolicy/);
   assert.doesNotMatch(settings, /onChange=\{\(event\) => saveAutomationPolicy\(\{ kill_switch_enabled/);
   assert.doesNotMatch(settings, /onChange=\{\(event\) => saveAutomationPolicy\(\{ safe_mode_enabled/);
+  assert.doesNotMatch(settings, /saveAutomationPolicy\(\{ kill_switch_enabled: false/);
+  assert.doesNotMatch(settings, /api\.updateSEOPolicy\(projectId, \{ \.\.\.policy, safe_mode_enabled: false \}\)/);
+  assert.doesNotMatch(settings, />\s*Turn off emergency stop\s*</);
 });
 
 test("notifications setup has an empty state that explains the automation gate", () => {

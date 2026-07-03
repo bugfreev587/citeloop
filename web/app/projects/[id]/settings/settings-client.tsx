@@ -535,41 +535,52 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     refreshAutomation();
   }, [refreshAutomation]);
 
-  async function saveAutomationPolicy(next: SEOPolicyUpdateInput) {
-    if (!policy) return;
+  async function saveAutomationPolicy(next: SEOPolicyUpdateInput): Promise<boolean> {
+    if (!policy) return false;
     setBusy(true);
     try {
       const saved = await api.updateSEOPolicy(projectId, { ...policy, ...next });
       setPolicy(saved);
       await refreshAutomation();
       notify({ title: "Automation policy saved", tone: "green" });
+      return true;
     } catch (e: any) {
-      notify({ title: "Could not save automation policy", detail: e.message, tone: "red" });
+      notify({ title: "Could not save automation policy", detail: friendlyError(e.message), tone: "red" });
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   async function acknowledgeRecoveryPlan() {
-    await saveAutomationPolicy({
+    const saved = await saveAutomationPolicy({
       recovery_plan_acknowledged: true,
       recovery_plan_acknowledged_by: "human",
     });
-    setSelectedAutomationCheck(null);
+    if (saved) setSelectedAutomationCheck(null);
   }
 
   async function savePolicyDraft() {
-    await saveAutomationPolicy({
+    const saved = await saveAutomationPolicy({
       autopilot_level: Math.max(0, Math.min(2, policyDraft.autopilot_level)),
       monthly_budget_limit: Math.max(0, policyDraft.monthly_budget_limit),
       kill_switch_enabled: policyDraft.kill_switch_enabled,
       safe_mode_enabled: policyDraft.safe_mode_enabled,
     });
-    setSelectedAutomationCheck(null);
+    if (saved) setSelectedAutomationCheck(null);
+  }
+
+  function openPolicyCheck(nextDraft: Partial<PolicyDraft> = {}) {
+    setPolicyDraft((current) => ({ ...current, ...nextDraft }));
+    setSelectedAutomationCheck("autopilot_policy_confirmed");
   }
 
   async function exitOpenSafeModeEvents() {
     const openEvents = safeModeEvents.filter((event) => !event.exited_at);
+    if (openEvents.length === 0) {
+      openPolicyCheck({ safe_mode_enabled: false });
+      return;
+    }
     setBusy(true);
     try {
       await Promise.all(
@@ -580,20 +591,19 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           }),
         ),
       );
-      if (policy?.safe_mode_enabled) {
-        const saved = await api.updateSEOPolicy(projectId, { ...policy, safe_mode_enabled: false });
-        setPolicy(saved);
-      }
       await refreshAutomation();
       notify({
-        title: "Safe mode cleared",
-        detail:
-          openEvents.length > 0
-            ? `${openEvents.length} open safe mode event${openEvents.length === 1 ? "" : "s"} exited.`
-            : "Safe mode policy is clear.",
+        title: policy?.safe_mode_enabled ? "Safe mode events exited" : "Safe mode cleared",
+        detail: policy?.safe_mode_enabled
+          ? "Open events were exited. Save the policy to turn off the policy-level safe mode switch."
+          : `${openEvents.length} open safe mode event${openEvents.length === 1 ? "" : "s"} exited.`,
         tone: "green",
       });
-      setSelectedAutomationCheck(null);
+      if (policy?.safe_mode_enabled) {
+        openPolicyCheck({ safe_mode_enabled: false });
+      } else {
+        setSelectedAutomationCheck(null);
+      }
     } catch (e: any) {
       notify({ title: "Could not clear safe mode", detail: friendlyError(e.message), tone: "red" });
     } finally {
@@ -603,8 +613,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   async function handleAutomationCheckAction(checkId: string, href?: string) {
     if (checkId === "kill_switch_clear") {
-      await saveAutomationPolicy({ kill_switch_enabled: false });
-      setSelectedAutomationCheck(null);
+      openPolicyCheck({ kill_switch_enabled: false });
       return;
     }
     if (checkId === "safe_mode_clear") {
@@ -1203,7 +1212,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                           <span>
                             <span className="block font-bold text-slate-900">Safe mode</span>
                             <span className="mt-1 block text-slate-500">
-                              {policyDraft.safe_mode_enabled ? "Safe mode is active. CiteLoop pauses guarded execution." : "Safe mode is clear."}
+                              {policyDraft.safe_mode_enabled
+                                ? "Safe mode policy switch is on. CiteLoop pauses guarded execution."
+                                : openSafeModeCount > 0
+                                  ? `${openSafeModeCount} open safe mode event${openSafeModeCount === 1 ? "" : "s"} still block automation. Exit them from the Safe mode card.`
+                                  : "Safe mode policy switch is off."}
                             </span>
                           </span>
                         </label>
@@ -1272,7 +1285,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   >
                     <ButtonProgress busy={busy} busyLabel="Updating" idleIcon={<ArrowRight size={16} />}>
                       {selectedAutomationCard.id === "kill_switch_clear"
-                        ? "Turn off emergency stop"
+                        ? "Review emergency stop"
                         : selectedAutomationCard.id === "safe_mode_clear"
                           ? "Exit safe mode"
                           : selectedAutomationCard.id === "rollback_or_recovery_ready"
