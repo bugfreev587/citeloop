@@ -77,6 +77,15 @@ export const READINESS_GATE_ACTIONS: Record<string, GateAction> = {
     priorityBeforeLevel2: "P1",
     rank: 28,
   },
+  automation_pause_clear: {
+    title: "Automation is paused",
+    cta: "Resume automation",
+    href: (projectId) => `/projects/${projectId}/settings#automation-status`,
+    category: "Blocking now",
+    priorityWhenLevel2: "P0",
+    priorityBeforeLevel2: "P1",
+    rank: 14,
+  },
   monthly_budget_configured: {
     // Budget gate reads SEOPolicy.monthly_budget_limit, edited in Settings Automation policy,
     // NOT the separate project-config budget field. The CTA must land on #automation-policy.

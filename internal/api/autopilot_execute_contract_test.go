@@ -29,6 +29,8 @@ func TestAutopilotExecuteContractRequiresGuardsAuditAndRollback(t *testing.T) {
 	for _, want := range []string{
 		"executeAutopilotPlan",
 		"auto_publish_allowed",
+		"!policy.AutomationPaused",
+		"automation_paused",
 		"guardrail_results",
 		"autopilot_audit_events",
 		"manual_rollback_required",

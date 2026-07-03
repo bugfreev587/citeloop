@@ -33,10 +33,13 @@ func TestAutopilotReadinessContractMentionsPhase5Gates(t *testing.T) {
 		"publisher_write",
 		"notification_write",
 		"autopilot_policy_confirmed",
+		"automation_pause_clear",
 		"monthly_budget_configured",
 		"safe_mode_clear",
 		"kill_switch_clear",
 		"rollback_or_recovery_ready",
+		"automation_paused",
+		"Automation paused",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("readiness contract missing %q", want)
