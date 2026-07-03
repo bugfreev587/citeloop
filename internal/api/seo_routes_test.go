@@ -38,8 +38,14 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "doctor run detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/doctor/runs/not-an-id"},
 		{name: "doctor run findings", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/doctor/runs/not-an-id/findings"},
 		{name: "doctor latest", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/doctor/latest"},
-		{name: "doctor convert finding", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/doctor/findings/not-an-id/convert"},
 		{name: "doctor dismiss finding", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/doctor/findings/not-an-id/dismiss"},
+		{name: "doctor canonical summary", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor"},
+		{name: "doctor canonical create run", method: http.MethodPost, path: "/api/projects/not-a-uuid/doctor/runs"},
+		{name: "doctor canonical run detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor/runs/not-an-id"},
+		{name: "doctor canonical run findings", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor/runs/not-an-id/findings"},
+		{name: "doctor canonical latest", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor/latest"},
+		{name: "doctor canonical dismiss finding", method: http.MethodPost, path: "/api/projects/not-a-uuid/doctor/findings/not-an-id/dismiss"},
+		{name: "doctor canonical start growth loop", method: http.MethodPost, path: "/api/projects/not-a-uuid/doctor/runs/not-an-id/start-growth-loop"},
 		{name: "settings", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/settings"},
 		{name: "update settings", method: http.MethodPut, path: "/api/projects/not-a-uuid/seo/settings"},
 		{name: "gsc connection", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/gsc/connection"},
@@ -72,6 +78,19 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestLegacyDoctorConvertRouteIsNotRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.New().String()
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/seo/doctor/findings/"+uuid.New().String()+"/convert", nil)
+	res := httptest.NewRecorder()
+
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("legacy convert route status = %d, want %d", res.Code, http.StatusNotFound)
 	}
 }
 

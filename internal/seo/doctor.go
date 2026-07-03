@@ -51,10 +51,9 @@ type DoctorRunRequest struct {
 }
 
 type DoctorReport struct {
-	Run                db.SeoDoctorRun       `json:"run"`
-	Findings           []db.SeoDoctorFinding `json:"findings"`
-	Human              DoctorHumanReport     `json:"human_report"`
-	AICodingToolReport DoctorAIReport        `json:"ai_coding_tool_report"`
+	Run      db.SeoDoctorRun       `json:"run"`
+	Findings []db.SeoDoctorFinding `json:"findings"`
+	Human    DoctorHumanReport     `json:"human_report"`
 }
 
 type DoctorHumanReport struct {
@@ -63,27 +62,6 @@ type DoctorHumanReport struct {
 	Summary     string         `json:"summary"`
 	IssueCounts map[string]int `json:"issue_counts"`
 	CheckedURLs int            `json:"checked_urls"`
-}
-
-type DoctorAIReport struct {
-	SchemaVersion string                  `json:"schema_version"`
-	RunID         uuid.UUID               `json:"run_id"`
-	HealthScore   int                     `json:"health_score"`
-	Findings      []DoctorAIReportFinding `json:"findings"`
-}
-
-type DoctorAIReportFinding struct {
-	ID                    uuid.UUID `json:"id"`
-	FindingKey            string    `json:"finding_key"`
-	Severity              string    `json:"severity"`
-	IssueType             string    `json:"issue_type"`
-	AffectedURLs          []string  `json:"affected_urls"`
-	Evidence              any       `json:"evidence"`
-	FixIntent             string    `json:"fix_intent"`
-	DeveloperInstructions string    `json:"developer_instructions"`
-	LikelyFilesOrSurfaces []string  `json:"likely_files_or_surfaces"`
-	AcceptanceTests       []string  `json:"acceptance_tests"`
-	ReviewRequired        bool      `json:"review_required"`
 }
 
 type doctorFindingCandidate struct {
@@ -134,7 +112,6 @@ var doctorStageStarts = map[DoctorStage]int{
 	DoctorStageChecking:      50,
 	DoctorStageClassifying:   75,
 	DoctorStageWritingReport: 88,
-	DoctorStageHandoff:       95,
 	DoctorStageCompleted:     100,
 }
 
@@ -145,7 +122,6 @@ var doctorStageOrder = []DoctorStage{
 	DoctorStageChecking,
 	DoctorStageClassifying,
 	DoctorStageWritingReport,
-	DoctorStageHandoff,
 	DoctorStageCompleted,
 }
 
@@ -184,7 +160,7 @@ func (s Service) StartDoctorRun(ctx context.Context, req DoctorRunRequest) (db.S
 		Status:          "queued",
 		Stage:           string(DoctorStageQueued),
 		ProgressPercent: 0,
-		Message:         "SEO Doctor is queued.",
+		Message:         "Doctor is queued.",
 		InputSnapshot: mustJSON(map[string]any{
 			"site_url": strings.TrimSpace(req.SiteURL),
 			"trigger":  trigger,
@@ -284,7 +260,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 			NormalizedURLs: []string{siteURL},
 			Evidence:       map[string]any{"source": "technical_checks", "checked_urls": len(checks)},
 			FixIntent:      "No repair needed.",
-			WhyItMatters:   "SEO Doctor did not find an active technical blocker in the current scan window.",
+			WhyItMatters:   "Doctor did not find an active technical blocker in the current scan window.",
 		})
 	}
 	seenKeys := make([]string, 0, len(candidates))
@@ -314,7 +290,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	run, err = s.Q.CompleteSEODoctorRun(ctx, db.CompleteSEODoctorRunParams{
 		ID:              run.ID,
 		ProjectID:       run.ProjectID,
-		Message:         "SEO Doctor report is ready.",
+		Message:         "Doctor report is ready.",
 		PagesDiscovered: pages,
 		PagesFetched:    pages,
 		PagesChecked:    pages,
@@ -362,18 +338,49 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 	human := buildDoctorHumanReport(score, candidates, int(run.PagesChecked))
 	human.Status = doctorDisplayStatus(score, candidates)
 	return DoctorReport{
-		Run:                run,
-		Findings:           nonNilSlice(findings),
-		Human:              human,
-		AICodingToolReport: buildDoctorAIReport(run, findings, score),
+		Run:      run,
+		Findings: nonNilSlice(findings),
+		Human:    human,
 	}, nil
 }
 
-func (s Service) ConvertDoctorFinding(ctx context.Context, projectID, findingID uuid.UUID) (db.ContentAction, error) {
-	finding, err := s.Q.GetSEODoctorFinding(ctx, db.GetSEODoctorFindingParams{ID: findingID, ProjectID: projectID})
-	if err != nil {
-		return db.ContentAction{}, err
+func (s Service) StartDoctorGrowthLoop(ctx context.Context, projectID, runID uuid.UUID, findingIDs []uuid.UUID) ([]db.ContentAction, error) {
+	if s.Q == nil {
+		return nil, errors.New("database unavailable")
 	}
+	if len(findingIDs) == 0 {
+		return nil, errors.New("selected doctor findings required")
+	}
+	actions := make([]db.ContentAction, 0, len(findingIDs))
+	seen := make(map[uuid.UUID]bool, len(findingIDs))
+	for _, findingID := range findingIDs {
+		if findingID == uuid.Nil || seen[findingID] {
+			continue
+		}
+		seen[findingID] = true
+		finding, err := s.Q.GetSEODoctorFinding(ctx, db.GetSEODoctorFindingParams{ID: findingID, ProjectID: projectID})
+		if err != nil {
+			return nil, err
+		}
+		if finding.RunID != runID {
+			return nil, fmt.Errorf("doctor finding does not belong to run")
+		}
+		if finding.Status != "active" {
+			return nil, fmt.Errorf("doctor finding is not active")
+		}
+		action, err := s.convertDoctorFinding(ctx, projectID, finding)
+		if err != nil {
+			return nil, err
+		}
+		actions = append(actions, action)
+	}
+	if len(actions) == 0 {
+		return nil, errors.New("selected doctor findings required")
+	}
+	return actions, nil
+}
+
+func (s Service) convertDoctorFinding(ctx context.Context, projectID uuid.UUID, finding db.SeoDoctorFinding) (db.ContentAction, error) {
 	urls := jsonStringArray(finding.AffectedUrls)
 	normalized := firstString(jsonStringArray(finding.NormalizedUrls))
 	pageURL := firstString(urls)
@@ -383,7 +390,7 @@ func (s Service) ConvertDoctorFinding(ctx context.Context, projectID, findingID 
 	}
 	impact := strings.TrimSpace(finding.WhyItMatters)
 	if impact == "" {
-		impact = "Fix a technical SEO issue found by SEO Doctor."
+		impact = "Fix a technical SEO issue found by Doctor."
 	}
 	opp, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
 		ProjectID:         projectID,
@@ -750,7 +757,7 @@ func (c doctorFindingCandidate) withDefaults() doctorFindingCandidate {
 		c.WhyItMatters = "This technical SEO issue can reduce crawl, index, preview, or report reliability."
 	}
 	if c.FixIntent == "" {
-		c.FixIntent = "Fix the technical SEO issue and rerun SEO Doctor."
+		c.FixIntent = "Fix the technical SEO issue and rerun Doctor."
 	}
 	if c.DeveloperInstructions == "" {
 		c.DeveloperInstructions = developerInstructionForIssue(c.IssueType)
@@ -796,31 +803,6 @@ func (c doctorFindingCandidate) upsertParams(projectID, runID uuid.UUID, seenAt 
 		LinkedContentActionID: c.LinkedContentActionID,
 		SeenAt:                seenAt,
 	}
-}
-
-func buildDoctorAIReport(run db.SeoDoctorRun, findings []db.SeoDoctorFinding, score int) DoctorAIReport {
-	out := DoctorAIReport{
-		SchemaVersion: "seo_doctor.ai_report.v1",
-		RunID:         run.ID,
-		HealthScore:   score,
-		Findings:      []DoctorAIReportFinding{},
-	}
-	for _, finding := range findings {
-		out.Findings = append(out.Findings, DoctorAIReportFinding{
-			ID:                    finding.ID,
-			FindingKey:            finding.FindingKey,
-			Severity:              finding.Severity,
-			IssueType:             finding.IssueType,
-			AffectedURLs:          jsonStringArray(finding.AffectedUrls),
-			Evidence:              jsonAny(finding.Evidence),
-			FixIntent:             finding.FixIntent,
-			DeveloperInstructions: finding.DeveloperInstructions,
-			LikelyFilesOrSurfaces: jsonStringArray(finding.LikelyFilesOrSurfaces),
-			AcceptanceTests:       jsonStringArray(finding.AcceptanceTests),
-			ReviewRequired:        finding.ReviewRequired,
-		})
-	}
-	return out
 }
 
 func doctorCandidatesFromRows(rows []db.SeoDoctorFinding) []doctorFindingCandidate {
@@ -921,7 +903,7 @@ func developerInstructionForIssue(issueType string) string {
 	case "soft_404":
 		return "Update routing, middleware, or not-found handling so missing paths return 404/410 instead of a homepage-like 200 response."
 	default:
-		return "Fix the affected SEO surface, deploy the change, and rerun SEO Doctor to verify resolution."
+		return "Fix the affected SEO surface, deploy the change, and rerun Doctor to verify resolution."
 	}
 }
 
@@ -940,7 +922,7 @@ func acceptanceTestsForIssue(issueType string) []string {
 	case "soft_404":
 		return []string{"Request two random missing URLs and verify both return 404 or 410."}
 	default:
-		return []string{"Rerun SEO Doctor and verify the finding is resolved."}
+		return []string{"Rerun Doctor and verify the finding is resolved."}
 	}
 }
 
@@ -1000,14 +982,6 @@ func jsonObject(raw json.RawMessage) map[string]any {
 		_ = json.Unmarshal(raw, &out)
 	}
 	return out
-}
-
-func jsonAny(raw json.RawMessage) any {
-	var out any
-	if len(raw) > 0 && json.Unmarshal(raw, &out) == nil {
-		return out
-	}
-	return map[string]any{}
 }
 
 func jsonStringArray(raw json.RawMessage) []string {

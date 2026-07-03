@@ -613,9 +613,9 @@ export function Workspace({ projectId }: { projectId: string }) {
       label: "Site health",
       value: doctorRunning ? `${doctorProgress}%` : doctorHealthScore == null ? "Run" : doctorHealthScore,
       detail: doctorRunning
-        ? `${doctorRun?.pages_checked ?? 0} URLs checked`
-        : doctorRun
-          ? `${doctorIssueCount} repair ${doctorIssueCount === 1 ? "item" : "items"}`
+          ? `${doctorRun?.pages_checked ?? 0} URLs checked`
+          : doctorRun
+          ? `${doctorIssueCount} diagnostic ${doctorIssueCount === 1 ? "item" : "items"}`
           : "Run Doctor for crawl and index checks",
       metricChangeLabel: doctorRunning
         ? doctorRun?.stage ?? "Running"

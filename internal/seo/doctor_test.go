@@ -72,6 +72,20 @@ func TestDoctorProgressInterpolatesWithinCheckingStage(t *testing.T) {
 	}
 }
 
+func TestDoctorProgressSequenceExcludesHandoffForNewRuns(t *testing.T) {
+	for _, stage := range doctorStageOrder {
+		if stage == DoctorStageHandoff {
+			t.Fatal("new Doctor run progress sequence must not enter handoff")
+		}
+	}
+	if _, ok := doctorStageStarts[DoctorStageHandoff]; ok {
+		t.Fatal("new Doctor run progress map must not expose handoff")
+	}
+	if progress := doctorProgressPercent(DoctorStageHandoff, 0, 0); progress != 0 {
+		t.Fatalf("legacy handoff progress = %d, want 0 for new-run interpolation", progress)
+	}
+}
+
 func TestDoctorSoft404HighConfidenceCanBeP0(t *testing.T) {
 	candidate := classifySoft404(soft404Evidence{
 		CanonicalHost:  true,
