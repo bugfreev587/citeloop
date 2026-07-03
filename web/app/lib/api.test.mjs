@@ -910,6 +910,7 @@ test("SEO APIs call project scoped endpoints", async () => {
     await client.listAutopilotPlans("project-1");
     await client.listSafeModeEvents("project-1");
     await client.enterSafeMode("project-1", { reason: "manual" });
+    await client.exitSafeMode("project-1", "safe-1", { exited_by: "human", exit_reason: "reviewed" });
 
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/overview");
     assert.equal(overview.capability_mode, "customer_site_pending_verification");
@@ -940,6 +941,9 @@ test("SEO APIs call project scoped endpoints", async () => {
     assert.equal(calls[14].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode");
     assert.equal(calls[15].init.method, "POST");
+    assert.equal(calls[16].url, "https://api.example.test/api/projects/project-1/seo/autopilot/safe-mode/safe-1/exit");
+    assert.equal(calls[16].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[16].init.body), { exited_by: "human", exit_reason: "reviewed" });
   } finally {
     globalThis.fetch = originalFetch;
   }

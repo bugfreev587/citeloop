@@ -1252,6 +1252,9 @@ test("settings deep links open the matching configuration tab", () => {
   assert.match(settings, /function settingsTabFromHash/);
   assert.match(settings, /window\.location\.hash/);
   assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(window\.location\.hash\)\)/);
+  assert.match(settings, /function openSettingsAnchor/);
+  assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(nextHash\)\)/);
+  assert.match(settings, /window\.history\.replaceState\(null, "", nextHash\)/);
   assert.match(settings, /function activateSettingsTab/);
   assert.match(settings, /window\.history\.replaceState/);
   assert.match(settings, /#\$\{tabId\}/);
@@ -1288,22 +1291,91 @@ test("automation readiness splits blocked from ready and gives every blocked gat
 
   for (const expected of [
     "readinessGateActionFor",
+    "automationReadinessCards",
+    "selectedAutomationCheck",
+    "openAutomationCheck",
     "const blockedGates",
     "const readyGates",
-    "Needs setup ·",
-    "Ready ·",
+    "Readiness checks",
     "checks ready",
-    // blocked gates render a clickable CTA, not just instruction text
-    "href={action.href}",
-    "{action.cta}",
+    "aspect-square",
+    "border-emerald-200 bg-emerald-50",
+    "border-red-200 bg-red-50",
+    // blocked gates open a focused details modal, not just instruction text
+    "Automation check details",
+    "role=\"dialog\"",
+    "aria-modal=\"true\"",
+    "selectedAutomationCard.action?.cta",
     // plain-language explainer for the jargon
     "guarded automation (Level",
+    "Emergency stop",
   ]) {
     assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
   }
 
   // the old undifferentiated "Blocked gates / Plans / Open safe mode" stat grid is gone
   assert.doesNotMatch(settings, /Latest plan status/);
+});
+
+test("automation policy is edited from a confirmable modal instead of auto-saving field blur", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const api = read("lib/api.ts");
+
+  for (const expected of [
+    "Automation Policy",
+    "Policy level",
+    "Level 0 Manual",
+    "Level 1 Assistive",
+    "Level 2 Guarded execution",
+    "Level 3 Future",
+    "Level 4 Future",
+    "policyDraft",
+    "setPolicyDraft",
+    "savePolicyDraft",
+    "Save policy",
+    "Review and save policy changes",
+    "Emergency stop is on",
+    "Review emergency stop",
+    "openPolicyCheck",
+    'setSelectedAutomationCheck("autopilot_policy_confirmed")',
+    "Promise<boolean>",
+    "return true",
+    "return false",
+    "exitOpenSafeModeEvents",
+    "api.exitSafeMode",
+    "Open safe mode events",
+    "Safe mode policy switch is on",
+    "open safe mode event",
+  ]) {
+    assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
+  }
+
+  assert.match(api, /exitSafeMode: async/);
+  assert.match(api, /\/projects\/\$\{id\}\/seo\/autopilot\/safe-mode\/\$\{safeModeID\}\/exit/);
+
+  assert.doesNotMatch(settings, /onBlur=\{\(event\) => saveAutomationPolicy/);
+  assert.doesNotMatch(settings, /onChange=\{\(event\) => saveAutomationPolicy\(\{ kill_switch_enabled/);
+  assert.doesNotMatch(settings, /onChange=\{\(event\) => saveAutomationPolicy\(\{ safe_mode_enabled/);
+  assert.doesNotMatch(settings, /saveAutomationPolicy\(\{ kill_switch_enabled: false/);
+  assert.doesNotMatch(settings, /api\.updateSEOPolicy\(projectId, \{ \.\.\.policy, safe_mode_enabled: false \}\)/);
+  assert.doesNotMatch(settings, />\s*Turn off emergency stop\s*</);
+});
+
+test("notifications setup has an empty state that explains the automation gate", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const notificationsPanel = settings.slice(settings.indexOf('id="settings-panel-notifications"'));
+
+  for (const expected of [
+    "Automation needs a notification channel",
+    "Failures, approval requests, safe mode alerts, and delivery problems should reach an operator.",
+    "Add a Slack or Discord webhook, then send a test notification to verify it.",
+    "Set notifications",
+    "create-channel",
+  ]) {
+    assert.equal(notificationsPanel.includes(expected), true, `notifications panel missing ${expected}`);
+  }
+
+  assert.doesNotMatch(notificationsPanel, />\s*No channels\s*</);
 });
 
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {
