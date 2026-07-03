@@ -7,7 +7,7 @@ const appRoot = path.resolve(import.meta.dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 const exists = (relativePath) => fs.existsSync(path.join(appRoot, relativePath));
 
-test("api client exposes SEO Doctor report, run, finding, and action methods", () => {
+test("api client exposes canonical read-only Doctor report, run, and finding methods", () => {
   const api = read("lib/api.ts");
 
   for (const contract of [
@@ -22,11 +22,15 @@ test("api client exposes SEO Doctor report, run, finding, and action methods", (
     "startSEODoctorRun",
     "getSEODoctorRun",
     "listSEODoctorRunFindings",
-    "convertSEODoctorFinding",
     "dismissSEODoctorFinding",
+    "startSEODoctorGrowthLoop",
   ]) {
     assert.match(api, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(api, /`\/projects\/\$\{id\}\/doctor`/);
+  assert.match(api, /`\/projects\/\$\{id\}\/doctor\/runs`/);
+  assert.doesNotMatch(api, /\/seo\/doctor/);
+  assert.doesNotMatch(api, /convertSEODoctorFinding/);
 });
 
 test("project shell exposes Doctor under the Home section", () => {
@@ -38,7 +42,7 @@ test("project shell exposes Doctor under the Home section", () => {
   assert.match(shell, /href: "doctor"/);
 });
 
-test("Doctor route renders a client page with progress and per-finding AI repair handoff affordances", () => {
+test("Doctor route renders a read-only diagnosis page without per-finding repair handoff", () => {
   assert.equal(exists("projects/[id]/doctor/page.tsx"), true, "doctor route should exist");
   assert.equal(exists("projects/[id]/doctor/doctor-client.tsx"), true, "doctor client should exist");
   const page = read("projects/[id]/doctor/page.tsx");
@@ -49,6 +53,13 @@ test("Doctor route renders a client page with progress and per-finding AI repair
     "progress_percent",
     "pages_checked",
     "Run Doctor",
+    "acceptance_tests",
+    "dismissSEODoctorFinding",
+    "Start Growth Loop",
+  ]) {
+    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const forbidden of [
     "Fix with AI",
     "buildAIRepairPayload",
     "copyAIRepairJSON",
@@ -56,107 +67,13 @@ test("Doctor route renders a client page with progress and per-finding AI repair
     "selectedRepairFinding",
     "Codex",
     "Claude Code",
-    "acceptance_tests",
-    "rerun SEO Doctor",
+    "Create action",
     "convertSEODoctorFinding",
-    "dismissSEODoctorFinding",
+    "AI coding repair JSON",
+    "document.execCommand",
   ]) {
-    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(client, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(client, /Structured handoff/);
-  assert.doesNotMatch(client, /title="AI coding report"/);
-  assert.match(client, /document\.execCommand\("copy"\)/);
-});
-
-test("AI repair JSON only includes website repair context, not CiteLoop Doctor metadata", () => {
-  const client = read("projects/[id]/doctor/doctor-client.tsx");
-  const repairPayloadBlock = client.slice(client.indexOf("function buildAIRepairPayload"), client.indexOf("async function writeClipboardText"));
-  const acceptanceBlock = client.slice(client.indexOf("function buildAIRepairAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
-
-  for (const required of [
-    "issue_type",
-    "severity",
-    "category",
-    "affected_urls",
-    "normalized_urls",
-    "problem",
-    "why_it_matters",
-    "evidence",
-    "fix",
-    "goal",
-    "instructions",
-    "likely_surfaces",
-    "acceptance_tests",
-  ]) {
-    assert.match(repairPayloadBlock, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-
-  for (const internalMetadata of [
-    "schema_version",
-    "intended_tools",
-    "run_id",
-    "run_status",
-    "run_stage",
-    "health_score",
-    "finding_key",
-    "id: finding.id",
-    "status: finding.status",
-    "first_seen_at",
-    "last_seen_at",
-    "review_required",
-    "autofix_eligible",
-  ]) {
-    assert.doesNotMatch(repairPayloadBlock, new RegExp(internalMetadata.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  assert.doesNotMatch(acceptanceBlock, /finding_key/);
-  assert.match(acceptanceBlock, /rerun SEO Doctor or an equivalent crawler/);
-});
-
-test("structured data AI repair JSON includes a concrete SEO schema contract", () => {
-  const client = read("projects/[id]/doctor/doctor-client.tsx");
-  const acceptanceBlock = client.slice(client.indexOf("function structuredDataAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
-
-  for (const contract of [
-    "seo_contract",
-    "page_role",
-    "homepage",
-    "schema_types",
-    "WebSite",
-    "Organization",
-    "WebPage",
-    "field_sources",
-    "canonical_url",
-    "render_requirement",
-    "server-rendered",
-    "Google Rich Results Test",
-    "Schema Markup Validator",
-    "@context",
-    "@type",
-    "absolute production URLs",
-    "staging",
-    "logo",
-  ]) {
-    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-
-  for (const acceptance of [
-    "server-rendered JSON-LD",
-    "Google Rich Results Test or Schema Markup Validator",
-    "WebSite, Organization, and WebPage",
-    "no localhost, staging, preview, or dev URLs",
-  ]) {
-    assert.match(acceptanceBlock, new RegExp(acceptance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-});
-
-test("Fix with AI uses a dedicated colored button variant instead of outline overrides", () => {
-  const ui = read("components/ui.tsx");
-  const client = read("projects/[id]/doctor/doctor-client.tsx");
-
-  assert.match(ui, /variant\?: "primary" \| "outline" \| "ghost" \| "danger" \| "ai"/);
-  assert.match(ui, /ai:\s*"[^"]*border-cyan-300[^"]*bg-cyan-100[^"]*text-cyan-900/);
-  assert.match(client, /variant="ai"[\s\S]*Fix with AI/);
-  assert.doesNotMatch(client, /className="ml-auto border-cyan/);
 });
 
 test("Home fetches and renders a first-fold Doctor module", () => {

@@ -19,10 +19,23 @@ import (
 const seoDoctorRunTimeout = 10 * time.Minute
 
 type seoDoctorResponse struct {
-	Run                *db.SeoDoctorRun      `json:"run"`
-	Findings           []db.SeoDoctorFinding `json:"findings"`
-	HumanReport        any                   `json:"human_report,omitempty"`
-	AICodingToolReport any                   `json:"ai_coding_tool_report,omitempty"`
+	Run         *db.SeoDoctorRun      `json:"run"`
+	Findings    []db.SeoDoctorFinding `json:"findings"`
+	HumanReport any                   `json:"human_report,omitempty"`
+}
+
+type seoDoctorGrowthLoopResponse struct {
+	Actions []db.ContentAction `json:"actions"`
+}
+
+func (s *Server) registerDoctorRoutes(r chi.Router, prefix string) {
+	r.Get(prefix, s.getSEODoctor)
+	r.Post(prefix+"/runs", s.createSEODoctorRun)
+	r.Get(prefix+"/runs/{runID}", s.getSEODoctorRun)
+	r.Get(prefix+"/runs/{runID}/findings", s.listSEODoctorRunFindings)
+	r.Post(prefix+"/runs/{runID}/start-growth-loop", s.startSEODoctorGrowthLoop)
+	r.Get(prefix+"/latest", s.getLatestSEODoctor)
+	r.Post(prefix+"/findings/{findingID}/dismiss", s.dismissSEODoctorFinding)
 }
 
 func (s *Server) getSEODoctor(w http.ResponseWriter, r *http.Request) {
@@ -127,17 +140,32 @@ func (s *Server) getLatestSEODoctor(w http.ResponseWriter, r *http.Request) {
 	writeSEODoctorReport(w, http.StatusOK, report)
 }
 
-func (s *Server) convertSEODoctorFinding(w http.ResponseWriter, r *http.Request) {
-	projectID, findingID, ok := s.seoDoctorIDs(w, r, "findingID")
+func (s *Server) startSEODoctorGrowthLoop(w http.ResponseWriter, r *http.Request) {
+	projectID, runID, ok := s.seoDoctorIDs(w, r, "runID")
 	if !ok {
 		return
 	}
-	action, err := s.seoServiceForProject(r.Context(), projectID).ConvertDoctorFinding(r.Context(), projectID, findingID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	var in struct {
+		FindingIDs []uuid.UUID `json:"finding_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid growth loop handoff request")
 		return
 	}
-	writeJSON(w, http.StatusCreated, action)
+	if len(in.FindingIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "selected doctor findings required")
+		return
+	}
+	actions, err := s.seoServiceForProject(r.Context(), projectID).StartDoctorGrowthLoop(r.Context(), projectID, runID, in.FindingIDs)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, pgx.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, seoDoctorGrowthLoopResponse{Actions: actions})
 }
 
 func (s *Server) dismissSEODoctorFinding(w http.ResponseWriter, r *http.Request) {
@@ -192,9 +220,8 @@ func (s *Server) seoDoctorIDs(w http.ResponseWriter, r *http.Request, param stri
 
 func writeSEODoctorReport(w http.ResponseWriter, status int, report seopkg.DoctorReport) {
 	writeJSON(w, status, seoDoctorResponse{
-		Run:                &report.Run,
-		Findings:           emptySlice(report.Findings),
-		HumanReport:        report.Human,
-		AICodingToolReport: report.AICodingToolReport,
+		Run:         &report.Run,
+		Findings:    emptySlice(report.Findings),
+		HumanReport: report.Human,
 	})
 }

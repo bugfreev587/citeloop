@@ -521,7 +521,10 @@ export type SEODoctorReport = {
     issue_counts?: Record<string, number>;
     checked_urls?: number;
   } | null;
-  ai_coding_tool_report?: any;
+};
+
+export type SEODoctorGrowthLoopResult = {
+  actions: SEOContentAction[];
 };
 
 export type ActionMeasurement = {
@@ -1269,7 +1272,6 @@ function normalizeSEODoctorReport(raw: any): SEODoctorReport {
     run: data.run ? normalizeSEODoctorRun(data.run) : null,
     findings: arrayFrom(data.findings).map(normalizeSEODoctorFinding),
     human_report: data.human_report ?? null,
-    ai_coding_tool_report: data.ai_coding_tool_report ?? null,
   };
 }
 
@@ -2050,31 +2052,35 @@ export function createApi(auth?: AuthOptions) {
     return normalizeVisibilitySummary(raw);
   },
   getSEODoctor: async (id: string): Promise<SEODoctorReport> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/doctor`, undefined, auth);
     return normalizeSEODoctorReport(raw);
   },
   getLatestSEODoctor: async (id: string): Promise<SEODoctorReport> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor/latest`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/doctor/latest`, undefined, auth);
     return normalizeSEODoctorReport(raw);
   },
   startSEODoctorRun: async (id: string, body: { site_url?: string } = {}): Promise<SEODoctorRun> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor/runs`, { method: "POST", body: JSON.stringify(body) }, auth);
+    const raw = await req<any>(`/projects/${id}/doctor/runs`, { method: "POST", body: JSON.stringify(body) }, auth);
     return normalizeSEODoctorRun(raw);
   },
   getSEODoctorRun: async (id: string, runID: string): Promise<SEODoctorRun> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor/runs/${runID}`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/doctor/runs/${runID}`, undefined, auth);
     return normalizeSEODoctorRun(raw);
   },
   listSEODoctorRunFindings: async (id: string, runID: string): Promise<SEODoctorFinding[]> => {
-    const raw = await req<any[]>(`/projects/${id}/seo/doctor/runs/${runID}/findings`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/doctor/runs/${runID}/findings`, undefined, auth);
     return arrayFrom(raw).map(normalizeSEODoctorFinding);
   },
-  convertSEODoctorFinding: async (id: string, findingID: string): Promise<SEOContentAction> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor/findings/${findingID}/convert`, { method: "POST" }, auth);
-    return normalizeSEOContentAction(raw);
+  startSEODoctorGrowthLoop: async (id: string, runID: string, findingIDs: string[]): Promise<SEODoctorGrowthLoopResult> => {
+    const raw = await req<any>(
+      `/projects/${id}/doctor/runs/${runID}/start-growth-loop`,
+      { method: "POST", body: JSON.stringify({ finding_ids: findingIDs }) },
+      auth,
+    );
+    return { actions: arrayFrom(raw?.actions).map(normalizeSEOContentAction) };
   },
   dismissSEODoctorFinding: async (id: string, findingID: string): Promise<SEODoctorFinding> => {
-    const raw = await req<any>(`/projects/${id}/seo/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
+    const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
     return normalizeSEODoctorFinding(raw);
   },
   syncSEO: async (id: string, siteURL?: string) => {
