@@ -658,6 +658,7 @@ export type SEOListOptions = {
 export type SEOPolicy = {
   id: string;
   autopilot_level: number;
+  automation_paused: boolean;
   weekly_action_limit: number;
   monthly_budget_limit?: RawPgNumeric;
   low_traffic_clicks_28d_threshold: number;
@@ -741,6 +742,7 @@ export type AutopilotReadinessGate = {
     | "publisher_write"
     | "notification_write"
     | "autopilot_policy_confirmed"
+    | "automation_pause_clear"
     | "monthly_budget_configured"
     | "safe_mode_clear"
     | "kill_switch_clear"
@@ -757,6 +759,7 @@ export type AutopilotReadiness = {
   ready_for_level_2: boolean;
   autopilot_level: number;
   derived_mode: string;
+  automation_paused: boolean;
   safe_mode_active: boolean;
   kill_switch_enabled: boolean;
   failed_gates: string[];

@@ -20,15 +20,16 @@ returning *;
 
 -- name: UpsertSEOPolicy :one
 insert into seo_policies
-  (project_id, autopilot_level, weekly_action_limit, monthly_budget_limit,
+  (project_id, autopilot_level, automation_paused, weekly_action_limit, monthly_budget_limit,
    allowed_action_types, blocked_url_patterns, requires_review_action_types,
    max_auto_changes_per_page_per_month, low_traffic_clicks_28d_threshold,
    low_traffic_impressions_28d_threshold, min_confidence_for_auto_publish,
    quiet_hours_start, quiet_hours_end, quiet_hours_timezone, quiet_hours_behavior,
    kill_switch_enabled, safe_mode_enabled, risk_classifier_version)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 on conflict (project_id) do update set
   autopilot_level = excluded.autopilot_level,
+  automation_paused = excluded.automation_paused,
   weekly_action_limit = excluded.weekly_action_limit,
   monthly_budget_limit = excluded.monthly_budget_limit,
   allowed_action_types = excluded.allowed_action_types,

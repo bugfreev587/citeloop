@@ -730,6 +730,7 @@ type SeoPolicy struct {
 	ID                                uuid.UUID          `json:"id"`
 	ProjectID                         uuid.UUID          `json:"project_id"`
 	AutopilotLevel                    int32              `json:"autopilot_level"`
+	AutomationPaused                  bool               `json:"automation_paused"`
 	WeeklyActionLimit                 int32              `json:"weekly_action_limit"`
 	MonthlyBudgetLimit                pgtype.Numeric     `json:"monthly_budget_limit"`
 	AllowedActionTypes                json.RawMessage    `json:"allowed_action_types"`

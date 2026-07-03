@@ -205,6 +205,7 @@ const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
 const settingsAnchorToTab: Record<string, SettingsTabId> = {
   project: "project",
   automation: "automation",
+  "automation-status": "automation",
   "automation-policy": "automation",
   "recovery-plan": "automation",
   activity: "activity",
@@ -221,6 +222,7 @@ function settingsTabFromHash(hash: string): SettingsTabId {
 
 function automationCheckIdFromHash(hash: string): string | null {
   const anchor = hash.replace(/^#/, "");
+  if (anchor === "automation-status") return "automation_pause_clear";
   if (anchor === "automation-policy") return "autopilot_policy_confirmed";
   if (anchor === "recovery-plan") return "rollback_or_recovery_ready";
   return null;
@@ -228,6 +230,7 @@ function automationCheckIdFromHash(hash: string): string | null {
 
 type PolicyDraft = {
   autopilot_level: number;
+  automation_paused: boolean;
   monthly_budget_limit: number;
   kill_switch_enabled: boolean;
   safe_mode_enabled: boolean;
@@ -235,6 +238,7 @@ type PolicyDraft = {
 
 const defaultPolicyDraft: PolicyDraft = {
   autopilot_level: 0,
+  automation_paused: false,
   monthly_budget_limit: 0,
   kill_switch_enabled: false,
   safe_mode_enabled: false,
@@ -243,16 +247,16 @@ const defaultPolicyDraft: PolicyDraft = {
 const automationPolicyLevels = [
   {
     value: 0,
-    title: "Level 0 Manual",
+    title: "Level 0 Observe only",
     mode: "Observe",
-    detail: "CiteLoop shows data and recommendations. Every action is completed by a person.",
+    detail: "CiteLoop analyzes, plans, and reports. It does not create drafts, run scheduled automation, or publish changes.",
     available: true,
   },
   {
     value: 1,
-    title: "Level 1 Assistive",
+    title: "Level 1 Draft only",
     mode: "Draft",
-    detail: "CiteLoop creates opportunities and drafts. A person still approves and publishes every change.",
+    detail: "CiteLoop can create drafts for review. A person still approves and publishes every change.",
     available: true,
   },
   {
@@ -284,6 +288,7 @@ function automationGateTitle(key: string, fallback: string) {
     publisher_write: "Publisher access",
     notification_write: "Notifications",
     autopilot_policy_confirmed: "Automation Policy",
+    automation_pause_clear: "Automation status",
     monthly_budget_configured: "Autopilot budget",
     safe_mode_clear: "Safe mode",
     kill_switch_clear: "Emergency stop",
@@ -293,6 +298,7 @@ function automationGateTitle(key: string, fallback: string) {
 }
 
 function automationGateSummary(key: string, blocked: boolean) {
+  if (key === "automation_pause_clear") return blocked ? "Automation is paused" : "Automation is active";
   if (key === "kill_switch_clear") return blocked ? "Emergency stop is on" : "Emergency stop is off";
   if (key === "safe_mode_clear") return blocked ? "Safe mode is active" : "Safe mode is clear";
   if (key === "autopilot_policy_confirmed") return blocked ? "Review policy before guarded execution" : "Policy confirmed";
@@ -310,6 +316,7 @@ function automationGateImpact(key: string) {
     publisher_write: "Guarded automation needs a scoped place to create or update content. Without it, CiteLoop can only prepare drafts.",
     notification_write: "Failures, approval requests, safe mode alerts, and delivery problems should reach an operator before Level 2 runs.",
     autopilot_policy_confirmed: "Automation Policy defines how much autonomy CiteLoop has, what budget it can use, and when it must stop.",
+    automation_pause_clear: "Automation status is the everyday on/off control. Pausing it does not change the autonomy level you selected.",
     monthly_budget_configured: "The Autopilot budget is the spending boundary for guarded execution. It is separate from the project cadence budget.",
     safe_mode_clear: "Safe mode pauses automation after degraded or risky conditions. It must be clear before guarded execution resumes.",
     kill_switch_clear: "Emergency stop immediately pauses automation. Turn it off only when you want CiteLoop to resume eligible work.",
@@ -374,6 +381,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     if (!policy) return;
     setPolicyDraft({
       autopilot_level: Math.max(0, Math.min(2, policy.autopilot_level ?? 0)),
+      automation_paused: Boolean(policy.automation_paused),
       monthly_budget_limit: policy.monthly_budget_limit != null ? normalizeNumeric(policy.monthly_budget_limit) ?? 0 : 0,
       kill_switch_enabled: Boolean(policy.kill_switch_enabled),
       safe_mode_enabled: Boolean(policy.safe_mode_enabled),
@@ -563,6 +571,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   async function savePolicyDraft() {
     const saved = await saveAutomationPolicy({
       autopilot_level: Math.max(0, Math.min(2, policyDraft.autopilot_level)),
+      automation_paused: policyDraft.automation_paused,
       monthly_budget_limit: Math.max(0, policyDraft.monthly_budget_limit),
       kill_switch_enabled: policyDraft.kill_switch_enabled,
       safe_mode_enabled: policyDraft.safe_mode_enabled,
@@ -964,6 +973,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   const openSafeModeEvents = safeModeEvents.filter((event) => !event.exited_at);
   const openSafeModeCount = openSafeModeEvents.length;
+  const automationPaused = Boolean(policy?.automation_paused);
   const readinessGatesAll = readiness?.gates ?? [];
   const blockedGates = readinessGatesAll
     .filter((gate) => gate.blocking)
@@ -1035,6 +1045,34 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             policy limits. Medium and high-risk changes still wait for your review.
           </p>
 
+          <div
+            id="automation-status"
+            className={cx(
+              "flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between",
+              automationPaused ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50",
+            )}
+          >
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automation status</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">{automationPaused ? "Paused" : "Active"}</div>
+              <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-600">
+                {automationPaused
+                  ? "Automation is paused. CiteLoop will not run scheduled automation or execute changes automatically."
+                  : "Automation is active. CiteLoop may run scheduled automation according to the autonomy level below."}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant={automationPaused ? "primary" : "outline"}
+              onClick={() => saveAutomationPolicy({ automation_paused: !automationPaused })}
+              disabled={busy || !policy}
+            >
+              <ButtonProgress busy={busy} busyLabel={automationPaused ? "Resuming" : "Pausing"} idleIcon={<Power size={14} />}>
+                {automationPaused ? "Resume automation" : "Pause automation"}
+              </ButtonProgress>
+            </Button>
+          </div>
+
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness</div>
@@ -1043,14 +1081,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Policy level</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Autonomy level</div>
               <div className="mt-1 text-lg font-bold text-slate-950">Level {policy?.autopilot_level ?? 0}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Safe mode</div>
-              <div className="mt-1 text-lg font-bold text-slate-950">
-                {openSafeModeCount > 0 || policy?.safe_mode_enabled ? "Active" : "Clear"}
-              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automation status</div>
+              <div className="mt-1 text-lg font-bold text-slate-950">{automationPaused ? "Paused" : "Active"}</div>
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Emergency stop</div>
@@ -1138,16 +1174,56 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </div>
 
               <div className="overflow-y-auto px-5 py-4">
-                {selectedAutomationCard.id === "autopilot_policy_confirmed" || selectedAutomationCard.id === "monthly_budget_configured" ? (
+                {selectedAutomationCard.id === "autopilot_policy_confirmed" ||
+                selectedAutomationCard.id === "automation_pause_clear" ||
+                selectedAutomationCard.id === "monthly_budget_configured" ? (
                   <div className="space-y-5">
                     <Notice
                       tone={selectedAutomationCard.blocked ? "amber" : "green"}
                       title="Automation Policy"
-                      detail="Policy level, Autopilot budget, safe mode, and emergency stop decide what CiteLoop can do without asking first."
+                      detail="Automation status, autonomy level, Autopilot budget, safe mode, and emergency stop decide what CiteLoop can do without asking first."
                     />
 
                     <div>
-                      <div className="mb-2 text-sm font-bold text-slate-950">Policy level</div>
+                      <div className="mb-2 text-sm font-bold text-slate-950">Automation status</div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {[
+                          {
+                            paused: false,
+                            title: "Active",
+                            detail: "Automation is active. CiteLoop may run scheduled automation according to the autonomy level below.",
+                          },
+                          {
+                            paused: true,
+                            title: "Paused",
+                            detail: "Automation is paused. CiteLoop will not run scheduled automation or execute changes automatically.",
+                          },
+                        ].map((option) => {
+                          const selected = policyDraft.automation_paused === option.paused;
+                          return (
+                            <button
+                              type="button"
+                              key={option.title}
+                              disabled={busy}
+                              onClick={() => setPolicyDraft((current) => ({ ...current, automation_paused: option.paused }))}
+                              className={cx(
+                                "rounded-lg border px-3 py-3 text-left transition-colors",
+                                selected ? "border-[#d93820] bg-red-50" : "border-slate-200 bg-white hover:bg-slate-50",
+                              )}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm font-bold text-slate-950">{option.title}</span>
+                                <Badge tone={option.paused ? "amber" : "green"}>{option.paused ? "Paused" : "Active"}</Badge>
+                              </div>
+                              <p className="mt-1 text-sm leading-5 text-slate-500">{option.detail}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-sm font-bold text-slate-950">Autonomy level</div>
                       <div className="grid gap-2">
                         {automationPolicyLevels.map((level) => {
                           const selected = policyDraft.autopilot_level === level.value;
@@ -1271,7 +1347,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 <Button variant="ghost" onClick={() => setSelectedAutomationCheck(null)} disabled={busy}>
                   Close
                 </Button>
-                {selectedAutomationCard.id === "autopilot_policy_confirmed" || selectedAutomationCard.id === "monthly_budget_configured" ? (
+                {selectedAutomationCard.id === "autopilot_policy_confirmed" ||
+                selectedAutomationCard.id === "automation_pause_clear" ||
+                selectedAutomationCard.id === "monthly_budget_configured" ? (
                   <Button variant="primary" onClick={savePolicyDraft} disabled={busy || !policy}>
                     <ButtonProgress busy={busy} busyLabel="Saving policy" idleIcon={<Save size={16} />}>
                       Save policy

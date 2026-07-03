@@ -29,6 +29,7 @@ type AutopilotReadiness struct {
 	ReadyForLevel2        bool                     `json:"ready_for_level_2"`
 	AutopilotLevel        int32                    `json:"autopilot_level"`
 	DerivedMode           string                   `json:"derived_mode"`
+	AutomationPaused      bool                     `json:"automation_paused"`
 	SafeModeActive        bool                     `json:"safe_mode_active"`
 	KillSwitchEnabled     bool                     `json:"kill_switch_enabled"`
 	FailedGates           []string                 `json:"failed_gates"`
@@ -154,6 +155,7 @@ func (s *Server) updateSEOPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		AutopilotLevel                int32           `json:"autopilot_level"`
+		AutomationPaused              bool            `json:"automation_paused"`
 		WeeklyActionLimit             int32           `json:"weekly_action_limit"`
 		MonthlyBudgetLimit            float64         `json:"monthly_budget_limit"`
 		AllowedActionTypes            json.RawMessage `json:"allowed_action_types"`
@@ -207,6 +209,7 @@ func (s *Server) updateSEOPolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := s.Q.UpsertSEOPolicy(r.Context(), db.UpsertSEOPolicyParams{
 		ProjectID:                         projectID,
 		AutopilotLevel:                    in.AutopilotLevel,
+		AutomationPaused:                  in.AutomationPaused,
 		WeeklyActionLimit:                 in.WeeklyActionLimit,
 		MonthlyBudgetLimit:                pgutil.Numeric(in.MonthlyBudgetLimit),
 		AllowedActionTypes:                rawOrDefault(in.AllowedActionTypes, `["submit sitemap","metadata rewrite","technical SEO fix task"]`),
@@ -294,7 +297,7 @@ func (s *Server) generateAutopilotPlan(w http.ResponseWriter, r *http.Request) {
 			TrafficPercentile: 0,
 			Confidence:        pgutil.Float(opp.Confidence),
 		}, riskPolicyFromDB(policy))
-		autoPublishAllowed := policy.AutopilotLevel >= 2 && result.Level == autopilot.RiskLow && !policy.KillSwitchEnabled && !policy.SafeModeEnabled
+		autoPublishAllowed := policy.AutopilotLevel >= 2 && result.Level == autopilot.RiskLow && !policy.AutomationPaused && !policy.KillSwitchEnabled && !policy.SafeModeEnabled
 		actionBucket := actionBucketFor(valueOr(opp.RecommendedAction, opp.Type), opp.Type)
 		measurementSchedule := measurementScheduleForAction(actionBucket)
 		selected = append(selected, map[string]any{
@@ -387,6 +390,7 @@ func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (Autop
 		readinessGate("publisher_write", "Publisher write", publisherReady, "A connected, enabled publisher with scoped credentials is required before Autopilot can create or update content.", "Connect and test the GitHub/Next.js publisher."),
 		readinessGateWithStatus("notification_write", "Notifications", notificationReady, notificationStatus, "Verified notifications are required so failures and approval needs reach the operator.", "Create and test a Slack or Discord notification channel."),
 		readinessGate("autopilot_policy_confirmed", "Policy confirmed", policyConfirmed, "Level 2 requires an explicit policy level so CiteLoop knows which low-risk actions may run.", "Set Autopilot level to 2 after reviewing limits and risk thresholds."),
+		readinessGate("automation_pause_clear", "Automation paused", !policy.AutomationPaused, "Automation is paused and blocks scheduled automation and guarded execution.", "Resume automation in Settings when you want CiteLoop to run eligible work again."),
 		readinessGate("monthly_budget_configured", "Monthly budget", budgetConfigured, "A project-level budget cap is required before automated execution can spend variable cost.", "Set a monthly Autopilot budget greater than 0."),
 		readinessGate("safe_mode_clear", "Safe mode clear", !safeModeActive, "Open safe mode blocks all automatic execution.", "Resolve the safe mode reason, then exit safe mode."),
 		readinessGate("kill_switch_clear", "Kill switch clear", !policy.KillSwitchEnabled, "The kill switch is enabled and blocks Level 2 execution.", "Turn off the kill switch only when you are ready to resume automation."),
@@ -402,6 +406,7 @@ func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (Autop
 		ReadyForLevel2:        len(failed) == 0,
 		AutopilotLevel:        policy.AutopilotLevel,
 		DerivedMode:           derivedMode(policy.AutopilotLevel),
+		AutomationPaused:      policy.AutomationPaused,
 		SafeModeActive:        safeModeActive,
 		KillSwitchEnabled:     policy.KillSwitchEnabled,
 		FailedGates:           failed,
@@ -884,6 +889,7 @@ func (s *Server) ensureSEOPolicy(r *http.Request, projectID uuid.UUID) (db.SeoPo
 	return s.Q.UpsertSEOPolicy(r.Context(), db.UpsertSEOPolicyParams{
 		ProjectID:                         projectID,
 		AutopilotLevel:                    0,
+		AutomationPaused:                  false,
 		WeeklyActionLimit:                 5,
 		MonthlyBudgetLimit:                pgutil.Numeric(25),
 		AllowedActionTypes:                json.RawMessage(`["submit sitemap","metadata rewrite","technical SEO fix task"]`),
@@ -980,7 +986,7 @@ func actionPortfolioDocument(selected, rejected []map[string]any, policy db.SeoP
 		"deferred_actions":     []map[string]any{},
 		"rejected_actions":     rejected,
 		"reason_codes":         map[string]any{"selection": "open_opportunity_priority"},
-		"policy_snapshot":      map[string]any{"autopilot_level": policy.AutopilotLevel, "weekly_action_limit": policy.WeeklyActionLimit, "safe_mode_enabled": policy.SafeModeEnabled, "kill_switch_enabled": policy.KillSwitchEnabled},
+		"policy_snapshot":      map[string]any{"autopilot_level": policy.AutopilotLevel, "automation_paused": policy.AutomationPaused, "weekly_action_limit": policy.WeeklyActionLimit, "safe_mode_enabled": policy.SafeModeEnabled, "kill_switch_enabled": policy.KillSwitchEnabled},
 		"budget_snapshot":      map[string]any{"expected_effort": len(selected)},
 		"risk_summary":         riskSummary,
 		"required_approvals":   requiredApprovals,

@@ -24,6 +24,7 @@ create table if not exists seo_policies (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade unique,
   autopilot_level int not null default 0 check (autopilot_level between 0 and 4),
+  automation_paused boolean not null default false,
   weekly_action_limit int not null default 5,
   monthly_budget_limit numeric not null default 25,
   allowed_action_types jsonb not null default '["submit sitemap","metadata rewrite","technical SEO fix task"]',

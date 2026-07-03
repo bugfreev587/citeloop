@@ -1323,9 +1323,15 @@ test("automation policy is edited from a confirmable modal instead of auto-savin
 
   for (const expected of [
     "Automation Policy",
-    "Policy level",
-    "Level 0 Manual",
-    "Level 1 Assistive",
+    "Automation status",
+    "automation_paused",
+    "Pause automation",
+    "Resume automation",
+    "Automation is paused. CiteLoop will not run scheduled automation or execute changes automatically.",
+    "Automation is active. CiteLoop may run scheduled automation according to the autonomy level below.",
+    "Autonomy level",
+    "Level 0 Observe only",
+    "Level 1 Draft only",
     "Level 2 Guarded execution",
     "Level 3 Future",
     "Level 4 Future",
