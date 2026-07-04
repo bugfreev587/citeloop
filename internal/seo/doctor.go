@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
-	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -342,96 +341,6 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 		Findings: nonNilSlice(findings),
 		Human:    human,
 	}, nil
-}
-
-func (s Service) StartDoctorGrowthLoop(ctx context.Context, projectID, runID uuid.UUID, findingIDs []uuid.UUID) ([]db.ContentAction, error) {
-	if s.Q == nil {
-		return nil, errors.New("database unavailable")
-	}
-	if len(findingIDs) == 0 {
-		return nil, errors.New("selected doctor findings required")
-	}
-	actions := make([]db.ContentAction, 0, len(findingIDs))
-	seen := make(map[uuid.UUID]bool, len(findingIDs))
-	for _, findingID := range findingIDs {
-		if findingID == uuid.Nil || seen[findingID] {
-			continue
-		}
-		seen[findingID] = true
-		finding, err := s.Q.GetSEODoctorFinding(ctx, db.GetSEODoctorFindingParams{ID: findingID, ProjectID: projectID})
-		if err != nil {
-			return nil, err
-		}
-		if finding.RunID != runID {
-			return nil, fmt.Errorf("doctor finding does not belong to run")
-		}
-		if finding.Status != "active" {
-			return nil, fmt.Errorf("doctor finding is not active")
-		}
-		action, err := s.convertDoctorFinding(ctx, projectID, finding)
-		if err != nil {
-			return nil, err
-		}
-		actions = append(actions, action)
-	}
-	if len(actions) == 0 {
-		return nil, errors.New("selected doctor findings required")
-	}
-	return actions, nil
-}
-
-func (s Service) convertDoctorFinding(ctx context.Context, projectID uuid.UUID, finding db.SeoDoctorFinding) (db.ContentAction, error) {
-	urls := jsonStringArray(finding.AffectedUrls)
-	normalized := firstString(jsonStringArray(finding.NormalizedUrls))
-	pageURL := firstString(urls)
-	action := strings.TrimSpace(finding.FixIntent)
-	if action == "" {
-		action = "technical SEO fix task"
-	}
-	impact := strings.TrimSpace(finding.WhyItMatters)
-	if impact == "" {
-		impact = "Fix a technical SEO issue found by Doctor."
-	}
-	opp, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
-		ProjectID:         projectID,
-		Type:              "technical_visibility_issue",
-		Status:            "open",
-		PriorityScore:     pgutil.Numeric(priorityForSeverity(finding.Severity)),
-		Confidence:        pgutil.Numeric(float64(confidenceFromFinding(finding))),
-		PageUrl:           strPtr(pageURL),
-		NormalizedPageUrl: normalized,
-		Evidence:          finding.Evidence,
-		RecommendedAction: &action,
-		ExpectedImpact:    &impact,
-		Effort:            effortForSeverity(finding.Severity),
-		RiskLevel:         finding.RiskLevel,
-	})
-	if err != nil {
-		return db.ContentAction{}, err
-	}
-	contentAction, err := s.Q.CreateContentAction(ctx, db.CreateContentActionParams{
-		ProjectID:           projectID,
-		OpportunityID:       opp.ID,
-		ActionType:          action,
-		Status:              "ready_for_review",
-		TargetUrl:           strPtr(pageURL),
-		NormalizedTargetUrl: strPtr(normalized),
-		BaselineWindow:      json.RawMessage(`{"days":28}`),
-		MeasurementWindow:   doctorTechnicalMeasurementWindow(),
-	})
-	if err != nil {
-		return db.ContentAction{}, err
-	}
-	_, err = s.Q.LinkSEODoctorFindingToAction(ctx, db.LinkSEODoctorFindingToActionParams{
-		ID:                    finding.ID,
-		ProjectID:             projectID,
-		LinkedOpportunityID:   uuidToPG(opp.ID),
-		LinkedContentActionID: uuidToPG(contentAction.ID),
-	})
-	if err != nil {
-		return db.ContentAction{}, err
-	}
-	return contentAction, nil
 }
 
 func (s Service) DismissDoctorFinding(ctx context.Context, projectID, findingID uuid.UUID) (db.SeoDoctorFinding, error) {
@@ -937,30 +846,6 @@ func riskForSeverity(severity string) string {
 	}
 }
 
-func priorityForSeverity(severity string) float64 {
-	switch severity {
-	case "P0":
-		return 95
-	case "P1":
-		return 80
-	case "P2":
-		return 55
-	default:
-		return 20
-	}
-}
-
-func effortForSeverity(severity string) int32 {
-	switch severity {
-	case "P0":
-		return 3
-	case "P1":
-		return 2
-	default:
-		return 1
-	}
-}
-
 func confidenceLabel(confidence int) string {
 	switch {
 	case confidence >= 80:
@@ -970,10 +855,6 @@ func confidenceLabel(confidence int) string {
 	default:
 		return "low"
 	}
-}
-
-func doctorTechnicalMeasurementWindow() json.RawMessage {
-	return json.RawMessage(`{"state":"scheduled","checkpoints":[{"day":7,"status":"scheduled"},{"day":14,"status":"scheduled"},{"day":28,"status":"scheduled"}]}`)
 }
 
 func jsonObject(raw json.RawMessage) map[string]any {
@@ -1001,13 +882,6 @@ func jsonStringArray(raw json.RawMessage) []string {
 		return []string{}
 	}
 	return values
-}
-
-func firstString(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
 
 func maxInt(a, b int) int {

@@ -27,15 +27,17 @@ Doctor does not create opportunities, does not create content actions, does not
 draft, does not publish, and does not measure impact. It is a health exam for
 existing pages.
 
-Growth Loops starts only after the user explicitly chooses to act on a Doctor
-report or other visibility signals. Growth Loops owns opportunity discovery,
-prioritization, content plans, review, publishing, verification, and results.
+Growth Loops is a separate product path that starts from Growth Findings in the
+Analysis workflow or other visibility signals, not from the default Doctor
+report. Growth Loops owns opportunity discovery, prioritization, content plans,
+review, publishing, verification, and results.
 
 The product thesis:
 
 ```text
 Doctor tells users what is unhealthy on their current pages.
-Growth Loops helps users fix, optimize, publish, and measure.
+Fix with AI helps users repair Doctor findings themselves.
+Growth Loops helps users automatically optimize, publish, and measure.
 ```
 
 ## 1. Background
@@ -105,11 +107,11 @@ Doctor does not answer:
 
 ### 2.3 Growth Loops Positioning
 
-Growth Loops is the execution and measurement layer. It starts from an explicit
-user decision:
+Growth Loops is the execution and measurement layer. In the current product
+boundary it starts outside Doctor:
 
 ```text
-Doctor report -> user selects findings -> Start Growth Loop -> opportunities/actions
+Growth Finding -> Analysis -> Content/Action -> Review -> Publish -> Results
 ```
 
 Growth Loops owns:
@@ -208,24 +210,25 @@ The existing SEO Doctor direction must be corrected in these areas:
 
 | Area | Current or previous direction | Required Doctor direction |
 |---|---|---|
-| Product layer | Doctor feeds action queue directly | Doctor is read-only; Growth Loop handoff is explicit and optional |
+| Product layer | Doctor feeds action queue directly | Doctor is read-only; current-version Growth Loop handoff is removed |
 | Scope | Technical SEO repair layer | SEO + GEO health diagnosis for current pages |
 | Side effects | Findings can convert into opportunities/actions | No opportunities/actions during Doctor run |
 | User promise | "Fixable issues" and AI repair handoff | "Health report" with evidence and suggested owner |
 | Navigation | Doctor as part of optimization workflow | Doctor as standalone diagnostic product surface |
-| Data model | `seo_doctor_findings` linked to actions | `doctor_findings` are report artifacts first; action links are handoff metadata only |
+| Data model | `seo_doctor_findings` linked to actions | `doctor_findings` are report artifacts first; action links are historical metadata only |
 | GEO coverage | Mainly crawler access | GEO readiness includes crawlability, extractability, product facts, citation readiness |
 | Report semantics | Technical repair backlog | Diagnosis, severity, evidence, page coverage, confidence |
 
 Required retrofit:
 
 1. Remove automatic conversion of Doctor findings into opportunities/actions.
-2. Move `convert finding` affordances out of default Doctor report UI.
+2. Remove Growth Loop conversion affordances from default Doctor report UI.
 3. Rename user-facing copy from "SEO Doctor" to "Doctor" where the scope is
    SEO/GEO.
 4. Keep current low-level technical checks, but present them as report findings.
 5. Add GEO readiness sections beyond crawler access.
-6. Add explicit "Start Growth Loop from this report" handoff.
+6. Add self-serve `Fix with AI` repair JSON for users who want to fix Doctor
+   findings themselves.
 7. Ensure Doctor runs remain useful in `public_only` mode.
 
 ### 6.1 Shipped SEO Doctor Migration Plan
@@ -249,25 +252,27 @@ Required migration:
      records, but new runs must not enter that stage.
 
 2. **Conversion API**
-   - Existing convert endpoints must be deprecated or moved behind the explicit
-     Growth Loop handoff command.
-   - Calling legacy convert endpoints directly must require the same
-     confirmation and permission checks as `start-growth-loop`.
-   - Legacy endpoints must not be invoked by Doctor run workers.
+   - Existing convert and Growth Loop handoff endpoints must be removed from
+     current Doctor surfaces.
+   - Doctor APIs must not create opportunities, content actions, topics, drafts,
+     publish jobs, or measurement windows.
+   - Legacy conversion endpoints must not be invoked by Doctor run workers.
 
 3. **Per-finding AI repair handoff UI**
-   - Remove repair/action buttons from the default Doctor finding rows.
+   - Restore `Fix with AI` as a self-serve repair JSON handoff.
+   - Remove action-creation buttons from the default Doctor finding rows.
    - Preserve report-friendly guidance such as suggested owner, suggested next
      step, and evidence.
-   - Move AI repair JSON, implementation instructions, and action creation into
-     the Growth Loop handoff flow after the user selects findings and confirms
-     side effects.
+   - AI repair JSON must include only the affected page, issue, evidence, repair
+     instructions, and verification checks needed to repair the website.
+   - AI repair JSON must not include Doctor run metadata, Growth Loop metadata,
+     opportunity IDs, content action IDs, or downstream execution instructions.
 
 4. **Data compatibility**
    - Keep existing `linked_opportunity_id` and `linked_content_action_id` fields,
      if already shipped, as nullable historical/handoff metadata.
    - New Doctor findings created by a run must leave those fields empty.
-   - Only explicit handoff may populate them.
+   - New current-version Doctor flows must not populate them.
 
 5. **Testing**
    - Add regression tests that fail if Doctor run execution writes
@@ -287,7 +292,7 @@ User enters URL
 -> Doctor writes report snapshot
 -> User reads report
 -> Optional: export/share
--> Optional: Start Growth Loop
+-> Optional: Fix with AI repair JSON
 ```
 
 ### 7.2 Entry Points
@@ -354,7 +359,7 @@ Doctor report page must include:
    - Export JSON.
    - Export Markdown; PDF only if enabled in a later phase.
    - Copy share summary.
-   - Start Growth Loop from selected findings.
+   - Fix with AI for a selected finding.
 
 ### 7.4 Empty and Error States
 
@@ -388,7 +393,7 @@ Use product and health language:
 - `Critical blockers`
 - `GEO readiness`
 - `Export report`
-- `Start Growth Loop`
+- `Fix with AI`
 
 Avoid execution-pipeline language in Doctor default views:
 
@@ -1016,8 +1021,8 @@ Doctor must not write to during a run:
 - publisher state;
 - measurement results.
 
-Optional Growth Loop handoff may later create opportunities or actions, but that
-is a separate user-triggered command.
+Growth Finding may later create opportunities or actions, but that is a separate
+Analysis workflow and not a Doctor command.
 
 ## 12. API Requirements
 
@@ -1037,7 +1042,6 @@ GET  /api/projects/{projectID}/doctor/runs/{runID}/export.md
 POST /api/projects/{projectID}/doctor/findings/{findingID}/dismiss
 POST /api/projects/{projectID}/doctor/findings/{findingID}/mute
 POST /api/projects/{projectID}/doctor/findings/{findingID}/note
-POST /api/projects/{projectID}/doctor/runs/{runID}/start-growth-loop
 ```
 
 Compatibility note:
@@ -1067,14 +1071,9 @@ Finding controls:
 - `mute` requires `muted_until` or a fixed preset such as 30 days.
 - `note` stores a report-local note without changing score or lifecycle.
 - These controls are report controls, not Growth Loop controls.
-
-`start-growth-loop` behavior:
-
-- Requires explicit user action.
-- Accepts selected finding IDs.
-- Creates opportunities/actions only after this call.
-- Stores source `doctor_run_id` and selected `doctor_finding_ids` in downstream
-  evidence.
+- There is no current-version Doctor `start-growth-loop` endpoint.
+- `Fix with AI` is a client-side repair handoff that copies scoped JSON for the
+  selected finding and does not create downstream objects.
 
 ## 13. Progress and Run Stages
 
@@ -1111,30 +1110,27 @@ Frontend polling:
 - After 60 seconds, poll every 5 seconds.
 - Stop when completed, blocked, failed, or cancelled.
 
-## 14. Growth Loop Handoff
-
-Doctor findings can become Growth Loop inputs only through explicit handoff.
+## 14. Fix with AI
 
 Required UX:
 
 1. User opens report.
-2. User selects findings or accepts recommended bundle.
-3. User clicks `Start Growth Loop`.
-4. CiteLoop explains what will happen:
-   - opportunities may be created;
-   - content or technical actions may be proposed;
-   - future steps may require review or publishing access.
-5. User confirms.
-6. Growth Loops creates downstream objects.
+2. User opens `Fix with AI` on one active finding.
+3. CiteLoop shows scoped repair JSON for that finding.
+4. User copies the JSON into their own developer or AI coding workflow.
+5. User applies the fix outside Doctor.
+6. User reruns Doctor to verify the finding is gone.
 
 Rules:
 
 - Doctor run itself never creates opportunities/actions.
-- Handoff is optional.
-- Handoff records source report and findings.
-- Handoff should preserve evidence exactly as Doctor observed it.
-- Dismiss/report-note actions inside Doctor do not dismiss Growth Loop
-  opportunities unless the user is already in Growth Loops.
+- `Fix with AI` is optional.
+- Repair JSON preserves evidence exactly as Doctor observed it.
+- Repair JSON includes issue, affected URLs, evidence, repair instructions, and
+  verification checks.
+- Repair JSON excludes Growth Loop metadata, opportunity IDs, content action IDs,
+  publishing instructions, and measurement instructions.
+- Dismiss/report-note actions inside Doctor do not affect Growth Findings.
 
 ## 15. Reporting and Export
 
@@ -1236,7 +1232,7 @@ Product metrics:
 - Median time to first report.
 - Percentage of reports with at least one useful finding.
 - Export/share rate.
-- Growth Loop handoff rate.
+- Fix with AI copy rate.
 - Repeat run rate.
 
 Quality metrics:
@@ -1336,21 +1332,24 @@ Exit criteria:
 2. User can compare new, persistent, and resolved findings.
 3. User can export JSON and Markdown.
 
-### Phase 4: Explicit Growth Loop Handoff
+### Phase 4: Self-Serve Fix with AI
 
 Scope:
 
-- Select findings.
-- Start Growth Loop CTA.
-- Confirm downstream side effects.
-- Create opportunities/actions only after confirmation.
+- Select a finding for repair assistance.
+- Show a scoped AI repair JSON payload.
+- Copy the payload for use in an external AI coding tool or developer workflow.
+- Keep Doctor out of Growth Finding, content action, publish, and measurement
+  flows.
 
 Exit criteria:
 
-1. Doctor report has optional Growth Loop handoff.
-2. Handoff requires explicit confirmation.
-3. Created downstream objects link back to source Doctor report.
-4. Doctor run still has zero automatic Growth Loop side effects.
+1. Doctor report has a per-finding `Fix with AI` control.
+2. AI repair JSON includes issue, affected URLs, evidence, fix instructions,
+   structured-data contracts when relevant, and verification checks.
+3. AI repair JSON excludes Doctor run metadata, Growth Loop metadata,
+   opportunity IDs, content action IDs, and publishing/measurement instructions.
+4. Doctor run and Doctor UI have zero Growth Loop side effects.
 
 ### Phase 5: Connected-Data Enhancements
 
@@ -1377,7 +1376,9 @@ Exit criteria:
 5. Doctor run does not create topics or drafts.
 6. Doctor run does not publish or update pages.
 7. Doctor run does not measure SEO/GEO impact.
-8. Growth Loop handoff requires explicit user confirmation.
+8. Doctor does not expose Growth Loop handoff in the current version.
+9. Doctor may expose self-serve `Fix with AI` repair JSON that does not create
+   downstream objects.
 
 ### 19.2 Run and Report
 
@@ -1441,8 +1442,8 @@ Exit criteria:
 46. Automated tests prove public-only reports do not contain private metrics.
 47. Automated tests prove existing `/seo/doctor` aliases, if retained, do not
     change read-only semantics.
-48. Automated tests prove Growth Loop handoff is the only path from Doctor
-    findings to opportunities/actions.
+48. Automated tests prove Doctor Growth Loop handoff routes are not registered in
+    the current version.
 49. Automated tests prove new Doctor runs do not enter a `handoff` stage.
 50. Automated tests prove legacy `/seo/doctor` aliases, if retained, preserve the
     read-only contract.
@@ -1487,7 +1488,9 @@ These are fixed unless product changes them explicitly:
   one version cycle, then redirect or be removed.
 - Weekly scheduled Doctor remains in V1 for active registered projects only.
 - Doctor findings are report artifacts, not opportunities.
-- Growth Loop handoff is explicit and optional.
+- Doctor has no current-version Growth Loop handoff.
+- `Fix with AI` is self-serve repair assistance and does not create downstream
+  objects.
 - Doctor uses bounded public crawl.
 - Doctor always respects robots in V1.
 - Doctor does not promise rankings, traffic, conversions, or AI citations.

@@ -23,7 +23,6 @@ test("api client exposes canonical read-only Doctor report, run, and finding met
     "getSEODoctorRun",
     "listSEODoctorRunFindings",
     "dismissSEODoctorFinding",
-    "startSEODoctorGrowthLoop",
   ]) {
     assert.match(api, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -31,6 +30,8 @@ test("api client exposes canonical read-only Doctor report, run, and finding met
   assert.match(api, /`\/projects\/\$\{id\}\/doctor\/runs`/);
   assert.doesNotMatch(api, /\/seo\/doctor/);
   assert.doesNotMatch(api, /convertSEODoctorFinding/);
+  assert.doesNotMatch(api, /startSEODoctorGrowthLoop/);
+  assert.doesNotMatch(api, /start-growth-loop/);
 });
 
 test("project shell exposes Doctor under the Home section", () => {
@@ -42,7 +43,7 @@ test("project shell exposes Doctor under the Home section", () => {
   assert.match(shell, /href: "doctor"/);
 });
 
-test("Doctor route renders a read-only diagnosis page without per-finding repair handoff", () => {
+test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", () => {
   assert.equal(exists("projects/[id]/doctor/page.tsx"), true, "doctor route should exist");
   assert.equal(exists("projects/[id]/doctor/doctor-client.tsx"), true, "doctor client should exist");
   const page = read("projects/[id]/doctor/page.tsx");
@@ -53,26 +54,131 @@ test("Doctor route renders a read-only diagnosis page without per-finding repair
     "progress_percent",
     "pages_checked",
     "Run Doctor",
-    "acceptance_tests",
-    "dismissSEODoctorFinding",
-    "Start Growth Loop",
-  ]) {
-    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  for (const forbidden of [
     "Fix with AI",
     "buildAIRepairPayload",
     "copyAIRepairJSON",
     "writeClipboardText",
     "selectedRepairFinding",
+    "AI coding repair JSON",
+    "Copy JSON",
+    "acceptance_tests",
+    "dismissSEODoctorFinding",
+    "document.execCommand",
+  ]) {
+    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const forbidden of [
     "Codex",
     "Claude Code",
     "Create action",
     "convertSEODoctorFinding",
-    "AI coding repair JSON",
-    "document.execCommand",
+    "Start Growth Loop",
+    "Select for Growth Loop",
+    "selectedFindingIDs",
+    "selectedGrowthLoopIDs",
+    "startingGrowthLoop",
+    "startGrowthLoop",
+    "startSEODoctorGrowthLoop",
   ]) {
     assert.doesNotMatch(client, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("AI repair JSON includes necessary website repair context without Growth Loop metadata", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const repairPayloadBlock = client.slice(client.indexOf("function repairEvidence"), client.indexOf("async function writeClipboardText"));
+  const acceptanceBlock = client.slice(client.indexOf("function buildAIRepairAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
+
+  for (const required of [
+    "issue_type",
+    "severity",
+    "category",
+    "affected_urls",
+    "normalized_urls",
+    "problem",
+    "why_it_matters",
+    "evidence",
+    "page_url",
+    "normalized_page_url",
+    "status",
+    "final_url",
+    "confidence",
+    "fix",
+    "goal",
+    "instructions",
+    "likely_surfaces",
+    "seo_contract",
+    "risk_level",
+    "acceptance_tests",
+  ]) {
+    assert.match(repairPayloadBlock, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const internalOrGrowthMetadata of [
+    "schema_version",
+    "intended_tools",
+    "run_id",
+    "run_status",
+    "run_stage",
+    "health_score",
+    "finding_key",
+    "id: finding.id",
+    "status: finding.status",
+    "project_id",
+    "first_seen_at",
+    "last_seen_at",
+    "review_required",
+    "autofix_eligible",
+    "linked_opportunity_id",
+    "linked_content_action_id",
+    "opportunity_id",
+    "content_action_id",
+    "Growth Loop",
+    "start-growth-loop",
+  ]) {
+    assert.doesNotMatch(repairPayloadBlock, new RegExp(internalOrGrowthMetadata.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(acceptanceBlock, /finding_key/);
+  assert.match(acceptanceBlock, /rerun Doctor or an equivalent crawler/);
+});
+
+test("structured data AI repair JSON includes the UNiPost-style schema contract", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const acceptanceBlock = client.slice(client.indexOf("function structuredDataAcceptanceTests"), client.indexOf("function buildAIRepairPayload"));
+
+  for (const contract of [
+    "seo_contract",
+    "page_role",
+    "homepage",
+    "schema_types",
+    "WebSite",
+    "Organization",
+    "WebPage",
+    "field_sources",
+    "canonical_url",
+    "render_requirement",
+    "server-rendered",
+    "Google Rich Results Test",
+    "Schema Markup Validator",
+    "@context",
+    "@type",
+    "absolute production URLs",
+    "trailing-slash format",
+    "template placeholders",
+    "staging",
+    "logo",
+  ]) {
+    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const acceptance of [
+    "server-rendered JSON-LD",
+    "valid JSON without template placeholders",
+    "Google Rich Results Test or Schema Markup Validator",
+    "WebSite, Organization, and WebPage",
+    "no localhost, staging, preview, or dev URLs",
+  ]) {
+    assert.match(acceptanceBlock, new RegExp(acceptance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
 

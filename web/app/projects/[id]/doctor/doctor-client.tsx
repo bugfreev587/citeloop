@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clipboard, Code2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
@@ -56,6 +56,116 @@ function firstURL(finding: SEODoctorFinding) {
   return finding.affected_urls[0] || finding.normalized_urls[0] || "Project surface";
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function compactRepairObject(value: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => {
+      if (entry == null) return false;
+      if (Array.isArray(entry)) return entry.length > 0;
+      if (typeof entry === "string") return entry.trim().length > 0;
+      return true;
+    }),
+  );
+}
+
+function parseRepairURL(value?: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function isStructuredDataIssue(finding: SEODoctorFinding) {
+  return finding.category === "structured_data" || finding.issue_type.startsWith("structured_data_") || finding.issue_type === "unsafe_mdx_detected";
+}
+
+function repairCanonicalURL(finding: SEODoctorFinding) {
+  const evidence = repairEvidence(finding);
+  return evidence.normalized_page_url ?? evidence.final_url ?? evidence.page_url ?? firstURL(finding);
+}
+
+function repairPageRole(finding: SEODoctorFinding) {
+  const url = parseRepairURL(repairCanonicalURL(finding));
+  if (url && (url.pathname === "" || url.pathname === "/")) return "homepage";
+  return "web_page";
+}
+
+function structuredDataSchemaTypes(pageRole: string) {
+  if (pageRole === "homepage") return ["WebSite", "Organization", "WebPage"];
+  return ["WebPage"];
+}
+
+function buildStructuredDataRepairContract(finding: SEODoctorFinding) {
+  if (!isStructuredDataIssue(finding)) return null;
+
+  const canonicalURL = repairCanonicalURL(finding);
+  const pageRole = repairPageRole(finding);
+
+  return {
+    page_role: pageRole,
+    canonical_url: canonicalURL,
+    schema_types: structuredDataSchemaTypes(pageRole),
+    render_requirement: "Add server-rendered JSON-LD to the initial HTML so crawlers can read it without client-side interaction.",
+    field_sources: [
+      { field: "name", source: "production site, product, or brand name for the affected page" },
+      { field: "url", source: "canonical_url from this repair contract" },
+      { field: "logo", source: "production logo asset URL that returns a 200 image response" },
+      { field: "description", source: "page meta description or approved brand/product description" },
+      { field: "sameAs", source: "official social or profile URLs if available; omit rather than invent" },
+      { field: "contactPoint", source: "public support/contact details if available; omit rather than invent" },
+      { field: "publisher", source: "the same Organization node when the page is published by the brand/site" },
+      { field: "inLanguage", source: "page html lang, locale config, or canonical locale" },
+      { field: "potentialAction", source: "site search URL template only when the site has search; omit otherwise" },
+    ],
+    canonical_rules: [
+      "Use the production canonical URL and preserve the trailing-slash format chosen by the page canonical tag and redirects.",
+      "Do not create competing /path and /path/ structured-data URLs for the same canonical page.",
+      "If this is a localized page, use the locale-specific canonical URL and language instead of the default homepage values.",
+    ],
+    validation_tools: ["Google Rich Results Test", "Schema Markup Validator"],
+    negative_checks: [
+      "Do not add placeholder JSON-LD solely to silence the warning.",
+      "Require @context to be https://schema.org and @type to match the page role.",
+      "Use absolute production URLs for url, logo, sameAs, publisher, and potentialAction targets.",
+      "Reject localhost, staging, preview, test, or dev URLs.",
+      "Remove empty, unknown, or templated fields instead of shipping blank values.",
+      "Verify logo and referenced image URLs return successful image responses.",
+    ],
+  };
+}
+
+function structuredDataAcceptanceTests(finding: SEODoctorFinding) {
+  if (!isStructuredDataIssue(finding)) return [];
+
+  const canonicalURL = repairCanonicalURL(finding);
+  const pageRole = repairPageRole(finding);
+  const schemaTypes = structuredDataSchemaTypes(pageRole);
+
+  return [
+    `Inspect the initial HTML for ${canonicalURL} and verify it contains server-rendered JSON-LD in a script[type="application/ld+json"] element that crawlers can read without client-side interaction.`,
+    "Parse every JSON-LD block from the rendered HTML and verify each block is valid JSON without template placeholders.",
+    "Validate the JSON-LD with Google Rich Results Test or Schema Markup Validator and resolve parser errors or unreadable schema warnings.",
+    pageRole === "homepage"
+      ? "For homepage pages, verify the JSON-LD models the page with WebSite, Organization, and WebPage schema types using real production brand metadata."
+      : `Verify the JSON-LD @type matches the actual page role; expected baseline schema types: ${schemaTypes.join(", ")}.`,
+    "Verify @context is https://schema.org, @type is present, all URL fields use absolute production URLs, there are no localhost, staging, preview, or dev URLs, no empty required fields, and any logo URL returns a 200 image response.",
+  ];
+}
+
+function buildAIRepairAcceptanceTests(finding: SEODoctorFinding) {
+  return uniqueStrings([
+    ...(finding.acceptance_tests ?? []),
+    ...structuredDataAcceptanceTests(finding),
+    `After the code fix, rerun Doctor or an equivalent crawler and confirm no active "${finding.issue_type}" issue appears for the same affected URLs, normalized URLs, or equivalent canonical URL variants.`,
+    "Confirm the underlying page response, metadata, schema, redirect, link, or crawl behavior that produced this finding now matches the intended SEO/GEO contract, not only that the card was dismissed.",
+  ]);
+}
+
 function findingEvidence(finding: SEODoctorFinding): Array<[string, unknown]> {
   const evidence = finding.evidence && typeof finding.evidence === "object" ? finding.evidence : {};
   const rawDetails = evidence.raw_details && typeof evidence.raw_details === "object" ? evidence.raw_details : {};
@@ -70,8 +180,72 @@ function findingEvidence(finding: SEODoctorFinding): Array<[string, unknown]> {
   return rows.filter(([, value]) => value != null && `${value}`.trim() !== "");
 }
 
-function isSelectableFinding(finding: SEODoctorFinding) {
-  return finding.status === "active" && finding.severity !== "Info";
+function repairEvidence(finding: SEODoctorFinding) {
+  const evidence = finding.evidence && typeof finding.evidence === "object" ? finding.evidence : {};
+  const rawDetails = evidence.raw_details && typeof evidence.raw_details === "object" ? evidence.raw_details : {};
+
+  return compactRepairObject({
+    page_url: evidence.page_url ?? firstURL(finding),
+    normalized_page_url: evidence.normalized_page_url ?? finding.normalized_urls[0] ?? null,
+    status: rawDetails.status ?? evidence.status ?? null,
+    final_url: rawDetails.final_url ?? evidence.final_url ?? null,
+    confidence: evidence.confidence_label ?? evidence.confidence ?? null,
+  });
+}
+
+function buildAIRepairPayload(finding: SEODoctorFinding) {
+  return {
+    issue: compactRepairObject({
+      severity: finding.severity,
+      category: finding.category,
+      issue_type: finding.issue_type,
+      affected_urls: finding.affected_urls,
+      normalized_urls: finding.normalized_urls,
+      problem: finding.fix_intent || finding.issue_type,
+      why_it_matters: finding.why_it_matters,
+    }),
+    evidence: repairEvidence(finding),
+    fix: compactRepairObject({
+      goal: finding.fix_intent || finding.issue_type,
+      instructions: finding.developer_instructions,
+      likely_surfaces: finding.likely_files_or_surfaces,
+      seo_contract: buildStructuredDataRepairContract(finding),
+      risk_level: finding.risk_level,
+    }),
+    acceptance_tests: buildAIRepairAcceptanceTests(finding),
+  };
+}
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea fallback for browsers that block async clipboard writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  activeElement?.focus();
+
+  if (!copied) {
+    throw new Error("Clipboard write failed.");
+  }
 }
 
 export function DoctorClient({ projectId }: { projectId: string }) {
@@ -83,8 +257,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeverityFilter>("all");
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
-  const [selectedFindingIDs, setSelectedFindingIDs] = useState<string[]>([]);
-  const [startingGrowthLoop, setStartingGrowthLoop] = useState(false);
+  const [selectedRepairFinding, setSelectedRepairFinding] = useState<SEODoctorFinding | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -120,16 +293,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }, [filter, report?.findings]);
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
-  const selectableFindingIDs = useMemo(() => {
-    return new Set((report?.findings ?? []).filter(isSelectableFinding).map((finding) => finding.id));
-  }, [report?.findings]);
-  const selectedGrowthLoopIDs = useMemo(() => {
-    return selectedFindingIDs.filter((id) => selectableFindingIDs.has(id));
-  }, [selectableFindingIDs, selectedFindingIDs]);
-
-  useEffect(() => {
-    setSelectedFindingIDs((current) => current.filter((id) => selectableFindingIDs.has(id)));
-  }, [selectableFindingIDs]);
+  const selectedRepairJSON = useMemo(() => {
+    return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding), null, 2) : "";
+  }, [selectedRepairFinding]);
 
   async function runDoctor() {
     setRunning(true);
@@ -146,31 +312,12 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     }
   }
 
-  function toggleFindingSelection(findingID: string) {
-    setSelectedFindingIDs((current) => {
-      if (current.includes(findingID)) {
-        return current.filter((id) => id !== findingID);
-      }
-      return [...current, findingID];
-    });
-  }
-
-  async function startGrowthLoop() {
-    if (!run?.id || selectedGrowthLoopIDs.length === 0) return;
-    setStartingGrowthLoop(true);
+  async function copyAIRepairJSON(finding: SEODoctorFinding) {
     try {
-      const result = await api.startSEODoctorGrowthLoop(projectId, run.id, selectedGrowthLoopIDs);
-      notify({
-        tone: "green",
-        title: "Growth Loop started",
-        detail: `${result.actions.length} ${result.actions.length === 1 ? "action was" : "actions were"} created from selected Doctor findings.`,
-      });
-      setSelectedFindingIDs([]);
-      await refresh();
-    } catch (err: any) {
-      notify({ tone: "red", title: "Could not start Growth Loop", detail: err?.apiMessage || err?.message });
-    } finally {
-      setStartingGrowthLoop(false);
+      await writeClipboardText(JSON.stringify(buildAIRepairPayload(finding), null, 2));
+      notify({ tone: "green", title: "Repair JSON copied" });
+    } catch {
+      notify({ tone: "red", title: "Could not copy repair JSON", detail: "Select the JSON in the dialog and copy it manually." });
     }
   }
 
@@ -238,17 +385,6 @@ export function DoctorClient({ projectId }: { projectId: string }) {
               Refresh
             </ButtonProgress>
           </Button>
-          <Button
-            onClick={() => void startGrowthLoop()}
-            disabled={!run?.id || selectedGrowthLoopIDs.length === 0 || startingGrowthLoop || isActiveRun(run)}
-          >
-            <ButtonProgress busy={startingGrowthLoop} busyLabel="Starting" idleIcon={<ArrowRight size={15} />}>
-              Start Growth Loop
-            </ButtonProgress>
-          </Button>
-          <span className="text-xs font-semibold text-slate-500">
-            {selectedGrowthLoopIDs.length} selected
-          </span>
           {run?.block_reason && <Badge tone="red">{run.block_reason}</Badge>}
         </div>
       </section>
@@ -335,19 +471,19 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                   </div>
                 )}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                  <label className={cx("inline-flex items-center gap-2 text-xs font-bold text-slate-500", !isSelectableFinding(finding) && "opacity-50")}>
-                    <input
-                      type="checkbox"
-                      checked={selectedGrowthLoopIDs.includes(finding.id)}
-                      onChange={() => toggleFindingSelection(finding.id)}
-                      disabled={!isSelectableFinding(finding)}
-                      className="h-4 w-4 rounded border-slate-300 text-[#d93820]"
-                    />
-                    Select for Growth Loop
-                  </label>
                   <Button size="sm" variant="ghost" onClick={() => void dismissFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
                     <X size={14} />
                     Dismiss
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ai"
+                    onClick={() => setSelectedRepairFinding(finding)}
+                    disabled={finding.status !== "active"}
+                    className="ml-auto"
+                  >
+                    <Code2 size={14} />
+                    Fix with AI
                   </Button>
                 </div>
               </article>
@@ -355,6 +491,46 @@ export function DoctorClient({ projectId }: { projectId: string }) {
           </div>
         )}
       </section>
+
+      {selectedRepairFinding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close repair JSON"
+            className="absolute inset-0 bg-slate-950/45"
+            onClick={() => setSelectedRepairFinding(null)}
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="seo-doctor-ai-repair-title"
+            className="relative z-10 flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase text-cyan-700">AI coding repair JSON</div>
+                <h2 id="seo-doctor-ai-repair-title" className="mt-1 text-xl font-bold leading-7 text-slate-950">
+                  Fix with AI
+                </h2>
+                <p className="mt-1 max-w-[74ch] text-sm font-semibold leading-5 text-slate-500">
+                  Copy this JSON into an AI coding tool. It includes the affected page, diagnosis evidence, repair instructions, and verification checks for this specific finding.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button size="sm" onClick={() => void copyAIRepairJSON(selectedRepairFinding)}>
+                  <Clipboard size={14} />
+                  Copy JSON
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedRepairFinding(null)}>
+                  <X size={14} />
+                  Close
+                </Button>
+              </div>
+            </div>
+            <pre className="max-h-[64vh] overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{selectedRepairJSON}</pre>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
