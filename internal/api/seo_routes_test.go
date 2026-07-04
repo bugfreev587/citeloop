@@ -45,7 +45,6 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "doctor canonical run findings", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor/runs/not-an-id/findings"},
 		{name: "doctor canonical latest", method: http.MethodGet, path: "/api/projects/not-a-uuid/doctor/latest"},
 		{name: "doctor canonical dismiss finding", method: http.MethodPost, path: "/api/projects/not-a-uuid/doctor/findings/not-an-id/dismiss"},
-		{name: "doctor canonical start growth loop", method: http.MethodPost, path: "/api/projects/not-a-uuid/doctor/runs/not-an-id/start-growth-loop"},
 		{name: "settings", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/settings"},
 		{name: "update settings", method: http.MethodPut, path: "/api/projects/not-a-uuid/seo/settings"},
 		{name: "gsc connection", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/gsc/connection"},
@@ -91,6 +90,28 @@ func TestLegacyDoctorConvertRouteIsNotRegistered(t *testing.T) {
 
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("legacy convert route status = %d, want %d", res.Code, http.StatusNotFound)
+	}
+}
+
+func TestDoctorGrowthLoopRoutesAreNotRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.New().String()
+	runID := uuid.New().String()
+
+	for _, path := range []string{
+		"/api/projects/" + projectID + "/doctor/runs/" + runID + "/start-growth-loop",
+		"/api/projects/" + projectID + "/seo/doctor/runs/" + runID + "/start-growth-loop",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			res := httptest.NewRecorder()
+
+			router.ServeHTTP(res, req)
+
+			if res.Code != http.StatusNotFound {
+				t.Fatalf("doctor growth loop route status = %d, want %d", res.Code, http.StatusNotFound)
+			}
+		})
 	}
 }
 

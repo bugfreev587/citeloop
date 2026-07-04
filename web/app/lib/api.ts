@@ -523,10 +523,6 @@ export type SEODoctorReport = {
   } | null;
 };
 
-export type SEODoctorGrowthLoopResult = {
-  actions: SEOContentAction[];
-};
-
 export type ActionMeasurement = {
   id: string;
   project_id: string;
@@ -2075,14 +2071,6 @@ export function createApi(auth?: AuthOptions) {
   listSEODoctorRunFindings: async (id: string, runID: string): Promise<SEODoctorFinding[]> => {
     const raw = await req<any[]>(`/projects/${id}/doctor/runs/${runID}/findings`, undefined, auth);
     return arrayFrom(raw).map(normalizeSEODoctorFinding);
-  },
-  startSEODoctorGrowthLoop: async (id: string, runID: string, findingIDs: string[]): Promise<SEODoctorGrowthLoopResult> => {
-    const raw = await req<any>(
-      `/projects/${id}/doctor/runs/${runID}/start-growth-loop`,
-      { method: "POST", body: JSON.stringify({ finding_ids: findingIDs }) },
-      auth,
-    );
-    return { actions: arrayFrom(raw?.actions).map(normalizeSEOContentAction) };
   },
   dismissSEODoctorFinding: async (id: string, findingID: string): Promise<SEODoctorFinding> => {
     const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
