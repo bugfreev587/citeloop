@@ -212,15 +212,15 @@ function WorkflowStage({
       className={cx("scroll-mt-8 overflow-hidden rounded-2xl border px-4 py-5 sm:px-6", meta.toneClass)}
     >
       <div data-content-workflow-stage-accent className={cx("mb-4 h-1.5 w-16 rounded-full", meta.accentClass)} />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-white/70 pb-4">
-        <div>
+      <div className="mb-4 border-b border-white/70 pb-5">
+        <h1 data-content-workflow-stage-title className="text-[26px] font-bold leading-8 tracking-tight text-slate-900 sm:text-[30px] sm:leading-9">
+          {meta.title}
+        </h1>
+        <div className="mt-3">
           <div data-content-workflow-stage-step className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">
             {meta.stepLabel}
           </div>
           <div className="mt-1 text-sm font-medium text-slate-500">{meta.eyebrow}</div>
-        </div>
-        <div className="rounded-full border border-white/80 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-500 shadow-sm">
-          {meta.title}
         </div>
       </div>
       <div data-content-workflow-stage-body className="min-w-0">

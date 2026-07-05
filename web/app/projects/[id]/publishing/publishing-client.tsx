@@ -735,40 +735,36 @@ export function PublishingClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-6">
-      <SectionHeader
-        title="Publish"
-        level="page"
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            {renderPrimaryCta()}
-            <button
-              type="button"
-              onClick={() => setDrawer("schedule")}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Settings2 size={14} className="text-slate-400" />
-              Schedule
-              <span className="inline-flex items-center gap-1 text-slate-900">
-                {MODE_META[publishMode].icon}
-                {MODE_META[publishMode].label}
-              </span>
-            </button>
-            <Button size="sm" onClick={() => openViewAll()}>
-              <CalendarClock size={14} />
-              View all
-            </Button>
-            <Button disabled={!!busy} size="sm" onClick={reconcile}>
-              <ButtonProgress busy={busy === "reconcile"} busyLabel="Checking status" idleIcon={<RotateCcw size={14} />}>
-                Check status
-              </ButtonProgress>
-            </Button>
-            <Button disabled={!!busy} size="sm" onClick={refresh}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
-          </div>
-        }
-      />
+      <div className="flex min-h-8 items-center justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {renderPrimaryCta()}
+          <button
+            type="button"
+            onClick={() => setDrawer("schedule")}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Settings2 size={14} className="text-slate-400" />
+            Schedule
+            <span className="inline-flex items-center gap-1 text-slate-900">
+              {MODE_META[publishMode].icon}
+              {MODE_META[publishMode].label}
+            </span>
+          </button>
+          <Button size="sm" onClick={() => openViewAll()}>
+            <CalendarClock size={14} />
+            View all
+          </Button>
+          <Button disabled={!!busy} size="sm" onClick={reconcile}>
+            <ButtonProgress busy={busy === "reconcile"} busyLabel="Checking status" idleIcon={<RotateCcw size={14} />}>
+              Check status
+            </ButtonProgress>
+          </Button>
+          <Button disabled={!!busy} size="sm" onClick={refresh}>
+            <RefreshCw size={14} />
+            Refresh
+          </Button>
+        </div>
+      </div>
 
       {destinations.github.state === "not_connected" && (
         <Notice title="No publisher connection" detail="GitHub/Next.js is the canonical publish destination. Connect it in Settings before publishing." tone="amber" />

@@ -247,25 +247,21 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-6">
       <div ref={reviewSurfaceRef} className="space-y-6">
-        <SectionHeader
-          title="Review"
-          level="page"
-          action={
-            <div className="flex flex-wrap justify-end gap-2">
-              {readyArticles.length > 0 && (
-                <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
-                  <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-                    Approve {readyArticles.length} ready
-                  </ButtonProgress>
-                </Button>
-              )}
-              <Button disabled={!!busy} size="sm" onClick={refresh}>
-                <RefreshCw size={14} />
-                Refresh
+        <div className="flex min-h-8 items-center justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
+            {readyArticles.length > 0 && (
+              <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
+                <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+                  Approve {readyArticles.length} ready
+                </ButtonProgress>
               </Button>
-            </div>
-          }
-        />
+            )}
+            <Button disabled={!!busy} size="sm" onClick={refresh}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+          </div>
+        </div>
 
         {summary.total === 0 ? (
           <EmptyState
