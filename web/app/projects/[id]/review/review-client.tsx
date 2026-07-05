@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
@@ -52,6 +53,7 @@ function stringList(value: any): string[] {
 
 export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
+  const searchParams = useSearchParams();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
@@ -60,6 +62,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const reviewSurfaceRef = useRef<HTMLDivElement | null>(null);
   const reviewDrawerRef = useRef<HTMLElement | null>(null);
   const reviewReturnFocusRef = useRef<HTMLElement | null>(null);
+  const reviewCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
@@ -101,6 +104,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   const selectedQueueArticle = queueArticles.find((item) => item.article.id === selectedArticleId) ?? null;
   const selectedArticle = selectedQueueArticle?.article ?? null;
+  const requestedArticleId = searchParams.get("article");
   const selectedBusy = selectedArticle
     ? busy === "bulk-approve" ||
       busy === `approve-${selectedArticle.id}` ||
@@ -115,6 +119,15 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       setSelectedArticleId(null);
     }
   }, [queueArticles, selectedArticleId]);
+
+  useEffect(() => {
+    if (!requestedArticleId || !queueArticles.some((item) => item.article.id === requestedArticleId)) return;
+    setSelectedArticleId(requestedArticleId);
+    const target = reviewCardRefs.current[requestedArticleId];
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.focus({ preventScroll: true });
+  }, [queueArticles, requestedArticleId]);
 
   useEffect(() => {
     if (!selectedArticle?.id) return;
@@ -283,6 +296,10 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                       key={item.article.id}
                       item={item}
                       selected={selectedArticleId === item.article.id}
+                      linked={requestedArticleId === item.article.id}
+                      buttonRef={(node) => {
+                        reviewCardRefs.current[item.article.id] = node;
+                      }}
                       onSelect={(trigger) => {
                         reviewReturnFocusRef.current = trigger;
                         setSelectedArticleId(item.article.id);
@@ -363,10 +380,14 @@ function ReviewMetricCard({
 function ReviewDecisionCard({
   item,
   selected,
+  linked,
+  buttonRef,
   onSelect,
 }: {
   item: QueueArticle;
   selected: boolean;
+  linked: boolean;
+  buttonRef: (node: HTMLButtonElement | null) => void;
   onSelect: (trigger: HTMLElement) => void;
 }) {
   const { article } = item;
@@ -377,14 +398,20 @@ function ReviewDecisionCard({
 
   return (
     <button
+      ref={buttonRef}
       data-review-card
+      data-linked-review-card={linked ? true : undefined}
       type="button"
       onClick={(event) => onSelect(event.currentTarget)}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
       className={cx(
         "group min-w-0 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0",
-        selected ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
+        linked
+          ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15"
+          : selected
+            ? "border-slate-400 ring-2 ring-slate-200"
+            : "border-slate-200",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">

@@ -97,6 +97,32 @@ function contentPlanActionTypeLabel(action: VisibilityActionInLoop) {
   return "Content work";
 }
 
+function topicFromAcceptedAction(action: VisibilityActionInLoop): Topic | null {
+  if (!action.topic_id) return null;
+  return {
+    id: action.topic_id,
+    project_id: undefined,
+    channel: "blog",
+    title: contentPlanActionTitle(action),
+    target_keyword: action.opportunity_query ?? null,
+    target_prompt: action.opportunity_expected_impact ?? null,
+    angle: action.opportunity_expected_impact ?? null,
+    format: "article",
+    priority: 0,
+    internal_links: [],
+    status: action.topic_status ?? "backlog",
+    scheduled_at: null,
+    created_at: null,
+    source_content_action_id: action.id,
+  };
+}
+
+function reviewHrefForAction(projectId: string, action: VisibilityActionInLoop) {
+  return action.draft_article_id
+    ? `/projects/${projectId}/review?article=${action.draft_article_id}`
+    : `/projects/${projectId}/review`;
+}
+
 export function TopicsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const searchParams = useSearchParams();
@@ -154,7 +180,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       (visibilitySummary?.actions_in_loop ?? []).filter(
         (action) =>
           isContentPlanAction(action) &&
-          (action.lifecycle_stage === "added_to_plan" || (action.lifecycle_stage === "planned" && !action.topic_id)),
+          ["added_to_plan", "planned", "drafting", "ready_for_review"].includes(action.lifecycle_stage),
       ),
     [visibilitySummary],
   );
@@ -234,69 +260,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     })[0] ?? null;
   }, [queuedTopics, recommendedIds]);
   const nextTopicBusy = nextTopic ? Boolean(generatingIds[nextTopic.id]) : false;
-  const pacingNote = useMemo(() => {
-    const cadence = config && config.cadence_per_week > 0
-      ? `about ${config.cadence_per_week}/week`
-      : "on your configured cadence";
-    const buffer = config && config.buffer_days > 0
-      ? `, then holds a ${config.buffer_days}-day buffer before publishing`
-      : "";
-    const inFlight = inReview + approvedCount > 0 ? ` ${inReview} in review · ${approvedCount} approved already in flight.` : "";
-    const queued = queuedTopics.length === 1 ? "1 topic is queued" : `${queuedTopics.length} topics are queued`;
-    return `${queued}. CiteLoop drafts ${cadence} to stay within budget${buffer}.${inFlight} Drafting runs automatically — draft one now to jump the queue.`;
-  }, [config, inReview, approvedCount, queuedTopics.length]);
   const topicGridClass = cx(
     "grid gap-3",
     view === "grid" && "lg:grid-cols-2",
     view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
   );
-
-  // The plan is built automatically from accepted opportunities; this banner explains
-  // that flow so the manual generate button is a fallback, not the main path.
-  const autoPlan: { tone: "green" | "blue" | "amber" | "neutral"; title: string; detail: string; cta: { label: string; href: string } | null } =
-    !autoEnabled
-      ? {
-          tone: "neutral",
-          title: "Automatic workflow paused",
-          detail:
-            "Turn Auto on to convert accepted opportunities into backlog topics and draft them on cadence. Manual domain generation and Draft now stay available.",
-          cta: summaryOpenOpportunityCount > 0 ? { label: "Review opportunities", href: `/projects/${projectId}/analysis` } : null,
-        }
-      : topics.length > 0
-      ? {
-          tone: "green",
-          title: "Your content plan is running automatically",
-          detail: queuedTopics.length > 0
-            ? pacingNote
-            : "CiteLoop turns accepted opportunities into a topic backlog and drafts them until a review, budget, or safety gate stops it. Non-topic actions continue through the action handoff in Analysis and Results.",
-          cta: null,
-        }
-      : summaryPendingPlanActions > 0
-        ? {
-            tone: "blue",
-            title: "Generating your content plan from accepted opportunities",
-            detail: "Accepted opportunities are being turned into topic backlog items automatically. Direct technical, metadata, schema, and distribution work stays in the action handoff.",
-            cta: null,
-          }
-        : summaryOpenOpportunityCount > 0
-          ? {
-              tone: "amber",
-              title: `${summaryOpenOpportunityCount} ${summaryOpenOpportunityCount === 1 ? "opportunity is" : "opportunities are"} waiting for review`,
-              detail: "Review opportunities to add useful recommendations to the plan. CiteLoop turns content recommendations into the topic backlog and routes direct work through the action handoff.",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/analysis` },
-            }
-          : {
-              tone: "neutral",
-              title: "No opportunities are waiting",
-              detail: "CiteLoop plans automatically once you review opportunities. You can also seed a starter topic backlog from your domain (advanced).",
-              cta: { label: "Review opportunities", href: `/projects/${projectId}/analysis` },
-            };
-  const autoPlanToneClass = {
-    green: "border-emerald-200 bg-emerald-50",
-    blue: "border-blue-200 bg-blue-50",
-    amber: "border-amber-200 bg-amber-50",
-    neutral: "border-slate-200 bg-white",
-  }[autoPlan.tone];
 
   async function runStrategist() {
     setBusy("strategist");
@@ -461,6 +429,25 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function draftAcceptedAction(action: VisibilityActionInLoop) {
+    setBusy(`draft-action-${action.id}`);
+    setMessage(null);
+    try {
+      let topic =
+        (action.topic_id ? topics.find((item) => item.id === action.topic_id) ?? topicFromAcceptedAction(action) : null) ??
+        null;
+      if (!topic) {
+        topic = await api.planSEOContentAction(projectId, action.id);
+        setTopics((current) => (current.some((item) => item.id === topic?.id) ? current : [topic!, ...current]));
+      }
+      await generate(topic);
+    } catch (e: any) {
+      setMessage({ title: "Draft Content failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const autoSwitch = (
     <div className="group relative inline-flex">
       <span id="content-plan-auto-help" className="sr-only">
@@ -504,81 +491,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-7">
-      <section className="space-y-3">
-        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" action={autoSwitch} />
-        <div className={cx("flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between", autoPlanToneClass)}>
-          <div className="min-w-0">
-            <div className="text-base font-bold text-slate-900">{autoPlan.title}</div>
-            <div className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{autoPlan.detail}</div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {nextTopic && (
-              <Button
-                aria-busy={nextTopicBusy}
-                disabled={nextTopicBusy}
-                variant="primary"
-                size="sm"
-                onClick={() => generate(nextTopic)}
-                title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
-              >
-                <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
-                  Draft next topic
-                </ButtonProgress>
-              </Button>
-            )}
-            {autoPlan.cta && (
-              <a
-                href={autoPlan.cta.href}
-                className="inline-flex h-9 items-center gap-2 rounded-xl bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-semibold text-white transition-all duration-150 active:scale-[0.97]"
-              >
-                {autoPlan.cta.label}
-                <ArrowRight size={15} />
-              </a>
-            )}
-            <Button
-              aria-busy={strategistRunning}
-              disabled={strategistRunning}
-              variant="ghost"
-              size="sm"
-              onClick={runStrategist}
-              title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed analysis."
-            >
-              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-              {strategistRunning ? "Generating content plan" : "Generate from domain"}
-            </Button>
-          </div>
-        </div>
-      </section>
-
       <section>
-        <SectionHeader title="Plan pulse" />
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <Badge tone={planPulse.tone}>{planPulse.tone === "amber" ? "Needs attention" : "Plan status"}</Badge>
-              <div className="mt-3 text-lg font-bold leading-6 text-slate-950">{planPulse.title}</div>
-              <p className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{planPulse.detail}</p>
-            </div>
-            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.backlog}</div>
-                <div className="text-xs font-semibold text-slate-500">Backlog</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.readyToDraft}</div>
-                <div className="text-xs font-semibold text-slate-500">Ready to draft</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.scheduledIntent}</div>
-                <div className="text-xs font-semibold text-slate-500">Scheduled intent</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.needsPriority}</div>
-                <div className="text-xs font-semibold text-slate-500">Needs priority</div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <SectionHeader title="Content Plan" eyebrow="Topic backlog and action handoff" level="page" action={autoSwitch} />
       </section>
 
       {acceptedPlanActions.length > 0 && (
@@ -591,6 +505,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <div className="grid gap-2">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
+              const actionDraftBusy = busy === `draft-action-${action.id}`;
+              const hasReviewContent = action.lifecycle_stage === "ready_for_review" || Boolean(action.draft_article_id);
               return (
                 <div
                   key={action.id}
@@ -615,8 +531,33 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
-                    <div className="shrink-0 text-sm font-semibold text-slate-600">
-                      {action.topic_id ? "Topic created" : "Waiting in Content Plan"}
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+                      {hasReviewContent ? (
+                        <a
+                          href={reviewHrefForAction(projectId, action)}
+                          className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
+                        >
+                          View in Review
+                          <ArrowRight size={15} />
+                        </a>
+                      ) : (
+                        <Button
+                          aria-busy={actionDraftBusy}
+                          disabled={Boolean(busy) || actionDraftBusy || autoEnabled}
+                          variant="primary"
+                          size="sm"
+                          onClick={() => draftAcceptedAction(action)}
+                          title={
+                            autoEnabled
+                              ? "Auto is on, so AI Editor will draft this content automatically."
+                              : "Send this accepted opportunity to AI Editor and QA Review."
+                          }
+                        >
+                          <ButtonProgress busy={actionDraftBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
+                            {autoEnabled ? "Drafting automatically" : "Draft Content"}
+                          </ButtonProgress>
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -627,7 +568,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       )}
 
       <section className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_auto]">
           <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search topics" />
           <select
             value={channel}
@@ -680,6 +621,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               Three
             </button>
           </div>
+          {nextTopic && (
+            <Button
+              aria-busy={nextTopicBusy}
+              disabled={nextTopicBusy}
+              variant="primary"
+              onClick={() => generate(nextTopic)}
+              title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
+            >
+              <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
+                Draft next topic
+              </ButtonProgress>
+            </Button>
+          )}
+          <Button
+            aria-busy={strategistRunning}
+            disabled={strategistRunning}
+            variant="ghost"
+            onClick={runStrategist}
+            title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed analysis."
+          >
+            {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+            {strategistRunning ? "Generating content plan" : "Generate from domain"}
+          </Button>
           <Button disabled={strategistRunning} onClick={refresh}>
             <RefreshCw size={16} />
             Refresh
@@ -883,6 +847,37 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             })}
           </div>
         )}
+      </section>
+
+      <section data-content-plan-summary-section>
+        <SectionHeader title="Topic summary" />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <Badge tone={planPulse.tone}>{planPulse.tone === "amber" ? "Needs attention" : "Plan status"}</Badge>
+              <div className="mt-3 text-lg font-bold leading-6 text-slate-950">{planPulse.title}</div>
+              <p className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{planPulse.detail}</p>
+            </div>
+            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.backlog}</div>
+                <div className="text-xs font-semibold text-slate-500">Backlog</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.readyToDraft}</div>
+                <div className="text-xs font-semibold text-slate-500">Ready to draft</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.scheduledIntent}</div>
+                <div className="text-xs font-semibold text-slate-500">Scheduled intent</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.needsPriority}</div>
+                <div className="text-xs font-semibold text-slate-500">Needs priority</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   );

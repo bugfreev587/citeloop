@@ -30,3 +30,34 @@ func TestCreateSEOContentActionInfersMultiSurfaceAssetAndReviewOutput(t *testing
 		}
 	}
 }
+
+func TestPlanSEOContentActionCreatesTopicForManualDrafting(t *testing.T) {
+	serverRaw, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("read server.go: %v", err)
+	}
+	if !strings.Contains(string(serverRaw), `r.Post("/actions/{actionID}/plan", s.planSEOContentAction)`) {
+		t.Fatal("manual Content Plan drafting must expose a content action planning endpoint")
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(handlerRaw)
+	for _, want := range []string{
+		"func (s *Server) planSEOContentAction",
+		"GetContentAction",
+		"contentActionNeedsTopic",
+		"CreateTopic",
+		"SourceContentActionID",
+		`Status:                string(topicstate.StatusBacklog)`,
+		`Status:    "approved"`,
+		"EnqueueWorkflowEvent",
+		"workflow.EventContentPlanCreated",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("manual content action planning missing %q", want)
+		}
+	}
+}

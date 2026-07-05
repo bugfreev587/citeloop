@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
+	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -509,6 +511,72 @@ func (s *Server) getSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: actionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	if !contentActionNeedsTopic(contentActionAssetType(action), action.ActionType) {
+		writeErr(w, http.StatusBadRequest, "content action does not create content")
+		return
+	}
+	if topic, ok, err := s.existingTopicForContentAction(r.Context(), projectID, actionID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if ok {
+		writeJSON(w, http.StatusOK, topic)
+		return
+	}
+	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "opportunity not found")
+		return
+	}
+	topic, err := s.Q.CreateTopic(r.Context(), topicFromContentAction(projectID, action, opp))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{
+		ID:        action.ID,
+		ProjectID: projectID,
+		Status:    "approved",
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.EnqueueWorkflowEvent(r.Context(), db.EnqueueWorkflowEventParams{
+		ProjectID:  projectID,
+		EventType:  workflow.EventContentPlanCreated,
+		DedupeKey:  workflowEventDedupeKey(workflow.EventContentPlanCreated, projectID, action.ID.String()),
+		Payload:    mustJSONLocal(map[string]any{"action_id": action.ID, "topic_id": topic.ID}),
+		EntityType: strPtr("topic"),
+		EntityID:   pgtype.UUID{Bytes: topic.ID, Valid: true},
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, topic)
+}
+
+func (s *Server) existingTopicForContentAction(ctx context.Context, projectID uuid.UUID, actionID uuid.UUID) (db.Topic, bool, error) {
+	topics, err := s.Q.ListTopics(ctx, projectID)
+	if err != nil {
+		return db.Topic{}, false, err
+	}
+	for _, topic := range topics {
+		if topic.SourceContentActionID.Valid && uuid.UUID(topic.SourceContentActionID.Bytes) == actionID {
+			return topic, true, nil
+		}
+	}
+	return db.Topic{}, false, nil
 }
 
 func (s *Server) listResultsActions(w http.ResponseWriter, r *http.Request) {
@@ -1048,6 +1116,104 @@ func stringPtrValueAPI(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func contentActionNeedsTopic(assetType string, actionType string) bool {
+	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
+	switch {
+	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata patch") || strings.Contains(text, "metadata"):
+		return false
+	case strings.Contains(text, "title") || strings.Contains(text, "meta description"):
+		return false
+	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
+		return false
+	case strings.Contains(text, "schema_patch") || strings.Contains(text, "schema patch"):
+		return false
+	case strings.Contains(text, "sitemap_update") || strings.Contains(text, "technical_fix") || strings.Contains(text, "technical seo"):
+		return false
+	case strings.Contains(text, "robots") || strings.Contains(text, "canonical") || strings.Contains(text, "crawler"):
+		return false
+	default:
+		return true
+	}
+}
+
+func contentActionAssetType(action db.ContentAction) string {
+	if action.AssetType == nil {
+		return ""
+	}
+	return strings.TrimSpace(*action.AssetType)
+}
+
+func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity) db.CreateTopicParams {
+	title := firstNonEmpty(
+		action.ActionType,
+		stringPtrValueAPI(opp.RecommendedAction),
+		"Improve search visibility",
+	)
+	if opp.Query != nil && strings.TrimSpace(*opp.Query) != "" && !strings.Contains(strings.ToLower(title), strings.ToLower(strings.TrimSpace(*opp.Query))) {
+		title = title + ": " + strings.TrimSpace(*opp.Query)
+	}
+	targetPrompt := firstNonEmpty(stringPtrValueAPI(opp.Query), stringPtrValueAPI(opp.ExpectedImpact), action.ActionType)
+	angle := firstNonEmpty(stringPtrValueAPI(opp.ExpectedImpact), action.ActionType)
+	internalLinks := []map[string]string{}
+	if action.TargetUrl != nil && strings.TrimSpace(*action.TargetUrl) != "" {
+		internalLinks = append(internalLinks, map[string]string{"url": strings.TrimSpace(*action.TargetUrl)})
+	}
+	return db.CreateTopicParams{
+		ProjectID:             projectID,
+		Channel:               "blog",
+		Title:                 title,
+		TargetKeyword:         opp.Query,
+		TargetPrompt:          strPtr(targetPrompt),
+		Angle:                 strPtr(angle),
+		Format:                strPtr("article"),
+		Priority:              priorityFromOpportunityScore(pgutil.Float(opp.PriorityScore)),
+		InternalLinks:         mustJSONLocal(internalLinks),
+		Status:                string(topicstate.StatusBacklog),
+		SourceContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
+	}
+}
+
+func priorityFromOpportunityScore(score float64) int32 {
+	if math.IsNaN(score) || math.IsInf(score, 0) || score <= 0 {
+		return 5
+	}
+	if score > 10 {
+		priority := int32(math.Ceil((100 - score) / 10))
+		if priority < 1 {
+			return 1
+		}
+		if priority > 10 {
+			return 10
+		}
+		return priority
+	}
+	priority := int32(math.Round(score))
+	if priority < 1 {
+		return 1
+	}
+	if priority > 10 {
+		return 10
+	}
+	return priority
+}
+
+func workflowEventDedupeKey(eventType string, projectID uuid.UUID, parts ...string) string {
+	key := eventType + ":" + projectID.String()
+	for _, part := range parts {
+		key += ":" + part
+	}
+	return key
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func measurementWindowForAction(assetType, actionType string) json.RawMessage {

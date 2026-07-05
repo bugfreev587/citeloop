@@ -2292,6 +2292,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
     return arrayFrom(raw);
   },
+  planSEOContentAction: async (id: string, actionID: string): Promise<Topic> => {
+    const raw = await req<any>(`/projects/${id}/seo/actions/${actionID}/plan`, { method: "POST" }, auth);
+    return normalizeTopic(raw);
+  },
   verifySEOContentAction: async (
     id: string,
     actionID: string,
