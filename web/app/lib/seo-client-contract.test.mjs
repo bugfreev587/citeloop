@@ -98,6 +98,9 @@ test("Analysis page leads with Opportunity Queue before Site Fixes", async () =>
 
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const drawerStart = source.indexOf("data-direct-action-drawer");
+  const drawerEnd = source.indexOf('{mode === "analysis" && selectedOpportunity', drawerStart);
+  const drawerSource = source.slice(drawerStart, drawerEnd);
 
   for (const expected of [
     "selectedDirectActionID",
@@ -108,10 +111,15 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
     "Review site fix details",
     "Close action details",
     "Mark applied",
-    "Needs revision",
+    "Dismiss",
+    "dismissSiteFixAction",
+    "api.dismissSEOContentAction",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+  assert.notEqual(drawerStart, -1, "seo-client.tsx missing direct action drawer");
+  assert.doesNotMatch(drawerSource, /Needs revision/, "Site Fix review drawer should not expose a non-functional revision action");
+  assert.doesNotMatch(drawerSource, /verifyAction\(action, "failed"\)/, "Site Fix review drawer should not mark review feedback as verification failure");
 });
 
 test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
