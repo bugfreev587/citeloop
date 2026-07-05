@@ -895,6 +895,15 @@ function lifecycleStageLabel(stage: string) {
   }
 }
 
+function loopLifecycleSummaryLabel(stage: string) {
+  if (stage === "published_or_applied") return "Published / Applied";
+  return lifecycleStageLabel(stage);
+}
+
+function loopActionDestinationLabel(action: LoopAction) {
+  return loopActionCurrentSurface(action);
+}
+
 function lifecycleStageTone(stage: string): "green" | "amber" | "red" | "neutral" {
   if (["learned", "published_or_applied", "measuring"].includes(stage)) return "green";
   if (["added_to_plan", "planned", "drafting", "ready_for_review", "approved"].includes(stage)) return "amber";
@@ -1336,14 +1345,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     loopLifecycleCounts.published_or_applied +
     loopLifecycleCounts.measuring;
   const loopSummaryItems: Array<{ key: VisibilityLifecycleStage; label: string; value: number }> = [
-    { key: "added_to_plan", label: "Added", value: loopLifecycleCounts.added_to_plan },
-    { key: "planned", label: "Planned", value: loopLifecycleCounts.planned },
-    { key: "drafting", label: "Drafting", value: loopLifecycleCounts.drafting },
-    { key: "ready_for_review", label: "Review", value: loopLifecycleCounts.ready_for_review },
-    { key: "published_or_applied", label: "Published", value: loopLifecycleCounts.published_or_applied },
-    { key: "measuring", label: "Measuring", value: loopLifecycleCounts.measuring },
-    { key: "learned", label: "Learned", value: loopLifecycleCounts.learned },
-    { key: "blocked", label: "Blocked", value: loopLifecycleCounts.blocked },
+    { key: "added_to_plan", label: loopLifecycleSummaryLabel("added_to_plan"), value: loopLifecycleCounts.added_to_plan },
+    { key: "planned", label: loopLifecycleSummaryLabel("planned"), value: loopLifecycleCounts.planned },
+    { key: "drafting", label: loopLifecycleSummaryLabel("drafting"), value: loopLifecycleCounts.drafting },
+    { key: "ready_for_review", label: loopLifecycleSummaryLabel("ready_for_review"), value: loopLifecycleCounts.ready_for_review },
+    { key: "published_or_applied", label: loopLifecycleSummaryLabel("published_or_applied"), value: loopLifecycleCounts.published_or_applied },
+    { key: "measuring", label: loopLifecycleSummaryLabel("measuring"), value: loopLifecycleCounts.measuring },
+    { key: "learned", label: loopLifecycleSummaryLabel("learned"), value: loopLifecycleCounts.learned },
+    { key: "blocked", label: loopLifecycleSummaryLabel("blocked"), value: loopLifecycleCounts.blocked },
   ];
   const selectedLoopActions = selectedLoopStage
     ? loopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage).slice(0, 6)
@@ -2042,7 +2051,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             )}
           </section>
 
-          <section data-analysis-loop-strip className="space-y-3">
+          <section data-analysis-loop-strip aria-label="Loop in motion for Content Plan and Site Fixes work through Published / Applied stages" className="space-y-3">
             <SectionHeader
               title="Loop in motion"
               eyebrow="Where reviewed opportunities are now"
@@ -2090,54 +2099,57 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </button>
                   </div>
                   <div className="grid gap-2 lg:grid-cols-3">
-                  {selectedLoopActions.map((action) => {
-                    const stage = deriveVisibilityLifecycleStage(action);
-                    const href = loopActionCurrentHref(projectId, action);
-                    const label = loopActionCurrentLabel(action);
-                    const content = (
-                      <div className="flex min-h-[78px] flex-col justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-start justify-between gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <ChevronRight className="mt-0.5 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={16} />
+                    {selectedLoopActions.map((action) => {
+                      const stage = deriveVisibilityLifecycleStage(action);
+                      const href = loopActionCurrentHref(projectId, action);
+                      const label = loopActionCurrentLabel(action);
+                      const content = (
+                        <div className="flex min-h-[78px] flex-col justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <Badge tone="neutral">{loopActionDestinationLabel(action)}</Badge>
+                                <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                              </div>
+                              <ChevronRight className="mt-0.5 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={16} />
+                            </div>
+                            <div className="mt-2 truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
+                            <div className="mt-1 truncate text-xs text-slate-500">
+                              {action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}
+                            </div>
                           </div>
-                          <div className="mt-2 truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
-                          <div className="mt-1 truncate text-xs text-slate-500">
-                            {action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}
-                          </div>
+                          <div className="text-xs font-semibold text-slate-600">Open current location: {label}</div>
                         </div>
-                        <div className="text-xs font-semibold text-slate-600">Open current location: {label}</div>
-                      </div>
-                    );
-                    if (loopActionCurrentSurface(action) === "Site Fixes") {
+                      );
+                      if (loopActionCurrentSurface(action) === "Site Fixes") {
+                        return (
+                          <button
+                            key={action.id}
+                            type="button"
+                            data-loop-action-card
+                            onClick={() => focusSiteFixCard(action.id)}
+                            className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                          >
+                            {content}
+                          </button>
+                        );
+                      }
                       return (
-                        <button
+                        <Link
                           key={action.id}
-                          type="button"
                           data-loop-action-card
-                          onClick={() => focusSiteFixCard(action.id)}
-                          className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                          href={href}
+                          className="group block rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                         >
                           {content}
-                        </button>
+                        </Link>
                       );
-                    }
-                    return (
-                      <Link
-                        key={action.id}
-                        data-loop-action-card
-                        href={href}
-                        className="group block rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                      >
-                        {content}
-                      </Link>
-                    );
-                  })}
+                    })}
                   </div>
                 </div>
               )}
               {!selectedLoopStage && (
-                <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed opportunities will appear here after they enter the content loop.</p>
+                <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed Content Plan and Site Fixes work will appear here after it enters the loop.</p>
               )}
             </div>
           </section>
