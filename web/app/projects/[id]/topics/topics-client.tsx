@@ -19,6 +19,7 @@ import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
+import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TopicDraft = {
@@ -560,9 +561,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   return (
     <>
     <div className="space-y-7">
-      <section className="flex min-h-8 items-center justify-end">
+      <ContentWorkflowStageHeaderAction>
         {autoSwitch}
-      </section>
+      </ContentWorkflowStageHeaderAction>
 
       {acceptedPlanActions.length > 0 && (
         <section data-content-plan-handoff-section className="space-y-3">
