@@ -940,6 +940,7 @@ test("content workflow PRD defines stage identity and click acceptance criteria"
 
 test("content workflow stages put stage identity before step metadata", () => {
   const workflow = read("projects/[id]/content-workflow-client.tsx");
+  const stageActions = read("projects/[id]/content-workflow-stage-actions.tsx");
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const review = read("projects/[id]/review/review-client.tsx");
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
@@ -952,6 +953,7 @@ test("content workflow stages put stage identity before step metadata", () => {
     "data-content-workflow-stage-shell",
     "data-content-workflow-stage-accent",
     "data-content-workflow-stage-title",
+    "data-content-workflow-stage-header-action",
     "data-content-workflow-stage-step",
     "data-content-workflow-stage-body",
   ]) {
@@ -969,10 +971,28 @@ test("content workflow stages put stage identity before step metadata", () => {
     workflow.indexOf("data-content-workflow-stage-title") < workflow.indexOf("data-content-workflow-stage-step"),
     "stage title should appear before the step metadata",
   );
+  assert.ok(
+    workflow.indexOf("data-content-workflow-stage-title") < workflow.indexOf("data-content-workflow-stage-header-action"),
+    "stage actions should share the title row instead of sitting below the divider",
+  );
+  assert.ok(
+    workflow.indexOf("data-content-workflow-stage-header-action") < workflow.indexOf("data-content-workflow-stage-step"),
+    "stage actions should appear above the step metadata",
+  );
+  assert.match(stageActions, /ContentWorkflowStageHeaderActionContext/);
+  assert.match(stageActions, /function ContentWorkflowStageHeaderAction/);
+  assert.match(stageActions, /createPortal/);
+  assert.match(workflow, /ContentWorkflowStageHeaderActionContext\.Provider/);
+  assert.match(topics, /<ContentWorkflowStageHeaderAction>\s*\{autoSwitch\}\s*<\/ContentWorkflowStageHeaderAction>/);
+  assert.match(review, /<ContentWorkflowStageHeaderAction>\s*\{reviewHeaderAction\}\s*<\/ContentWorkflowStageHeaderAction>/);
+  assert.match(publishing, /<ContentWorkflowStageHeaderAction>\s*\{publishingHeaderAction\}\s*<\/ContentWorkflowStageHeaderAction>/);
   assert.doesNotMatch(workflow, /rounded-full border border-white\/80 bg-white\/70/);
   assert.doesNotMatch(topics, /<SectionHeader title="Content Plan"/);
   assert.doesNotMatch(review, /<SectionHeader[\s\S]{0,120}title="Review"[\s\S]{0,120}level="page"/);
   assert.doesNotMatch(publishing, /<SectionHeader[\s\S]{0,120}title="Publish"[\s\S]{0,120}level="page"/);
+  assert.doesNotMatch(topics, /<section className="flex min-h-8 items-center justify-end">/);
+  assert.doesNotMatch(review, /<div className="flex min-h-8 items-center justify-end">/);
+  assert.doesNotMatch(publishing, /<div className="flex min-h-8 items-center justify-end">/);
   assert.doesNotMatch(publishing, /title="Publishing"/);
   assert.match(workflow, /data-content-workflow-stage-step className="text-sm font-bold uppercase/);
 });
@@ -1550,11 +1570,8 @@ test("content plan shows visible feedback while strategist is running", () => {
 
 test("content plan exposes an Auto switch for the automatic workflow", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
-  const actionRowStart = topics.indexOf('<section className="flex min-h-8 items-center justify-end">');
-  const contentPlanActionRow = topics.slice(Math.max(0, actionRowStart - 80), actionRowStart + 220);
 
-  assert.ok(actionRowStart >= 0, "Content Plan action row should exist");
-  assert.match(contentPlanActionRow, /\{autoSwitch\}/);
+  assert.match(topics, /<ContentWorkflowStageHeaderAction>\s*\{autoSwitch\}\s*<\/ContentWorkflowStageHeaderAction>/);
   assert.match(topics, /auto_advance_enabled/);
   assert.match(topics, /const autoEnabled = Boolean\(config\?\.auto_advance_enabled\)/);
   assert.match(topics, /toggleAutoAdvance/);

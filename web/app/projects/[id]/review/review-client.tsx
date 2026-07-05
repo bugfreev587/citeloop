@@ -19,6 +19,7 @@ import {
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx } from "../../../components/ui";
+import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type QueueArticle = { article: Article; topicId: string };
@@ -244,25 +245,28 @@ export function ReviewClient({ projectId }: { projectId: string }) {
     return mutate("CiteLoop re-ran the QA check", `recheck-${article.id}`, () => api.recheckArticle(projectId, article.id));
   }
 
+  const reviewHeaderAction = (
+    <div className="flex w-full flex-wrap justify-start gap-2 sm:justify-end">
+      {readyArticles.length > 0 && (
+        <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
+          <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
+            Approve {readyArticles.length} ready
+          </ButtonProgress>
+        </Button>
+      )}
+      <Button disabled={!!busy} size="sm" onClick={refresh}>
+        <RefreshCw size={14} />
+        Refresh
+      </Button>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
+      <ContentWorkflowStageHeaderAction>
+        {reviewHeaderAction}
+      </ContentWorkflowStageHeaderAction>
       <div ref={reviewSurfaceRef} className="space-y-6">
-        <div className="flex min-h-8 items-center justify-end">
-          <div className="flex flex-wrap justify-end gap-2">
-            {readyArticles.length > 0 && (
-              <Button disabled={!!busy} size="sm" variant="primary" onClick={approveReadyArticles}>
-                <ButtonProgress busy={busy === "bulk-approve"} busyLabel="Approving" idleIcon={<CheckCircle2 size={14} />}>
-                  Approve {readyArticles.length} ready
-                </ButtonProgress>
-              </Button>
-            )}
-            <Button disabled={!!busy} size="sm" onClick={refresh}>
-              <RefreshCw size={14} />
-              Refresh
-            </Button>
-          </div>
-        </div>
-
         {summary.total === 0 ? (
           <EmptyState
             title="Nothing needs you"

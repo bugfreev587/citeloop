@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../../components/ui";
 import { CONTENT_WORKFLOW_PATH_CHANGE_EVENT } from "../../lib/dashboard-routing";
+import { ContentWorkflowStageHeaderActionContext } from "./content-workflow-stage-actions";
 import { PublishingClient } from "./publishing/publishing-client";
 import { ReviewClient } from "./review/review-client";
 import { TopicsClient } from "./topics/topics-client";
@@ -202,6 +203,7 @@ function WorkflowStage({
   children: ReactNode;
 }) {
   const meta = STAGE_META[step];
+  const [headerActionTarget, setHeaderActionTarget] = useState<HTMLElement | null>(null);
 
   return (
     <section
@@ -213,9 +215,16 @@ function WorkflowStage({
     >
       <div data-content-workflow-stage-accent className={cx("mb-4 h-1.5 w-16 rounded-full", meta.accentClass)} />
       <div className="mb-4 border-b border-white/70 pb-5">
-        <h1 data-content-workflow-stage-title className="text-[26px] font-bold leading-8 tracking-tight text-slate-900 sm:text-[30px] sm:leading-9">
-          {meta.title}
-        </h1>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <h1 data-content-workflow-stage-title className="text-[26px] font-bold leading-8 tracking-tight text-slate-900 sm:shrink-0 sm:text-[30px] sm:leading-9">
+            {meta.title}
+          </h1>
+          <div
+            ref={setHeaderActionTarget}
+            data-content-workflow-stage-header-action
+            className="flex min-h-9 min-w-0 items-center justify-start sm:flex-1 sm:justify-end"
+          />
+        </div>
         <div className="mt-3">
           <div data-content-workflow-stage-step className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">
             {meta.stepLabel}
@@ -223,9 +232,11 @@ function WorkflowStage({
           <div className="mt-1 text-sm font-medium text-slate-500">{meta.eyebrow}</div>
         </div>
       </div>
-      <div data-content-workflow-stage-body className="min-w-0">
-        {children}
-      </div>
+      <ContentWorkflowStageHeaderActionContext.Provider value={headerActionTarget}>
+        <div data-content-workflow-stage-body className="min-w-0">
+          {children}
+        </div>
+      </ContentWorkflowStageHeaderActionContext.Provider>
     </section>
   );
 }
