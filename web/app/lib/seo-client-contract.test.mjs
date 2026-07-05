@@ -114,6 +114,33 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
   }
 });
 
+test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "buildSiteFixAIPayload",
+    "siteFixImplementationSteps",
+    "siteFixLikelySurfaces",
+    "siteFixPatchContract",
+    "siteFixAIJSON",
+    "copySiteFixAIJSON",
+    "writeClipboardText",
+    "data-site-fix-ai-payload",
+    "AI coding fix JSON",
+    "Copy fix JSON",
+    "Copy this JSON into Codex or Claude Code",
+    "ai_repair",
+    "acceptance_tests",
+    "proposed_changes",
+    "schema_patch",
+    "script[type=\\\"application/ld+json\\\"]",
+    "Clipboard",
+    "Code2",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+});
+
 test("Analysis opportunity cards expose destination-specific routing and handoff links", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BarChart3, CheckCircle2, ChevronRight, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -483,6 +483,246 @@ function actionOutputPreviewText(action: SEOContentAction | ResultsAction) {
 
   const target = action.target_url ?? action.normalized_target_url;
   return target ? `Review proposed changes for ${target}.` : "Review the generated output before execution.";
+}
+
+function firstProposedChange(action: SEOContentAction | ResultsAction) {
+  const proposedChanges = action.diff_snapshot?.proposed_changes;
+  if (!Array.isArray(proposedChanges) || proposedChanges.length === 0) return null;
+  const first = proposedChanges[0];
+  return first && typeof first === "object" && !Array.isArray(first) ? first : null;
+}
+
+function stringArrayValue(value: any) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+}
+
+function siteFixAssetType(action: SEOContentAction | ResultsAction) {
+  const change = firstProposedChange(action);
+  return String(action.asset_type ?? change?.asset_type ?? "technical_fix").toLowerCase();
+}
+
+function siteFixTargetURL(action: SEOContentAction | ResultsAction) {
+  return action.target_url ?? action.normalized_target_url ?? action.diff_snapshot?.target_url ?? "";
+}
+
+function siteFixTargetLabel(targetURL: string) {
+  return targetURL || "the target URL";
+}
+
+function isHomepageTarget(targetURL: string) {
+  try {
+    const parsed = new URL(targetURL);
+    return parsed.pathname === "" || parsed.pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
+function siteFixLikelySurfaces(assetType: string, targetURL: string) {
+  const target = siteFixTargetLabel(targetURL);
+  if (assetType === "schema_patch") {
+    return [
+      `Page route or template that renders ${target}`,
+      "Shared SEO metadata or structured-data component used by that route",
+      "Server-rendered head/layout file where JSON-LD can be emitted in initial HTML",
+    ];
+  }
+  if (assetType === "internal_link_patch") {
+    return [
+      `Target page content for ${target}`,
+      "Relevant source pages in the same topic cluster",
+      "Navigation, related-content, or body-copy components that own internal links",
+    ];
+  }
+  if (assetType === "sitemap_update") {
+    return [
+      "Production sitemap generator or sitemap.xml route",
+      "Robots.txt sitemap declaration",
+      `Canonical URL config for ${target}`,
+    ];
+  }
+  return [
+    `Page route, metadata config, or crawler-facing component for ${target}`,
+    "Robots, canonical, redirect, sitemap, or server response configuration that controls discoverability",
+  ];
+}
+
+function siteFixImplementationSteps(assetType: string, actionType: string, targetURL: string) {
+  if (assetType === "schema_patch") {
+    return [
+      "Locate the route/template that renders the target URL and confirm whether JSON-LD already exists.",
+      "Add or update server-rendered JSON-LD in a script[type=\"application/ld+json\"] block using real production page metadata.",
+      "Preserve the canonical target URL, omit placeholder fields, and keep all URL fields absolute production URLs.",
+    ];
+  }
+  if (assetType === "internal_link_patch") {
+    return [
+      "Identify source pages with topical relevance and enough body context to link naturally to the target URL.",
+      "Add descriptive anchor text that matches the destination intent without keyword stuffing.",
+      "Confirm the new links are crawlable HTML links and do not point through redirects or non-canonical URL variants.",
+    ];
+  }
+  if (assetType === "sitemap_update") {
+    return [
+      "Locate the production sitemap generator and confirm the target URL inclusion or exclusion rule.",
+      "Update sitemap and robots declarations so the canonical target URL is discoverable by crawlers.",
+      "Keep generated sitemap URLs canonical, absolute, indexable, and free of staging or preview hosts.",
+    ];
+  }
+  return [
+    "Locate the code or configuration that controls the crawler-facing behavior for the target URL.",
+    `Apply the requested site fix: ${actionType}.`,
+    "Preserve canonical URLs, indexability, and production-only hosts while making the smallest safe change.",
+  ];
+}
+
+function siteFixPatchContract(assetType: string, targetURL: string) {
+  if (assetType === "schema_patch") {
+    return {
+      change_type: "json_ld_schema_patch",
+      target_url: targetURL,
+      page_role: isHomepageTarget(targetURL) ? "homepage" : "web_page",
+      schema_types: isHomepageTarget(targetURL) ? ["WebSite", "Organization", "WebPage"] : ["WebPage"],
+      render_requirement: "JSON-LD must be present in the initial server-rendered HTML.",
+      constraints: [
+        "Use real production brand, page, and canonical metadata.",
+        "Use absolute production URLs only.",
+        "Omit fields that cannot be verified instead of shipping blank or placeholder values.",
+      ],
+    };
+  }
+  if (assetType === "internal_link_patch") {
+    return {
+      change_type: "internal_link_patch",
+      target_url: targetURL,
+      constraints: [
+        "Links must be crawlable HTML anchors.",
+        "Anchor copy must describe the destination intent.",
+        "Use canonical production URLs and avoid redirect chains.",
+      ],
+    };
+  }
+  return {
+    change_type: assetType,
+    target_url: targetURL,
+    constraints: [
+      "Make the smallest production-safe change that resolves the crawler-facing issue.",
+      "Do not use staging, preview, localhost, or placeholder URLs.",
+      "Verify the signal in production after deployment.",
+    ],
+  };
+}
+
+function fallbackSiteFixAcceptanceTests(assetType: string, actionType: string, targetURL: string) {
+  const target = siteFixTargetLabel(targetURL);
+  if (assetType === "schema_patch") {
+    return [
+      `Inspect the initial HTML for ${target} and verify it includes server-rendered JSON-LD in a script[type=\"application/ld+json\"] element.`,
+      "Parse every JSON-LD block as valid JSON and verify it has @context set to https://schema.org, a relevant @type, and no placeholders.",
+      `Run Google Rich Results Test or Schema Markup Validator for ${target} and resolve parser errors or unreadable schema warnings.`,
+    ];
+  }
+  if (assetType === "internal_link_patch") {
+    return [
+      `Fetch the updated source pages and confirm they contain crawlable HTML links to ${target}.`,
+      "Verify anchor text is descriptive, unique enough to explain the destination, and does not duplicate existing boilerplate links.",
+      "Confirm linked URLs resolve to canonical production URLs without redirect chains.",
+    ];
+  }
+  if (assetType === "sitemap_update") {
+    return [
+      "Fetch the production sitemap and confirm it contains the canonical target URL when the page should be indexed.",
+      "Fetch robots.txt and confirm it advertises the correct sitemap and does not block the target URL.",
+      "Confirm the sitemap URL returns 200, valid XML, production hosts only, and no non-canonical variants.",
+    ];
+  }
+  return [
+    `Fetch ${target} and confirm the crawler-facing behavior now matches the requested site fix: ${actionType}.`,
+    "Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
+    "Confirm production pages still return the expected status, canonical URL, and indexability signals.",
+  ];
+}
+
+function siteFixAcceptanceTests(action: SEOContentAction | ResultsAction) {
+  const diff = action.diff_snapshot ?? {};
+  const change = firstProposedChange(action);
+  const direct = stringArrayValue(diff.acceptance_tests);
+  if (direct.length > 0) return direct;
+  const changeTests = stringArrayValue(change?.verification_steps);
+  if (changeTests.length > 0) return changeTests;
+  return fallbackSiteFixAcceptanceTests(siteFixAssetType(action), action.action_type, siteFixTargetURL(action));
+}
+
+function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
+  const diff = action.diff_snapshot ?? {};
+  const output = action.output_snapshot ?? {};
+  const aiRepair = diff.ai_repair ?? output.ai_repair;
+  if (hasNonEmptyStructuredValue(aiRepair)) return aiRepair;
+
+  const change = firstProposedChange(action);
+  const assetType = siteFixAssetType(action);
+  const target = siteFixTargetURL(action);
+  const implementationSteps = stringArrayValue(change?.implementation_steps);
+  const likelySurfaces = stringArrayValue(change?.likely_surfaces);
+  return {
+    issue: {
+      category: "site_fix",
+      issue_type: assetType,
+      affected_urls: target ? [target] : [],
+      problem: action.action_type,
+      why_it_matters: actionSEOContributionText(action),
+    },
+    evidence: {
+      page_url: target,
+      opportunity_query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? null,
+      recommended_action: (action as ResultsAction).opportunity_recommended_action ?? action.input_snapshot?.recommended_action ?? action.action_type,
+      proposed_changes: diff.proposed_changes ?? [],
+    },
+    fix: {
+      goal: action.action_type,
+      instructions: implementationSteps.length ? implementationSteps : siteFixImplementationSteps(assetType, action.action_type, target),
+      likely_surfaces: likelySurfaces.length ? likelySurfaces : siteFixLikelySurfaces(assetType, target),
+      seo_contract: change?.patch_contract ?? siteFixPatchContract(assetType, target),
+      risk_level: action.risk_reasons?.risk_level ?? null,
+    },
+    acceptance_tests: siteFixAcceptanceTests(action),
+  };
+}
+
+function siteFixAIJSON(action: SEOContentAction | ResultsAction) {
+  return JSON.stringify(buildSiteFixAIPayload(action), null, 2);
+}
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea fallback for browsers that block async clipboard writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  activeElement?.focus();
+
+  if (!copied) {
+    throw new Error("Clipboard write failed.");
+  }
 }
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
@@ -1403,6 +1643,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setMessage({ title: "Could not update verification", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function copySiteFixAIJSON(action: SEOContentAction | ResultsAction) {
+    try {
+      await writeClipboardText(siteFixAIJSON(action));
+      setMessage({ title: "Fix JSON copied", detail: "Paste it into Codex or Claude Code to apply the site fix.", tone: "green" });
+    } catch {
+      setMessage({ title: "Could not copy fix JSON", detail: "Select the JSON in the drawer and copy it manually.", tone: "red" });
     }
   }
 
@@ -2884,6 +3133,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const stage = deriveVisibilityLifecycleStage(action);
       const markAppliedBusy = busy === `verify-${action.id}-verified`;
       const needsRevisionBusy = busy === `verify-${action.id}-failed`;
+      const aiRepairJSON = siteFixAIJSON(action);
 
       return (
         <div className="fixed inset-0 z-30">
@@ -2935,6 +3185,25 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewable output</div>
                   <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{actionOutputPreviewText(action)}</p>
+                </section>
+
+                <section data-site-fix-ai-payload className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50">
+                  <div className="flex flex-col gap-3 border-b border-cyan-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-800">
+                        <Code2 size={14} />
+                        AI coding fix JSON
+                      </div>
+                      <p className="mt-2 text-sm font-semibold leading-5 text-cyan-950">
+                        Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks.
+                      </p>
+                    </div>
+                    <Button size="sm" variant="ai" onClick={() => void copySiteFixAIJSON(action)}>
+                      <Clipboard size={14} />
+                      Copy fix JSON
+                    </Button>
+                  </div>
+                  <pre className="max-h-80 overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{aiRepairJSON}</pre>
                 </section>
 
                 <section className="grid gap-3 text-sm sm:grid-cols-2">
@@ -2990,6 +3259,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               aria-label="Drawer actions"
               className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
             >
+              <Button size="sm" variant="ai" onClick={() => void copySiteFixAIJSON(action)}>
+                <Clipboard size={14} />
+                Copy fix JSON
+              </Button>
               <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
                 <ButtonProgress busy={markAppliedBusy} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
                   Mark applied
