@@ -333,9 +333,13 @@ function actionHandoffStatus(action: SEOContentAction | ResultsAction) {
   return destinationForAction(action) === "Site Fixes" ? "Sent to Site Fixes" : "Sent to Content Plan";
 }
 
+const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
+
 function isRecentlySentAction(action: SEOContentAction | ResultsAction) {
   if (["published", "measuring", "completed", "archived", "dismissed"].includes(action.status)) return false;
   if (!action.opportunity_id) return false;
+  const stage = deriveVisibilityLifecycleStage(action);
+  if (activeHandoffStages.has(stage)) return true;
   if (!action.created_at) return true;
   const createdAt = new Date(action.created_at);
   if (Number.isNaN(createdAt.getTime())) return true;
@@ -1058,7 +1062,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
     .slice(0, 6);
-  const sentOpportunityLinks = actions
+  const sentOpportunityLinks = loopActions
     .filter(isRecentlySentAction)
     .slice()
     .sort((a, b) => {
