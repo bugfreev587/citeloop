@@ -1593,6 +1593,15 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   assert.doesNotMatch(topics, /Waiting in Content Plan/);
 });
 
+test("content plan only links to Review after a draft article exists", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /const hasReviewContent = Boolean\(action\.draft_article_id\)/);
+  assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
+  assert.match(topics, /\/projects\/\$\{projectId\}\/review\?article=\$\{action\.draft_article_id\}/);
+  assert.doesNotMatch(topics, /: `\/projects\/\$\{projectId\}\/review`/);
+});
+
 test("content plan backlog excludes drafted topics", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 

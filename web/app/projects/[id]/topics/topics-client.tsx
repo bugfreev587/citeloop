@@ -118,9 +118,7 @@ function topicFromAcceptedAction(action: VisibilityActionInLoop): Topic | null {
 }
 
 function reviewHrefForAction(projectId: string, action: VisibilityActionInLoop) {
-  return action.draft_article_id
-    ? `/projects/${projectId}/review?article=${action.draft_article_id}`
-    : `/projects/${projectId}/review`;
+  return `/projects/${projectId}/review?article=${action.draft_article_id}`;
 }
 
 export function TopicsClient({ projectId }: { projectId: string }) {
@@ -506,7 +504,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
               const actionDraftBusy = busy === `draft-action-${action.id}`;
-              const hasReviewContent = action.lifecycle_stage === "ready_for_review" || Boolean(action.draft_article_id);
+              const hasReviewContent = Boolean(action.draft_article_id);
               return (
                 <div
                   key={action.id}
