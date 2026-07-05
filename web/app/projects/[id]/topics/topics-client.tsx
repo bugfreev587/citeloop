@@ -18,6 +18,7 @@ import {
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
+import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -97,6 +98,51 @@ function contentPlanActionTypeLabel(action: VisibilityActionInLoop) {
   return "Content work";
 }
 
+function contentPlanActionWhyText(action: VisibilityActionInLoop) {
+  const input = action.input_snapshot ?? {};
+  const evidence = action.evidence_snapshot ?? {};
+  const value =
+    action.opportunity_expected_impact ??
+    input.expected_impact ??
+    input.recommended_action ??
+    input.query ??
+    evidence.recommended_action ??
+    evidence.query ??
+    action.opportunity_recommended_action ??
+    action.opportunity_query;
+  return value ? String(value) : "This accepted opportunity has enough evidence to turn into a content brief.";
+}
+
+function contentPlanActionContributionText(action: VisibilityActionInLoop) {
+  const contribution = action.output_snapshot?.seo_geo_contribution;
+  if (contribution) return String(contribution);
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  if (assetType === "metadata_rewrite") return "Improve query-page relevance and search appearance without publishing a new page.";
+  if (assetType === "blog_post") return "Create an indexable asset that can answer the target query and earn AI citation coverage.";
+  if (assetType === "page_update") return "Refresh an existing page so search engines and answer engines see stronger evidence on the canonical URL.";
+  if (assetType.includes("geo")) return "Create answer-ready entity coverage for AI discovery surfaces.";
+  return "Create or refresh an indexable asset that can earn rankings, citations, and downstream measurement.";
+}
+
+function contentPlanActionEvidenceText(action: VisibilityActionInLoop) {
+  const evidence = action.evidence_snapshot ?? {};
+  const value =
+    evidence.summary ??
+    evidence.reason ??
+    evidence.source ??
+    evidence.source_url ??
+    evidence.page_url ??
+    action.opportunity_page_url ??
+    action.opportunity_normalized_page_url ??
+    action.target_url ??
+    action.normalized_target_url;
+  return value ? String(value) : "Accepted from Opportunity Queue after review.";
+}
+
+function contentPlanRiskReasons(action: VisibilityActionInLoop) {
+  return Array.isArray(action.risk_reasons) ? action.risk_reasons.map((item) => String(item)).filter(Boolean) : [];
+}
+
 function topicFromAcceptedAction(action: VisibilityActionInLoop): Topic | null {
   if (!action.topic_id) return null;
   return {
@@ -139,6 +185,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   };
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [highlightContentPlanAction, setHighlightContentPlanAction] = useState<string | null>(null);
+  const [selectedContentPlanActionID, setSelectedContentPlanActionID] = useState<string | null>(null);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
@@ -178,9 +225,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       (visibilitySummary?.actions_in_loop ?? []).filter(
         (action) =>
           isContentPlanAction(action) &&
-          ["added_to_plan", "planned", "drafting", "ready_for_review"].includes(action.lifecycle_stage),
+          ["added_to_plan", "planned", "drafting", "ready_for_review"].includes(action.lifecycle_stage) &&
+          !["dismissed", "archived"].includes(String(action.opportunity_status ?? "").toLowerCase()),
       ),
     [visibilitySummary],
+  );
+  const selectedContentPlanAction = useMemo(
+    () => acceptedPlanActions.find((action) => action.id === selectedContentPlanActionID) ?? null,
+    [acceptedPlanActions, selectedContentPlanActionID],
   );
   const summaryPendingPlanActions =
     acceptedPlanActions.length;
@@ -188,6 +240,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (selectedContentPlanActionID && !selectedContentPlanAction) {
+      setSelectedContentPlanActionID(null);
+    }
+  }, [selectedContentPlanAction, selectedContentPlanActionID]);
 
   useEffect(() => {
     if (!requestedActionID || acceptedPlanActions.length === 0) return;
@@ -263,6 +321,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     view === "grid" && "lg:grid-cols-2",
     view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
   );
+  const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
+  const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
+  const selectedActionHasReviewContent = Boolean(selectedContentPlanAction?.draft_article_id);
+  const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
+  const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
 
   async function runStrategist() {
     setBusy("strategist");
@@ -446,6 +509,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function dismissAcceptedAction(action: VisibilityActionInLoop) {
+    if (!action.opportunity_id) {
+      setMessage({ title: "Dismiss unavailable", detail: "This content action is missing its opportunity link.", tone: "red" });
+      return;
+    }
+    setBusy(`dismiss-action-${action.id}`);
+    setMessage(null);
+    try {
+      await api.dismissSEOOpportunity(projectId, action.opportunity_id);
+      setVisibilitySummary((current) =>
+        current
+          ? { ...current, actions_in_loop: current.actions_in_loop.filter((item) => item.id !== action.id) }
+          : current,
+      );
+      setSelectedContentPlanActionID(null);
+      setMessage({ title: "Opportunity dismissed", detail: contentPlanActionTitle(action), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Dismiss failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const autoSwitch = (
     <div className="group relative inline-flex">
       <span id="content-plan-auto-help" className="sr-only">
@@ -488,6 +574,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   );
 
   return (
+    <>
     <div className="space-y-7">
       <section>
         <SectionHeader title="Content Plan" level="page" action={autoSwitch} />
@@ -503,8 +590,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <div className="grid gap-2">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
-              const actionDraftBusy = busy === `draft-action-${action.id}`;
-              const hasReviewContent = Boolean(action.draft_article_id);
               return (
                 <div
                   key={action.id}
@@ -530,32 +615,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                      {hasReviewContent ? (
-                        <a
-                          href={reviewHrefForAction(projectId, action)}
-                          className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
-                        >
-                          View in Review
-                          <ArrowRight size={15} />
-                        </a>
-                      ) : (
-                        <Button
-                          aria-busy={actionDraftBusy}
-                          disabled={Boolean(busy) || actionDraftBusy || autoEnabled}
-                          variant="primary"
-                          size="sm"
-                          onClick={() => draftAcceptedAction(action)}
-                          title={
-                            autoEnabled
-                              ? "Auto is on, so AI Editor will draft this content automatically."
-                              : "Send this accepted opportunity to AI Editor and QA Review."
-                          }
-                        >
-                          <ButtonProgress busy={actionDraftBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
-                            {autoEnabled ? "Drafting automatically" : "Draft Content"}
-                          </ButtonProgress>
-                        </Button>
-                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSelectedContentPlanActionID(action.id)}
+                        aria-label={`Review accepted content brief: ${contentPlanActionTitle(action)}`}
+                      >
+                        Review brief
+                        <ArrowRight size={15} />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -878,5 +946,112 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         </div>
       </section>
     </div>
+    {selectedContentPlanAction && (
+      <RightDrawer
+        open={Boolean(selectedContentPlanAction)}
+        dataAttribute="content-plan-action-drawer"
+        eyebrow="Accepted opportunity brief"
+        title={contentPlanActionTitle(selectedContentPlanAction)}
+        subtitle={contentPlanActionDetail(selectedContentPlanAction)}
+        closeLabel="Close content plan action details"
+        footerLabel="Content plan drawer actions"
+        onClose={() => setSelectedContentPlanActionID(null)}
+        badges={
+          <>
+            <Badge tone="green">Accepted</Badge>
+            <Badge tone="blue">{contentPlanActionTypeLabel(selectedContentPlanAction)}</Badge>
+            <Badge tone="neutral">{autoEnabled ? "Auto drafting" : "Manual review"}</Badge>
+          </>
+        }
+        footer={
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => dismissAcceptedAction(selectedContentPlanAction)}
+              disabled={Boolean(busy)}
+            >
+              <ButtonProgress busy={selectedActionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                Dismiss
+              </ButtonProgress>
+            </Button>
+            {selectedActionHasReviewContent ? (
+              <a
+                href={reviewHrefForAction(projectId, selectedContentPlanAction)}
+                className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                View in Review
+                <ArrowRight size={14} />
+              </a>
+            ) : (
+              <Button
+                aria-busy={selectedActionDraftBusy}
+                disabled={reviewingContentPlanAction}
+                variant="primary"
+                size="sm"
+                onClick={() => draftAcceptedAction(selectedContentPlanAction)}
+                title={autoEnabled ? "Auto is on, so AI Editor will draft this content automatically." : "Send this brief to AI Editor and QA Review."}
+              >
+                <ButtonProgress busy={selectedActionDraftBusy} busyLabel="Drafting" idleIcon={<Wand2 size={14} />}>
+                  Draft Content
+                </ButtonProgress>
+              </Button>
+            )}
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Why write this</div>
+            <p className="mt-2 text-sm leading-6 text-slate-700">{contentPlanActionWhyText(selectedContentPlanAction)}</p>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">SEO/GEO contribution</div>
+            <div className="mt-2 text-sm font-semibold leading-5 text-slate-950">AI Visibility / GEO Impact</div>
+            <p className="mt-1 text-sm leading-6 text-slate-700">{contentPlanActionContributionText(selectedContentPlanAction)}</p>
+          </section>
+
+          <section className="grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <div className="text-xs font-semibold uppercase text-slate-400">Title</div>
+              <div className="mt-1 break-words font-medium text-slate-700">{contentPlanActionTitle(selectedContentPlanAction)}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase text-slate-400">Work type</div>
+              <div className="mt-1 font-medium text-slate-700">{contentPlanActionTypeLabel(selectedContentPlanAction)}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase text-slate-400">Target query</div>
+              <div className="mt-1 break-words font-medium text-slate-700">{selectedContentPlanAction.opportunity_query ?? "Not query-specific"}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase text-slate-400">Plan status</div>
+              <div className="mt-1 font-medium text-slate-700">{selectedContentPlanAction.topic_status ?? selectedContentPlanAction.lifecycle_stage}</div>
+            </div>
+            <div className="sm:col-span-2">
+              <div className="text-xs font-semibold uppercase text-slate-400">Target URL</div>
+              <div className="mt-1 break-words font-medium text-slate-700">{contentPlanActionDetail(selectedContentPlanAction)}</div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence source</div>
+            <p className="mt-2 text-sm leading-6 text-slate-700">{contentPlanActionEvidenceText(selectedContentPlanAction)}</p>
+            {selectedActionRiskReasons.length > 0 && (
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <div className="text-xs font-semibold uppercase text-slate-400">Review notes</div>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-slate-600">
+                  {selectedActionRiskReasons.slice(0, 4).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+        </div>
+      </RightDrawer>
+    )}
+    </>
   );
 }

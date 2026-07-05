@@ -13,7 +13,6 @@ import {
   RotateCcw,
   Send,
   Settings2,
-  X,
   Zap,
 } from "lucide-react";
 import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig } from "../../../lib/api";
@@ -29,6 +28,7 @@ import {
 } from "../../../lib/publish-destinations-logic";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
+import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -92,44 +92,10 @@ function Drawer({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className="absolute inset-0 bg-slate-900/30"
-        onClick={onClose}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col border-l border-slate-200 bg-white shadow-xl lg:max-w-[50vw]"
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <div className="min-w-0">
-            <div className="text-sm font-bold text-slate-900">{title}</div>
-            {subtitle && <div className="mt-0.5 text-xs leading-5 text-slate-500">{subtitle}</div>}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-            aria-label="Close"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-      </div>
-    </div>
+    <RightDrawer open={open} title={title} subtitle={subtitle} onClose={onClose} maxWidthClassName="max-w-xl lg:max-w-[50vw]">
+      {children}
+    </RightDrawer>
   );
 }
 
