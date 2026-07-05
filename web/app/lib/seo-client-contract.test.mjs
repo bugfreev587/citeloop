@@ -141,6 +141,22 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
   }
 });
 
+test("Analysis Loop in motion makes Site Fixes visible inside the lifecycle", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  const loopStart = source.indexOf("data-analysis-loop-strip");
+  const loopEnd = source.indexOf("Finish automation setup in Settings", loopStart);
+  const loopBlock = source.slice(loopStart, loopEnd);
+
+  assert.notEqual(loopStart, -1, "seo-client.tsx missing Loop in motion section");
+  assert.match(source, /function loopActionDestinationLabel/);
+  assert.match(source, /function loopLifecycleSummaryLabel/);
+  assert.match(loopBlock, /Published \/ Applied/);
+  assert.match(loopBlock, /loopActionDestinationLabel\(action\)/);
+  assert.match(loopBlock, /Site Fixes/);
+  assert.match(loopBlock, /Content Plan/);
+});
+
 test("Analysis opportunity cards expose destination-specific routing and handoff links", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
