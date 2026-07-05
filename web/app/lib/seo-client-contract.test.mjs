@@ -127,6 +127,7 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
     "Recently sent",
     "Sent to Site Fixes",
     "View in Site Fixes",
+    "plan?action=${action.id}",
     "focusSiteFixCard",
     "citeloop-linked-card-pulse",
   ]) {

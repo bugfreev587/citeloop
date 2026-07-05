@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, Power, RefreshCw, Wand2, X } from "lucide-react";
-import { ProjectConfig, Topic, VisibilitySummary, defaultProjectConfig } from "../../../lib/api";
+import { defaultProjectConfig } from "../../../lib/api";
+import type { ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
@@ -32,6 +34,8 @@ type TopicDraft = {
 const AUTO_WORKFLOW_HELP =
   "Auto On: accepted opportunities become backlog topics and drafts on cadence. " +
   "Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available.";
+
+const siteFixAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
 
 function toDateTimeLocal(value: string | null) {
   if (!value) return "";
@@ -72,8 +76,30 @@ function topicPriorityTone(priority: number): "red" | "amber" | "neutral" {
   return "neutral";
 }
 
+function isContentPlanAction(action: VisibilityActionInLoop) {
+  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  return outputType !== "direct_patch" && outputType !== "technical_task" && !siteFixAssetTypes.has(assetType);
+}
+
+function contentPlanActionTitle(action: VisibilityActionInLoop) {
+  return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Accepted content work";
+}
+
+function contentPlanActionDetail(action: VisibilityActionInLoop) {
+  return action.target_url || action.normalized_target_url || action.opportunity_page_url || action.opportunity_normalized_page_url || "Ready for content planning.";
+}
+
+function contentPlanActionTypeLabel(action: VisibilityActionInLoop) {
+  if (action.asset_type === "page_update") return "Page update";
+  if (action.asset_type === "blog_post") return "New content";
+  if (action.asset_type === "metadata_rewrite") return "Page metadata";
+  return "Content work";
+}
+
 export function TopicsClient({ projectId }: { projectId: string }) {
   const api = useApi();
+  const searchParams = useSearchParams();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -88,12 +114,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
+  const [highlightContentPlanAction, setHighlightContentPlanAction] = useState<string | null>(null);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
+  const contentPlanActionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const strategistRunning = busy === "strategist";
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
+  const requestedActionID = searchParams.get("action");
 
   const refresh = useCallback(async () => {
     try {
@@ -120,14 +149,32 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [api, projectId]);
 
   const summaryOpenOpportunityCount = visibilitySummary?.open_opportunities.length ?? 0;
+  const acceptedPlanActions = useMemo(
+    () =>
+      (visibilitySummary?.actions_in_loop ?? []).filter(
+        (action) =>
+          isContentPlanAction(action) &&
+          (action.lifecycle_stage === "added_to_plan" || (action.lifecycle_stage === "planned" && !action.topic_id)),
+      ),
+    [visibilitySummary],
+  );
   const summaryPendingPlanActions =
-    visibilitySummary?.actions_in_loop.filter(
-      (action) => action.lifecycle_stage === "added_to_plan" || (action.lifecycle_stage === "planned" && !action.topic_id),
-    ).length ?? 0;
+    acceptedPlanActions.length;
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!requestedActionID || acceptedPlanActions.length === 0) return;
+    const target = contentPlanActionRefs.current[requestedActionID];
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.focus({ preventScroll: true });
+    setHighlightContentPlanAction(requestedActionID);
+    const timeout = window.setTimeout(() => setHighlightContentPlanAction(null), 2_200);
+    return () => window.clearTimeout(timeout);
+  }, [acceptedPlanActions, requestedActionID]);
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
@@ -533,6 +580,51 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           </div>
         </div>
       </section>
+
+      {acceptedPlanActions.length > 0 && (
+        <section data-content-plan-handoff-section className="space-y-3">
+          <SectionHeader
+            title="Accepted opportunities"
+            eyebrow="Sent from Opportunity Queue"
+            action={<Badge tone="green">{acceptedPlanActions.length}</Badge>}
+          />
+          <div className="grid gap-2">
+            {acceptedPlanActions.map((action) => {
+              const highlighted = highlightContentPlanAction === action.id;
+              return (
+                <div
+                  key={action.id}
+                  id={`content-plan-action-${action.id}`}
+                  ref={(node) => {
+                    contentPlanActionRefs.current[action.id] = node;
+                  }}
+                  tabIndex={-1}
+                  data-content-plan-action-card
+                  className={cx(
+                    "rounded-xl border bg-white p-4 shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                    highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                  )}
+                >
+                  <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="green">Accepted</Badge>
+                        <Badge tone="blue">{contentPlanActionTypeLabel(action)}</Badge>
+                        <Badge tone="neutral">{autoEnabled ? "Queued for planning" : "Auto paused"}</Badge>
+                      </div>
+                      <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
+                      <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
+                    </div>
+                    <div className="shrink-0 text-sm font-semibold text-slate-600">
+                      {action.topic_id ? "Topic created" : "Waiting in Content Plan"}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
         <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">

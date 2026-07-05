@@ -321,7 +321,7 @@ function destinationForAction(action: SEOContentAction | ResultsAction): Opportu
 }
 
 function actionHandoffHref(projectId: string, action: SEOContentAction | ResultsAction) {
-  return destinationForAction(action) === "Site Fixes" ? null : `/projects/${projectId}/topics`;
+  return destinationForAction(action) === "Site Fixes" ? null : `/projects/${projectId}/plan?action=${action.id}`;
 }
 
 function actionHandoffLabel(action: SEOContentAction | ResultsAction) {

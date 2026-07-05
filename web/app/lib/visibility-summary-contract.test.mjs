@@ -109,6 +109,13 @@ test("content plan consumes visibility summary for analysis handoff state", () =
     "setVisibilitySummary",
     "summaryOpenOpportunityCount",
     "summaryPendingPlanActions",
+    "acceptedPlanActions",
+    "data-content-plan-handoff-section",
+    "data-content-plan-action-card",
+    "highlightContentPlanAction",
+    "useSearchParams",
+    "searchParams.get(\"action\")",
+    "citeloop-linked-card-pulse",
     "action.lifecycle_stage === \"added_to_plan\"",
   ]) {
     assert.match(topics, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
