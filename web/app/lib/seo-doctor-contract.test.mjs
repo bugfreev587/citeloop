@@ -182,6 +182,43 @@ test("structured data AI repair JSON includes the UNiPost-style schema contract"
   }
 });
 
+test("structured data AI repair JSON separates observed metadata from unresolved fields", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const structuredBlock = client.slice(
+    client.indexOf("function buildStructuredDataRepairContract"),
+    client.indexOf("function structuredDataAcceptanceTests"),
+  );
+
+  for (const contract of [
+    "approved_metadata",
+    "unresolved_fields",
+    "observed_page_metadata",
+    "brandName",
+    "canonicalUrl",
+    "logoUrl",
+    "description",
+    "language",
+    "sameAs",
+    "contactPoint",
+    "hasSiteSearch",
+    "site_search_policy",
+    "No site search URL template was observed",
+    "omit potentialAction",
+  ]) {
+    assert.match(structuredBlock, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.doesNotMatch(structuredBlock, /potentialAction:\s*\{/);
+});
+
+test("structured data repair canonical URL prefers the observed canonical tag", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const canonicalBlock = client.slice(client.indexOf("function repairCanonicalURL"), client.indexOf("function repairPageRole"));
+
+  assert.match(canonicalBlock, /rawDetails\.canonical_url/);
+  assert.match(canonicalBlock, /normalized_page_url/);
+});
+
 test("Home fetches and renders a first-fold Doctor module", () => {
   const workspace = read("projects/[id]/workspace.tsx");
 
