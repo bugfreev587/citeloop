@@ -100,33 +100,6 @@ test("planHealthForTopics reports whole-plan health independent of active filter
   });
 });
 
-test("planPulseForTopics turns plan health into one operator summary", async () => {
-  const { planPulseForTopics } = await loadContentPlanLogicModule();
-
-  assert.deepEqual(
-    planPulseForTopics([
-      topic({ id: "ready", status: "backlog", priority: 3 }),
-      topic({ id: "scheduled", status: "scheduled", scheduled_at: "2026-07-03T10:00:00.000Z", priority: 2 }),
-      topic({ id: "needs-priority", status: "backlog", priority: 0 }),
-    ]),
-    {
-      title: "3 topics in the plan",
-      detail: "1 ready to draft, 1 scheduled, 1 needs priority.",
-      tone: "amber",
-    },
-  );
-});
-
-test("planPulseForTopics gives calm copy for an empty plan", async () => {
-  const { planPulseForTopics } = await loadContentPlanLogicModule();
-
-  assert.deepEqual(planPulseForTopics([]), {
-    title: "No topics in the plan yet",
-    detail: "Review opportunities or generate from domain to seed the first backlog.",
-    tone: "neutral",
-  });
-});
-
 test("topicCardSpanClass only spans three columns in compact view", async () => {
   const { topicCardSpanClass } = await loadContentPlanLogicModule();
 

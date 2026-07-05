@@ -9,7 +9,6 @@ import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
   planHealthForTopics,
-  planPulseForTopics,
   recommendedTopicIds,
   normalizedTopicPriority,
   topicCardSpanClass,
@@ -33,7 +32,7 @@ type TopicDraft = {
 };
 
 const AUTO_WORKFLOW_HELP =
-  "Auto On: accepted opportunities become backlog topics and drafts on cadence. " +
+  "Auto On: accepted opportunities become planned topics and drafts on cadence. " +
   "Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available.";
 
 const siteFixAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
@@ -175,7 +174,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [view, setView] = useState<PlanView>("grid");
-  const [query, setQuery] = useState("");
   const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
@@ -219,7 +217,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }, [api, projectId]);
 
-  const summaryOpenOpportunityCount = visibilitySummary?.open_opportunities.length ?? 0;
   const acceptedPlanActions = useMemo(
     () =>
       (visibilitySummary?.actions_in_loop ?? []).filter(
@@ -277,26 +274,20 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     return () => window.clearInterval(interval);
   }, [autoEnabled, generatingIds, refresh, summaryPendingPlanActions, topics]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return topics.filter((topic) => {
-      const channelMatch = channel === "all" || topic.channel === channel;
-      const queryMatch =
-        !q ||
-        [topic.title, topic.target_keyword, topic.target_prompt, topic.angle, topic.format].some((value) =>
-          value?.toLowerCase().includes(q),
-        );
-      return channelMatch && queryMatch;
-    });
-  }, [channel, query, topics]);
+  const filtered = useMemo(() => topics.filter((topic) => channel === "all" || topic.channel === channel), [channel, topics]);
 
-  // The card list reflects the active search/channel filters...
+  // The card list reflects the active channel control...
   const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
-  // ...but the banner, pacing copy, and recommendation describe the whole automation
-  // queue and sit above the filters, so they derive from every backlog topic.
+  // ...but status, pacing copy, and recommendation describe the whole automation
+  // queue and sit above that control, so they derive from every planned topic.
   const allBacklogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
   const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
-  const planPulse = useMemo(() => planPulseForTopics(topics), [topics]);
+  const planStatusItems = [
+    { label: "Planned topics", value: planHealth.backlog },
+    { label: "Ready to draft", value: planHealth.readyToDraft },
+    { label: "Scheduled intent", value: planHealth.scheduledIntent },
+    { label: "Needs priority", value: planHealth.needsPriority },
+  ];
   const recommendedIds = useMemo(() => {
     return new Set(recommendedTopicIds(allBacklogTopics));
   }, [allBacklogTopics]);
@@ -352,7 +343,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setMessage({
         title: nextEnabled ? "Auto enabled" : "Automatic workflow paused",
         detail: nextEnabled
-          ? "Accepted opportunities can become backlog topics and draft on cadence."
+          ? "Accepted opportunities can become planned topics and draft on cadence."
           : "Accepted opportunities stay in the action handoff. Manual drafting stays available.",
         tone: nextEnabled ? "green" : "amber",
       });
@@ -633,94 +624,113 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         </section>
       )}
 
-      <section className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_auto]">
-          <TextInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search topics" />
-          <select
-            value={channel}
-            onChange={(event) => setChannel(event.target.value)}
-            className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
-          >
-            <option value="all">All channels</option>
-            <option value="blog">Blog</option>
-            <option value="syndication">Syndication</option>
-            <option value="both">Both</option>
-          </select>
-          <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
-            <button
-              type="button"
-              title="List view"
-              aria-pressed={view === "list"}
-              onClick={() => setView("list")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+      <section className="space-y-3">
+        <SectionHeader title="Planned topics" eyebrow="Draft queue" action={<Badge tone="neutral">{backlogTopics.length}</Badge>} />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan status</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {planStatusItems.map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
+                    <div className="text-xs font-semibold text-slate-500">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              <select
+                value={channel}
+                onChange={(event) => setChannel(event.target.value)}
+                aria-label="Planned topic channel"
+                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
+              >
+                <option value="all">All channels</option>
+                <option value="blog">Blog</option>
+                <option value="syndication">Syndication</option>
+                <option value="both">Both</option>
+              </select>
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  title="List view"
+                  aria-pressed={view === "list"}
+                  onClick={() => setView("list")}
+                  className={cx(
+                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                    view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+                  )}
+                >
+                  <List size={14} />
+                  List
+                </button>
+                <button
+                  type="button"
+                  title="Two-column view"
+                  aria-pressed={view === "grid"}
+                  onClick={() => setView("grid")}
+                  className={cx(
+                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                    view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+                  )}
+                >
+                  <LayoutGrid size={14} />
+                  Two
+                </button>
+                <button
+                  type="button"
+                  title="Three-column view"
+                  aria-pressed={view === "compact"}
+                  onClick={() => setView("compact")}
+                  className={cx(
+                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                    view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+                  )}
+                >
+                  <Columns3 size={14} />
+                  Three
+                </button>
+              </div>
+              {nextTopic && (
+                <Button
+                  aria-busy={nextTopicBusy}
+                  disabled={nextTopicBusy}
+                  variant="primary"
+                  onClick={() => generate(nextTopic)}
+                  title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
+                >
+                  <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
+                    Draft next topic
+                  </ButtonProgress>
+                </Button>
               )}
-            >
-              <List size={14} />
-              List
-            </button>
-            <button
-              type="button"
-              title="Two-column view"
-              aria-pressed={view === "grid"}
-              onClick={() => setView("grid")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-              )}
-            >
-              <LayoutGrid size={14} />
-              Two
-            </button>
-            <button
-              type="button"
-              title="Three-column view"
-              aria-pressed={view === "compact"}
-              onClick={() => setView("compact")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-              )}
-            >
-              <Columns3 size={14} />
-              Three
-            </button>
+              <Button
+                aria-busy={strategistRunning}
+                disabled={strategistRunning}
+                variant="ghost"
+                onClick={runStrategist}
+                title="Advanced: seed starter planned topics from your domain profile and search, instead of waiting for reviewed analysis."
+              >
+                {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+                {strategistRunning ? "Generating content plan" : "Generate from domain"}
+              </Button>
+              <Button disabled={strategistRunning} onClick={refresh}>
+                <RefreshCw size={16} />
+                Refresh
+              </Button>
+            </div>
           </div>
-          {nextTopic && (
-            <Button
-              aria-busy={nextTopicBusy}
-              disabled={nextTopicBusy}
-              variant="primary"
-              onClick={() => generate(nextTopic)}
-              title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
-            >
-              <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
-                Draft next topic
-              </ButtonProgress>
-            </Button>
-          )}
-          <Button
-            aria-busy={strategistRunning}
-            disabled={strategistRunning}
-            variant="ghost"
-            onClick={runStrategist}
-            title="Advanced: seed a starter backlog from your domain profile and search, instead of waiting for reviewed analysis."
-          >
-            {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-            {strategistRunning ? "Generating content plan" : "Generate from domain"}
-          </Button>
-          <Button disabled={strategistRunning} onClick={refresh}>
-            <RefreshCw size={16} />
-            Refresh
-          </Button>
         </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Backlog" action={<Badge tone="neutral">{backlogTopics.length}</Badge>} />
         {backlogTopics.length === 0 ? (
-          <EmptyState title="No backlog topics found" detail="Drafted topics move to Review; run Strategist or adjust filters to populate the backlog." />
+          allBacklogTopics.length === 0 ? (
+            <EmptyState
+              title="No planned topics yet"
+              detail="Review opportunities to add accepted content work. Domain generation stays available as an advanced seed."
+            />
+          ) : (
+            <EmptyState title="No planned topics in this channel" detail="Choose another channel or reset to All channels." />
+          )
         ) : (
           <div className={topicGridClass}>
             {backlogTopics.map((topic) => {
@@ -913,37 +923,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             })}
           </div>
         )}
-      </section>
-
-      <section data-content-plan-summary-section>
-        <SectionHeader title="Topic summary" />
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <Badge tone={planPulse.tone}>{planPulse.tone === "amber" ? "Needs attention" : "Plan status"}</Badge>
-              <div className="mt-3 text-lg font-bold leading-6 text-slate-950">{planPulse.title}</div>
-              <p className="mt-1 max-w-[68ch] text-sm leading-5 text-slate-600">{planPulse.detail}</p>
-            </div>
-            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.backlog}</div>
-                <div className="text-xs font-semibold text-slate-500">Backlog</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.readyToDraft}</div>
-                <div className="text-xs font-semibold text-slate-500">Ready to draft</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.scheduledIntent}</div>
-                <div className="text-xs font-semibold text-slate-500">Scheduled intent</div>
-              </div>
-              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{planHealth.needsPriority}</div>
-                <div className="text-xs font-semibold text-slate-500">Needs priority</div>
-              </div>
-            </div>
-          </div>
-        </div>
       </section>
     </div>
     {selectedContentPlanAction && (
