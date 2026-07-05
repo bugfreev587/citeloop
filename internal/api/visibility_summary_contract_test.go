@@ -4,6 +4,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestVisibilitySummaryRouteAndLifecycleContract(t *testing.T) {
@@ -79,5 +83,31 @@ func TestAcceptSEOOpportunityAliasesActionCreation(t *testing.T) {
 	}
 	if strings.Contains(body, `"accepted"`) || strings.Contains(body, "updateSEOOpportunityStatus") {
 		t.Fatal("acceptSEOOpportunity must not leave an accepted-without-action state")
+	}
+}
+
+func TestVisibilityLifecycleOnlyTreatsPendingReviewDraftAsReviewHandoff(t *testing.T) {
+	actionID := uuid.New()
+	topicID := uuid.New()
+	pending := "pending_review"
+
+	stage := deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
+		Status:             "approved",
+		TopicID:            pgtype.UUID{Bytes: topicID, Valid: true},
+		DraftArticleID:     pgtype.UUID{Bytes: actionID, Valid: true},
+		DraftArticleStatus: nil,
+	})
+	if stage != VisibilityStagePlanned {
+		t.Fatalf("stale draft id stage = %q, want %q", stage, VisibilityStagePlanned)
+	}
+
+	stage = deriveVisibilityLifecycleStage(db.ListVisibilityActionRowsRow{
+		Status:             "approved",
+		TopicID:            pgtype.UUID{Bytes: topicID, Valid: true},
+		DraftArticleID:     pgtype.UUID{Bytes: actionID, Valid: true},
+		DraftArticleStatus: &pending,
+	})
+	if stage != VisibilityStageReadyForReview {
+		t.Fatalf("pending review draft stage = %q, want %q", stage, VisibilityStageReadyForReview)
 	}
 }

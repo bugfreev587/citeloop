@@ -1697,9 +1697,15 @@ test("content plan reviews accepted opportunities in the shared right drawer bef
 
 test("content plan only links to Review after a draft article exists", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
+  const logic = read("lib/content-plan-logic.ts");
 
-  assert.match(topics, /const selectedActionHasReviewContent = Boolean\(selectedContentPlanAction\?\.draft_article_id\)/);
+  assert.match(logic, /hasReviewableDraft/);
+  assert.match(topics, /hasReviewableDraft\(selectedContentPlanAction\)/);
+  assert.match(topics, /const actionHasReviewContent = hasReviewableDraft\(action\)/);
+  assert.match(topics, /actionHasReviewContent \? \(/);
+  assert.match(topics, /View in Review/);
   assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
+  assert.doesNotMatch(topics, /const selectedActionHasReviewContent = Boolean\(selectedContentPlanAction\?\.draft_article_id\)/);
   assert.match(topics, /\/projects\/\$\{projectId\}\/review\?article=\$\{action\.draft_article_id\}/);
   assert.doesNotMatch(topics, /: `\/projects\/\$\{projectId\}\/review`/);
 });

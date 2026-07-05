@@ -99,3 +99,24 @@ test("planHealthForTopics reports whole-plan health independent of active filter
     needsPriority: 1,
   });
 });
+
+test("hasReviewableDraft only links actions with pending Review drafts", async () => {
+  const { hasReviewableDraft } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    hasReviewableDraft({ draft_article_id: "article-1", draft_article_status: "pending_review" }),
+    true,
+  );
+  assert.equal(
+    hasReviewableDraft({ draft_article_id: "article-1", draft_article_status: null }),
+    false,
+  );
+  assert.equal(
+    hasReviewableDraft({ draft_article_id: "article-1", draft_article_status: "drafted" }),
+    false,
+  );
+  assert.equal(
+    hasReviewableDraft({ draft_article_id: null, draft_article_status: "pending_review" }),
+    false,
+  );
+});

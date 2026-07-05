@@ -6,6 +6,7 @@ import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Wand2
 import { defaultProjectConfig } from "../../../lib/api";
 import type { ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
+  hasReviewableDraft,
   isBacklogStatus,
   planHealthForTopics,
   recommendedTopicIds,
@@ -283,7 +284,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const topicGridClass = "grid gap-3 lg:grid-cols-2";
   const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
   const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
-  const selectedActionHasReviewContent = Boolean(selectedContentPlanAction?.draft_article_id);
+  const selectedActionHasReviewContent = hasReviewableDraft(selectedContentPlanAction);
   const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
   const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
 
@@ -536,6 +537,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <div className="grid gap-2">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
+              const actionHasReviewContent = hasReviewableDraft(action);
               return (
                 <div
                   key={action.id}
@@ -561,15 +563,25 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSelectedContentPlanActionID(action.id)}
-                        aria-label={`Review accepted content brief: ${contentPlanActionTitle(action)}`}
-                      >
-                        Review brief
-                        <ArrowRight size={15} />
-                      </Button>
+                      {actionHasReviewContent ? (
+                        <a
+                          href={reviewHrefForAction(projectId, action)}
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                        >
+                          View in Review
+                          <ArrowRight size={15} />
+                        </a>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedContentPlanActionID(action.id)}
+                          aria-label={`Review accepted content brief: ${contentPlanActionTitle(action)}`}
+                        >
+                          Review brief
+                          <ArrowRight size={15} />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
