@@ -771,7 +771,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     <div className="space-y-6">
       <SectionHeader
         title="Publish"
-        eyebrow="Ready content first. Choose where and when per post."
         level="page"
         action={
           <div className="flex flex-wrap items-center gap-2">
