@@ -1591,18 +1591,41 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   assert.match(topics, /draftAcceptedAction/);
   assert.match(topics, /api\.planSEOContentAction\(projectId, action\.id\)/);
   assert.match(topics, /generate\(topic\)/);
+  assert.match(topics, /Review brief/);
+  assert.match(topics, /selectedContentPlanActionID/);
+  assert.match(topics, /dataAttribute="content-plan-action-drawer"/);
+  assert.match(topics, /footerLabel="Content plan drawer actions"/);
   assert.match(topics, /Draft Content/);
-  assert.match(topics, /aria-busy=\{actionDraftBusy\}/);
-  assert.match(topics, /disabled=\{Boolean\(busy\) \|\| actionDraftBusy \|\| autoEnabled\}/);
-  assert.match(topics, /autoEnabled \? "Drafting automatically" : "Draft Content"/);
-  assert.match(topics, /reviewHrefForAction\(projectId, action\)/);
+  assert.match(topics, /aria-busy=\{selectedActionDraftBusy\}/);
+  assert.match(topics, /disabled=\{reviewingContentPlanAction\}/);
+  assert.match(topics, /reviewHrefForAction\(projectId, selectedContentPlanAction\)/);
+  assert.doesNotMatch(topics, /onClick=\{\(\) => draftAcceptedAction\(action\)\}/);
   assert.doesNotMatch(topics, /Waiting in Content Plan/);
+});
+
+test("content plan reviews accepted opportunities in the shared right drawer before drafting", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const drawer = read("components/right-drawer.tsx");
+
+  assert.match(drawer, /export function RightDrawer/);
+  assert.match(drawer, /drawerFocusableSelector/);
+  assert.match(drawer, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(drawer, /motion-safe:animate-\[citeloop-drawer-panel-in_220ms_cubic-bezier\(0\.16,1,0\.3,1\)\]/);
+  assert.match(drawer, /footer/);
+  assert.match(topics, /import \{ RightDrawer \} from "\.\.\/\.\.\/\.\.\/components\/right-drawer"/);
+  assert.match(topics, /selectedContentPlanAction/);
+  assert.match(topics, /setSelectedContentPlanActionID\(action\.id\)/);
+  assert.match(topics, /AI Visibility \/ GEO Impact/);
+  assert.match(topics, /Why write this/);
+  assert.match(topics, /Evidence source/);
+  assert.match(topics, /dismissAcceptedAction/);
+  assert.match(topics, /api\.dismissSEOOpportunity\(projectId, action\.opportunity_id\)/);
 });
 
 test("content plan only links to Review after a draft article exists", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
-  assert.match(topics, /const hasReviewContent = Boolean\(action\.draft_article_id\)/);
+  assert.match(topics, /const selectedActionHasReviewContent = Boolean\(selectedContentPlanAction\?\.draft_article_id\)/);
   assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
   assert.match(topics, /\/projects\/\$\{projectId\}\/review\?article=\$\{action\.draft_article_id\}/);
   assert.doesNotMatch(topics, /: `\/projects\/\$\{projectId\}\/review`/);
