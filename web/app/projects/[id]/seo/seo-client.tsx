@@ -3198,8 +3198,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks.
                       </p>
                     </div>
-                    <Button size="sm" variant="ai" onClick={() => void copySiteFixAIJSON(action)}>
-                      <Clipboard size={14} />
+                    <Button
+                      size="sm"
+                      variant="ai"
+                      className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                      onClick={() => void copySiteFixAIJSON(action)}
+                    >
+                      <Clipboard className="shrink-0" size={14} />
                       Copy fix JSON
                     </Button>
                   </div>
@@ -3259,8 +3264,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               aria-label="Drawer actions"
               className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
             >
-              <Button size="sm" variant="ai" onClick={() => void copySiteFixAIJSON(action)}>
-                <Clipboard size={14} />
+              <Button
+                size="sm"
+                variant="ai"
+                className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                onClick={() => void copySiteFixAIJSON(action)}
+              >
+                <Clipboard className="shrink-0" size={14} />
                 Copy fix JSON
               </Button>
               <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
