@@ -548,6 +548,80 @@ function siteFixTargetLabel(targetURL: string) {
   return targetURL || "the target URL";
 }
 
+function normalizeMetadataKey(value: string) {
+  return value.trim().toLowerCase().replace(/[_\-\s.]/g, "");
+}
+
+function firstObservedMetadataStringIn(value: any, wanted: Set<string>): string {
+  if (!value) return "";
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = firstObservedMetadataStringIn(entry, wanted);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+
+  const record = value as Record<string, any>;
+  for (const [key, entry] of Object.entries(record)) {
+    if (!wanted.has(normalizeMetadataKey(key))) continue;
+    if (typeof entry === "string" && entry.trim()) return entry.trim();
+  }
+
+  for (const preferred of ["observed_metadata", "metadata", "page_metadata", "seo_metadata", "open_graph", "opengraph"]) {
+    const foundEntry = Object.entries(record).find(([key]) => normalizeMetadataKey(key) === normalizeMetadataKey(preferred));
+    const found = firstObservedMetadataStringIn(foundEntry?.[1], wanted);
+    if (found) return found;
+  }
+
+  for (const key of Object.keys(record).sort()) {
+    const found = firstObservedMetadataStringIn(record[key], wanted);
+    if (found) return found;
+  }
+  return "";
+}
+
+function firstObservedMetadataString(value: any, aliases: string[]) {
+  return firstObservedMetadataStringIn(value, new Set(aliases.map(normalizeMetadataKey)));
+}
+
+function siteFixObservedMetadata(action: SEOContentAction | ResultsAction) {
+  const diff = action.diff_snapshot ?? {};
+  const output = action.output_snapshot ?? {};
+  const evidence = action.evidence_snapshot ?? {};
+  const change = firstProposedChange(action);
+  const sources = [
+    evidence.observed_metadata,
+    output.observed_metadata,
+    diff.observed_metadata,
+    change?.observed_metadata,
+    evidence.metadata,
+    evidence.page_metadata,
+    evidence.source_evidence,
+    evidence,
+  ];
+  const fields = [
+    { name: "canonical_url", aliases: ["canonical_url", "canonical", "canonicalUrl", "canonical_href", "canonicalHref"] },
+    { name: "title", aliases: ["title", "page_title", "pageTitle"] },
+    { name: "description", aliases: ["description", "meta_description", "metaDescription"] },
+    { name: "og_title", aliases: ["og_title", "ogTitle"] },
+    { name: "og_description", aliases: ["og_description", "ogDescription"] },
+    { name: "og_image", aliases: ["og_image", "ogImage"] },
+    { name: "brand_name", aliases: ["brand_name", "brandName", "site_name", "siteName", "og_site_name", "ogSiteName", "application_name", "applicationName"] },
+  ];
+  const observed: Record<string, string> = {};
+  for (const field of fields) {
+    for (const source of sources) {
+      const found = firstObservedMetadataString(source, field.aliases);
+      if (!found) continue;
+      observed[field.name] = found;
+      break;
+    }
+  }
+  return observed;
+}
+
 function isHomepageTarget(targetURL: string) {
   try {
     const parsed = new URL(targetURL);
@@ -615,6 +689,118 @@ function siteFixImplementationSteps(assetType: string, actionType: string, targe
   ];
 }
 
+function siteFixDeduplicationRule(assetType: string) {
+  if (assetType === "schema_patch") {
+    return "If JSON-LD already exists, update or extend the existing graph instead of adding duplicate Organization, WebSite, or WebPage nodes.";
+  }
+  if (assetType === "internal_link_patch") {
+    return "If a crawlable canonical link to the target already exists on a source page, update anchor/context only when it improves clarity instead of adding duplicate boilerplate links.";
+  }
+  if (assetType === "sitemap_update") {
+    return "Update the canonical sitemap entry or generation rule instead of adding duplicate URL variants.";
+  }
+  return "Update the existing crawler-facing signal when present instead of adding duplicate or conflicting signals.";
+}
+
+function siteFixDoNot(assetType: string) {
+  if (assetType === "schema_patch") {
+    return [
+      "Do not add unverified sameAs links.",
+      "Do not add placeholder logo, address, founder, phone, or social profile fields.",
+      "Do not inject JSON-LD only on the client after hydration.",
+      "Do not change visible page content unless required.",
+    ];
+  }
+  if (assetType === "internal_link_patch") {
+    return [
+      "Do not add links with generic anchor text such as click here.",
+      "Do not point links at staging, preview, redirecting, or non-canonical URLs.",
+      "Do not add duplicate navigation or footer links when contextual body links are the intended fix.",
+    ];
+  }
+  return [
+    "Do not add placeholder values or staging URLs.",
+    "Do not change unrelated visible page content unless required.",
+    "Do not create duplicate or conflicting SEO signals.",
+  ];
+}
+
+function siteFixHumanReview(assetType: string) {
+  if (assetType === "schema_patch") {
+    return {
+      required: true,
+      reason: "Structured data affects public search and entity interpretation and should use verified brand metadata only.",
+      review_focus: ["brand name", "description", "canonical URL", "organization identity"],
+    };
+  }
+  return {
+    required: true,
+    reason: "This fix changes crawler-facing production signals and should be reviewed before applying.",
+    review_focus: ["target URL", "canonical URL", "production-only values"],
+  };
+}
+
+const siteFixSchemaGraphIDFragments = {
+  organization: "#organization",
+  website: "#website",
+  webpage: "#webpage",
+} as const;
+
+function siteFixSchemaFragmentID(targetURL: string, fragment: "organization" | "website" | "webpage") {
+  const trimmed = targetURL.trim();
+  const hash = siteFixSchemaGraphIDFragments[fragment];
+  if (!trimmed) return hash;
+  try {
+    const parsed = new URL(trimmed);
+    parsed.search = "";
+    parsed.hash = hash;
+    if (!parsed.pathname) parsed.pathname = "/";
+    return parsed.toString();
+  } catch {
+    return `${trimmed.replace(/\/+$/, "")}/${hash}`;
+  }
+}
+
+function siteFixSchemaGraphGuidance(targetURL: string) {
+  const webpageID = siteFixSchemaFragmentID(targetURL, "webpage");
+  if (!isHomepageTarget(targetURL)) {
+    return {
+      recommended_shape: "Use one JSON-LD object with @context set to https://schema.org and an @graph array.",
+      stable_ids: {
+        WebPage: webpageID,
+      },
+      relationships: ["Use stable @id values so entities can reference each other without duplicating nodes."],
+      example: {
+        "@context": "https://schema.org",
+        "@graph": [{ "@type": "WebPage", "@id": webpageID }],
+      },
+    };
+  }
+  const organizationID = siteFixSchemaFragmentID(targetURL, "organization");
+  const websiteID = siteFixSchemaFragmentID(targetURL, "website");
+  return {
+    recommended_shape: "Use one JSON-LD object with @context set to https://schema.org and an @graph array.",
+    stable_ids: {
+      Organization: organizationID,
+      WebSite: websiteID,
+      WebPage: webpageID,
+    },
+    relationships: [
+      "WebSite.publisher should reference the Organization @id.",
+      "WebPage.isPartOf should reference the WebSite @id.",
+      "WebPage.about or WebPage.publisher should reference the Organization @id when verified.",
+    ],
+    example: {
+      "@context": "https://schema.org",
+      "@graph": [
+        { "@type": "Organization", "@id": organizationID },
+        { "@type": "WebSite", "@id": websiteID },
+        { "@type": "WebPage", "@id": webpageID },
+      ],
+    },
+  };
+}
+
 function siteFixPatchContract(assetType: string, targetURL: string) {
   if (assetType === "schema_patch") {
     return {
@@ -623,10 +809,14 @@ function siteFixPatchContract(assetType: string, targetURL: string) {
       page_role: isHomepageTarget(targetURL) ? "homepage" : "web_page",
       schema_types: isHomepageTarget(targetURL) ? ["WebSite", "Organization", "WebPage"] : ["WebPage"],
       render_requirement: "JSON-LD must be present in the initial server-rendered HTML.",
+      deduplication_rule: siteFixDeduplicationRule(assetType),
+      graph_guidance: siteFixSchemaGraphGuidance(targetURL),
+      do_not: siteFixDoNot(assetType),
       constraints: [
         "Use real production brand, page, and canonical metadata.",
         "Use absolute production URLs only.",
         "Omit fields that cannot be verified instead of shipping blank or placeholder values.",
+        siteFixDeduplicationRule(assetType),
       ],
     };
   }
@@ -658,7 +848,8 @@ function fallbackSiteFixAcceptanceTests(assetType: string, actionType: string, t
     return [
       `Inspect the initial HTML for ${target} and verify it includes server-rendered JSON-LD in a script[type=\"application/ld+json\"] element.`,
       "Parse every JSON-LD block as valid JSON and verify it has @context set to https://schema.org, a relevant @type, and no placeholders.",
-      `Run Google Rich Results Test or Schema Markup Validator for ${target} and resolve parser errors or unreadable schema warnings.`,
+      `Validate the JSON-LD with Schema Markup Validator for ${target} and resolve every parser error.`,
+      "Use Google Rich Results Test only to confirm the page is readable and parser-error free; WebSite, Organization, and WebPage schema does not require rich result eligibility.",
     ];
   }
   if (assetType === "internal_link_patch") {
@@ -703,6 +894,7 @@ function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
   const target = siteFixTargetURL(action);
   const implementationSteps = stringArrayValue(change?.implementation_steps);
   const likelySurfaces = stringArrayValue(change?.likely_surfaces);
+  const observedMetadata = siteFixObservedMetadata(action);
   return {
     issue: {
       category: "site_fix",
@@ -716,15 +908,19 @@ function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
       opportunity_query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? null,
       recommended_action: (action as ResultsAction).opportunity_recommended_action ?? action.input_snapshot?.recommended_action ?? action.action_type,
       proposed_changes: diff.proposed_changes ?? [],
+      ...(Object.keys(observedMetadata).length > 0 ? { observed_metadata: observedMetadata } : {}),
     },
     fix: {
       goal: action.action_type,
       instructions: implementationSteps.length ? implementationSteps : siteFixImplementationSteps(assetType, action.action_type, target),
       likely_surfaces: likelySurfaces.length ? likelySurfaces : siteFixLikelySurfaces(assetType, target),
       seo_contract: change?.patch_contract ?? siteFixPatchContract(assetType, target),
+      deduplication_rule: siteFixDeduplicationRule(assetType),
+      do_not: siteFixDoNot(assetType),
       risk_level: action.risk_reasons?.risk_level ?? null,
     },
     acceptance_tests: siteFixAcceptanceTests(action),
+    human_review: siteFixHumanReview(assetType),
   };
 }
 
