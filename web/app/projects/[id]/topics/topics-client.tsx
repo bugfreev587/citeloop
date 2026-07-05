@@ -174,7 +174,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [view, setView] = useState<PlanView>("grid");
-  const [channel, setChannel] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
   const { notify } = useToast();
@@ -274,13 +273,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     return () => window.clearInterval(interval);
   }, [autoEnabled, generatingIds, refresh, summaryPendingPlanActions, topics]);
 
-  const filtered = useMemo(() => topics.filter((topic) => channel === "all" || topic.channel === channel), [channel, topics]);
-
-  // The card list reflects the active channel control...
-  const backlogTopics = useMemo(() => filtered.filter((topic) => isBacklogStatus(topic.status)), [filtered]);
-  // ...but status, pacing copy, and recommendation describe the whole automation
-  // queue and sit above that control, so they derive from every planned topic.
-  const allBacklogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
+  const backlogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
   const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
   const planStatusItems = [
     { label: "Planned topics", value: planHealth.backlog },
@@ -289,13 +282,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     { label: "Needs priority", value: planHealth.needsPriority },
   ];
   const recommendedIds = useMemo(() => {
-    return new Set(recommendedTopicIds(allBacklogTopics));
-  }, [allBacklogTopics]);
+    return new Set(recommendedTopicIds(backlogTopics));
+  }, [backlogTopics]);
   // Topics that are still waiting (not already drafting) define the queue the
   // pacing copy describes, and the highest-value one is the "jump the queue" pick.
   const queuedTopics = useMemo(
-    () => allBacklogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
-    [allBacklogTopics, generatingIds],
+    () => backlogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
+    [backlogTopics, generatingIds],
   );
   const nextTopic = useMemo(() => {
     const recommendedFirst = queuedTopics.filter((topic) => recommendedIds.has(topic.id));
@@ -627,110 +620,96 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       <section className="space-y-3">
         <SectionHeader title="Planned topics" eyebrow="Draft queue" action={<Badge tone="neutral">{backlogTopics.length}</Badge>} />
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-            <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan status</div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {planStatusItems.map((item) => (
-                  <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
-                    <div className="text-xs font-semibold text-slate-500">{item.label}</div>
-                  </div>
-                ))}
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan status</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {planStatusItems.map((item) => (
+              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
+                <div className="text-xs font-semibold text-slate-500">{item.label}</div>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-              <select
-                value={channel}
-                onChange={(event) => setChannel(event.target.value)}
-                aria-label="Planned topic channel"
-                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
-              >
-                <option value="all">All channels</option>
-                <option value="blog">Blog</option>
-                <option value="syndication">Syndication</option>
-                <option value="both">Both</option>
-              </select>
-              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
-                <button
-                  type="button"
-                  title="List view"
-                  aria-pressed={view === "list"}
-                  onClick={() => setView("list")}
-                  className={cx(
-                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                    view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-                  )}
-                >
-                  <List size={14} />
-                  List
-                </button>
-                <button
-                  type="button"
-                  title="Two-column view"
-                  aria-pressed={view === "grid"}
-                  onClick={() => setView("grid")}
-                  className={cx(
-                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                    view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-                  )}
-                >
-                  <LayoutGrid size={14} />
-                  Two
-                </button>
-                <button
-                  type="button"
-                  title="Three-column view"
-                  aria-pressed={view === "compact"}
-                  onClick={() => setView("compact")}
-                  className={cx(
-                    "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                    view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-                  )}
-                >
-                  <Columns3 size={14} />
-                  Three
-                </button>
-              </div>
-              {nextTopic && (
-                <Button
-                  aria-busy={nextTopicBusy}
-                  disabled={nextTopicBusy}
-                  variant="primary"
-                  onClick={() => generate(nextTopic)}
-                  title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
-                >
-                  <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
-                    Draft next topic
-                  </ButtonProgress>
-                </Button>
+            ))}
+          </div>
+        </div>
+        <div
+          data-content-plan-topic-toolbar
+          className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/85 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+        >
+          <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 sm:w-auto">
+            <button
+              type="button"
+              title="List view"
+              aria-pressed={view === "list"}
+              onClick={() => setView("list")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
               )}
+            >
+              <List size={14} />
+              List
+            </button>
+            <button
+              type="button"
+              title="Two-column view"
+              aria-pressed={view === "grid"}
+              onClick={() => setView("grid")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+              )}
+            >
+              <LayoutGrid size={14} />
+              Two
+            </button>
+            <button
+              type="button"
+              title="Three-column view"
+              aria-pressed={view === "compact"}
+              onClick={() => setView("compact")}
+              className={cx(
+                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
+                view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+              )}
+            >
+              <Columns3 size={14} />
+              Three
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {nextTopic && (
               <Button
-                aria-busy={strategistRunning}
-                disabled={strategistRunning}
-                variant="ghost"
-                onClick={runStrategist}
-                title="Advanced: seed starter planned topics from your domain profile and search, instead of waiting for reviewed analysis."
+                aria-busy={nextTopicBusy}
+                disabled={nextTopicBusy}
+                variant="primary"
+                onClick={() => generate(nextTopic)}
+                title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
               >
-                {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-                {strategistRunning ? "Generating content plan" : "Generate from domain"}
+                <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
+                  Draft next topic
+                </ButtonProgress>
               </Button>
-              <Button disabled={strategistRunning} onClick={refresh}>
-                <RefreshCw size={16} />
-                Refresh
-              </Button>
-            </div>
+            )}
+            <Button
+              aria-busy={strategistRunning}
+              disabled={strategistRunning}
+              variant="ghost"
+              onClick={runStrategist}
+              title="Advanced: seed starter planned topics from your domain profile and search, instead of waiting for reviewed analysis."
+            >
+              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
+              {strategistRunning ? "Generating content plan" : "Generate from domain"}
+            </Button>
+            <Button disabled={strategistRunning} onClick={refresh}>
+              <RefreshCw size={16} />
+              Refresh
+            </Button>
           </div>
         </div>
         {backlogTopics.length === 0 ? (
-          allBacklogTopics.length === 0 ? (
-            <EmptyState
-              title="No planned topics yet"
-              detail="Review opportunities to add accepted content work. Domain generation stays available as an advanced seed."
-            />
-          ) : (
-            <EmptyState title="No planned topics in this channel" detail="Choose another channel or reset to All channels." />
-          )
+          <EmptyState
+            title="No planned topics yet"
+            detail="Review opportunities to add accepted content work. Domain generation stays available as an advanced seed."
+          />
         ) : (
           <div className={topicGridClass}>
             {backlogTopics.map((topic) => {

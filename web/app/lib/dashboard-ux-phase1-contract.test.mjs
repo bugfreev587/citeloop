@@ -1674,10 +1674,14 @@ test("content plan presents planned topics without legacy backlog search or summ
   assert.doesNotMatch(topics, /Pick signal/);
   assert.doesNotMatch(topics, /priority \{topic\.priority\}/);
   assert.doesNotMatch(topics, /Search topics/);
+  assert.doesNotMatch(topics, /Planned topic channel/);
+  assert.doesNotMatch(topics, /All channels/);
+  assert.doesNotMatch(topics, /const \[channel, setChannel\]/);
   assert.doesNotMatch(topics, /data-content-plan-summary-section/);
   assert.doesNotMatch(topics, /<SectionHeader title="Backlog"/);
   assert.doesNotMatch(topics, /No backlog topics found/);
   assert.doesNotMatch(topics, /adjust filters/);
+  assert.doesNotMatch(topics, /No planned topics in this channel/);
 
   assert.match(topics, /PlanView/);
   assert.match(topics, /setView\("list"\)/);
@@ -1689,6 +1693,7 @@ test("content plan presents planned topics without legacy backlog search or summ
   assert.match(topics, /planHealthForTopics\(topics\)/);
   assert.match(topics, /planHealth\.backlog/);
   assert.match(topics, /planStatusItems/);
+  assert.match(topics, /data-content-plan-topic-toolbar/);
   assert.doesNotMatch(topics, /planPulseForTopics/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan health"/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan pulse"/);
