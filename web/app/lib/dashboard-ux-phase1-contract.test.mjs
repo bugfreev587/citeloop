@@ -810,7 +810,12 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   );
 
   assert.match(readyNowBlock, /title="Ready to post"/);
+  assert.match(readyNowBlock, /articlePreviewHref\(projectId, item\.article\)/);
+  assert.match(readyNowBlock, /target="_blank"/);
+  assert.match(readyNowBlock, /rel="noopener noreferrer"/);
   assert.match(readyNowBlock, /item\.secondaryActionLabel/);
+  assert.match(readyNowBlock, /SEO Details/);
+  assert.match(readyNowBlock, /onSeoDetails\(item\.article\)/);
   assert.match(readyNowBlock, /item\.destinationActionLabel/);
   assert.match(readyNowBlock, /item\.timingActionLabel/);
   assert.match(readyNowBlock, /publishTimeLabel\(item\.article\)/);
@@ -820,6 +825,13 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(readyNowBlock, /readyNow\.emptyState\.title/);
   assert.match(logic, /No approved posts ready/);
   assert.doesNotMatch(readyNowBlock, />\s*Review\s*</);
+  assert.ok(
+    !readyNowBlock.includes('href={`/projects/${projectId}/articles/${item.articleId}`}'),
+    "Preview should not route to the internal article detail page",
+  );
+  assert.match(publishing, /drawer === "seo_details"/);
+  assert.match(publishing, /dataAttribute="publish-seo-details-drawer"/);
+  assert.match(publishing, /function SEODetailsDrawerContent/);
 });
 
 test("publishing manual drafts and View all drawer preserve non-first-viewport states", () => {
