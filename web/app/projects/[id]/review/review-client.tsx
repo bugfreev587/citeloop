@@ -249,7 +249,6 @@ export function ReviewClient({ projectId }: { projectId: string }) {
       <div ref={reviewSurfaceRef} className="space-y-6">
         <SectionHeader
           title="Review"
-          eyebrow="Mostly automatic — you only decide the rare cases"
           level="page"
           action={
             <div className="flex flex-wrap justify-end gap-2">

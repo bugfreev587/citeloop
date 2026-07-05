@@ -214,7 +214,7 @@ function WorkflowStage({
       <div data-content-workflow-stage-accent className={cx("mb-4 h-1.5 w-16 rounded-full", meta.accentClass)} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-white/70 pb-4">
         <div>
-          <div data-content-workflow-stage-step className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+          <div data-content-workflow-stage-step className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">
             {meta.stepLabel}
           </div>
           <div className="mt-1 text-sm font-medium text-slate-500">{meta.eyebrow}</div>

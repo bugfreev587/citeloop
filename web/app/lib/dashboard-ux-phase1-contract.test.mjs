@@ -386,6 +386,7 @@ test("Phase 5 pages separate growth operating outputs", () => {
   const workspace = read("projects/[id]/workspace.tsx");
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const topics = read("projects/[id]/topics/topics-client.tsx");
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
   const activity = read("projects/[id]/settings/activity/page.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
   const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
@@ -402,8 +403,8 @@ test("Phase 5 pages separate growth operating outputs", () => {
   assert.match(activity, /Operations health/);
   assert.match(activity, /Operational blockers/);
   assert.match(activity, /Diagnostics/);
-  assert.match(topics, /topic backlog/i);
-  assert.match(topics, /action handoff/i);
+  assert.match(workflow, /topic backlog/i);
+  assert.match(workflow, /action handoff/i);
   assert.doesNotMatch(`${workspace}\n${seo}\n${topics}\n${activity}`, /content pipeline/i);
   assert.doesNotMatch(resultsBlock, /Measurement and diagnostics/);
 });
@@ -720,6 +721,7 @@ test("destructive content-plan and distribution actions confirm before running",
 
 test("publishing first viewport is content-first Manual publish instead of platform-first C2", () => {
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
 
   assert.match(publishing, /buildPublishDestinations/);
   assert.match(publishing, /buildPublishHeaderCta/);
@@ -729,7 +731,7 @@ test("publishing first viewport is content-first Manual publish instead of platf
   assert.match(publishing, /data-publish-c2-destinations/);
   assert.match(publishing, /title="Ready to post"/);
   assert.match(publishing, /title="Publish destinations"/);
-  assert.match(publishing, /Ready content first\. Choose where and when per post\./);
+  assert.match(workflow, /Ready content first\. Choose where and when per post\./);
   assert.match(publishing, /onDestination=\{\(\) => setDrawer\("github"\)\}/);
   assert.match(publishing, /onTiming=\{\(\) => setDrawer\("schedule"\)\}/);
   assert.match(publishing, />\s*Schedule\s*</);
@@ -957,6 +959,10 @@ test("content workflow stages expose page-level identity above module headings",
   assert.match(publishing, /title="Publish"/);
   assert.match(publishing, /title="Publish"[\s\S]*level="page"/);
   assert.doesNotMatch(publishing, /title="Publishing"/);
+  assert.match(workflow, /data-content-workflow-stage-step className="text-sm font-bold uppercase/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Content Plan" eyebrow=/);
+  assert.doesNotMatch(review, /<SectionHeader[\s\S]{0,160}title="Review"[\s\S]{0,160}eyebrow=/);
+  assert.doesNotMatch(publishing, /<SectionHeader[\s\S]{0,160}title="Publish"[\s\S]{0,160}eyebrow=/);
 });
 
 test("content workflow route clicks retry target alignment while content settles", () => {
