@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -2304,7 +2304,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="min-w-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-1">
-                                <Badge tone="neutral">{loopActionDestinationLabel(action)}</Badge>
+                                <Badge tone={loopActionDestinationLabel(action) === "Site Fixes" ? "blue" : "violet"}>
+                                  {loopActionDestinationLabel(action) === "Site Fixes" ? (
+                                    <Wrench size={12} className="mr-1" />
+                                  ) : (
+                                    <FileText size={12} className="mr-1" />
+                                  )}
+                                  {loopActionDestinationLabel(action)}
+                                </Badge>
                                 <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
                               </div>
                               <ChevronRight className="mt-0.5 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={16} />
