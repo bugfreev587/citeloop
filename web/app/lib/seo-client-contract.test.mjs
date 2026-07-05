@@ -119,8 +119,6 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
 
   for (const expected of [
     "opportunityWorkType",
-    "opportunityWorkTypeOptions",
-    "workTypeOverrides",
     "opportunityDestination",
     "opportunityPrimaryCTA",
     "assetTypeForWorkType",
@@ -137,6 +135,8 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
 
   assert.equal(source.includes("Create content task"), false, "Opportunity Queue should not show generic Create content task CTA");
   assert.equal(source.includes("Create technical task"), false, "Opportunity Queue should not show generic technical task CTA");
+  assert.equal(source.includes("opportunityWorkTypeOptions"), false, "Opportunity work type should be fixed by the opportunity, not chosen in the UI");
+  assert.equal(source.includes("workTypeOverrides"), false, "Opportunity approval must not override the system-selected work type");
   const directAssetTypes = source.match(/const directActionAssetTypes = new Set\(\[([^\]]+)\]\)/)?.[1] ?? "";
   assert.equal(directAssetTypes.includes("metadata_rewrite"), false, "Metadata/page-update work should not be routed to Site Fixes");
 });
@@ -147,7 +147,6 @@ test("Opportunity review drawer explains work type destination and approval sour
   for (const expected of [
     "Approve to send this to",
     "Work type",
-    "aria-pressed",
     "Destination",
     "Approval source",
     "Human opportunity approval",
@@ -155,6 +154,11 @@ test("Opportunity review drawer explains work type destination and approval sour
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+
+  assert.match(source, /function opportunityWorkType\(opportunity: SEOOpportunity\): OpportunityWorkType/);
+  assert.equal(source.includes('role="group" aria-label="Work type"'), false, "Work type should render as read-only information, not a toggle group");
+  assert.equal(source.includes("aria-pressed"), false, "Opportunity drawer should not expose work type selection buttons");
+  assert.equal(source.includes("setWorkTypeOverrides"), false, "Opportunity drawer should not let users change the system-selected work type");
 });
 
 test("Analysis loop progress is a strip and finding dismissal is explicit", async () => {
