@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1025,6 +1026,8 @@ func defaultDiffSnapshotForAction(raw json.RawMessage, assetType string, actionT
 		return rawOrDefault(raw, `{}`)
 	}
 	targetURL := opportunityTargetURL(opp)
+	acceptanceTests := directActionAcceptanceTests(assetType, actionType, targetURL)
+	aiRepair := directActionAIRepairPayload(assetType, actionType, opp)
 	if path == "technical_task" {
 		return mustJSONLocal(map[string]any{
 			"output_type": "technical_task",
@@ -1033,25 +1036,274 @@ func defaultDiffSnapshotForAction(raw json.RawMessage, assetType string, actionT
 				{
 					"task":                 actionType,
 					"seo_geo_contribution": seoGeoContributionForAsset(assetType),
-					"verification":         "verify the technical signal after the fix is applied",
+					"likely_surfaces":      directActionLikelySurfaces(assetType, targetURL),
+					"implementation_steps": directActionImplementationSteps(assetType, actionType, targetURL),
+					"verification_steps":   acceptanceTests,
 				},
 			},
+			"ai_repair":           aiRepair,
+			"acceptance_tests":    acceptanceTests,
 			"requires_apply_step": true,
 		})
 	}
 	return mustJSONLocal(map[string]any{
-		"output_type": "direct_patch",
-		"target_url":  targetURL,
-		"proposed_changes": []map[string]any{
-			{
-				"asset_type":            assetType,
-				"instruction":           actionType,
-				"seo_geo_contribution":  seoGeoContributionForAsset(assetType),
-				"human_review_required": true,
-			},
-		},
+		"output_type":         "direct_patch",
+		"target_url":          targetURL,
+		"proposed_changes":    []map[string]any{directActionProposedChange(assetType, actionType, targetURL)},
+		"ai_repair":           aiRepair,
+		"acceptance_tests":    acceptanceTests,
 		"requires_apply_step": true,
 	})
+}
+
+func directActionProposedChange(assetType string, actionType string, targetURL string) map[string]any {
+	return compactActionPayload(map[string]any{
+		"asset_type":            assetType,
+		"target_url":            targetURL,
+		"instruction":           actionType,
+		"seo_geo_contribution":  seoGeoContributionForAsset(assetType),
+		"likely_surfaces":       directActionLikelySurfaces(assetType, targetURL),
+		"implementation_steps":  directActionImplementationSteps(assetType, actionType, targetURL),
+		"verification_steps":    directActionAcceptanceTests(assetType, actionType, targetURL),
+		"patch_contract":        directActionPatchContract(assetType, targetURL),
+		"human_review_required": true,
+	})
+}
+
+func directActionAIRepairPayload(assetType string, actionType string, opp db.SeoOpportunity) map[string]any {
+	targetURL := opportunityTargetURL(opp)
+	return map[string]any{
+		"issue": compactActionPayload(map[string]any{
+			"category":        "site_fix",
+			"issue_type":      assetType,
+			"affected_urls":   nonEmptyStrings(targetURL),
+			"normalized_urls": nonEmptyStrings(opp.NormalizedPageUrl),
+			"problem":         actionType,
+			"why_it_matters":  firstNonEmptyString(stringPtrValueAPI(opp.ExpectedImpact), seoGeoContributionForAsset(assetType)),
+		}),
+		"evidence": directActionRepairEvidence(opp),
+		"fix": compactActionPayload(map[string]any{
+			"goal":            actionType,
+			"instructions":    directActionImplementationSteps(assetType, actionType, targetURL),
+			"likely_surfaces": directActionLikelySurfaces(assetType, targetURL),
+			"seo_contract":    directActionPatchContract(assetType, targetURL),
+			"risk_level":      opp.RiskLevel,
+		}),
+		"acceptance_tests": directActionAcceptanceTests(assetType, actionType, targetURL),
+	}
+}
+
+func directActionRepairEvidence(opp db.SeoOpportunity) map[string]any {
+	evidence := compactActionPayload(map[string]any{
+		"page_url":            opportunityTargetURL(opp),
+		"normalized_page_url": opp.NormalizedPageUrl,
+		"opportunity_type":    opp.Type,
+		"query":               stringPtrValueAPI(opp.Query),
+		"recommended_action":  stringPtrValueAPI(opp.RecommendedAction),
+		"expected_impact":     stringPtrValueAPI(opp.ExpectedImpact),
+	})
+	if rawHasMeaningfulJSON(opp.Evidence) {
+		var parsed any
+		if err := json.Unmarshal(opp.Evidence, &parsed); err == nil {
+			evidence["source_evidence"] = parsed
+		}
+	}
+	return evidence
+}
+
+func directActionLikelySurfaces(assetType string, targetURL string) []string {
+	switch assetType {
+	case "schema_patch":
+		return []string{
+			"Page route or template that renders " + targetURL,
+			"Shared SEO metadata or structured-data component used by that route",
+			"Server-rendered head/layout file where JSON-LD can be emitted in initial HTML",
+		}
+	case "internal_link_patch":
+		return []string{
+			"Target page content for " + targetURL,
+			"Relevant source pages in the same topic cluster",
+			"Navigation, related-content, or body-copy components that own internal links",
+		}
+	case "sitemap_update":
+		return []string{
+			"Production sitemap generator or sitemap.xml route",
+			"Robots.txt sitemap declaration",
+			"Canonical URL config for " + targetURL,
+		}
+	default:
+		return []string{
+			"Page route, metadata config, or crawler-facing component for " + targetURL,
+			"Robots, canonical, redirect, sitemap, or server response configuration that controls discoverability",
+		}
+	}
+}
+
+func directActionImplementationSteps(assetType string, actionType string, targetURL string) []string {
+	switch assetType {
+	case "schema_patch":
+		return []string{
+			"Locate the route/template that renders the target URL and confirm whether JSON-LD already exists.",
+			"Add or update server-rendered JSON-LD in a script[type=\"application/ld+json\"] block using real production page metadata.",
+			"Preserve the canonical target URL, omit placeholder fields, and keep all URL fields absolute production URLs.",
+		}
+	case "internal_link_patch":
+		return []string{
+			"Identify source pages with topical relevance and enough body context to link naturally to the target URL.",
+			"Add descriptive anchor text that matches the destination intent without keyword stuffing.",
+			"Confirm the new links are crawlable HTML links and do not point through redirects or non-canonical URL variants.",
+		}
+	case "sitemap_update":
+		return []string{
+			"Locate the production sitemap generator and confirm the target URL inclusion or exclusion rule.",
+			"Update sitemap and robots declarations so the canonical target URL is discoverable by crawlers.",
+			"Keep generated sitemap URLs canonical, absolute, indexable, and free of staging or preview hosts.",
+		}
+	default:
+		return []string{
+			"Locate the code or configuration that controls the crawler-facing behavior for the target URL.",
+			"Apply the requested site fix: " + actionType + ".",
+			"Preserve canonical URLs, indexability, and production-only hosts while making the smallest safe change.",
+		}
+	}
+}
+
+func directActionAcceptanceTests(assetType string, actionType string, targetURL string) []string {
+	switch assetType {
+	case "schema_patch":
+		return []string{
+			"Inspect the initial HTML for " + targetURL + " and verify it includes server-rendered JSON-LD in a script[type=\"application/ld+json\"] element.",
+			"Parse every JSON-LD block as valid JSON and verify it has @context set to https://schema.org, a relevant @type, and no placeholders.",
+			"Run Google Rich Results Test or Schema Markup Validator for " + targetURL + " and resolve parser errors or unreadable schema warnings.",
+		}
+	case "internal_link_patch":
+		return []string{
+			"Fetch the updated source pages and confirm they contain crawlable HTML links to " + targetURL + ".",
+			"Verify anchor text is descriptive, unique enough to explain the destination, and does not duplicate existing boilerplate links.",
+			"Confirm linked URLs resolve to canonical production URLs without redirect chains.",
+		}
+	case "sitemap_update":
+		return []string{
+			"Fetch the production sitemap and confirm it contains the canonical target URL when the page should be indexed.",
+			"Fetch robots.txt and confirm it advertises the correct sitemap and does not block the target URL.",
+			"Confirm the sitemap URL returns 200, valid XML, production hosts only, and no non-canonical variants.",
+		}
+	default:
+		return []string{
+			"Fetch " + targetURL + " and confirm the crawler-facing behavior now matches the requested site fix: " + actionType + ".",
+			"Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
+			"Confirm production pages still return the expected status, canonical URL, and indexability signals.",
+		}
+	}
+}
+
+func directActionPatchContract(assetType string, targetURL string) map[string]any {
+	switch assetType {
+	case "schema_patch":
+		pageRole := "web_page"
+		schemaTypes := []string{"WebPage"}
+		if isHomepageURL(targetURL) {
+			pageRole = "homepage"
+			schemaTypes = []string{"WebSite", "Organization", "WebPage"}
+		}
+		return map[string]any{
+			"change_type":        "json_ld_schema_patch",
+			"target_url":         targetURL,
+			"page_role":          pageRole,
+			"schema_types":       schemaTypes,
+			"render_requirement": "JSON-LD must be present in the initial server-rendered HTML.",
+			"constraints": []string{
+				"Use real production brand, page, and canonical metadata.",
+				"Use absolute production URLs only.",
+				"Omit fields that cannot be verified instead of shipping blank or placeholder values.",
+			},
+		}
+	case "internal_link_patch":
+		return map[string]any{
+			"change_type": "internal_link_patch",
+			"target_url":  targetURL,
+			"constraints": []string{
+				"Links must be crawlable HTML anchors.",
+				"Anchor copy must describe the destination intent.",
+				"Use canonical production URLs and avoid redirect chains.",
+			},
+		}
+	default:
+		return map[string]any{
+			"change_type": assetType,
+			"target_url":  targetURL,
+			"constraints": []string{
+				"Make the smallest production-safe change that resolves the crawler-facing issue.",
+				"Do not use staging, preview, localhost, or placeholder URLs.",
+				"Verify the signal in production after deployment.",
+			},
+		}
+	}
+}
+
+func compactActionPayload(value map[string]any) map[string]any {
+	out := make(map[string]any, len(value))
+	for key, entry := range value {
+		switch typed := entry.(type) {
+		case nil:
+			continue
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				continue
+			}
+			out[key] = typed
+		case []string:
+			if len(typed) == 0 {
+				continue
+			}
+			out[key] = typed
+		case []map[string]any:
+			if len(typed) == 0 {
+				continue
+			}
+			out[key] = typed
+		case map[string]any:
+			if len(typed) == 0 {
+				continue
+			}
+			out[key] = typed
+		default:
+			out[key] = entry
+		}
+	}
+	return out
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func isHomepageURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	path := strings.TrimSpace(parsed.Path)
+	return path == "" || path == "/"
 }
 
 func actionGenerationPath(assetType string, actionType string) string {
