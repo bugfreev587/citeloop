@@ -560,8 +560,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   return (
     <>
     <div className="space-y-7">
-      <section>
-        <SectionHeader title="Content Plan" level="page" action={autoSwitch} />
+      <section className="flex min-h-8 items-center justify-end">
+        {autoSwitch}
       </section>
 
       {acceptedPlanActions.length > 0 && (

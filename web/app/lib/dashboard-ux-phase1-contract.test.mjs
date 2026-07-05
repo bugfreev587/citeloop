@@ -938,9 +938,8 @@ test("content workflow PRD defines stage identity and click acceptance criteria"
   }
 });
 
-test("content workflow stages expose page-level identity above module headings", () => {
+test("content workflow stages put stage identity before step metadata", () => {
   const workflow = read("projects/[id]/content-workflow-client.tsx");
-  const ui = read("components/ui.tsx");
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const review = read("projects/[id]/review/review-client.tsx");
   const publishing = read("projects/[id]/publishing/publishing-client.tsx");
@@ -952,6 +951,7 @@ test("content workflow stages expose page-level identity above module headings",
     "Step 3 of 3",
     "data-content-workflow-stage-shell",
     "data-content-workflow-stage-accent",
+    "data-content-workflow-stage-title",
     "data-content-workflow-stage-step",
     "data-content-workflow-stage-body",
   ]) {
@@ -964,18 +964,17 @@ test("content workflow stages expose page-level identity above module headings",
   assert.match(workflow, /toneClass: "border-sky-200 bg-sky-100\/70"/);
   assert.match(workflow, /toneClass: "border-amber-200 bg-amber-100\/70"/);
   assert.match(workflow, /toneClass: "border-emerald-200 bg-emerald-100\/70"/);
-  assert.match(ui, /level = "section"/);
-  assert.match(ui, /data-content-workflow-stage-title/);
-  assert.match(ui, /<Heading[\s\S]*\{title\}[\s\S]*<\/Heading>/);
-  assert.match(topics, /title="Content Plan"[\s\S]*level="page"/);
-  assert.match(review, /title="Review"[\s\S]*level="page"/);
-  assert.match(publishing, /title="Publish"/);
-  assert.match(publishing, /title="Publish"[\s\S]*level="page"/);
+  assert.match(workflow, /<h1[\s\S]*data-content-workflow-stage-title[\s\S]*\{meta\.title\}[\s\S]*<\/h1>/);
+  assert.ok(
+    workflow.indexOf("data-content-workflow-stage-title") < workflow.indexOf("data-content-workflow-stage-step"),
+    "stage title should appear before the step metadata",
+  );
+  assert.doesNotMatch(workflow, /rounded-full border border-white\/80 bg-white\/70/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Content Plan"/);
+  assert.doesNotMatch(review, /<SectionHeader[\s\S]{0,120}title="Review"[\s\S]{0,120}level="page"/);
+  assert.doesNotMatch(publishing, /<SectionHeader[\s\S]{0,120}title="Publish"[\s\S]{0,120}level="page"/);
   assert.doesNotMatch(publishing, /title="Publishing"/);
   assert.match(workflow, /data-content-workflow-stage-step className="text-sm font-bold uppercase/);
-  assert.doesNotMatch(topics, /<SectionHeader title="Content Plan" eyebrow=/);
-  assert.doesNotMatch(review, /<SectionHeader[\s\S]{0,160}title="Review"[\s\S]{0,160}eyebrow=/);
-  assert.doesNotMatch(publishing, /<SectionHeader[\s\S]{0,160}title="Publish"[\s\S]{0,160}eyebrow=/);
 });
 
 test("content workflow route clicks retry target alignment while content settles", () => {
@@ -1551,11 +1550,11 @@ test("content plan shows visible feedback while strategist is running", () => {
 
 test("content plan exposes an Auto switch for the automatic workflow", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
-  const headerStart = topics.indexOf('title="Content Plan"');
-  const contentPlanHeader = topics.slice(Math.max(0, headerStart - 120), headerStart + 360);
+  const actionRowStart = topics.indexOf('<section className="flex min-h-8 items-center justify-end">');
+  const contentPlanActionRow = topics.slice(Math.max(0, actionRowStart - 80), actionRowStart + 220);
 
-  assert.ok(headerStart >= 0, "Content Plan page header should exist");
-  assert.match(contentPlanHeader, /action=\{autoSwitch\}/);
+  assert.ok(actionRowStart >= 0, "Content Plan action row should exist");
+  assert.match(contentPlanActionRow, /\{autoSwitch\}/);
   assert.match(topics, /auto_advance_enabled/);
   assert.match(topics, /const autoEnabled = Boolean\(config\?\.auto_advance_enabled\)/);
   assert.match(topics, /toggleAutoAdvance/);
@@ -1654,9 +1653,10 @@ test("content plan backlog excludes drafted topics", () => {
 
 test("content plan presents planned topics without legacy backlog search or summary chrome", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
 
+  assert.match(workflow, /title: "Content Plan"/);
   for (const copy of [
-    "Content Plan",
     "Planned topics",
     "Draft queue",
     "Plan status",
