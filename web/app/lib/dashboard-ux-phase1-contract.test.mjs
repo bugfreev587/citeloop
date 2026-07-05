@@ -398,7 +398,7 @@ test("Phase 5 pages separate growth operating outputs", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const workflow = read("projects/[id]/content-workflow-client.tsx");
-  const activity = read("projects/[id]/settings/activity/page.tsx");
+  const activity = read("projects/[id]/runs/runs-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
   const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
   const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
@@ -867,7 +867,7 @@ test("renamed dashboard routes exist and legacy routes redirect", () => {
     ["projects/[id]/opportunities/page.tsx", "/analysis"],
     ["projects/[id]/visibility/page.tsx", "/results"],
     ["projects/[id]/seo/page.tsx", "/results"],
-    ["projects/[id]/runs/page.tsx", "/settings/activity"],
+    ["projects/[id]/runs/page.tsx", "/settings#activity"],
   ]);
 
   for (const [route, target] of redirects) {
@@ -1245,9 +1245,16 @@ test("home renders the loop as a single connected pipeline stepper", () => {
 
 test("settings exposes activity log as the secondary home for automation audit details", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
+  const activityPage = read("projects/[id]/settings/activity/page.tsx");
 
   assert.match(settings, /Activity Log/);
-  assert.match(settings, /\/settings\/activity/);
+  assert.match(settings, /import \{ RunsClient \} from "\.\.\/runs\/runs-client"/);
+  assert.match(settings, /<RunsClient projectId=\{projectId\} embeddedInSettings/);
+  assert.doesNotMatch(settings, /Open Activity Log/);
+  assert.doesNotMatch(settings, /\/settings\/activity/);
+
+  assert.match(activityPage, /redirect\(`\/projects\/\$\{id\}\/settings#activity`\)/);
+  assert.doesNotMatch(activityPage, /<RunsClient/);
 });
 
 test("settings groups every top-level section behind a tab", () => {
@@ -1305,6 +1312,8 @@ test("settings deep links open the matching configuration tab", () => {
 
   assert.match(settings, /function settingsTabFromHash/);
   assert.match(settings, /window\.location\.hash/);
+  assert.match(settings, /const \[activeSettingsTab, setActiveSettingsTab\] = useState<SettingsTabId>\("project"\)/);
+  assert.doesNotMatch(settings, /useState<SettingsTabId>\(\(\) => \{[\s\S]*window\.location\.hash[\s\S]*\}\)/);
   assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(window\.location\.hash\)\)/);
   assert.match(settings, /function openSettingsAnchor/);
   assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(nextHash\)\)/);
@@ -1547,12 +1556,32 @@ test("analysis page presents decisions and results page presents impact reports"
   assert.doesNotMatch(seo, /title="Visibility overview"/);
 });
 
-test("activity log defaults to user-facing attention events and hides run internals in details", () => {
+test("activity log defaults to user-facing attention cards and opens fix details in a drawer", () => {
   const activity = read("projects/[id]/runs/runs-client.tsx");
 
-  for (const copy of ["Activity Log", "Needs attention", "Recent successful activity", "User impact", "Next action", "Advanced details"]) {
+  for (const copy of [
+    "Activity Log",
+    "Needs attention",
+    "Recent successful activity",
+    "User impact",
+    "Next action",
+    "AttentionRunCard",
+    "RightDrawer",
+    "What failed",
+    "How to fix",
+    "AI-ready fix brief",
+    "Copy AI fix brief",
+    'dataAttribute="activity-run-drawer"',
+    "aspect-square",
+  ]) {
     assert.match(activity, new RegExp(copy));
   }
+
+  assert.match(activity, /setSelectedRun\(run\)/);
+  assert.match(activity, /rawError\(run\)/);
+  assert.match(activity, /fixGuidance\(run\)/);
+  assert.match(activity, /aiFixBrief\(selectedRun, projectId\)/);
+  assert.doesNotMatch(activity, /Advanced details/);
 
   for (const defaultHeader of [">Agent<", ">Cost<", ">Model<"]) {
     assert.doesNotMatch(activity, new RegExp(defaultHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

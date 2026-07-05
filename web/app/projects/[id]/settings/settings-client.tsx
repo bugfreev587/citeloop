@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { Activity, AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
   AutopilotReadiness,
   defaultProjectConfig,
@@ -26,6 +25,7 @@ import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
+import { RunsClient } from "../runs/runs-client";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 
@@ -353,19 +353,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
   const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
   const [safeModeEvents, setSafeModeEvents] = useState<SafeModeEvent[]>([]);
-  const [selectedAutomationCheck, setSelectedAutomationCheck] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return automationCheckIdFromHash(window.location.hash);
-  });
+  const [selectedAutomationCheck, setSelectedAutomationCheck] = useState<string | null>(null);
   const [reviewedRecoveryPlan, setReviewedRecoveryPlan] = useState(false);
   const { notify } = useToast();
   const setMessage = (next: Message) => {
     if (next) notify(next);
   };
-  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>(() => {
-    if (typeof window === "undefined") return "project";
-    return settingsTabFromHash(window.location.hash);
-  });
+  const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>("project");
 
   useEffect(() => {
     function syncTabFromHash() {
@@ -1459,26 +1453,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
       {activeSettingsTab === "activity" && (
       <section id="settings-panel-activity" role="tabpanel" aria-labelledby="settings-tab-activity" tabIndex={0}>
-        <SectionHeader title="Activity Log" eyebrow="Automation audit" />
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-              <Activity size={18} />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-slate-900">Review automation health when something needs attention.</div>
-              <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
-                Failed, degraded, and budget-stopped activity lives here so primary navigation stays focused on user outcomes.
-              </p>
-            </div>
-          </div>
-          <Link
-            href={`/projects/${projectId}/settings/activity`}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-          >
-            Open Activity Log
-          </Link>
-        </div>
+        <RunsClient projectId={projectId} embeddedInSettings />
       </section>
       )}
 
