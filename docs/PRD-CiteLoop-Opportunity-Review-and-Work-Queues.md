@@ -378,6 +378,11 @@ Approved technical fixes will appear here after you approve a site issue.
 
 ## 8. Stage-to-Stage Handoff Links
 
+> 修订（2026-07-05）: handoff link card 机制的唯一规范已迁移至
+> `docs/PRD-CiteLoop-Workflow-Handoff-Link-Cards.md`。本节与该文档冲突时，以该文档为准。
+> 退场规则（§8.3）两文档一致：事件驱动，下游 item 进入再下一阶段后 link card 才离开默认队列；
+> 展示层淤积由 "Recently sent" 折叠分组化解，见该文档 §2.2 与 §7.2。
+
 ### 8.1 核心交互原则
 
 用户完成一个阶段动作后，当前 card 不应立刻消失。它应该先从 action card 变成 link card，明确告诉用户工作已经被送到哪里，并允许用户点击跳到下一阶段的对应 item。
