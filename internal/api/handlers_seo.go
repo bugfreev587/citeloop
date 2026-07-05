@@ -1752,7 +1752,7 @@ func deriveVisibilityLifecycleStage(row db.ListVisibilityActionRowsRow) Visibili
 	if status == "drafting" {
 		return VisibilityStageDrafting
 	}
-	if row.DraftArticleID.Valid || row.DraftArticleJoinedID.Valid {
+	if draftStatus == "pending_review" && (row.DraftArticleID.Valid || row.DraftArticleJoinedID.Valid) {
 		return VisibilityStageReadyForReview
 	}
 	if status == "approved" {

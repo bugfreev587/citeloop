@@ -12,8 +12,19 @@ export type ContentPlanTopic = {
   created_at: string | null;
 };
 
+export type ContentPlanReviewDraft = {
+  draft_article_id?: string | null;
+  draft_article_status?: string | null;
+};
+
 export function isBacklogStatus(status: string) {
   return status === "backlog" || status === "scheduled" || status === "generating";
+}
+
+export function hasReviewableDraft(action: ContentPlanReviewDraft | null | undefined) {
+  const draftID = action?.draft_article_id?.trim();
+  const draftStatus = action?.draft_article_status?.trim().toLowerCase();
+  return Boolean(draftID) && draftStatus === "pending_review";
 }
 
 export function topicPickScore(topic: ContentPlanTopic) {
