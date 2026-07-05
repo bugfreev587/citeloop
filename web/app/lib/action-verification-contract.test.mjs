@@ -18,6 +18,17 @@ test("web API exposes content action verification endpoint", () => {
   }
 });
 
+test("web API exposes content action dismiss endpoint", () => {
+  const api = read("lib/api.ts");
+  for (const snippet of [
+    "dismissSEOContentAction",
+    "/dismiss",
+    "Promise<SEOContentAction>",
+  ]) {
+    assert.match(api, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("SEO action card renders manual verification controls", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   for (const snippet of [

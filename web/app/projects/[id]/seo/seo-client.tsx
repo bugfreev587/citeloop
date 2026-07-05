@@ -1920,6 +1920,22 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }
 
+  async function dismissSiteFixAction(action: SEOContentAction) {
+    setBusy(`dismiss-${action.id}`);
+    setMessage(null);
+    try {
+      const updated = await api.dismissSEOContentAction(projectId, action.id);
+      setActions((current) => current.filter((item) => item.id !== updated.id));
+      setResultsActions((current) => current.filter((item) => item.id !== updated.id));
+      setSelectedDirectActionID(null);
+      setMessage({ title: "Site fix dismissed", detail: action.action_type, tone: "neutral" });
+    } catch (e: any) {
+      setMessage({ title: "Could not dismiss site fix", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function dismiss(opp: SEOOpportunity) {
     setOpportunityPending(opp.id, "dismiss");
     setMessage(null);
@@ -3462,7 +3478,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const action = selectedDirectAction;
       const stage = deriveVisibilityLifecycleStage(action);
       const markAppliedBusy = busy === `verify-${action.id}-verified`;
-      const needsRevisionBusy = busy === `verify-${action.id}-failed`;
+      const dismissSiteFixBusy = busy === `dismiss-${action.id}`;
       const aiRepairJSON = siteFixAIJSON(action);
 
       return (
@@ -3608,9 +3624,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   Mark applied
                 </ButtonProgress>
               </Button>
-              <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={!!busy}>
-                <ButtonProgress busy={needsRevisionBusy} busyLabel="Marking revision" idleIcon={null}>
-                  Needs revision
+              <Button size="sm" variant="ghost" onClick={() => dismissSiteFixAction(action)} disabled={!!busy}>
+                <ButtonProgress busy={dismissSiteFixBusy} busyLabel="Dismissing" idleIcon={null}>
+                  Dismiss
                 </ButtonProgress>
               </Button>
             </div>

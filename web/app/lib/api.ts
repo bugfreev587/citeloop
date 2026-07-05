@@ -2307,6 +2307,13 @@ export function createApi(auth?: AuthOptions) {
       auth,
     );
   },
+  dismissSEOContentAction: async (id: string, actionID: string): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(
+      `/projects/${id}/seo/actions/${actionID}/dismiss`,
+      { method: "POST" },
+      auth,
+    );
+  },
   listSEOObjectives: async (id: string): Promise<SEOObjective[]> => {
     const raw = await req<any[]>(`/projects/${id}/seo/autopilot/objectives`, undefined, auth);
     return arrayFrom(raw);

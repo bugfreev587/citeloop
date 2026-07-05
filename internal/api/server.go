@@ -152,6 +152,9 @@ func (s *Server) Router() http.Handler {
 					s.updateSEOContentActionStatus(w, r, "measuring")
 				})
 				r.Post("/actions/{actionID}/verify", s.verifySEOContentAction)
+				r.Post("/actions/{actionID}/dismiss", func(w http.ResponseWriter, r *http.Request) {
+					s.updateSEOContentActionStatus(w, r, "dismissed")
+				})
 				r.Get("/briefs/latest", s.getSEOBrief)
 				s.registerDoctorRoutes(r, "/doctor")
 				r.Get("/settings", s.getSEOSettings)
