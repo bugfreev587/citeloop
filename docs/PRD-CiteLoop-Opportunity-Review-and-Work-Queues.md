@@ -480,6 +480,54 @@ Link card 不允许展示已经失效的 primary action。例如:
 - 已 sent to Review 的 Content Plan item 不再显示 `Create draft`。
 - 已 sent to Publish 的 Review item 不再显示 `Approve`。
 
+### 8.8 Same-Page Linked Item Focus Behavior
+
+当 link card 指向同一页面内的下游区域时，点击后不能只改变 URL 或轻微滚动。系统必须明确指出目标 card。
+
+典型场景:
+
+```text
+Opportunity Queue card
+-> View in Site Fixes
+-> Site Fixes 区域中的对应 Site Fix card
+```
+
+点击同页链接后的行为:
+
+```text
+1. Smooth scroll 到目标区域。
+2. 如果目标区域折叠，则自动展开。
+3. 将目标 card 滚到可视区域顶部附近。
+4. 在目标区域内临时将目标 card 置顶，或保持排序但确保目标 card 完整可见。
+5. 目标 card 获得 focus ring。
+6. 目标 card 背景或边框柔和 pulse 两次。
+7. 2-3 秒后恢复正常视觉状态。
+```
+
+注意: 不应把整个 Site Fixes 区域移动到 Opportunity Queue 上方。页面 IA 仍然保持 Opportunity Queue 在上、Site Fixes 在下。被强调的是目标 Site Fix card，而不是整个 section 的位置。
+
+可接受的视觉表达:
+
+- 柔和背景高亮两次。
+- 边框 pulse 两次。
+- 短暂 focus ring。
+- 短暂 `Linked from Opportunity` label。
+
+不可接受的视觉表达:
+
+- 强烈闪屏。
+- 页面大幅跳动。
+- 长时间改变排序导致用户以为队列真实优先级变了。
+- 只依靠颜色，不提供文字或 focus 状态。
+
+Accessibility requirements:
+
+- 如果用户开启 `prefers-reduced-motion`，不做 pulse 动画，改用静态高亮和 focus ring。
+- 点击 link 后焦点必须移动到目标 card 或目标 card 内的 heading。
+- 目标 card 必须有稳定 anchor / id，便于深链接和浏览器返回。
+- 如果目标 card 被 filter、tab、pagination 隐藏，系统应自动切换到可见状态，或显示明确 fallback message。
+- 如果目标 item 已不存在，link card 应显示 stale state，例如 `This item moved or was completed`，并提供进入目标页面的安全入口。
+
 ## 9. CTA 规则
 
 Opportunity Queue 不允许使用 generic creation CTA。
@@ -570,6 +618,8 @@ current_stage: opportunity | content_plan | review | publish | results
 next_destination: content_plan | site_fixes | review | publish | results | null
 next_entity_id: uuid | null
 next_entity_label: user-facing sentence
+next_entity_anchor: stable same-page anchor | null
+same_page_focus_behavior: scroll_and_highlight | page_navigation | none
 ```
 
 ## 12. Autopilot 规则
@@ -626,7 +676,17 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 7. Publish item 完成 publish / apply 后，Publish card 变成 `View Results` link。
 8. 所有 link card 都必须显示 destination label 和 next entity label。
 
-### 13.4 Product Language
+### 13.4 Same-Page Linked Focus
+
+1. Opportunity card 指向同页 Site Fixes item 时，点击后 smooth scroll 到 Site Fixes。
+2. 目标 Site Fix card 必须完整进入可视区域。
+3. 目标 Site Fix card 必须获得 focus ring。
+4. 目标 Site Fix card 背景或边框柔和 pulse 两次。
+5. `prefers-reduced-motion` 下禁用 pulse，改用静态高亮和 focus ring。
+6. 如果目标 card 被 filter、tab、pagination 隐藏，系统必须让目标 card 可见或显示明确 fallback。
+7. 同页聚焦不能改变 Opportunity Queue 和 Site Fixes 的整体 IA 顺序。
+
+### 13.5 Product Language
 
 1. 用户不需要理解 internal type string 就能看懂 card。
 2. 每张 card 可以通过 work type、evidence、destination、CTA 被理解。
@@ -651,6 +711,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 确保 approved content / page-update work 进入 Content Plan。
 - 确保 watch-only decision 进入 Results Watchlist。
 - 为 Content Plan、Review、Publish 增加 sent-forward link card 行为。
+- 为同页 link 增加 scroll、focus、target-card pulse 行为。
 
 ### Phase 3: Approval Source
 
