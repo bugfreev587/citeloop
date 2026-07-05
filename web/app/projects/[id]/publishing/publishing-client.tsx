@@ -11,6 +11,7 @@ import {
   Plug,
   RefreshCw,
   RotateCcw,
+  Search,
   Send,
   Settings2,
   Zap,
@@ -26,15 +27,16 @@ import {
   buildPublishingOperationalGroups,
   buildReadyNow,
 } from "../../../lib/publish-destinations-logic";
+import { articlePreviewHref, buildSEOContributions, searchAppearanceRows } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, cx, formatDate, formatScore } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type PublishMode = "scheduled" | "auto" | "manual";
-type DrawerKind = "schedule" | "view_all" | "github" | "manual" | "more" | "cms" | null;
+type DrawerKind = "schedule" | "view_all" | "github" | "manual" | "more" | "cms" | "seo_details" | null;
 type ManualPlatformID = ManualSyndicationPlatform["id"];
 
 const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; detail: string }> = {
@@ -62,6 +64,22 @@ function publisherConnectionDetail(connection: PublisherConnection) {
   return target ? `${kind} · ${target}` : kind;
 }
 
+function textValue(value: any) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function metadataValue(article: Article, key: string) {
+  return textValue(article.seo_meta?.[key]);
+}
+
+function articleStatusTone(article: Article): "neutral" | "red" | "amber" | "green" | "blue" {
+  if (article.status === "publish_failed") return "red";
+  if (article.status === "published") return "green";
+  if (article.status === "approved") return "green";
+  if (article.status === "pending_url_verification") return "amber";
+  return "neutral";
+}
+
 function platformTone(destination: PublishDestination): "neutral" | "red" | "amber" | "green" | "blue" {
   if (destination.kind === "roadmap") return "neutral";
   if (destination.state === "needs_attention") return "red";
@@ -84,17 +102,19 @@ function Drawer({
   open,
   title,
   subtitle,
+  dataAttribute,
   onClose,
   children,
 }: {
   open: boolean;
   title: string;
   subtitle?: string;
+  dataAttribute?: string;
   onClose: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <RightDrawer open={open} title={title} subtitle={subtitle} onClose={onClose} maxWidthClassName="max-w-xl lg:max-w-[50vw]">
+    <RightDrawer open={open} title={title} subtitle={subtitle} dataAttribute={dataAttribute} onClose={onClose} maxWidthClassName="max-w-xl lg:max-w-[50vw]">
       {children}
     </RightDrawer>
   );
@@ -161,6 +181,7 @@ function ReadyNowStrip({
   activePublisherConnection,
   onPublish,
   onRetry,
+  onSeoDetails,
   onDestination,
   onTiming,
 }: {
@@ -171,6 +192,7 @@ function ReadyNowStrip({
   activePublisherConnection: PublisherConnection | null;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
+  onSeoDetails: (article: Article) => void;
   onDestination: () => void;
   onTiming: () => void;
 }) {
@@ -205,12 +227,19 @@ function ReadyNowStrip({
               {item.failureReason && <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700">{item.failureReason}</div>}
               <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
                 <a
-                  href={`/projects/${projectId}/articles/${item.articleId}`}
+                  href={articlePreviewHref(projectId, item.article)}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   <Eye size={14} />
                   {item.secondaryActionLabel}
+                  <ExternalLink size={13} />
                 </a>
+                <Button size="sm" onClick={() => onSeoDetails(item.article)}>
+                  <Search size={14} />
+                  SEO Details
+                </Button>
                 <Button size="sm" onClick={onDestination}>
                   <Plug size={14} />
                   {item.destinationActionLabel}
@@ -240,6 +269,91 @@ function ReadyNowStrip({
         </div>
       )}
     </section>
+  );
+}
+
+function SEODetailTile({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">{label}</div>
+      <div className="mt-1 break-words text-sm font-semibold leading-5 text-slate-950">{value}</div>
+      {detail && <div className="mt-1 text-xs leading-5 text-slate-500">{detail}</div>}
+    </div>
+  );
+}
+
+function SEODetailsDrawerContent({ article }: { article: Article }) {
+  const searchRows = searchAppearanceRows(article);
+  const seoContributions = buildSEOContributions(article);
+  const h1 = metadataValue(article, "h1") || articleTitle(article);
+  const canonical = textValue(article.canonical_url) || "Not published yet";
+  const slug = textValue(article.resolved_slug) || metadataValue(article, "slug") || "Missing slug";
+  const targetKeyword = metadataValue(article, "target_keyword") || metadataValue(article, "keyword") || "Not specified";
+  const rawMetadata = JSON.stringify(article.seo_meta ?? {}, null, 2);
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={articleStatusTone(article)}>{article.status}</Badge>
+          <Badge tone={article.kind === "canonical" ? "green" : "blue"}>{article.platform || article.kind}</Badge>
+          {article.qa_blocking && <Badge tone="red">QA attention</Badge>}
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <SEODetailTile label="GEO" value={formatScore(article.geo_score)} />
+          <SEODetailTile label="SEO" value={formatScore(article.seo_score)} />
+          <SEODetailTile label="Created" value={formatDate(article.created_at)} />
+          <SEODetailTile label="Reviewed" value={formatDate(article.reviewed_at)} />
+          <SEODetailTile label="Scheduled" value={formatDate(article.scheduled_at)} />
+          <SEODetailTile label="Published" value={formatDate(article.published_at)} />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader title="Search appearance" />
+        <div className="grid gap-2">
+          {searchRows.map((row) => (
+            <SEODetailTile key={row.label} label={row.label} value={row.value} detail={row.detail} />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader title="Publish metadata" />
+        <div className="grid gap-2">
+          <SEODetailTile label="H1" value={h1} detail="Visible page headline used by the reader preview." />
+          <SEODetailTile label="Target keyword" value={targetKeyword} detail="Primary query target from SEO metadata." />
+          <SEODetailTile label="Slug" value={slug} detail="Resolved publish slug or SEO slug." />
+          <SEODetailTile label="Canonical URL" value={canonical} detail="Live URL after publish, or pending until the canonical page is created." />
+          <SEODetailTile label="Destination" value="GitHub/Next.js" detail={publishTimeLabel(article)} />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader title="SEO readiness" />
+        <div className="grid gap-2">
+          {seoContributions.map((row) => (
+            <div key={row.label} className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="break-words text-sm font-bold leading-5 text-slate-950">{row.label}</div>
+                  <div className="mt-1 break-words text-sm font-semibold leading-5 text-slate-700">{row.value}</div>
+                </div>
+                <Badge tone={row.status === "ready" ? "green" : row.status === "missing" ? "red" : "amber"}>
+                  {row.status === "needs_review" ? "Review" : row.status}
+                </Badge>
+              </div>
+              <div className="mt-2 text-xs leading-5 text-slate-500">{row.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <details className="rounded-lg border border-slate-200 bg-white p-3">
+        <summary className="cursor-pointer text-sm font-bold text-slate-900">Raw metadata</summary>
+        <pre className="mt-3 max-h-72 overflow-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100">{rawMetadata}</pre>
+      </details>
+    </div>
   );
 }
 
@@ -438,6 +552,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   };
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const [selectedManualPlatform, setSelectedManualPlatform] = useState<ManualPlatformID | null>(null);
+  const [selectedSEOArticle, setSelectedSEOArticle] = useState<Article | null>(null);
   const [focusedOperationalGroup, setFocusedOperationalGroup] = useState<OperationalGroup["key"] | null>(null);
 
   const refresh = useCallback(async () => {
@@ -700,6 +815,11 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     setDrawer("manual");
   }
 
+  function openSEODetails(article: Article) {
+    setSelectedSEOArticle(article);
+    setDrawer("seo_details");
+  }
+
   function openViewAll(groupKey?: OperationalGroup["key"]) {
     setFocusedOperationalGroup(groupKey ?? null);
     setDrawer("view_all");
@@ -789,6 +909,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           activePublisherConnection={activePublisherConnection}
           onPublish={publishNow}
           onRetry={retryPublish}
+          onSeoDetails={openSEODetails}
           onDestination={() => setDrawer("github")}
           onTiming={() => setDrawer("schedule")}
         />
@@ -899,6 +1020,16 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             </a>
           </div>
         </div>
+      </Drawer>
+
+      <Drawer
+        open={drawer === "seo_details" && Boolean(selectedSEOArticle)}
+        title="SEO Details"
+        subtitle={selectedSEOArticle ? articleTitle(selectedSEOArticle) : undefined}
+        dataAttribute="publish-seo-details-drawer"
+        onClose={() => setDrawer(null)}
+      >
+        {selectedSEOArticle && <SEODetailsDrawerContent article={selectedSEOArticle} />}
       </Drawer>
 
       <Drawer
