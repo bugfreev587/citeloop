@@ -99,12 +99,3 @@ test("planHealthForTopics reports whole-plan health independent of active filter
     needsPriority: 1,
   });
 });
-
-test("topicCardSpanClass only spans three columns in compact view", async () => {
-  const { topicCardSpanClass } = await loadContentPlanLogicModule();
-
-  assert.equal(topicCardSpanClass("list", true), "");
-  assert.equal(topicCardSpanClass("grid", true), "lg:col-span-2");
-  assert.equal(topicCardSpanClass("compact", true), "lg:col-span-2 2xl:col-span-3");
-  assert.equal(topicCardSpanClass("compact", false), "");
-});

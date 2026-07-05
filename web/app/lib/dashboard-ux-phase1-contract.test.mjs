@@ -1559,13 +1559,14 @@ test("activity log defaults to user-facing attention events and hides run intern
   assert.doesNotMatch(activity, /title="Runs"/);
 });
 
-test("content plan shows visible feedback while strategist is running", () => {
+test("content plan removes the legacy domain strategist entry point", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
-  assert.match(topics, /busy === "strategist"/);
-  assert.match(topics, /animate-spin/);
-  assert.match(topics, /Generating content plan/);
+  assert.doesNotMatch(topics, /busy === "strategist"/);
+  assert.doesNotMatch(topics, /Generating content plan/);
   assert.doesNotMatch(topics, /Running strategist/);
+  assert.doesNotMatch(topics, /Domain generation stays available/);
+  assert.match(topics, /Starting draft generation/);
 });
 
 test("content plan exposes an Auto switch for the automatic workflow", () => {
@@ -1582,7 +1583,7 @@ test("content plan exposes an Auto switch for the automatic workflow", () => {
   assert.match(topics, /id="content-plan-auto-help"/);
   assert.match(topics, /group-hover:opacity-100/);
   assert.match(topics, /Auto On: accepted opportunities become planned topics and drafts on cadence\./);
-  assert.match(topics, /Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available\./);
+  assert.match(topics, /Auto Off: automatic planning and drafting pause; manual drafting stays available from reviewed briefs and planned topics\./);
   assert.match(topics, />Auto<\/span>/);
   assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
   assert.doesNotMatch(topics, /const autoPlan:/);
@@ -1700,17 +1701,23 @@ test("content plan presents planned topics without legacy backlog search or summ
   assert.doesNotMatch(topics, /adjust filters/);
   assert.doesNotMatch(topics, /No planned topics in this channel/);
 
-  assert.match(topics, /PlanView/);
-  assert.match(topics, /setView\("list"\)/);
-  assert.match(topics, /setView\("grid"\)/);
-  assert.match(topics, /setView\("compact"\)/);
-  assert.match(topics, /lg:grid-cols-2/);
-  assert.match(topics, /2xl:grid-cols-3/);
-  assert.match(topics, /aria-pressed=\{view === "grid"\}/);
+  assert.doesNotMatch(topics, /PlanView/);
+  assert.doesNotMatch(topics, /const \[view, setView\]/);
+  assert.doesNotMatch(topics, /setView\("list"\)/);
+  assert.doesNotMatch(topics, /setView\("grid"\)/);
+  assert.doesNotMatch(topics, /setView\("compact"\)/);
+  assert.doesNotMatch(topics, /aria-pressed=\{view === "grid"\}/);
   assert.match(topics, /planHealthForTopics\(topics\)/);
   assert.match(topics, /planHealth\.backlog/);
   assert.match(topics, /planStatusItems/);
-  assert.match(topics, /data-content-plan-topic-toolbar/);
+  assert.doesNotMatch(topics, /data-content-plan-topic-toolbar/);
+  assert.doesNotMatch(topics, /Generate from domain/);
+  assert.doesNotMatch(topics, /api\.runStrategist/);
+  assert.doesNotMatch(topics, /List view/);
+  assert.doesNotMatch(topics, /Two-column view/);
+  assert.doesNotMatch(topics, /Three-column view/);
+  assert.doesNotMatch(topics, /Draft next topic/);
+  assert.doesNotMatch(topics, /<RefreshCw/);
   assert.doesNotMatch(topics, /planPulseForTopics/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan health"/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan pulse"/);
