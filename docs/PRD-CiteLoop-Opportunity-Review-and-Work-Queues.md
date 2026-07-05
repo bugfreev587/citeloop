@@ -113,7 +113,7 @@ approval source 可以来自用户手动 review、明确配置过的 Autopilot p
 6. 每张 Opportunity 卡片在用户点击前必须显示 work type、destination 和 next step。
 7. 用 destination-specific CTA 取代通用 `Create Content`。
 8. 每个阶段完成后，当前阶段 card 先变成 link card，指向下一阶段的对应 item。
-9. 保留现有后端模型和数据表，先修正用户心智和页面分流。
+9. 优先复用现有后端模型；当 link target、Watchlist 或 Snooze 需要持久化语义时，必须补最小字段或明确延后对应 UI。
 10. 将用户可见 Opportunity 类型压缩为少量 outcome-oriented work types。
 
 ## 3. 非目标
@@ -125,6 +125,8 @@ approval source 可以来自用户手动 review、明确配置过的 Autopilot p
 - 不允许系统自动执行高风险站点改动，除非用户显式授权 policy。
 - 不要求用户理解 `metadata_rewrite`、`schema_patch`、`technical_fix` 等内部 asset type。
 - 不继续把 Direct Action 作为用户可见产品词。
+- 不在本 PRD 中设计 Autopilot 管理界面。本 PRD 只要求卡片和队列展示 `approval source`；policy 配置、risk limit、kill switch、recent approvals 管理面另立 PRD。
+- Doctor findings 不进入 Opportunity Queue。Doctor 和 Opportunities 是两条独立链路；如果未来 Doctor Growth Loop handoff 要创建 opportunities/actions，必须另行修订 approval source 模型。
 
 ## 4. 用户心智模型
 
@@ -254,7 +256,28 @@ Opportunity detail 必须显示下列含义之一:
 | `gsc_query_cannibalization` | Improve Page | Content Plan |
 | `geo_crawler_access_blocked` | Fix Site Issue | Site Fixes |
 
-当内部类型可能对应多种 work type 时，由 recommended action 和 evidence 决定最终 route。用户只看到最终 work type 和 destination。
+当内部类型可能对应多种 work type 时，由 recommended action 和 evidence 决定默认 route。用户在 review drawer 中仍可在允许范围内纠正 work type 和 destination。
+
+### 6.2 Review Drawer Work Type Override
+
+系统推荐的 work type 不是最终决定。Review drawer 必须允许用户在 approve 前纠正 route，尤其适用于 `gsc_query_gap`、`cold_start_evidence_page` 等可能同时适合 Improve Page 或 Create Content 的机会。
+
+要求:
+
+- Drawer 展示系统推荐 work type 和 destination。
+- 用户可以切换到其他允许的 work type。
+- 切换后 CTA、destination line、approval copy 必须同步变化。
+- 高风险或技术确定性强的机会可以限制可选项，但必须解释原因，例如 `This is a site fix because robots.txt blocks crawling.`
+- 用户 override 后，downstream item 必须记录 `routing_source = user_override` 或等价字段，避免后续归因误判。
+
+示例:
+
+```text
+System recommendation: Improve Page
+User changes to: Create Content
+CTA changes from: Create Page Update
+CTA changes to: Add to Content Plan
+```
 
 ## 7. Analysis 页面 IA
 
@@ -293,6 +316,7 @@ What needs review next
 
 Opportunity Queue 卡片必须展示:
 
+- Section header count，例如 `Opportunity Queue · 4 need decision`。该 count 只统计未决策的 active opportunities，不包含 `Recently sent`。
 - Work type: Create Content、Improve Page、Fix Site Issue、Watch Result。
 - Priority。
 - Evidence source。
@@ -384,6 +408,8 @@ Opportunity Queue 中的 card 有两种主要交互状态:
 - `Sent to Site Fixes`
 - `Watching in Results`
 
+Needs decision 永远排在 Opportunity Queue 的主要列表顶部。Sent downstream 的 link cards 不应挤占首屏决策空间。
+
 ### 8.3 Opportunity Queue 移除时机
 
 一个 approved opportunity 不应在用户点击 approve 后立刻从 Opportunity Queue 消失。
@@ -394,7 +420,8 @@ Opportunity Queue 中的 card 有两种主要交互状态:
 Opportunity approve
 -> Opportunity card 变成 link card
 -> 指向 Content Plan / Site Fixes / Results Watchlist 的对应 item
--> 当下一阶段 item 被用户进一步处理并进入再下一阶段后，Opportunity Queue 中的 card 才从默认队列移除
+-> card 移入下方折叠分组 `Recently sent`
+-> 当下一阶段 item 被用户进一步处理并进入再下一阶段后，或 link card 存在超过 7 天后，Opportunity Queue 中的 card 从默认队列移除
 ```
 
 示例:
@@ -408,6 +435,15 @@ Opportunity Queue
 ```
 
 Site Fixes 和 Results Watchlist 也遵循同样原则: Opportunity card 先变成 link，再在下游 item 明确接手后从默认 decision queue 移除。
+
+排序和退场规则:
+
+- `Needs decision` cards 永远在主队列上方。
+- `Sent downstream` cards 进入 `Recently sent` 折叠分组。
+- 当存在任何 `Needs decision` card 时，`Recently sent` 默认折叠。
+- `Recently sent` 显示 count，例如 `Recently sent (10)`。
+- link card 保留 7 天后自动进入 reviewed/history，即使下游 item 尚未进入下一阶段。
+- 用户可以从 history 找回 sent downstream cards，但默认 Opportunity Queue 不应长期堆积 link cards。
 
 ### 8.4 Content Plan Handoff
 
@@ -498,7 +534,7 @@ Opportunity Queue card
 1. Smooth scroll 到目标区域。
 2. 如果目标区域折叠，则自动展开。
 3. 将目标 card 滚到可视区域顶部附近。
-4. 在目标区域内临时将目标 card 置顶，或保持排序但确保目标 card 完整可见。
+4. 保持目标区域原有排序，但确保目标 card 完整可见。
 5. 目标 card 获得 focus ring。
 6. 目标 card 背景或边框柔和 pulse 两次。
 7. 2-3 秒后恢复正常视觉状态。
@@ -591,6 +627,28 @@ Results 使用:
 - Inconclusive
 - Learned
 
+### 10.4 State Transition Table
+
+实现时应以状态转换表为准，而不是自由组合状态文案。
+
+| Surface | From | Trigger | Actor | To | Notes |
+|---|---|---|---|---|---|
+| Opportunity Queue | Needs decision | Approve as Create Content | User or policy | Sent to Content Plan | Creates downstream handoff target |
+| Opportunity Queue | Needs decision | Approve as Improve Page | User or policy | Sent to Content Plan | Creates downstream handoff target |
+| Opportunity Queue | Needs decision | Approve as Fix Site Issue | User or policy | Sent to Site Fixes | Creates downstream handoff target |
+| Opportunity Queue | Needs decision | Watch | User | Watching in Results | Creates Results Watchlist item |
+| Opportunity Queue | Needs decision | Snooze | User | Snoozed | Hidden until `snoozed_until` |
+| Opportunity Queue | Needs decision | Dismiss | User | Dismissed | Does not create execution item |
+| Opportunity Queue | Sent to Content Plan | Downstream item enters Review | System | Reviewed/history | Removed from default queue |
+| Opportunity Queue | Sent to Site Fixes | Site fix applied or sent to review | System | Reviewed/history | Removed from default queue |
+| Opportunity Queue | Sent downstream | 7 days elapsed | System | Reviewed/history | Prevents queue buildup |
+| Content Plan | Planned | Create/generate draft | User or system | Sent to Review | Card becomes `View in Review` |
+| Review | Waiting for review | Approve | User or policy | Sent to Publish | Card becomes `View in Publish` |
+| Publish | Approved/In progress | Publish/apply | User or system | Sent to Results | Card becomes `View Results` |
+| Results | Measuring | Measurement window closes | System | Learned | Outcome is stored |
+
+`Sent to Review` means the planning card has handed off to a review item. `Waiting for review` means the review item itself is awaiting approval. `Sent to Publish` means review has handed off to publish. `Approved` means a user or policy has approved the current-stage item but the next stage has not necessarily taken over yet.
+
 ## 11. Data 和 API Implications
 
 本 PRD 不要求立即重命名已有数据库表。
@@ -607,6 +665,59 @@ Results 使用:
 
 如果 approval source 无法从现有字段可靠推导，则应添加显式字段或 API DTO 属性，而不是只靠前端文案猜测。
 
+### 11.1 V1 Link Target Contract
+
+Phase 1 不允许实现没有目标数据的 link card。为了避免 phasing 依赖倒置，Phase 1 必须先交付最小 handoff target contract，再交付 UI link card。
+
+V1 link target 的解析顺序:
+
+1. 如果具体 downstream item 已存在，link card 指向具体 item。
+2. 如果 downstream item 尚未 materialize，link card 指向 destination section 中的 handoff receipt card。
+3. 如果连 handoff receipt 都无法创建，则 Phase 1 不渲染具体 link card，只显示 disabled sent state 和明确 pending copy，例如 `Sent to Content Plan, preparing link`。
+
+Phase 1 最小字段:
+
+```text
+destination
+handoff_entity_id
+handoff_entity_label
+handoff_entity_anchor
+handoff_materialized: boolean
+```
+
+Phase 3 可以继续补齐更完整的 approval-source persistence，但不能把 Phase 1 link card 所需的 target contract 推迟到 Phase 3。
+
+### 11.2 Results Watchlist and Snooze Semantics
+
+`Watch Result` 和 `Snooze` 不是同一件事。
+
+Watch Result:
+
+- 用户认为当前不应立即改动，但值得观察。
+- 创建 Results Watchlist item。
+- 从默认 Opportunity Queue 移除，保留 link card 到 Results Watchlist。
+- 默认 observation window 为 28 天。
+- 到期后状态变为 `due_for_review` 或 `learned`，取决于是否有足够 measurement signal。
+- 用户可以手动关闭 watchlist item，关闭后进入 Results history。
+
+Snooze:
+
+- 用户认为机会稍后再决策。
+- 不创建 execution item。
+- Opportunity 留在 Opportunity Queue 数据源中，但默认隐藏到 `snoozed_until`。
+- 默认 snooze options: 7 天、14 天、30 天。
+- 到期后回到 `Needs decision`。
+- 用户可以手动 unsnooze。
+
+最小数据语义:
+
+```text
+watchlist_item: id, source_opportunity_id, project_id, status, observation_window_days, due_at, closed_at
+snooze: opportunity_id, snoozed_until, snooze_reason, unsnoozed_at
+```
+
+如果当前 schema 无法承载这些语义，`Watch Result` 和 `Snooze` 必须延后到单独 phase，不能在 UI 中假装可用。
+
 建议 API-facing concepts:
 
 ```text
@@ -620,19 +731,21 @@ next_entity_id: uuid | null
 next_entity_label: user-facing sentence
 next_entity_anchor: stable same-page anchor | null
 same_page_focus_behavior: scroll_and_highlight | page_navigation | none
+routing_source: system_recommendation | user_override | policy
 ```
 
 ## 12. Autopilot 规则
 
 Autopilot 只有在用户显式批准 policy 后，才能跳过逐条 Opportunity Queue review。
 
-Autopilot UI 必须展示:
+本 PRD 只要求在 card 和 link card 上展示 Autopilot approval source，不负责设计完整 Autopilot 管理界面。
 
-- 它可以批准哪类 work。
-- risk limit。
+本 PRD 范围内必须展示:
+
+- policy approval source。
+- policy name。
 - destination。
-- 最近由 policy 批准的 items。
-- kill switch 或 pause control。
+- risk label。
 
 示例:
 
@@ -642,11 +755,35 @@ Policy: Low-risk site fixes
 Destination: Site Fixes
 ```
 
-Autopilot 不允许让高风险站点改动对用户不可见。
+Autopilot 管理界面中的可批准类型、risk limit、recent approvals、kill switch 或 pause control 另立 PRD。Autopilot 不允许让高风险站点改动对用户不可见。
 
-## 13. Acceptance Criteria
+## 13. Navigation Panorama
 
-### 13.1 Analysis Page
+本 PRD 不要求路由重命名。它只定义 Analysis 页面内的信息架构和队列行为。
+
+项目导航全景:
+
+```text
+Home
+Analysis
+  - Opportunity Queue
+  - Site Fixes
+Content
+  - Content Plan
+  - Review
+  - Publish
+Results
+Doctor
+Docs
+Context
+Settings
+```
+
+Doctor 是独立入口，不向 Opportunity Queue 注入 findings。未来如果 Doctor handoff 要进入 Opportunity / Content / Site Fixes 链路，需要更新本 PRD 的 approval source、handoff target 和 navigation contract。
+
+## 14. Acceptance Criteria
+
+### 14.1 Analysis Page
 
 1. 顶部 `What needs review next` metrics board 被移除。
 2. Opportunity Queue 是 Analysis 页面第一个主要 work surface。
@@ -655,8 +792,10 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 5. 非内容工作不再使用 generic `Create Content` CTA。
 6. Opportunity card 在 approve 前显示 destination。
 7. Site Fixes 只展示 approved 或 policy-approved site-fix work。
+8. Opportunity Queue section header 显示 need-decision count。
+9. 对应契约测试必须同步移除或更新 `What needs review next` 文案断言。
 
-### 13.2 Routing
+### 14.2 Routing
 
 1. Create Content opportunities route to Content Plan。
 2. Improve Page opportunities route to Content Plan。
@@ -664,8 +803,10 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 4. Watch Result opportunities route to Results Watchlist。
 5. Dismissed opportunities 不进入执行队列。
 6. 每个 execution item 都有 approval source。
+7. Review drawer 允许用户在可选 work types 之间 override route。
+8. 用户 override 后，CTA、destination line 和 approval copy 同步变化。
 
-### 13.3 Handoff Links
+### 14.3 Handoff Links
 
 1. Opportunity approve 后，Opportunity card 不立刻消失。
 2. Approved opportunity card 变成 link card，指向 Content Plan、Site Fixes 或 Results Watchlist 的对应 item。
@@ -675,8 +816,12 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 6. Review item 进入 Publish 后，Review card 变成 `View in Publish` link。
 7. Publish item 完成 publish / apply 后，Publish card 变成 `View Results` link。
 8. 所有 link card 都必须显示 destination label 和 next entity label。
+9. Needs decision cards 永远排在 sent downstream link cards 上方。
+10. Sent downstream link cards 默认进入 `Recently sent` 折叠分组。
+11. link card 7 天后自动进入 history，避免 Opportunity Queue 淤积。
+12. Phase 1 link card 必须有最小 handoff target contract，不能依赖 Phase 3 才补数据。
 
-### 13.4 Same-Page Linked Focus
+### 14.4 Same-Page Linked Focus
 
 1. Opportunity card 指向同页 Site Fixes item 时，点击后 smooth scroll 到 Site Fixes。
 2. 目标 Site Fix card 必须完整进入可视区域。
@@ -686,23 +831,34 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 6. 如果目标 card 被 filter、tab、pagination 隐藏，系统必须让目标 card 可见或显示明确 fallback。
 7. 同页聚焦不能改变 Opportunity Queue 和 Site Fixes 的整体 IA 顺序。
 
-### 13.5 Product Language
+### 14.5 Watchlist and Snooze
+
+1. Watch Result 创建 Results Watchlist item，不等同于 snooze。
+2. Results Watchlist item 有 observation window 和 due state。
+3. Snooze 不创建 execution item。
+4. Snoozed opportunity 到 `snoozed_until` 后回到 Needs decision。
+5. 如果 watchlist/snooze 数据语义未实现，对应 UI 不得上线。
+
+### 14.6 Product Language
 
 1. 用户不需要理解 internal type string 就能看懂 card。
 2. 每张 card 可以通过 work type、evidence、destination、CTA 被理解。
 3. Site Fixes 被描述为 approved site work，不是另一个 discovery queue。
 4. Results 被描述为 measurement surface，不是 opportunity approval surface。
 
-## 14. Migration Plan
+## 15. Migration Plan
 
-### Phase 1: Copy and IA
+### Phase 1: Link Contract, Copy, and IA
 
+- 增加最小 handoff target contract: destination、handoff entity、anchor、materialized state。
 - 移除 Analysis 顶部 metrics board。
 - 将 Opportunity Queue 放到页面顶部。
 - 将 Direct Action queue 改名为 Site Fixes。
 - 将 Site Fixes 放在 Opportunity Queue 下方。
 - 将 generic CTA 替换为 destination-specific CTA。
 - 将 approved Opportunity card 从立即移除改为 link card。
+- 添加 Opportunity Queue section header count。
+- 同步更新契约测试中对 `What needs review next` 的断言。
 
 ### Phase 2: Routing Clarity
 
@@ -712,6 +868,8 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 确保 watch-only decision 进入 Results Watchlist。
 - 为 Content Plan、Review、Publish 增加 sent-forward link card 行为。
 - 为同页 link 增加 scroll、focus、target-card pulse 行为。
+- 在 review drawer 中允许 work type override。
+- 添加 `Recently sent` 折叠分组和 7 天 history 退场规则。
 
 ### Phase 3: Approval Source
 
@@ -719,6 +877,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 在 Content Plan、Site Fixes、Results 中显示 approval source。
 - 显式展示 Autopilot policy approval。
 - 在上游 card 中显示 approval source 和 downstream link。
+- 补齐 Results Watchlist 和 Snooze 的持久化语义，或明确将对应 UI 延后。
 
 ### Phase 4: Measurement Feedback
 
@@ -726,7 +885,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 已应用 technical / site fixes 与已发布 content outcomes 一起进入结果复盘。
 - Results 不承接 raw opportunity approval。
 
-## 15. UX Review Summary
+## 16. UX Review Summary
 
 最终用户路径应压缩为:
 
