@@ -86,7 +86,8 @@ function isStructuredDataIssue(finding: SEODoctorFinding) {
 
 function repairCanonicalURL(finding: SEODoctorFinding) {
   const evidence = repairEvidence(finding);
-  return evidence.normalized_page_url ?? evidence.final_url ?? evidence.page_url ?? firstURL(finding);
+  const rawDetails = repairRawDetails(finding);
+  return textValue(rawDetails.canonical_url) ?? evidence.normalized_page_url ?? evidence.final_url ?? evidence.page_url ?? firstURL(finding);
 }
 
 function repairPageRole(finding: SEODoctorFinding) {
@@ -105,12 +106,20 @@ function buildStructuredDataRepairContract(finding: SEODoctorFinding) {
 
   const canonicalURL = repairCanonicalURL(finding);
   const pageRole = repairPageRole(finding);
+  const observedPageMetadata = buildObservedPageMetadata(finding);
 
   return {
     page_role: pageRole,
     canonical_url: canonicalURL,
     schema_types: structuredDataSchemaTypes(pageRole),
     render_requirement: "Add server-rendered JSON-LD to the initial HTML so crawlers can read it without client-side interaction.",
+    observed_page_metadata: observedPageMetadata,
+    approved_metadata: buildApprovedStructuredDataMetadata(observedPageMetadata, canonicalURL),
+    unresolved_fields: buildStructuredDataUnresolvedFields(observedPageMetadata),
+    site_search_policy:
+      observedPageMetadata.site_search_observed === true && observedPageMetadata.site_search_action_url
+        ? "Only add SearchAction when the observed site search URL template is the real production search endpoint."
+        : "No site search URL template was observed; omit potentialAction unless the site owner confirms a real production search endpoint.",
     field_sources: [
       { field: "name", source: "production site, product, or brand name for the affected page" },
       { field: "url", source: "canonical_url from this repair contract" },
@@ -137,6 +146,94 @@ function buildStructuredDataRepairContract(finding: SEODoctorFinding) {
       "Verify logo and referenced image URLs return successful image responses.",
     ],
   };
+}
+
+function repairRawDetails(finding: SEODoctorFinding) {
+  const evidence = finding.evidence && typeof finding.evidence === "object" ? finding.evidence : {};
+  const rawDetails = evidence.raw_details && typeof evidence.raw_details === "object" ? evidence.raw_details : {};
+  return rawDetails;
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return uniqueStrings(value.map((entry) => (typeof entry === "string" ? entry : "")));
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    const text = textValue(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function inferredBrandFromTitle(title: unknown) {
+  const text = textValue(title);
+  if (!text) return null;
+  return firstText(...text.split(/\s+\|\s+|\s+-\s+/));
+}
+
+function buildObservedPageMetadata(finding: SEODoctorFinding) {
+  const rawDetails = repairRawDetails(finding);
+  return compactRepairObject({
+    title: textValue(rawDetails.page_title),
+    meta_description: textValue(rawDetails.meta_description),
+    application_name: textValue(rawDetails.application_name),
+    og_site_name: textValue(rawDetails.og_site_name),
+    og_title: textValue(rawDetails.og_title),
+    og_description: textValue(rawDetails.og_description),
+    og_image: textValue(rawDetails.og_image),
+    canonical_url: textValue(rawDetails.canonical_url),
+    og_url: textValue(rawDetails.og_url),
+    html_lang: textValue(rawDetails.html_lang),
+    logo_candidates: stringArray(rawDetails.logo_candidates),
+    site_search_observed: typeof rawDetails.site_search_observed === "boolean" ? rawDetails.site_search_observed : null,
+    site_search_action_url: textValue(rawDetails.site_search_action_url),
+  });
+}
+
+function buildApprovedStructuredDataMetadata(observedPageMetadata: Record<string, any>, canonicalURL: string) {
+  const logoCandidates = stringArray(observedPageMetadata.logo_candidates);
+  return compactRepairObject({
+    brandName: firstText(observedPageMetadata.og_site_name, observedPageMetadata.application_name, inferredBrandFromTitle(observedPageMetadata.title)),
+    canonicalUrl: canonicalURL,
+    logoUrl: firstText(...logoCandidates),
+    description: firstText(observedPageMetadata.meta_description, observedPageMetadata.og_description),
+    language: firstText(observedPageMetadata.html_lang),
+    sameAs: stringArray(observedPageMetadata.same_as_candidates),
+    contactPoint: textValue(observedPageMetadata.contact_point),
+    hasSiteSearch: typeof observedPageMetadata.site_search_observed === "boolean" ? observedPageMetadata.site_search_observed : null,
+  });
+}
+
+function buildStructuredDataUnresolvedFields(observedPageMetadata: Record<string, any>) {
+  const unresolved: Array<{ field: string; instruction: string }> = [];
+  if (!firstText(observedPageMetadata.og_site_name, inferredBrandFromTitle(observedPageMetadata.title))) {
+    unresolved.push({ field: "name", instruction: "Confirm the production brand or product name from an approved source." });
+  }
+  if (stringArray(observedPageMetadata.logo_candidates).length === 0) {
+    unresolved.push({ field: "logo", instruction: "Find a production logo URL that returns a 200 image response, or omit logo until confirmed." });
+  }
+  if (!firstText(observedPageMetadata.meta_description, observedPageMetadata.og_description)) {
+    unresolved.push({ field: "description", instruction: "Use the page meta description or approved brand/product description; do not invent marketing copy." });
+  }
+  if (!firstText(observedPageMetadata.html_lang)) {
+    unresolved.push({ field: "inLanguage", instruction: "Use the page html lang, locale config, or canonical locale before adding inLanguage." });
+  }
+  if (stringArray(observedPageMetadata.same_as_candidates).length === 0) {
+    unresolved.push({ field: "sameAs", instruction: "Omit sameAs unless official social or profile URLs are available." });
+  }
+  if (!textValue(observedPageMetadata.contact_point)) {
+    unresolved.push({ field: "contactPoint", instruction: "Omit contactPoint unless public support or contact details are available." });
+  }
+  if (observedPageMetadata.site_search_observed !== true || !textValue(observedPageMetadata.site_search_action_url)) {
+    unresolved.push({ field: "potentialAction", instruction: "No site search URL template was observed; omit potentialAction unless the site has a real production search endpoint." });
+  }
+  return unresolved;
 }
 
 function structuredDataAcceptanceTests(finding: SEODoctorFinding) {
@@ -183,6 +280,7 @@ function findingEvidence(finding: SEODoctorFinding): Array<[string, unknown]> {
 function repairEvidence(finding: SEODoctorFinding) {
   const evidence = finding.evidence && typeof finding.evidence === "object" ? finding.evidence : {};
   const rawDetails = evidence.raw_details && typeof evidence.raw_details === "object" ? evidence.raw_details : {};
+  const observedPageMetadata = buildObservedPageMetadata(finding);
 
   return compactRepairObject({
     page_url: evidence.page_url ?? firstURL(finding),
@@ -190,6 +288,7 @@ function repairEvidence(finding: SEODoctorFinding) {
     status: rawDetails.status ?? evidence.status ?? null,
     final_url: rawDetails.final_url ?? evidence.final_url ?? null,
     confidence: evidence.confidence_label ?? evidence.confidence ?? null,
+    observed_page_metadata: observedPageMetadata,
   });
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/net/html"
 )
 
 const (
@@ -1247,23 +1249,184 @@ func (s Service) checkURL(ctx context.Context, rawURL, siteURL string) Technical
 	status := int32(res.StatusCode)
 	limited := io.LimitReader(res.Body, 1<<20)
 	body, _ := io.ReadAll(limited)
-	html := strings.ToLower(string(body))
+	htmlStr := string(body)
+	htmlLower := strings.ToLower(htmlStr)
+	rawDetails := map[string]any{
+		"status":     res.Status,
+		"final_url":  res.Request.URL.String(),
+		"body_bytes": len(body),
+	}
+	for key, value := range extractRepairMetadataFacts(htmlStr, res.Request.URL) {
+		rawDetails[key] = value
+	}
 	return TechnicalResult{
 		HTTPStatus:            &status,
-		CanonicalStatus:       presenceStatus(html, `rel=["']canonical["']`),
-		RobotsStatus:          robotsStatus(html),
-		TitleStatus:           presenceStatus(html, `<title`),
-		MetaDescriptionStatus: presenceStatus(html, `name=["']description["']`),
-		H1Status:              presenceStatus(html, `<h1`),
-		StructuredDataStatus:  presenceStatus(html, `application/ld\+json`),
-		InternalLinkCount:     countLinks(html, siteURL, true),
-		OutboundLinkCount:     countLinks(html, siteURL, false),
-		RawDetails: map[string]any{
-			"status":     res.Status,
-			"final_url":  res.Request.URL.String(),
-			"body_bytes": len(body),
-		},
+		CanonicalStatus:       presenceStatus(htmlLower, `rel=["']canonical["']`),
+		RobotsStatus:          robotsStatus(htmlLower),
+		TitleStatus:           presenceStatus(htmlLower, `<title`),
+		MetaDescriptionStatus: presenceStatus(htmlLower, `name=["']description["']`),
+		H1Status:              presenceStatus(htmlLower, `<h1`),
+		StructuredDataStatus:  presenceStatus(htmlLower, `application/ld\+json`),
+		InternalLinkCount:     countLinks(htmlLower, siteURL, true),
+		OutboundLinkCount:     countLinks(htmlLower, siteURL, false),
+		RawDetails:            rawDetails,
 	}
+}
+
+func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any {
+	out := map[string]any{"site_search_observed": false}
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return out
+	}
+	logoCandidates := []string{}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "html":
+				if lang := strings.TrimSpace(attr(n, "lang")); lang != "" {
+					out["html_lang"] = lang
+				}
+			case "title":
+				if _, ok := out["page_title"]; !ok {
+					if title := strings.TrimSpace(nodeText(n)); title != "" {
+						out["page_title"] = title
+					}
+				}
+			case "link":
+				rel := strings.ToLower(attr(n, "rel"))
+				href := strings.TrimSpace(attr(n, "href"))
+				if href != "" && relHas(rel, "canonical") {
+					if canonical := resolveURL(href, baseURL); canonical != "" {
+						out["canonical_url"] = canonical
+					}
+				}
+				if href != "" && (relHas(rel, "icon") || relHas(rel, "apple-touch-icon") || relHas(rel, "mask-icon")) {
+					if logo := resolveURL(href, baseURL); logo != "" {
+						logoCandidates = append(logoCandidates, logo)
+					}
+				}
+			case "meta":
+				key := strings.ToLower(firstNonEmpty(attr(n, "name"), attr(n, "property")))
+				content := strings.TrimSpace(attr(n, "content"))
+				if content == "" {
+					break
+				}
+				switch key {
+				case "description":
+					out["meta_description"] = content
+				case "application-name":
+					out["application_name"] = content
+				case "og:site_name":
+					out["og_site_name"] = content
+				case "og:title":
+					out["og_title"] = content
+				case "og:description":
+					out["og_description"] = content
+				case "og:url":
+					if resolved := resolveURL(content, baseURL); resolved != "" {
+						out["og_url"] = resolved
+					}
+				case "og:image":
+					if image := resolveURL(content, baseURL); image != "" {
+						out["og_image"] = image
+					}
+				}
+			case "form":
+				role := strings.ToLower(attr(n, "role"))
+				action := strings.ToLower(attr(n, "action"))
+				if role == "search" || strings.Contains(action, "search") {
+					out["site_search_observed"] = true
+					if resolved := resolveURL(attr(n, "action"), baseURL); resolved != "" {
+						out["site_search_action_url"] = resolved
+					}
+				}
+			case "input":
+				inputType := strings.ToLower(attr(n, "type"))
+				inputName := strings.ToLower(attr(n, "name"))
+				if inputType == "search" || inputName == "q" || inputName == "query" || inputName == "search" {
+					out["site_search_observed"] = true
+				}
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	if logos := uniqueNonEmptyStrings(logoCandidates); len(logos) > 0 {
+		out["logo_candidates"] = logos
+	}
+	return out
+}
+
+func attr(n *html.Node, name string) string {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, name) {
+			return attr.Val
+		}
+	}
+	return ""
+}
+
+func nodeText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.TextNode {
+			b.WriteString(node.Data)
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
+func relHas(rel, token string) bool {
+	for _, part := range strings.Fields(rel) {
+		if part == token {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveURL(raw string, baseURL *url.URL) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || baseURL == nil {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return baseURL.ResolveReference(parsed).String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func failedTechnicalResult(err error) TechnicalResult {
