@@ -414,7 +414,7 @@ test("Phase 5 pages separate growth operating outputs", () => {
   assert.match(activity, /Operations health/);
   assert.match(activity, /Operational blockers/);
   assert.match(activity, /Diagnostics/);
-  assert.match(workflow, /topic backlog/i);
+  assert.match(workflow, /planned topics/i);
   assert.match(workflow, /action handoff/i);
   assert.doesNotMatch(`${workspace}\n${seo}\n${topics}\n${activity}`, /content pipeline/i);
   assert.doesNotMatch(resultsBlock, /Measurement and diagnostics/);
@@ -959,6 +959,8 @@ test("content workflow stages expose page-level identity above module headings",
   }
 
   assert.match(workflow, /title: "Content Plan"[\s\S]*title: "Review"[\s\S]*title: "Publish"/);
+  assert.match(workflow, /eyebrow: "Planned topics and action handoff"/);
+  assert.doesNotMatch(workflow, /eyebrow: "Topic backlog and action handoff"/);
   assert.match(workflow, /toneClass: "border-sky-200 bg-sky-100\/70"/);
   assert.match(workflow, /toneClass: "border-amber-200 bg-amber-100\/70"/);
   assert.match(workflow, /toneClass: "border-emerald-200 bg-emerald-100\/70"/);
@@ -1563,7 +1565,7 @@ test("content plan exposes an Auto switch for the automatic workflow", () => {
   assert.match(topics, /aria-describedby="content-plan-auto-help"/);
   assert.match(topics, /id="content-plan-auto-help"/);
   assert.match(topics, /group-hover:opacity-100/);
-  assert.match(topics, /Auto On: accepted opportunities become backlog topics and drafts on cadence\./);
+  assert.match(topics, /Auto On: accepted opportunities become planned topics and drafts on cadence\./);
   assert.match(topics, /Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available\./);
   assert.match(topics, />Auto<\/span>/);
   assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
@@ -1650,12 +1652,14 @@ test("content plan backlog excludes drafted topics", () => {
   assert.match(topics, /isBacklogStatus\(topic\.status\)/);
 });
 
-test("content plan helps users choose from backlog topics and supports density views", () => {
+test("content plan presents planned topics without legacy backlog search or summary chrome", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
   for (const copy of [
     "Content Plan",
-    "Topic summary",
+    "Planned topics",
+    "Draft queue",
+    "Plan status",
     "Ready to draft",
     "Scheduled intent",
     "Needs priority",
@@ -1669,6 +1673,11 @@ test("content plan helps users choose from backlog topics and supports density v
   }
   assert.doesNotMatch(topics, /Pick signal/);
   assert.doesNotMatch(topics, /priority \{topic\.priority\}/);
+  assert.doesNotMatch(topics, /Search topics/);
+  assert.doesNotMatch(topics, /data-content-plan-summary-section/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Backlog"/);
+  assert.doesNotMatch(topics, /No backlog topics found/);
+  assert.doesNotMatch(topics, /adjust filters/);
 
   assert.match(topics, /PlanView/);
   assert.match(topics, /setView\("list"\)/);
@@ -1677,11 +1686,13 @@ test("content plan helps users choose from backlog topics and supports density v
   assert.match(topics, /lg:grid-cols-2/);
   assert.match(topics, /2xl:grid-cols-3/);
   assert.match(topics, /aria-pressed=\{view === "grid"\}/);
-  assert.match(topics, /planPulseForTopics\(topics\)/);
   assert.match(topics, /planHealthForTopics\(topics\)/);
-  assert.match(topics, /\{planHealth\.backlog\}/);
+  assert.match(topics, /planHealth\.backlog/);
+  assert.match(topics, /planStatusItems/);
+  assert.doesNotMatch(topics, /planPulseForTopics/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan health"/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan pulse"/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Topic summary"/);
   assert.doesNotMatch(topics, /Topics waiting for draft generation\./);
 });
 

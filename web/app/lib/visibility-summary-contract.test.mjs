@@ -107,7 +107,6 @@ test("content plan consumes visibility summary for analysis handoff state", () =
     "getVisibilitySummary(projectId)",
     "visibilitySummary",
     "setVisibilitySummary",
-    "summaryOpenOpportunityCount",
     "summaryPendingPlanActions",
     "acceptedPlanActions",
     "data-content-plan-handoff-section",
