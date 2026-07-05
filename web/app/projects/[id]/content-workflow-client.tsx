@@ -20,6 +20,7 @@ const SECTION_IDS: Record<ContentWorkflowStep, string> = {
 const TARGET_TOP_OFFSET = 24;
 const TARGET_ALIGNMENT_TOLERANCE = 8;
 const TARGET_SETTLE_TIMEOUT_MS = 1_200;
+const ACTIVE_STEP_MARKER_MAX_OFFSET = 160;
 
 type StageMeta = {
   stepLabel: string;
@@ -120,7 +121,8 @@ export function ContentWorkflowClient({
       pendingTargetRef.current = null;
     }
 
-    const marker = window.innerHeight * 0.35;
+    // Keep short top-aligned stages active until the next stage is meaningfully near the top.
+    const marker = Math.min(window.innerHeight * 0.35, TARGET_TOP_OFFSET + ACTIVE_STEP_MARKER_MAX_OFFSET);
     let nextStep: ContentWorkflowStep = "plan";
 
     for (const step of WORKFLOW_STEPS) {
