@@ -1022,6 +1022,8 @@ test("content workflow scroll keeps project shell navigation active state in syn
   const shell = read("components/project-shell.tsx");
   const workflow = read("projects/[id]/content-workflow-client.tsx");
 
+  assert.match(workflow, /ACTIVE_STEP_MARKER_MAX_OFFSET/);
+  assert.match(workflow, /Math\.min\(window\.innerHeight \* 0\.35, TARGET_TOP_OFFSET \+ ACTIVE_STEP_MARKER_MAX_OFFSET\)/);
   assert.match(workflow, /CONTENT_WORKFLOW_PATH_CHANGE_EVENT/);
   assert.match(workflow, /window\.dispatchEvent/);
   assert.match(workflow, /detail: \{ pathname: nextHref \}/);
