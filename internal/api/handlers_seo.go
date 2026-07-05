@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1066,6 +1067,7 @@ func directActionProposedChange(assetType string, actionType string, targetURL s
 		"implementation_steps":  directActionImplementationSteps(assetType, actionType, targetURL),
 		"verification_steps":    directActionAcceptanceTests(assetType, actionType, targetURL),
 		"patch_contract":        directActionPatchContract(assetType, targetURL),
+		"human_review":          directActionHumanReview(assetType),
 		"human_review_required": true,
 	})
 }
@@ -1083,13 +1085,16 @@ func directActionAIRepairPayload(assetType string, actionType string, opp db.Seo
 		}),
 		"evidence": directActionRepairEvidence(opp),
 		"fix": compactActionPayload(map[string]any{
-			"goal":            actionType,
-			"instructions":    directActionImplementationSteps(assetType, actionType, targetURL),
-			"likely_surfaces": directActionLikelySurfaces(assetType, targetURL),
-			"seo_contract":    directActionPatchContract(assetType, targetURL),
-			"risk_level":      opp.RiskLevel,
+			"goal":               actionType,
+			"instructions":       directActionImplementationSteps(assetType, actionType, targetURL),
+			"likely_surfaces":    directActionLikelySurfaces(assetType, targetURL),
+			"seo_contract":       directActionPatchContract(assetType, targetURL),
+			"deduplication_rule": directActionDeduplicationRule(assetType),
+			"do_not":             directActionDoNot(assetType),
+			"risk_level":         opp.RiskLevel,
 		}),
 		"acceptance_tests": directActionAcceptanceTests(assetType, actionType, targetURL),
+		"human_review":     directActionHumanReview(assetType),
 	}
 }
 
@@ -1105,10 +1110,95 @@ func directActionRepairEvidence(opp db.SeoOpportunity) map[string]any {
 	if rawHasMeaningfulJSON(opp.Evidence) {
 		var parsed any
 		if err := json.Unmarshal(opp.Evidence, &parsed); err == nil {
+			if observedMetadata := directActionObservedMetadata(parsed); len(observedMetadata) > 0 {
+				evidence["observed_metadata"] = observedMetadata
+			}
 			evidence["source_evidence"] = parsed
 		}
 	}
 	return evidence
+}
+
+func directActionObservedMetadata(parsed any) map[string]any {
+	fields := []struct {
+		name    string
+		aliases []string
+	}{
+		{name: "canonical_url", aliases: []string{"canonical_url", "canonical", "canonicalUrl", "canonical_href", "canonicalHref"}},
+		{name: "title", aliases: []string{"title", "page_title", "pageTitle"}},
+		{name: "description", aliases: []string{"description", "meta_description", "metaDescription"}},
+		{name: "og_title", aliases: []string{"og_title", "ogTitle"}},
+		{name: "og_description", aliases: []string{"og_description", "ogDescription"}},
+		{name: "og_image", aliases: []string{"og_image", "ogImage"}},
+		{name: "brand_name", aliases: []string{"brand_name", "brandName", "site_name", "siteName", "og_site_name", "ogSiteName", "application_name", "applicationName"}},
+	}
+	out := map[string]any{}
+	for _, field := range fields {
+		if value := firstObservedMetadataString(parsed, field.aliases); value != "" {
+			out[field.name] = value
+		}
+	}
+	return out
+}
+
+func firstObservedMetadataString(value any, aliases []string) string {
+	wanted := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		wanted[normalizeMetadataKey(alias)] = struct{}{}
+	}
+	return firstObservedMetadataStringIn(value, wanted)
+}
+
+func firstObservedMetadataStringIn(value any, wanted map[string]struct{}) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, entry := range typed {
+			if _, ok := wanted[normalizeMetadataKey(key)]; !ok {
+				continue
+			}
+			if text, ok := entry.(string); ok {
+				if trimmed := strings.TrimSpace(text); trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+
+		preferredContainers := []string{"observed_metadata", "metadata", "page_metadata", "seo_metadata", "open_graph", "opengraph"}
+		for _, preferred := range preferredContainers {
+			normalizedPreferred := normalizeMetadataKey(preferred)
+			for key, entry := range typed {
+				if normalizeMetadataKey(key) != normalizedPreferred {
+					continue
+				}
+				if found := firstObservedMetadataStringIn(entry, wanted); found != "" {
+					return found
+				}
+			}
+		}
+
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if found := firstObservedMetadataStringIn(typed[key], wanted); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for _, entry := range typed {
+			if found := firstObservedMetadataStringIn(entry, wanted); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeMetadataKey(value string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", " ", "", ".", "")
+	return replacer.Replace(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func directActionLikelySurfaces(assetType string, targetURL string) []string {
@@ -1174,7 +1264,8 @@ func directActionAcceptanceTests(assetType string, actionType string, targetURL 
 		return []string{
 			"Inspect the initial HTML for " + targetURL + " and verify it includes server-rendered JSON-LD in a script[type=\"application/ld+json\"] element.",
 			"Parse every JSON-LD block as valid JSON and verify it has @context set to https://schema.org, a relevant @type, and no placeholders.",
-			"Run Google Rich Results Test or Schema Markup Validator for " + targetURL + " and resolve parser errors or unreadable schema warnings.",
+			"Validate the JSON-LD with Schema Markup Validator for " + targetURL + " and resolve every parser error.",
+			"Use Google Rich Results Test only to confirm the page is readable and parser-error free; WebSite, Organization, and WebPage schema does not require rich result eligibility.",
 		}
 	case "internal_link_patch":
 		return []string{
@@ -1212,10 +1303,14 @@ func directActionPatchContract(assetType string, targetURL string) map[string]an
 			"page_role":          pageRole,
 			"schema_types":       schemaTypes,
 			"render_requirement": "JSON-LD must be present in the initial server-rendered HTML.",
+			"deduplication_rule": directActionDeduplicationRule(assetType),
+			"graph_guidance":     directActionSchemaGraphGuidance(targetURL),
+			"do_not":             directActionDoNot(assetType),
 			"constraints": []string{
 				"Use real production brand, page, and canonical metadata.",
 				"Use absolute production URLs only.",
 				"Omit fields that cannot be verified instead of shipping blank or placeholder values.",
+				directActionDeduplicationRule(assetType),
 			},
 		}
 	case "internal_link_patch":
@@ -1239,6 +1334,128 @@ func directActionPatchContract(assetType string, targetURL string) map[string]an
 			},
 		}
 	}
+}
+
+func directActionDeduplicationRule(assetType string) string {
+	switch assetType {
+	case "schema_patch":
+		return "If JSON-LD already exists, update or extend the existing graph instead of adding duplicate Organization, WebSite, or WebPage nodes."
+	case "internal_link_patch":
+		return "If a crawlable canonical link to the target already exists on a source page, update anchor/context only when it improves clarity instead of adding duplicate boilerplate links."
+	case "sitemap_update":
+		return "Update the canonical sitemap entry or generation rule instead of adding duplicate URL variants."
+	default:
+		return "Update the existing crawler-facing signal when present instead of adding duplicate or conflicting signals."
+	}
+}
+
+func directActionDoNot(assetType string) []string {
+	switch assetType {
+	case "schema_patch":
+		return []string{
+			"Do not add unverified sameAs links.",
+			"Do not add placeholder logo, address, founder, phone, or social profile fields.",
+			"Do not inject JSON-LD only on the client after hydration.",
+			"Do not change visible page content unless required.",
+		}
+	case "internal_link_patch":
+		return []string{
+			"Do not add links with generic anchor text such as click here.",
+			"Do not point links at staging, preview, redirecting, or non-canonical URLs.",
+			"Do not add duplicate navigation or footer links when contextual body links are the intended fix.",
+		}
+	default:
+		return []string{
+			"Do not add placeholder values or staging URLs.",
+			"Do not change unrelated visible page content unless required.",
+			"Do not create duplicate or conflicting SEO signals.",
+		}
+	}
+}
+
+func directActionHumanReview(assetType string) map[string]any {
+	switch assetType {
+	case "schema_patch":
+		return map[string]any{
+			"required": true,
+			"reason":   "Structured data affects public search and entity interpretation and should use verified brand metadata only.",
+			"review_focus": []string{
+				"brand name",
+				"description",
+				"canonical URL",
+				"organization identity",
+			},
+		}
+	default:
+		return map[string]any{
+			"required": true,
+			"reason":   "This fix changes crawler-facing production signals and should be reviewed before applying.",
+			"review_focus": []string{
+				"target URL",
+				"canonical URL",
+				"production-only values",
+			},
+		}
+	}
+}
+
+func directActionSchemaGraphGuidance(targetURL string) map[string]any {
+	pageID := schemaFragmentID(targetURL, "webpage")
+	guidance := map[string]any{
+		"recommended_shape": "Use one JSON-LD object with @context set to https://schema.org and an @graph array.",
+		"stable_ids": map[string]any{
+			"WebPage": pageID,
+		},
+		"relationships": []string{
+			"Use stable @id values so entities can reference each other without duplicating nodes.",
+		},
+		"example": map[string]any{
+			"@context": "https://schema.org",
+			"@graph": []map[string]any{
+				{"@type": "WebPage", "@id": pageID},
+			},
+		},
+	}
+	if isHomepageURL(targetURL) {
+		orgID := schemaFragmentID(targetURL, "organization")
+		websiteID := schemaFragmentID(targetURL, "website")
+		guidance["stable_ids"] = map[string]any{
+			"Organization": orgID,
+			"WebSite":      websiteID,
+			"WebPage":      pageID,
+		}
+		guidance["relationships"] = []string{
+			"WebSite.publisher should reference the Organization @id.",
+			"WebPage.isPartOf should reference the WebSite @id.",
+			"WebPage.about or WebPage.publisher should reference the Organization @id when verified.",
+		}
+		guidance["example"] = map[string]any{
+			"@context": "https://schema.org",
+			"@graph": []map[string]any{
+				{"@type": "Organization", "@id": orgID},
+				{"@type": "WebSite", "@id": websiteID},
+				{"@type": "WebPage", "@id": pageID},
+			},
+		}
+	}
+	return guidance
+}
+
+func schemaFragmentID(targetURL string, fragment string) string {
+	trimmed := strings.TrimSpace(targetURL)
+	if trimmed == "" {
+		return "#" + fragment
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.RawQuery = ""
+		parsed.Fragment = fragment
+		if parsed.Path == "" {
+			parsed.Path = "/"
+		}
+		return parsed.String()
+	}
+	return strings.TrimRight(trimmed, "/") + "/#" + fragment
 }
 
 func compactActionPayload(value map[string]any) map[string]any {
