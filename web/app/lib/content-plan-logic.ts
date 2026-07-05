@@ -1,5 +1,3 @@
-export type PlanView = "list" | "grid" | "compact";
-
 export type ContentPlanTopic = {
   id: string;
   channel: string;
@@ -75,10 +73,4 @@ export function planHealthForTopics(topics: ContentPlanTopic[]) {
     scheduledIntent: backlogTopics.filter((topic) => topic.scheduled_at).length,
     needsPriority: backlogTopics.filter((topic) => topic.priority <= 0).length,
   };
-}
-
-export function topicCardSpanClass(view: PlanView, editing: boolean) {
-  if (!editing || view === "list") return "";
-  if (view === "grid") return "lg:col-span-2";
-  return "lg:col-span-2 2xl:col-span-3";
 }

@@ -2,17 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Archive, ArrowRight, CalendarDays, Check, Columns3, LayoutGrid, List, Loader2, Pencil, Power, RefreshCw, Wand2, X } from "lucide-react";
+import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
 import type { ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
-import type { PlanView } from "../../../lib/content-plan-logic";
 import {
   isBacklogStatus,
   planHealthForTopics,
   recommendedTopicIds,
   normalizedTopicPriority,
-  topicCardSpanClass,
-  topicPickScore,
   topicWhy,
 } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
@@ -33,7 +30,7 @@ type TopicDraft = {
 
 const AUTO_WORKFLOW_HELP =
   "Auto On: accepted opportunities become planned topics and drafts on cadence. " +
-  "Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available.";
+  "Auto Off: automatic planning and drafting pause; manual drafting stays available from reviewed briefs and planned topics.";
 
 const siteFixAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
 
@@ -173,7 +170,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
-  const [view, setView] = useState<PlanView>("grid");
   const [busy, setBusy] = useState<string | null>(null);
   const [generatingIds, setGeneratingIds] = useState<Record<string, boolean>>({});
   const { notify } = useToast();
@@ -187,7 +183,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
   const contentPlanActionRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const strategistRunning = busy === "strategist";
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
   const requestedActionID = searchParams.get("action");
@@ -284,46 +279,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const recommendedIds = useMemo(() => {
     return new Set(recommendedTopicIds(backlogTopics));
   }, [backlogTopics]);
-  // Topics that are still waiting (not already drafting) define the queue the
-  // pacing copy describes, and the highest-value one is the "jump the queue" pick.
-  const queuedTopics = useMemo(
-    () => backlogTopics.filter((topic) => topic.status !== "generating" && !generatingIds[topic.id]),
-    [backlogTopics, generatingIds],
-  );
-  const nextTopic = useMemo(() => {
-    const recommendedFirst = queuedTopics.filter((topic) => recommendedIds.has(topic.id));
-    const pool = recommendedFirst.length ? recommendedFirst : queuedTopics;
-    return [...pool].sort((a, b) => {
-      const score = topicPickScore(b) - topicPickScore(a);
-      if (score !== 0) return score;
-      return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
-    })[0] ?? null;
-  }, [queuedTopics, recommendedIds]);
-  const nextTopicBusy = nextTopic ? Boolean(generatingIds[nextTopic.id]) : false;
-  const topicGridClass = cx(
-    "grid gap-3",
-    view === "grid" && "lg:grid-cols-2",
-    view === "compact" && "lg:grid-cols-2 2xl:grid-cols-3",
-  );
+  const topicGridClass = "grid gap-3 lg:grid-cols-2";
   const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
   const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
   const selectedActionHasReviewContent = Boolean(selectedContentPlanAction?.draft_article_id);
   const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
   const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
-
-  async function runStrategist() {
-    setBusy("strategist");
-    setMessage(null);
-    try {
-      const next = await api.runStrategist(projectId);
-      setTopics(next);
-      setMessage({ title: "Content plan generated", detail: `${next.length} topics returned.`, tone: "green" });
-    } catch (e: any) {
-      setMessage({ title: "Content plan failed", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function toggleAutoAdvance() {
     const nextEnabled = !autoEnabled;
@@ -630,85 +591,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             ))}
           </div>
         </div>
-        <div
-          data-content-plan-topic-toolbar
-          className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/85 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
-        >
-          <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 sm:w-auto">
-            <button
-              type="button"
-              title="List view"
-              aria-pressed={view === "list"}
-              onClick={() => setView("list")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-              )}
-            >
-              <List size={14} />
-              List
-            </button>
-            <button
-              type="button"
-              title="Two-column view"
-              aria-pressed={view === "grid"}
-              onClick={() => setView("grid")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-              )}
-            >
-              <LayoutGrid size={14} />
-              Two
-            </button>
-            <button
-              type="button"
-              title="Three-column view"
-              aria-pressed={view === "compact"}
-              onClick={() => setView("compact")}
-              className={cx(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold transition-colors",
-                view === "compact" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-              )}
-            >
-              <Columns3 size={14} />
-              Three
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            {nextTopic && (
-              <Button
-                aria-busy={nextTopicBusy}
-                disabled={nextTopicBusy}
-                variant="primary"
-                onClick={() => generate(nextTopic)}
-                title={`Draft "${nextTopic.title}" now instead of waiting for the automatic cadence.`}
-              >
-                <ButtonProgress busy={nextTopicBusy} busyLabel="Drafting" idleIcon={<Wand2 size={15} />}>
-                  Draft next topic
-                </ButtonProgress>
-              </Button>
-            )}
-            <Button
-              aria-busy={strategistRunning}
-              disabled={strategistRunning}
-              variant="ghost"
-              onClick={runStrategist}
-              title="Advanced: seed starter planned topics from your domain profile and search, instead of waiting for reviewed analysis."
-            >
-              {strategistRunning ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-              {strategistRunning ? "Generating content plan" : "Generate from domain"}
-            </Button>
-            <Button disabled={strategistRunning} onClick={refresh}>
-              <RefreshCw size={16} />
-              Refresh
-            </Button>
-          </div>
-        </div>
         {backlogTopics.length === 0 ? (
           <EmptyState
             title="No planned topics yet"
-            detail="Review opportunities to add accepted content work. Domain generation stays available as an advanced seed."
+            detail="Review opportunities to add accepted content work."
           />
         ) : (
           <div className={topicGridClass}>
@@ -724,8 +610,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 key={topic.id}
                 className={cx(
                   "flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3",
-                  view !== "list" && "min-h-[260px]",
-                  topicCardSpanClass(view, editingId === topic.id),
+                  "min-h-[260px]",
+                  editingId === topic.id && "lg:col-span-2",
                 )}
               >
                 <div data-content-plan-card-top className="flex flex-wrap items-center gap-2">
@@ -846,17 +732,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 )}
                 <div
                   data-content-plan-card-footer
-                  className={cx(
-                    "mt-4 flex flex-col gap-3 border-t border-slate-100 pt-3",
-                    view === "list" ? "md:flex-row md:items-end md:justify-between" : "lg:flex-row lg:items-end lg:justify-between",
-                  )}
+                  className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-3 lg:flex-row lg:items-end lg:justify-between"
                 >
                   <div
                     data-content-plan-card-schedule
-                    className={cx(
-                      "grid min-w-0 flex-1 gap-2",
-                      view === "list" ? "sm:grid-cols-[minmax(0,320px)_auto] sm:items-end" : "sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end",
-                    )}
+                    className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
                   >
                     <div className="min-w-0">
                       <Field label="Scheduled at">
