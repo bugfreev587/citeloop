@@ -40,6 +40,14 @@ Analysis 页面
 
 approval source 可以来自用户手动 review、明确配置过的 Autopilot policy、用户手动创建任务、或已批准工作的 retry / recovery。
 
+另一个关键 UX 规则:
+
+```text
+上一阶段的 card 完成后不立刻消失，而是先变成指向下一阶段的 link card。
+```
+
+这样用户不会在 approve、create、submit 之后丢失上下文。
+
 ## 1. 背景和问题
 
 ### 1.1 当前用户为什么会晕
@@ -104,8 +112,9 @@ approval source 可以来自用户手动 review、明确配置过的 Autopilot p
 5. 每一个系统发现的 execution item 都必须有 approval source。
 6. 每张 Opportunity 卡片在用户点击前必须显示 work type、destination 和 next step。
 7. 用 destination-specific CTA 取代通用 `Create Content`。
-8. 保留现有后端模型和数据表，先修正用户心智和页面分流。
-9. 将用户可见 Opportunity 类型压缩为少量 outcome-oriented work types。
+8. 每个阶段完成后，当前阶段 card 先变成 link card，指向下一阶段的对应 item。
+9. 保留现有后端模型和数据表，先修正用户心智和页面分流。
+10. 将用户可见 Opportunity 类型压缩为少量 outcome-oriented work types。
 
 ## 3. 非目标
 
@@ -343,7 +352,135 @@ No site fixes waiting
 Approved technical fixes will appear here after you approve a site issue.
 ```
 
-## 8. CTA 规则
+## 8. Stage-to-Stage Handoff Links
+
+### 8.1 核心交互原则
+
+用户完成一个阶段动作后，当前 card 不应立刻消失。它应该先从 action card 变成 link card，明确告诉用户工作已经被送到哪里，并允许用户点击跳到下一阶段的对应 item。
+
+```text
+上一阶段不是垃圾桶。
+上一阶段是追踪入口。
+```
+
+这解决两个 UX 问题:
+
+- 用户知道刚刚 approve / create / submit 的东西去了哪里。
+- 用户可以从上游页面回到当前工作的最新位置。
+
+### 8.2 Opportunity Queue Handoff
+
+Opportunity Queue 中的 card 有两种主要交互状态:
+
+| State | Visual treatment | Click behavior | Allowed actions |
+|---|---|---|---|
+| Needs decision | 明显的待处理状态，可使用红色或高优先级边框，但不能只依赖颜色 | 打开 opportunity review drawer | approve、dismiss、snooze、view evidence |
+| Sent downstream | 成功态，可使用绿色边框和 destination badge | 跳转到下一阶段的对应 item | view linked item，不允许再次 approve |
+
+颜色只能作为辅助。卡片必须同时显示文字状态，例如:
+
+- `Needs decision`
+- `Sent to Content Plan`
+- `Sent to Site Fixes`
+- `Watching in Results`
+
+### 8.3 Opportunity Queue 移除时机
+
+一个 approved opportunity 不应在用户点击 approve 后立刻从 Opportunity Queue 消失。
+
+推荐规则:
+
+```text
+Opportunity approve
+-> Opportunity card 变成 link card
+-> 指向 Content Plan / Site Fixes / Results Watchlist 的对应 item
+-> 当下一阶段 item 被用户进一步处理并进入再下一阶段后，Opportunity Queue 中的 card 才从默认队列移除
+```
+
+示例:
+
+```text
+Opportunity Queue
+-> Add to Content Plan
+-> Opportunity card 变成 "View in Content Plan"
+-> Content Plan item 被 Create / Generate 后进入 Review
+-> Opportunity card 从默认 Opportunity Queue 移除，进入 reviewed/history
+```
+
+Site Fixes 和 Results Watchlist 也遵循同样原则: Opportunity card 先变成 link，再在下游 item 明确接手后从默认 decision queue 移除。
+
+### 8.4 Content Plan Handoff
+
+Content Plan item 被 create / generate / submit 后，不应立刻消失。它应先变成 link card，指向 Review 页面中的对应 draft 或 review item。
+
+示例:
+
+```text
+Content Plan
+-> Create draft
+-> Content Plan card 变成 "View in Review"
+-> 点击跳到 Review 页面对应 draft
+```
+
+当 Review 明确接手后，Content Plan 可以将该 item 从 active planning list 移到 completed / sent-forward / history。
+
+### 8.5 Review 和 Publish Handoff
+
+Review 和 Publish 也应遵循相同模式:
+
+```text
+Review
+-> Approve
+-> Review card 变成 "View in Publish"
+
+Publish
+-> Publish / Apply
+-> Publish card 变成 "View Results"
+```
+
+完成动作后的 card 不再打开原 drawer，也不再允许重复执行原动作。它只承担追踪和跳转作用。
+
+### 8.6 链路示例
+
+完整链路:
+
+```text
+Opportunity Queue
+-> approve
+-> Opportunity card links to Content Plan
+
+Content Plan
+-> create / generate
+-> Content Plan card links to Review
+-> Opportunity card may leave default queue
+
+Review
+-> approve
+-> Review card links to Publish
+
+Publish
+-> publish / apply
+-> Publish card links to Results
+```
+
+### 8.7 Link Card Requirements
+
+Link card 必须展示:
+
+- Current stage status。
+- Destination label。
+- Destination item title。
+- Last completed action。
+- Timestamp 或 relative time。
+- Clear CTA，例如 `View in Content Plan`、`View in Review`、`View in Publish`、`View Results`。
+
+Link card 不允许展示已经失效的 primary action。例如:
+
+- 已 sent to Content Plan 的 opportunity 不再显示 `Add to Content Plan`。
+- 已 sent to Review 的 Content Plan item 不再显示 `Create draft`。
+- 已 sent to Publish 的 Review item 不再显示 `Approve`。
+
+## 9. CTA 规则
 
 Opportunity Queue 不允许使用 generic creation CTA。
 
@@ -366,30 +503,36 @@ Opportunity Queue 不允许使用 generic creation CTA。
 
 每个 CTA 必须和 route 一致。
 
-## 9. Status 语言
+## 10. Status 语言
 
-### 9.1 Opportunity Status
+### 10.1 Opportunity Status
 
 Opportunity Queue 使用:
 
 - Needs decision
 - Approved
+- Sent to Content Plan
+- Sent to Site Fixes
+- Watching in Results
 - Dismissed
 - Snoozed
 
-### 9.2 Work Queue Status
+### 10.2 Work Queue Status
 
 Content Plan 和 Site Fixes 使用:
 
 - Planned
+- Sent to Review
 - Waiting for review
 - Approved
+- Sent to Publish
 - In progress
 - Applied
+- Sent to Results
 - Measuring
 - Blocked
 
-### 9.3 Results Status
+### 10.3 Results Status
 
 Results 使用:
 
@@ -400,7 +543,7 @@ Results 使用:
 - Inconclusive
 - Learned
 
-## 10. Data 和 API Implications
+## 11. Data 和 API Implications
 
 本 PRD 不要求立即重命名已有数据库表。
 
@@ -410,6 +553,7 @@ Results 使用:
 - 保留 `content_actions` 作为内部 execution bridge。
 - 对外暴露用户可理解的 route: Content Plan、Site Fixes、Results Watchlist。
 - 对每个 execution item 增加或推导 approval source。
+- 对每个已送出的 item 增加或推导 next destination link。
 - 将 Direct Action 作为 internal-only concept。
 - 用 Site Fixes 作为 approved technical / site work 的用户可见 surface。
 
@@ -422,9 +566,13 @@ work_type: create_content | improve_page | fix_site_issue | watch_result
 destination: content_plan | site_fixes | results_watchlist
 approval_source: human_review | autopilot_policy | manual | retry_recovery | admin_import
 approval_source_label: user-facing sentence
+current_stage: opportunity | content_plan | review | publish | results
+next_destination: content_plan | site_fixes | review | publish | results | null
+next_entity_id: uuid | null
+next_entity_label: user-facing sentence
 ```
 
-## 11. Autopilot 规则
+## 12. Autopilot 规则
 
 Autopilot 只有在用户显式批准 policy 后，才能跳过逐条 Opportunity Queue review。
 
@@ -446,9 +594,9 @@ Destination: Site Fixes
 
 Autopilot 不允许让高风险站点改动对用户不可见。
 
-## 12. Acceptance Criteria
+## 13. Acceptance Criteria
 
-### 12.1 Analysis Page
+### 13.1 Analysis Page
 
 1. 顶部 `What needs review next` metrics board 被移除。
 2. Opportunity Queue 是 Analysis 页面第一个主要 work surface。
@@ -458,7 +606,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 6. Opportunity card 在 approve 前显示 destination。
 7. Site Fixes 只展示 approved 或 policy-approved site-fix work。
 
-### 12.2 Routing
+### 13.2 Routing
 
 1. Create Content opportunities route to Content Plan。
 2. Improve Page opportunities route to Content Plan。
@@ -467,14 +615,25 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 5. Dismissed opportunities 不进入执行队列。
 6. 每个 execution item 都有 approval source。
 
-### 12.3 Product Language
+### 13.3 Handoff Links
+
+1. Opportunity approve 后，Opportunity card 不立刻消失。
+2. Approved opportunity card 变成 link card，指向 Content Plan、Site Fixes 或 Results Watchlist 的对应 item。
+3. Approved opportunity card 不允许再次 approve。
+4. 当对应 Content Plan item 进入 Review 后，Opportunity card 可以从默认 Opportunity Queue 移除。
+5. Content Plan item 进入 Review 后，Content Plan card 变成 `View in Review` link。
+6. Review item 进入 Publish 后，Review card 变成 `View in Publish` link。
+7. Publish item 完成 publish / apply 后，Publish card 变成 `View Results` link。
+8. 所有 link card 都必须显示 destination label 和 next entity label。
+
+### 13.4 Product Language
 
 1. 用户不需要理解 internal type string 就能看懂 card。
 2. 每张 card 可以通过 work type、evidence、destination、CTA 被理解。
 3. Site Fixes 被描述为 approved site work，不是另一个 discovery queue。
 4. Results 被描述为 measurement surface，不是 opportunity approval surface。
 
-## 13. Migration Plan
+## 14. Migration Plan
 
 ### Phase 1: Copy and IA
 
@@ -483,6 +642,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 将 Direct Action queue 改名为 Site Fixes。
 - 将 Site Fixes 放在 Opportunity Queue 下方。
 - 将 generic CTA 替换为 destination-specific CTA。
+- 将 approved Opportunity card 从立即移除改为 link card。
 
 ### Phase 2: Routing Clarity
 
@@ -490,12 +650,14 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 确保 approved fix-site work 进入 Site Fixes。
 - 确保 approved content / page-update work 进入 Content Plan。
 - 确保 watch-only decision 进入 Results Watchlist。
+- 为 Content Plan、Review、Publish 增加 sent-forward link card 行为。
 
 ### Phase 3: Approval Source
 
 - 为 execution items 增加或推导 approval source。
 - 在 Content Plan、Site Fixes、Results 中显示 approval source。
 - 显式展示 Autopilot policy approval。
+- 在上游 card 中显示 approval source 和 downstream link。
 
 ### Phase 4: Measurement Feedback
 
@@ -503,7 +665,7 @@ Autopilot 不允许让高风险站点改动对用户不可见。
 - 已应用 technical / site fixes 与已发布 content outcomes 一起进入结果复盘。
 - Results 不承接 raw opportunity approval。
 
-## 14. UX Review Summary
+## 15. UX Review Summary
 
 最终用户路径应压缩为:
 
@@ -516,6 +678,14 @@ Measure result
 
 这个设计把 Analysis 聚焦在决策，把 Content Plan 聚焦在内容和页面更新，把 Site Fixes 聚焦在站点修复，把 Results 聚焦在结果。
 
+同时，上一阶段 card 不应在完成后立即消失，而应先变成下一阶段的 link:
+
+```text
+Action card -> Link card -> History
+```
+
+这是降低用户迷失感的关键交互原则。
+
 最重要的视觉顺序:
 
 ```text
@@ -525,4 +695,3 @@ Metrics and diagnostics later
 ```
 
 产品必须在用户点击前说明下一步会发生什么。
-
