@@ -226,14 +226,12 @@ function findingTypeLabel(opportunity: SEOOpportunity) {
 
 type OpportunityWorkType = "Create Content" | "Improve Page" | "Fix Site Issue";
 type OpportunityDestination = "Content Plan" | "Site Fixes";
-const opportunityWorkTypeOptions: OpportunityWorkType[] = ["Create Content", "Improve Page", "Fix Site Issue"];
 
 function opportunitySearchText(opportunity: SEOOpportunity) {
   return `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().replace(/[_-]/g, " ");
 }
 
-function opportunityWorkType(opportunity: SEOOpportunity, override?: OpportunityWorkType): OpportunityWorkType {
-  if (override) return override;
+function opportunityWorkType(opportunity: SEOOpportunity): OpportunityWorkType {
   const type = opportunity.type.toLowerCase();
   const words = opportunitySearchText(opportunity);
   if (
@@ -273,12 +271,12 @@ function opportunityWorkType(opportunity: SEOOpportunity, override?: Opportunity
   return "Create Content";
 }
 
-function opportunityDestination(opportunity: SEOOpportunity, override?: OpportunityWorkType): OpportunityDestination {
-  return opportunityWorkType(opportunity, override) === "Fix Site Issue" ? "Site Fixes" : "Content Plan";
+function opportunityDestination(opportunity: SEOOpportunity): OpportunityDestination {
+  return opportunityWorkType(opportunity) === "Fix Site Issue" ? "Site Fixes" : "Content Plan";
 }
 
-function opportunityPrimaryCTA(opportunity: SEOOpportunity, override?: OpportunityWorkType) {
-  const workType = opportunityWorkType(opportunity, override);
+function opportunityPrimaryCTA(opportunity: SEOOpportunity) {
+  const workType = opportunityWorkType(opportunity);
   if (workType === "Fix Site Issue") return { label: "Create Site Fix", busyLabel: "Creating site fix" };
   if (workType === "Improve Page") return { label: "Create Page Update", busyLabel: "Creating page update" };
   return { label: "Add to Content Plan", busyLabel: "Adding to plan" };
@@ -768,7 +766,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
-  const [workTypeOverrides, setWorkTypeOverrides] = useState<Record<string, OpportunityWorkType>>({});
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
@@ -1370,17 +1367,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
-      const workType = workTypeOverrides[opp.id] ?? opportunityWorkType(opp);
-      const destination = opportunityDestination(opp, workType);
+      const workType = opportunityWorkType(opp);
+      const destination = opportunityDestination(opp);
       const action = await api.createSEOContentAction(projectId, opp.id, {
         action_type: opp.recommended_action ?? undefined,
         asset_type: assetTypeForWorkType(opp, workType),
       });
       setOpportunities((current) => current.map((item) => (item.id === opp.id ? { ...item, status: "converted" } : item)));
-      setWorkTypeOverrides((current) => {
-        const { [opp.id]: _removed, ...rest } = current;
-        return rest;
-      });
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setSelectedOpportunityID(null);
       setMessage({ title: `Sent to ${destination}`, detail: opp.recommended_action ?? opp.type, tone: "green" });
@@ -1558,10 +1551,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             ) : (
               <div data-analysis-finding-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {activeOpportunities.slice(0, 12).map((opp) => {
-                  const workTypeOverride = workTypeOverrides[opp.id];
-                  const workType = opportunityWorkType(opp, workTypeOverride);
-                  const destination = opportunityDestination(opp, workTypeOverride);
-                  const cta = opportunityPrimaryCTA(opp, workTypeOverride);
+                  const workType = opportunityWorkType(opp);
+                  const destination = opportunityDestination(opp);
+                  const cta = opportunityPrimaryCTA(opp);
                   return (
                     <button
                       data-analysis-finding-card
@@ -3013,10 +3005,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);
       const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-      const workTypeOverride = workTypeOverrides[selectedOpportunity.id];
-      const workType = opportunityWorkType(selectedOpportunity, workTypeOverride);
-      const destination = opportunityDestination(selectedOpportunity, workTypeOverride);
-      const cta = opportunityPrimaryCTA(selectedOpportunity, workTypeOverride);
+      const workType = opportunityWorkType(selectedOpportunity);
+      const destination = opportunityDestination(selectedOpportunity);
+      const cta = opportunityPrimaryCTA(selectedOpportunity);
       const evidence = selectedOpportunity.evidence;
       const dataSourceNotes =
         evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
@@ -3074,30 +3065,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   </p>
                 </section>
 
-                <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Work type</div>
-                  <div role="group" aria-label="Work type" className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {opportunityWorkTypeOptions.map((option) => {
-                      const selected = option === workType;
-                      return (
-                        <button
-                          key={option}
-                          type="button"
-                          aria-pressed={selected}
-                          disabled={reviewingOpportunity}
-                          onClick={() => setWorkTypeOverrides((current) => ({ ...current, [selectedOpportunity.id]: option }))}
-                          className={`min-h-10 rounded-md border px-3 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] disabled:cursor-not-allowed disabled:opacity-60 ${
-                            selected ? "border-[#d93820] bg-[#fff7ed] text-[#a82812]" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                          }`}
-                        >
-                          {option}
-                        </button>
-                      );
-                    })}
+                <section className="grid gap-3 text-sm sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Work type</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{workType}</div>
                   </div>
-                </section>
-
-                <section className="grid gap-3 text-sm sm:grid-cols-2">
                   <div className="rounded-lg border border-slate-200 p-3">
                     <div className="text-xs font-semibold uppercase text-slate-400">Destination</div>
                     <div className="mt-1 font-medium leading-5 text-slate-700">{destination}</div>
