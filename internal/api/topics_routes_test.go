@@ -72,6 +72,28 @@ func TestGenerateTopicRouteStartsBackgroundGeneration(t *testing.T) {
 	}
 }
 
+func TestGenerateTopicBackgroundLinksSourceContentActionDraft(t *testing.T) {
+	source, err := os.ReadFile("handlers_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (s *Server) generateTopicInBackground")
+	if start == -1 {
+		t.Fatal("could not locate generateTopicInBackground")
+	}
+	background := body[start:]
+	for _, want := range []string{
+		"SourceContentActionID",
+		"MarkContentActionDraftReady",
+		"DraftArticleID",
+	} {
+		if !strings.Contains(background, want) {
+			t.Fatalf("manual topic generation must link content action draft readiness; missing %q", want)
+		}
+	}
+}
+
 func TestAcceptGEOAssetBriefStartsBackgroundGeneration(t *testing.T) {
 	source, err := os.ReadFile("handlers_geo_pr2.go")
 	if err != nil {

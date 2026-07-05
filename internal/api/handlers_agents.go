@@ -404,13 +404,25 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 		s.Log.Error("manual generation topic lookup failed", "project", projectID, "topic", topicID, "err", err)
 		return
 	}
+	sourceActionID := uuid.UUID{}
+	if topic.SourceContentActionID.Valid {
+		sourceActionID = uuid.UUID(topic.SourceContentActionID.Bytes)
+		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+			ID:        sourceActionID,
+			ProjectID: projectID,
+			Status:    "drafting",
+		}); err != nil {
+			s.Log.Warn("mark manual content action drafting failed", "project", projectID, "topic", topicID, "action", sourceActionID, "err", err)
+		}
+	}
 	n, err := q.CountNonRejectedArticlesForTopic(ctx, topicID)
 	if err != nil {
 		s.Log.Error("manual generation article check failed", "project", projectID, "topic", topicID, "err", err)
-		s.resetTopicAfterGenerationFailure(ctx, q, topic)
+		s.resetTopicAfterGenerationFailure(ctx, q, topic, sourceActionID)
 		return
 	}
 	if n > 0 {
+		s.markSourceContentActionExistingDraft(ctx, q, projectID, topicID, sourceActionID)
 		if _, err := s.reconcileDraftedTopicStatus(ctx, q, topic); err != nil {
 			s.Log.Warn("manual generation topic draft reconciliation failed", "project", projectID, "topic", topicID, "err", err)
 		}
@@ -418,14 +430,58 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 	}
 
 	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-	if _, err := writer.Generate(ctx, projectID, topic); err != nil {
+	articles, err := writer.Generate(ctx, projectID, topic)
+	if err != nil {
 		s.Log.Error("manual generation failed", "project", projectID, "topic", topicID, "err", err)
-		if n, countErr := q.CountNonRejectedArticlesForTopic(ctx, topicID); countErr == nil && n == 0 {
-			s.resetTopicAfterGenerationFailure(ctx, q, topic)
+		if n, countErr := q.CountNonRejectedArticlesForTopic(ctx, topicID); countErr == nil {
+			if n == 0 {
+				s.resetTopicAfterGenerationFailure(ctx, q, topic, sourceActionID)
+			} else {
+				s.markSourceContentActionExistingDraft(ctx, q, projectID, topicID, sourceActionID)
+			}
 		}
 		return
 	}
+	s.markSourceContentActionDraftReady(ctx, q, projectID, topicID, sourceActionID, articles)
 	s.Log.Info("manual generation accepted into review queue", "project", projectID, "topic", topic.Title)
+}
+
+func (s *Server) markSourceContentActionExistingDraft(ctx context.Context, q *db.Queries, projectID, topicID, sourceActionID uuid.UUID) {
+	if sourceActionID != uuid.Nil {
+		articles, err := q.ListArticlesByTopicForProject(ctx, db.ListArticlesByTopicForProjectParams{TopicID: topicID, ProjectID: projectID})
+		if err != nil {
+			s.Log.Warn("manual generation existing article lookup failed", "project", projectID, "topic", topicID, "action", sourceActionID, "err", err)
+			return
+		}
+		s.markSourceContentActionDraftReady(ctx, q, projectID, topicID, sourceActionID, articles)
+	}
+}
+
+func (s *Server) markSourceContentActionDraftReady(ctx context.Context, q *db.Queries, projectID, topicID, sourceActionID uuid.UUID, articles []db.Article) {
+	if sourceActionID == uuid.Nil {
+		return
+	}
+	if canonicalID := canonicalArticleID(articles); canonicalID != uuid.Nil {
+		if _, err := q.MarkContentActionDraftReady(ctx, db.MarkContentActionDraftReadyParams{
+			ID:             sourceActionID,
+			ProjectID:      projectID,
+			DraftArticleID: pgtype.UUID{Bytes: canonicalID, Valid: true},
+		}); err != nil {
+			s.Log.Warn("mark manual content action draft ready failed", "project", projectID, "topic", topicID, "action", sourceActionID, "article", canonicalID, "err", err)
+		}
+	}
+}
+
+func canonicalArticleID(articles []db.Article) uuid.UUID {
+	for _, article := range articles {
+		if article.Kind == "canonical" {
+			return article.ID
+		}
+	}
+	if len(articles) > 0 {
+		return articles[0].ID
+	}
+	return uuid.Nil
 }
 
 func (s *Server) reconcileDraftedTopicStatus(ctx context.Context, q *db.Queries, topic db.Topic) (db.Topic, error) {
@@ -443,7 +499,7 @@ func (s *Server) reconcileDraftedTopicStatus(ctx context.Context, q *db.Queries,
 	return topic, nil
 }
 
-func (s *Server) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Queries, topic db.Topic) {
+func (s *Server) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Queries, topic db.Topic, sourceActionID uuid.UUID) {
 	status, err := topicstate.GenerationFailureStatus(topicstate.Status(topic.Status), topic.ScheduledAt.Valid)
 	if err != nil {
 		s.Log.Warn("generation failure topic state transition rejected", "project", topic.ProjectID, "topic", topic.ID, "status", topic.Status, "err", err)
@@ -455,6 +511,15 @@ func (s *Server) resetTopicAfterGenerationFailure(ctx context.Context, q *db.Que
 		Status:    string(status),
 	}); err != nil {
 		s.Log.Warn("reset topic after generation failure failed", "project", topic.ProjectID, "topic", topic.ID, "err", err)
+	}
+	if sourceActionID != uuid.Nil {
+		if _, err := q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{
+			ID:        sourceActionID,
+			ProjectID: topic.ProjectID,
+			Status:    "approved",
+		}); err != nil {
+			s.Log.Warn("reset manual content action after generation failure failed", "project", topic.ProjectID, "topic", topic.ID, "action", sourceActionID, "err", err)
+		}
 	}
 }
 
