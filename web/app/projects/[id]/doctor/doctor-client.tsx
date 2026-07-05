@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clipboard, Code2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
@@ -34,6 +34,24 @@ function healthTone(score?: number | null) {
   if (score < 70) return "text-red-700";
   if (score < 90) return "text-amber-700";
   return "text-emerald-700";
+}
+
+function firstTimestamp(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function doctorRunTimestamp(run?: SEODoctorRun | null) {
+  return firstTimestamp(run?.finished_at, run?.updated_at, run?.started_at, run?.created_at);
+}
+
+function doctorRunStageLabel(run?: SEODoctorRun | null) {
+  if (!run) return "Ready";
+  if (isActiveRun(run)) return `Running: ${run.stage || "checking"}`;
+  if (run.status === "completed") return "Completed";
+  return run.stage || run.status || "Ready";
 }
 
 function issueCounts(report: SEODoctorReport | null) {
@@ -350,6 +368,7 @@ async function writeClipboardText(text: string) {
 export function DoctorClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const { notify } = useToast();
+  const pendingRunNoticeID = useRef<string | null>(null);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -363,6 +382,15 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     try {
       const next = await api.getSEODoctor(projectId);
       setReport(next);
+      const pendingRunID = pendingRunNoticeID.current;
+      if (pendingRunID && next.run?.id === pendingRunID && !isActiveRun(next.run)) {
+        pendingRunNoticeID.current = null;
+        if (next.run.status === "failed" || next.run.status === "blocked") {
+          notify({ tone: "red", title: "Doctor did not finish", detail: next.run.error || next.run.block_reason || "Review the run status and try again." });
+        } else {
+          notify({ tone: "green", title: "Doctor refreshed", detail: "The report now reflects the latest crawl checks." });
+        }
+      }
       return next;
     } catch (err: any) {
       setError(err?.apiMessage || err?.message || "Could not load Doctor.");
@@ -370,7 +398,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [api, projectId]);
+  }, [api, notify, projectId]);
 
   useEffect(() => {
     void refresh();
@@ -392,6 +420,8 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }, [filter, report?.findings]);
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
+  const lastRunAt = doctorRunTimestamp(run);
+  const stageLabel = doctorRunStageLabel(run);
   const selectedRepairJSON = useMemo(() => {
     return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding), null, 2) : "";
   }, [selectedRepairFinding]);
@@ -401,6 +431,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     setError(null);
     try {
       const nextRun = await api.startSEODoctorRun(projectId);
+      pendingRunNoticeID.current = nextRun.id;
       setReport((current) => ({ ...(current ?? { findings: [] }), run: nextRun }));
       notify({ tone: "green", title: "Doctor started", detail: "The report will update as checks complete." });
       window.setTimeout(() => void refresh(), 800);
@@ -451,6 +482,13 @@ export function DoctorClient({ projectId }: { projectId: string }) {
             <p className="mt-1 max-w-[72ch] text-sm font-semibold leading-5 text-slate-500">
               {report?.human_report?.summary ?? "Run Doctor to check crawl, index, metadata, schema, links, and report trust signals."}
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+              <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                <span className="font-bold uppercase text-slate-400">Last run</span>
+                <span>{lastRunAt ? formatDate(lastRunAt) : "Never"}</span>
+              </span>
+              <span className="inline-flex items-center rounded-lg border border-slate-200 px-2.5 py-1.5">Uses the latest crawl checks</span>
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-[120px_1fr] lg:min-w-[420px]">
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
@@ -459,16 +497,16 @@ export function DoctorClient({ projectId }: { projectId: string }) {
             </div>
             <div className="rounded-lg border border-slate-200 px-3 py-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-xs font-bold uppercase text-slate-400">{run?.stage ?? "ready"}</div>
+                <div className="text-xs font-bold uppercase text-slate-400">{stageLabel}</div>
                 <div className="text-xs font-bold text-slate-500">{progress}%</div>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
                 <div className="h-full rounded-full bg-[#d93820] transition-all duration-500" style={{ width: `${progress}%` }} />
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-500">
-                <span>{run?.pages_checked ?? 0} checked</span>
+                <span>{isActiveRun(run) ? `${run?.pages_checked ?? 0} checked so far` : `Last result: ${run?.pages_checked ?? 0} checked`}</span>
                 <span>{run?.issues_found ?? 0} issues</span>
-                <span>{formatDate(run?.updated_at ?? null)}</span>
+                <span>Last run: {lastRunAt ? formatDate(lastRunAt) : "Never"}</span>
               </div>
             </div>
           </div>
@@ -486,6 +524,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
           </Button>
           {run?.block_reason && <Badge tone="red">{run.block_reason}</Badge>}
         </div>
+        <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+          Run Doctor refreshes this report from the latest crawl checks. Refresh SEO data first when you need a fresh recrawl.
+        </p>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-4">
