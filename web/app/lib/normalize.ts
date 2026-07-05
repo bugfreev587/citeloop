@@ -65,6 +65,7 @@ export type Topic = {
   status: string;
   scheduled_at: string | null;
   created_at: string | null;
+  source_content_action_id: string | null;
 };
 
 export type ProductProfile = {
@@ -234,6 +235,7 @@ export function normalizeTopic(raw: any): Topic {
     status: raw.status ?? "backlog",
     scheduled_at: normalizeTime(raw.scheduled_at),
     created_at: normalizeTime(raw.created_at),
+    source_content_action_id: raw.source_content_action_id ?? null,
   };
 }
 

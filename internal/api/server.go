@@ -141,6 +141,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/opportunities/{opportunityID}/actions", s.createSEOContentAction)
 				r.Get("/actions", s.listSEOContentActions)
 				r.Get("/actions/{actionID}", s.getSEOContentAction)
+				r.Post("/actions/{actionID}/plan", s.planSEOContentAction)
 				r.Post("/actions/{actionID}/generate-draft", func(w http.ResponseWriter, r *http.Request) {
 					s.updateSEOContentActionStatus(w, r, "ready_for_review")
 				})

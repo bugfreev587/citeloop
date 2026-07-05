@@ -694,6 +694,19 @@ test("review page is built around automatic recovery, not manual triage", () => 
   assert.doesNotMatch(articleDetail, /qa blocking/);
 });
 
+test("review page opens linked Content Plan drafts from the article query param", () => {
+  const review = read("projects/[id]/review/review-client.tsx");
+
+  assert.match(review, /useSearchParams/);
+  assert.match(review, /searchParams\.get\("article"\)/);
+  assert.match(review, /requestedArticleId/);
+  assert.match(review, /setSelectedArticleId\(requestedArticleId\)/);
+  assert.match(review, /reviewCardRefs/);
+  assert.match(review, /data-linked-review-card/);
+  assert.match(review, /scrollIntoView\(\{ block: "center", behavior: "smooth" \}\)/);
+  assert.match(review, /citeloop-linked-card-pulse/);
+});
+
 test("destructive content-plan and distribution actions confirm before running", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   // Archive and schedule-clear are reversible-but-surprising; both must confirm.
@@ -1537,8 +1550,10 @@ test("content plan exposes an Auto switch for the automatic workflow", () => {
   assert.match(topics, /Auto Off: automatic planning and drafting pause; manual generation and Draft now stay available\./);
   assert.match(topics, />Auto<\/span>/);
   assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
-  assert.match(topics, /Automatic workflow paused/);
-  assert.match(topics, /Turn Auto on to convert accepted opportunities into backlog topics and draft them on cadence/);
+  assert.doesNotMatch(topics, /const autoPlan:/);
+  assert.doesNotMatch(topics, /autoPlanToneClass/);
+  assert.doesNotMatch(topics, /autoPlan\.title/);
+  assert.doesNotMatch(topics, /Turn Auto on to convert accepted opportunities into backlog topics and draft them on cadence/);
 });
 
 test("content plan treats topic generation as a per-topic background operation", () => {
@@ -1555,13 +1570,27 @@ test("content plan polls accepted opportunity actions until topics appear", () =
 
   assert.match(topics, /api\.getVisibilitySummary\(projectId\)/);
   assert.match(topics, /summaryPendingPlanActions/);
-  assert.match(topics, /action\.lifecycle_stage === "added_to_plan"/);
+  assert.match(topics, /\["added_to_plan", "planned", "drafting", "ready_for_review"\]\.includes\(action\.lifecycle_stage\)/);
   assert.match(topics, /hasPendingPlanActions/);
   assert.match(topics, /autoEnabled && summaryPendingPlanActions > 0 && topics\.length === 0/);
   assert.match(topics, /const hasDueScheduled = autoEnabled && topics\.some/);
   assert.match(topics, /window\.setInterval\(refresh, hasGenerating \? 10_000 : hasPendingPlanActions \? 5_000 : 30_000\)/);
   assert.doesNotMatch(topics, /api\.listSEOOpportunities\(projectId, \{ status: "open", limit: 50 \}\)/);
   assert.doesNotMatch(topics, /api\.listSEOContentActions\(projectId, \{ limit: 50 \}\)/);
+});
+
+test("content plan lets users draft accepted opportunities manually when Auto is off", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /draftAcceptedAction/);
+  assert.match(topics, /api\.planSEOContentAction\(projectId, action\.id\)/);
+  assert.match(topics, /generate\(topic\)/);
+  assert.match(topics, /Draft Content/);
+  assert.match(topics, /aria-busy=\{actionDraftBusy\}/);
+  assert.match(topics, /disabled=\{Boolean\(busy\) \|\| actionDraftBusy \|\| autoEnabled\}/);
+  assert.match(topics, /autoEnabled \? "Drafting automatically" : "Draft Content"/);
+  assert.match(topics, /reviewHrefForAction\(projectId, action\)/);
+  assert.doesNotMatch(topics, /Waiting in Content Plan/);
 });
 
 test("content plan backlog excludes drafted topics", () => {
@@ -1577,7 +1606,7 @@ test("content plan helps users choose from backlog topics and supports density v
 
   for (const copy of [
     "Content Plan",
-    "Plan pulse",
+    "Topic summary",
     "Ready to draft",
     "Scheduled intent",
     "Needs priority",
@@ -1603,6 +1632,7 @@ test("content plan helps users choose from backlog topics and supports density v
   assert.match(topics, /planHealthForTopics\(topics\)/);
   assert.match(topics, /\{planHealth\.backlog\}/);
   assert.doesNotMatch(topics, /<SectionHeader title="Plan health"/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Plan pulse"/);
   assert.doesNotMatch(topics, /Topics waiting for draft generation\./);
 });
 

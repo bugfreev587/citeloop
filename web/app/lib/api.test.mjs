@@ -434,6 +434,38 @@ test("generateTopic normalizes accepted background generation responses", async 
   }
 });
 
+test("planSEOContentAction creates a topic from an accepted opportunity action", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "topic-1",
+        project_id: "project-1",
+        channel: "blog",
+        title: "Draft me",
+        status: "backlog",
+        source_content_action_id: "action-1",
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const topic = await createApi().planSEOContentAction("project-1", "action-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/actions/action-1/plan");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(topic.id, "topic-1");
+    assert.equal(topic.source_content_action_id, "action-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
