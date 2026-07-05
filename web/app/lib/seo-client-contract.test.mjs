@@ -71,25 +71,24 @@ test("Analysis page does not render Automation readiness as a primary module", a
   );
 });
 
-test("Analysis page leads with compact review cards instead of deep data panels", async () => {
+test("Analysis page leads with Opportunity Queue before Site Fixes", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
-  for (const expected of [
-    "data-analysis-focus-cards",
-    "data-analysis-focus-card",
-    "What needs review next",
-    "Review direct action",
-    "Inspect new findings",
-  ]) {
+  for (const expected of ["data-analysis-growth-findings-section", "Opportunity Queue ·", "data-site-fixes-queue", "Site Fixes", "data-site-fix-card"]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
 
-  const focusIndex = source.indexOf("data-analysis-focus-cards");
-  const directQueueIndex = source.indexOf("data-direct-action-queue");
-  const growthIndex = source.indexOf("data-analysis-growth-findings-section");
+  const opportunityQueueIndex = source.indexOf("data-analysis-growth-findings-section");
+  const siteFixesIndex = source.indexOf("data-site-fixes-queue");
+  const loopIndex = source.indexOf("data-analysis-loop-strip");
 
-  assert.ok(focusIndex < directQueueIndex, "priority cards should appear before the direct action queue");
-  assert.ok(directQueueIndex < growthIndex, "reviewable direct actions should appear before new findings");
+  assert.ok(opportunityQueueIndex < siteFixesIndex, "Opportunity Queue should appear before Site Fixes");
+  assert.ok(siteFixesIndex < loopIndex, "Site Fixes should stay before lower-priority loop diagnostics");
+  assert.equal(source.includes("data-analysis-focus-cards"), false, "Analysis should not render the old top metrics board");
+  assert.equal(source.includes("What needs review next"), false, "Analysis should not render the old metrics board headline");
+  assert.equal(source.includes("Review direct action"), false, "Analysis should not expose Direct Action as user-facing queue copy");
+  assert.equal(source.includes("Direct action queue"), false, "Analysis should rename the old Direct Action queue to Site Fixes");
+  assert.equal(source.includes("No direct actions to review"), false, "Analysis empty states should use Site Fixes language");
   assert.equal(source.includes("data-analysis-autopilot-visible"), false);
   assert.equal(source.includes("Automation readiness"), false);
   assert.equal(source.includes("Finish automation setup in Settings"), true);
@@ -97,19 +96,62 @@ test("Analysis page leads with compact review cards instead of deep data panels"
   assert.equal(source.includes("Search performance snapshot"), false, "Home owns the search-performance KPI snapshot");
 });
 
-test("Analysis direct actions open a reusable right drawer for review", async () => {
+test("Analysis Site Fixes open a reusable right drawer for review", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
   for (const expected of [
     "selectedDirectActionID",
     "selectedDirectAction",
     "directActionDrawerRef",
-    "data-direct-action-card",
+    "data-site-fix-card",
     "data-direct-action-drawer",
-    "Review action details",
+    "Review site fix details",
     "Close action details",
     "Mark applied",
     "Needs revision",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+});
+
+test("Analysis opportunity cards expose destination-specific routing and handoff links", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "opportunityWorkType",
+    "opportunityWorkTypeOptions",
+    "workTypeOverrides",
+    "opportunityDestination",
+    "opportunityPrimaryCTA",
+    "assetTypeForWorkType",
+    "sentOpportunityLinks",
+    "data-opportunity-handoff-card",
+    "Recently sent",
+    "Sent to Site Fixes",
+    "View in Site Fixes",
+    "focusSiteFixCard",
+    "citeloop-linked-card-pulse",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+
+  assert.equal(source.includes("Create content task"), false, "Opportunity Queue should not show generic Create content task CTA");
+  assert.equal(source.includes("Create technical task"), false, "Opportunity Queue should not show generic technical task CTA");
+  const directAssetTypes = source.match(/const directActionAssetTypes = new Set\(\[([^\]]+)\]\)/)?.[1] ?? "";
+  assert.equal(directAssetTypes.includes("metadata_rewrite"), false, "Metadata/page-update work should not be routed to Site Fixes");
+});
+
+test("Opportunity review drawer explains work type destination and approval source", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "Approve to send this to",
+    "Work type",
+    "aria-pressed",
+    "Destination",
+    "Approval source",
+    "Human opportunity approval",
+    "Create Site Fix",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }

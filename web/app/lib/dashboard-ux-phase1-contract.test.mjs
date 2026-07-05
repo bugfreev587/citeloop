@@ -217,12 +217,13 @@ test("analysis owns decisions while results owns impact reports and learning", (
   for (const copy of [
     "Opportunities",
     "Analysis",
-    "Opportunity queue",
+    "Opportunity Queue",
+    "Site Fixes",
     "Loop in motion",
     "View results",
-    "Create content task",
-    "Create refresh task",
-    "Create technical task",
+    "Add to Content Plan",
+    "Create Page Update",
+    "Create Site Fix",
   ]) {
     assert.match(seo, new RegExp(copy));
   }
@@ -252,7 +253,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   const seo = read("projects/[id]/seo/seo-client.tsx");
 
   for (const copy of [
-    "Opportunity queue",
+    "Opportunity Queue",
+    "Site Fixes",
     "Loop in motion",
     "View results",
     "GSC Connected",
@@ -260,10 +262,10 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Search Console details",
     "Manage in Settings",
     "Connect Search Console",
-    "Create content task",
-    "Create refresh task",
-    "Create technical task",
-    "Watch",
+    "Add to Content Plan",
+    "Create Page Update",
+    "Create Site Fix",
+    "Recently sent",
     "Open details",
     "Opportunity details",
     "Evidence",
@@ -283,7 +285,7 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.match(seo, /document\.removeEventListener\("pointerdown", onPointerDown\)/);
   assert.match(seo, /gscMenuRef\.current\?\.contains\(target\)/);
   assert.match(seo, /setGSCMenuOpen\(false\)/);
-  assert.match(seo, /function actionCtaForOpportunity/);
+  assert.match(seo, /function opportunityPrimaryCTA/);
   assert.match(seo, /function opportunityPriorityLabel/);
   assert.match(seo, /function toneForOpportunityPriority/);
   assert.match(seo, /\/projects\/\$\{projectId\}\/settings#search-console/);
@@ -332,7 +334,6 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   assert.doesNotMatch(seo, /Recommendation \{index \+ 1\}/);
   assert.doesNotMatch(seo, /\{mode === "analysis" && actions\.length > 0 && \(/);
   assert.doesNotMatch(seo, /<SectionHeader title="Content actions"/);
-  assert.doesNotMatch(seo, /Add to Content Plan/);
   assert.doesNotMatch(seo, /Decide which recommendations deserve content work/);
   assert.doesNotMatch(seo, /Raw GSC rows/);
   assert.doesNotMatch(seo, /Full signal table/);
@@ -1471,13 +1472,14 @@ test("analysis page presents decisions and results page presents impact reports"
   for (const copy of [
     "Opportunities",
     "Analysis",
-    "Opportunity queue",
+    "Opportunity Queue",
+    "Site Fixes",
     "Loop in motion",
     "View results",
     "Impact Reports",
     "Results and learning",
     "Weekly analysis brief",
-    "Create content task",
+    "Add to Content Plan",
     "Public crawl only",
     "Opportunity details",
     "Open details",
@@ -1670,12 +1672,14 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(visibility, /opportunityBusy/);
   assert.match(visibility, /createActionBusy/);
   assert.match(visibility, /dismissBusy/);
-  assert.match(visibility, /Creating task/);
+  assert.match(visibility, /Adding to plan/);
+  assert.match(visibility, /Creating site fix/);
   assert.match(visibility, /Dismissing/);
 
   const createActionBlock = visibility.slice(visibility.indexOf("async function createAction"), visibility.indexOf("async function dismiss"));
   assert.match(createActionBlock, /api\.createSEOContentAction/);
-  assert.match(createActionBlock, /setOpportunities\(\(current\) => current\.filter/);
+  assert.match(createActionBlock, /setOpportunities\(\(current\) => current\.map/);
+  assert.match(createActionBlock, /status: "converted"/);
   assert.match(createActionBlock, /setActions\(\(current\) => \[action, \.\.\.current\.filter/);
   assert.doesNotMatch(createActionBlock, /await refresh\(\)/);
 

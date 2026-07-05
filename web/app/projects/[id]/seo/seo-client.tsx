@@ -224,32 +224,124 @@ function findingTypeLabel(opportunity: SEOOpportunity) {
   return "Growth finding";
 }
 
+type OpportunityWorkType = "Create Content" | "Improve Page" | "Fix Site Issue";
+type OpportunityDestination = "Content Plan" | "Site Fixes";
+const opportunityWorkTypeOptions: OpportunityWorkType[] = ["Create Content", "Improve Page", "Fix Site Issue"];
+
+function opportunitySearchText(opportunity: SEOOpportunity) {
+  return `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().replace(/[_-]/g, " ");
+}
+
+function opportunityWorkType(opportunity: SEOOpportunity, override?: OpportunityWorkType): OpportunityWorkType {
+  if (override) return override;
+  const type = opportunity.type.toLowerCase();
+  const words = opportunitySearchText(opportunity);
+  if (
+    type === "internal_link_gap" ||
+    type === "schema_gap" ||
+    type === "technical_visibility_issue" ||
+    type === "geo_crawler_access_blocked" ||
+    words.includes("internal link") ||
+    words.includes("schema") ||
+    words.includes("index") ||
+    words.includes("sitemap") ||
+    words.includes("crawler") ||
+    words.includes("robots") ||
+    words.includes("canonical")
+  ) {
+    return "Fix Site Issue";
+  }
+  if (
+    type === "gsc_low_ctr_query" ||
+    type === "gsc_striking_distance_query" ||
+    type === "gsc_content_decay" ||
+    type === "thin_evidence_page" ||
+    type === "gsc_query_cannibalization" ||
+    words.includes("refresh") ||
+    words.includes("decay") ||
+    words.includes("ctr") ||
+    words.includes("title") ||
+    words.includes("meta") ||
+    words.includes("near") ||
+    words.includes("cannibal") ||
+    words.includes("consolidat") ||
+    words.includes("evidence block") ||
+    words.includes("source backed")
+  ) {
+    return "Improve Page";
+  }
+  return "Create Content";
+}
+
+function opportunityDestination(opportunity: SEOOpportunity, override?: OpportunityWorkType): OpportunityDestination {
+  return opportunityWorkType(opportunity, override) === "Fix Site Issue" ? "Site Fixes" : "Content Plan";
+}
+
+function opportunityPrimaryCTA(opportunity: SEOOpportunity, override?: OpportunityWorkType) {
+  const workType = opportunityWorkType(opportunity, override);
+  if (workType === "Fix Site Issue") return { label: "Create Site Fix", busyLabel: "Creating site fix" };
+  if (workType === "Improve Page") return { label: "Create Page Update", busyLabel: "Creating page update" };
+  return { label: "Add to Content Plan", busyLabel: "Adding to plan" };
+}
+
+function assetTypeForWorkType(opportunity: SEOOpportunity, workType: OpportunityWorkType) {
+  if (workType === "Create Content") return "blog_post";
+  if (workType === "Improve Page") return "page_update";
+  const inferred = assetTypeForOpportunity(opportunity);
+  return directActionAssetTypes.has(inferred) ? inferred : "technical_fix";
+}
+
 function actionCtaForOpportunity(opportunity: SEOOpportunity) {
   const type = opportunity.type.toLowerCase();
-  const text = `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase();
-  const words = text.replace(/[_-]/g, " ");
+  const words = opportunitySearchText(opportunity);
   if (type === "gsc_query_cannibalization" || words.includes("cannibal") || words.includes("consolidat")) {
-    return { label: "Create consolidation task", busyLabel: "Creating task" };
+    return { label: "Create Page Update", busyLabel: "Creating page update" };
   }
   if (type === "thin_evidence_page" || words.includes("thin evidence") || words.includes("evidence block") || words.includes("source backed")) {
-    return { label: "Create evidence refresh task", busyLabel: "Creating task" };
+    return { label: "Create Page Update", busyLabel: "Creating page update" };
   }
   if (type === "internal_link_gap" || words.includes("internal link")) {
-    return { label: "Create internal-link task", busyLabel: "Creating task" };
+    return { label: "Create Site Fix", busyLabel: "Creating site fix" };
   }
   if (type === "schema_gap" || type === "technical_visibility_issue" || words.includes("index") || words.includes("sitemap") || words.includes("schema") || words.includes("crawler") || words.includes("robots") || words.includes("canonical")) {
-    return { label: "Create technical task", busyLabel: "Creating task" };
+    return { label: "Create Site Fix", busyLabel: "Creating site fix" };
   }
   if (words.includes("geo") || words.includes("citation") || words.includes("answer engine")) {
-    return { label: "Create GEO asset task", busyLabel: "Creating task" };
+    return { label: "Add to Content Plan", busyLabel: "Adding to plan" };
   }
   if (words.includes("refresh") || words.includes("decay") || words.includes("ctr") || words.includes("title") || words.includes("meta") || words.includes("near")) {
-    return { label: "Create refresh task", busyLabel: "Creating task" };
+    return { label: "Create Page Update", busyLabel: "Creating page update" };
   }
   if (words.includes("watch") || words.includes("wait") || words.includes("monitor")) {
-    return { label: "Watch", busyLabel: "Adding watch" };
+    return { label: "Add to Content Plan", busyLabel: "Adding to plan" };
   }
-  return { label: "Create content task", busyLabel: "Creating task" };
+  return opportunityPrimaryCTA(opportunity);
+}
+
+function destinationForAction(action: SEOContentAction | ResultsAction): OpportunityDestination {
+  return isDirectAction(action) ? "Site Fixes" : "Content Plan";
+}
+
+function actionHandoffHref(projectId: string, action: SEOContentAction | ResultsAction) {
+  return destinationForAction(action) === "Site Fixes" ? null : `/projects/${projectId}/topics`;
+}
+
+function actionHandoffLabel(action: SEOContentAction | ResultsAction) {
+  const destination = destinationForAction(action);
+  return destination === "Site Fixes" ? "View in Site Fixes" : "View in Content Plan";
+}
+
+function actionHandoffStatus(action: SEOContentAction | ResultsAction) {
+  return destinationForAction(action) === "Site Fixes" ? "Sent to Site Fixes" : "Sent to Content Plan";
+}
+
+function isRecentlySentAction(action: SEOContentAction | ResultsAction) {
+  if (["published", "measuring", "completed", "archived", "dismissed"].includes(action.status)) return false;
+  if (!action.opportunity_id) return false;
+  if (!action.created_at) return true;
+  const createdAt = new Date(action.created_at);
+  if (Number.isNaN(createdAt.getTime())) return true;
+  return Date.now() - createdAt.getTime() <= 7 * 24 * 60 * 60 * 1000;
 }
 
 function opportunityPriorityLabel(opportunity: SEOOpportunity) {
@@ -344,7 +436,7 @@ function actionOutputTypeLabel(action: SEOContentAction | ResultsAction) {
   return "Topic-backed asset";
 }
 
-const directActionAssetTypes = new Set(["metadata_rewrite", "internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
+const directActionAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
 
 function isDirectAction(action: SEOContentAction | ResultsAction) {
   const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
@@ -676,6 +768,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
+  const [workTypeOverrides, setWorkTypeOverrides] = useState<Record<string, OpportunityWorkType>>({});
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
@@ -684,9 +777,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
   const directActionDrawerRef = useRef<HTMLElement | null>(null);
   const directActionReturnFocusRef = useRef<HTMLElement | null>(null);
+  const siteFixCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
+  const [highlightedSiteFixID, setHighlightedSiteFixID] = useState<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -925,9 +1020,22 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     };
   }, [selectedResultAction?.id]);
 
+  const focusSiteFixCard = useCallback((actionID: string) => {
+    const target = siteFixCardRefs.current[actionID];
+    if (!target) return;
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+    setHighlightedSiteFixID(actionID);
+    window.setTimeout(() => {
+      setHighlightedSiteFixID((current) => (current === actionID ? null : current));
+    }, prefersReducedMotion ? 2200 : 2600);
+  }, []);
+
+  const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
-  loopLifecycleCounts.detected = opportunities.length || summaryLifecycleCounts?.detected || 0;
+  loopLifecycleCounts.detected = activeOpportunities.length || summaryLifecycleCounts?.detected || 0;
   const loopActiveCount =
     loopLifecycleCounts.added_to_plan +
     loopLifecycleCounts.planned +
@@ -953,28 +1061,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
     .slice(0, 6);
+  const sentOpportunityLinks = actions
+    .filter(isRecentlySentAction)
+    .slice()
+    .sort((a, b) => {
+      const left = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const right = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return right - left;
+    })
+    .slice(0, 10);
   const selectedDirectAction = useMemo(
     () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
     [directReviewActions, selectedDirectActionID],
   );
-  const analysisFocusCards = [
-    {
-      key: "direct",
-      eyebrow: "Needs review",
-      title: directReviewActions.length ? `${directReviewActions.length} direct action${directReviewActions.length === 1 ? "" : "s"}` : "No direct actions waiting",
-      detail: directReviewActions.length ? "Review direct action output before it moves toward execution." : "Reviewable patches and technical tasks will appear here.",
-      meta: "Review direct action",
-      tone: directReviewActions.length ? ("amber" as const) : ("neutral" as const),
-    },
-    {
-      key: "findings",
-      eyebrow: "New analysis",
-      title: opportunities.length ? `${opportunities.length} opportunit${opportunities.length === 1 ? "y" : "ies"} available` : "No new opportunities",
-      detail: opportunities.length ? "Inspect new findings and create only the work that is worth doing." : "Refresh or Sync after Context changes.",
-      meta: "Inspect new findings",
-      tone: opportunities.length ? ("green" as const) : ("neutral" as const),
-    },
-  ];
 
   useEffect(() => {
     if (!selectedDirectActionID || selectedDirectAction) return;
@@ -1271,14 +1370,20 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
+      const workType = workTypeOverrides[opp.id] ?? opportunityWorkType(opp);
+      const destination = opportunityDestination(opp, workType);
       const action = await api.createSEOContentAction(projectId, opp.id, {
         action_type: opp.recommended_action ?? undefined,
-        asset_type: assetTypeForOpportunity(opp),
+        asset_type: assetTypeForWorkType(opp, workType),
       });
-      setOpportunities((current) => current.filter((item) => item.id !== opp.id));
+      setOpportunities((current) => current.map((item) => (item.id === opp.id ? { ...item, status: "converted" } : item)));
+      setWorkTypeOverrides((current) => {
+        const { [opp.id]: _removed, ...rest } = current;
+        return rest;
+      });
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
       setSelectedOpportunityID(null);
-      setMessage({ title: "Visibility action created", detail: opp.recommended_action ?? opp.type, tone: "green" });
+      setMessage({ title: `Sent to ${destination}`, detail: opp.recommended_action ?? opp.type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
     } finally {
@@ -1433,56 +1538,176 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       {mode === "analysis" && (
         <>
         <div className="space-y-5">
-          <section data-analysis-focus-cards className="space-y-3">
-            <SectionHeader title="What needs review next" eyebrow="Start here" />
-            <div className="grid gap-3 lg:grid-cols-3">
-              {analysisFocusCards.map((card) => (
-                <div key={card.key} data-analysis-focus-card className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{card.eyebrow}</div>
-                      <h3 className="mt-2 text-base font-bold leading-6 text-slate-950">{card.title}</h3>
-                    </div>
-                    <Badge tone={card.tone}>{card.meta}</Badge>
-                  </div>
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{card.detail}</p>
+          <section data-analysis-growth-findings-section className="space-y-3">
+            <SectionHeader
+              title={`Opportunity Queue · ${activeOpportunities.length} need decision`}
+              eyebrow="Decision-ready recommendations"
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={activeOpportunities.length ? "red" : "neutral"}>{activeOpportunities.length ? "Needs decision" : "No review needed"}</Badge>
+                  <Badge tone="neutral">{loopActiveCount} in loop</Badge>
                 </div>
-              ))}
-            </div>
+              }
+            />
+
+            {activeOpportunities.length === 0 ? (
+              <EmptyState
+                title="No opportunities to review"
+                detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
+              />
+            ) : (
+              <div data-analysis-finding-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {activeOpportunities.slice(0, 12).map((opp) => {
+                  const workTypeOverride = workTypeOverrides[opp.id];
+                  const workType = opportunityWorkType(opp, workTypeOverride);
+                  const destination = opportunityDestination(opp, workTypeOverride);
+                  const cta = opportunityPrimaryCTA(opp, workTypeOverride);
+                  return (
+                    <button
+                      data-analysis-finding-card
+                      key={opp.id}
+                      type="button"
+                      onClick={(event) => {
+                        analysisReturnFocusRef.current = event.currentTarget;
+                        setSelectedDirectActionID(null);
+                        setSelectedOpportunityID(opp.id);
+                      }}
+                      aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
+                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                        selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                      }`}
+                    >
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="blue">{workType}</Badge>
+                            <Badge tone={toneForOpportunityPriority(opp)}>{opportunityPriorityLabel(opp)}</Badge>
+                            <Badge tone="red">Needs decision</Badge>
+                          </div>
+                          <h3 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
+                            {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
+                          </p>
+                        </div>
+                        <div className="grid gap-2 text-sm">
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Approve sends this to</div>
+                            <div className="mt-1 truncate font-medium text-slate-700">{destination}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Next step</div>
+                            <div className="mt-1 truncate font-medium text-slate-700">{cta.label}</div>
+                          </div>
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                          <span className="text-xs text-slate-400">Open details before approval</span>
+                          <span className="flex items-center gap-1">
+                            Review
+                            <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {sentOpportunityLinks.length > 0 && (
+              <details className="rounded-lg border border-slate-200 bg-white" open={activeOpportunities.length === 0}>
+                <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
+                  Recently sent ({sentOpportunityLinks.length})
+                </summary>
+                <div className="grid gap-2 border-t border-slate-100 p-3">
+                  {sentOpportunityLinks.map((action) => {
+                    const destination = destinationForAction(action);
+                    const href = actionHandoffHref(projectId, action);
+                    const content = (
+                      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="green">{actionHandoffStatus(action)}</Badge>
+                            <Badge tone="neutral">Human opportunity approval</Badge>
+                          </div>
+                          <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{loopActionTitle(action as any)}</h3>
+                          <p className="mt-1 truncate text-xs text-slate-500">
+                            {action.target_url ?? action.normalized_target_url ?? "Approved work is ready in the next queue."}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                          {actionHandoffLabel(action)}
+                          <ChevronRight size={16} className="text-slate-400" />
+                        </span>
+                      </div>
+                    );
+
+                    if (destination === "Site Fixes") {
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          data-opportunity-handoff-card
+                          onClick={() => focusSiteFixCard(action.id)}
+                          className="w-full rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                        >
+                          {content}
+                        </button>
+                      );
+                    }
+
+                    return (
+                      <Link
+                        key={action.id}
+                        data-opportunity-handoff-card
+                        href={href ?? `/projects/${projectId}/topics`}
+                        className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                      >
+                        {content}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
           </section>
 
-          <section data-direct-action-queue className="space-y-3">
+          <section data-site-fixes-queue className="space-y-3">
             <SectionHeader
-              title="Direct action queue"
-              eyebrow="Reviewable output"
+              title="Site Fixes"
+              eyebrow="Approved site work"
               action={<Badge tone={directReviewActions.length ? "amber" : "neutral"}>{directReviewActions.length} to review</Badge>}
             />
             {directReviewActions.length === 0 ? (
-              <EmptyState title="No direct actions to review" detail="When CiteLoop creates a patch or technical task, it will appear here as a compact review card." />
+              <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
             ) : (
               <div className="grid gap-2">
                 {directReviewActions.map((action) => {
                   const stage = deriveVisibilityLifecycleStage(action);
+                  const highlighted = highlightedSiteFixID === action.id;
                   return (
                     <button
                       key={action.id}
                       type="button"
-                      data-direct-action-card
-                      aria-label={`Open action details: ${action.action_type}`}
+                      data-site-fix-card
+                      id={`site-fix-${action.id}`}
+                      ref={(node) => {
+                        siteFixCardRefs.current[action.id] = node;
+                      }}
+                      aria-label={`Open site fix details: ${action.action_type}`}
                       onClick={(event) => {
                         directActionReturnFocusRef.current = event.currentTarget;
                         setSelectedOpportunityID(null);
                         setSelectedDirectActionID(action.id);
                       }}
                       className={`group w-full rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
-                        selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
+                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
                       }`}
                     >
                       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto] lg:items-center">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
+                            <Badge tone="blue">Fix Site Issue</Badge>
                             <Badge tone={action.review_required === false ? "neutral" : "amber"}>
                               {action.review_required === false ? "Review optional" : "Review required"}
                             </Badge>
@@ -1503,75 +1728,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
                           <span>Open details</span>
                           <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <section data-analysis-growth-findings-section className="space-y-3">
-            <SectionHeader
-              title="Opportunity queue"
-              eyebrow="Decision-ready recommendations"
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <Badge tone={opportunities.length ? "green" : "neutral"}>{opportunities.length ? "Ready to review" : "No review needed"}</Badge>
-                  <Badge tone="neutral">{loopActiveCount} in loop</Badge>
-                </div>
-              }
-            />
-
-            {opportunities.length === 0 ? (
-              <EmptyState
-                title="No opportunities to review"
-                detail="Refresh or Sync after Context changes. New findings will appear here when they need a decision."
-              />
-            ) : (
-              <div data-analysis-finding-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {opportunities.slice(0, 12).map((opp) => {
-                  const cta = actionCtaForOpportunity(opp);
-                  return (
-                    <button
-                      data-analysis-finding-card
-                      key={opp.id}
-                      type="button"
-                      onClick={(event) => {
-                        analysisReturnFocusRef.current = event.currentTarget;
-                        setSelectedDirectActionID(null);
-                        setSelectedOpportunityID(opp.id);
-                      }}
-                      aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
-                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
-                        selectedOpportunityID === opp.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
-                      }`}
-                    >
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone="blue">{findingTypeLabel(opp)}</Badge>
-                            <Badge tone={toneForOpportunityPriority(opp)}>{opportunityPriorityLabel(opp)}</Badge>
-                            <Badge tone={toneForStatus(opp.status)}>{visibilityLifecycleLabel(opp.status)}</Badge>
-                          </div>
-                          <h3 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-                          <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
-                            {opp.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
-                          </p>
-                        </div>
-                        <div className="grid gap-2 text-sm">
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Recommended action</div>
-                            <div className="mt-1 truncate font-medium text-slate-700">{cta.label}</div>
-                          </div>
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                          <span className="text-xs text-slate-400">Open to review the details</span>
-                          <span className="flex items-center gap-1">
-                            Review
-                            <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
-                          </span>
                         </div>
                       </div>
                     </button>
@@ -2751,7 +2907,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
               <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Review action details</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Review site fix details</div>
                 <h3 id="direct-action-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
                   {action.action_type}
                 </h3>
@@ -2857,7 +3013,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);
       const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-      const cta = actionCtaForOpportunity(selectedOpportunity);
+      const workTypeOverride = workTypeOverrides[selectedOpportunity.id];
+      const workType = opportunityWorkType(selectedOpportunity, workTypeOverride);
+      const destination = opportunityDestination(selectedOpportunity, workTypeOverride);
+      const cta = opportunityPrimaryCTA(selectedOpportunity, workTypeOverride);
       const evidence = selectedOpportunity.evidence;
       const dataSourceNotes =
         evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
@@ -2887,10 +3046,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   {opportunityTitle(selectedOpportunity)}
                 </h3>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge tone="blue">{findingTypeLabel(selectedOpportunity)}</Badge>
-                  <Badge tone={toneForRisk(selectedOpportunity.risk_level)}>{selectedOpportunity.risk_level ?? "risk unknown"}</Badge>
-                  <Badge tone="neutral">{sourceModeForOpportunity(selectedOpportunity, overview)}</Badge>
-                  <Badge tone={toneForStatus(selectedOpportunity.status)}>{visibilityLifecycleLabel(selectedOpportunity.status)}</Badge>
+                  <Badge tone="blue">{workType}</Badge>
+                  <Badge tone="neutral">{destination}</Badge>
+                  <Badge tone="red">Needs decision</Badge>
                 </div>
               </div>
               <button
@@ -2907,6 +3065,50 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
               <div className="space-y-5">
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Next step</div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-900">
+                    Approve to send this to {destination}.
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    {cta.label} keeps this work in the right queue instead of creating a generic task.
+                  </p>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Work type</div>
+                  <div role="group" aria-label="Work type" className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {opportunityWorkTypeOptions.map((option) => {
+                      const selected = option === workType;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          aria-pressed={selected}
+                          disabled={reviewingOpportunity}
+                          onClick={() => setWorkTypeOverrides((current) => ({ ...current, [selectedOpportunity.id]: option }))}
+                          className={`min-h-10 rounded-md border px-3 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] disabled:cursor-not-allowed disabled:opacity-60 ${
+                            selected ? "border-[#d93820] bg-[#fff7ed] text-[#a82812]" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Destination</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">{destination}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Approval source</div>
+                    <div className="mt-1 font-medium leading-5 text-slate-700">Human opportunity approval</div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Expected impact</div>
                   <p className="mt-2 text-sm leading-6 text-slate-700">
                     {selectedOpportunity.expected_impact || "Review this opportunity against confirmed Context before creating downstream work."}
@@ -2932,6 +3134,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   <div>
                     <div className="text-xs font-semibold uppercase text-slate-400">Effort</div>
                     <div className="mt-1 font-medium text-slate-700">{selectedOpportunity.effort ?? "Unknown"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Risk</div>
+                    <div className="mt-1 font-medium text-slate-700">{selectedOpportunity.risk_level ?? "Unknown"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold uppercase text-slate-400">Evidence source</div>
+                    <div className="mt-1 font-medium text-slate-700">{sourceModeForOpportunity(selectedOpportunity, overview)}</div>
                   </div>
                   <div className="sm:col-span-2">
                     <div className="text-xs font-semibold uppercase text-slate-400">Source</div>

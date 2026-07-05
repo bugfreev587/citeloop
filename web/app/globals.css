@@ -379,6 +379,35 @@ html[data-theme="dark"] textarea::placeholder {
   }
 }
 
+@keyframes citeloop-linked-card-pulse-keyframes {
+  0%,
+  100% {
+    background-color: #ffffff;
+    box-shadow: 0 0 0 0 rgba(217, 56, 32, 0);
+  }
+  18%,
+  58% {
+    background-color: #fff7ed;
+    box-shadow: 0 0 0 4px rgba(217, 56, 32, 0.12);
+  }
+  36%,
+  76% {
+    background-color: #ffffff;
+    box-shadow: 0 0 0 0 rgba(217, 56, 32, 0);
+  }
+}
+
+.citeloop-linked-card-pulse {
+  animation: citeloop-linked-card-pulse-keyframes 1.8s cubic-bezier(0.16, 1, 0.3, 1) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .citeloop-linked-card-pulse {
+    animation: none;
+    background-color: #fff7ed;
+  }
+}
+
 @keyframes toast-card-enter {
   from {
     opacity: 0;

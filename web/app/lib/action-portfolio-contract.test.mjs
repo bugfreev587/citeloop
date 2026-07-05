@@ -49,13 +49,12 @@ test("SEO dashboard renders action portfolio groups", () => {
 test("Analysis distinguishes multi-surface action task types", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   for (const snippet of [
-    "Create content task",
-    "Create refresh task",
-    "Create technical task",
-    "Create internal-link task",
-    "Create GEO asset task",
-    "Create evidence refresh task",
-    "Create consolidation task",
+    "Add to Content Plan",
+    "Create Page Update",
+    "Create Site Fix",
+    "Fix Site Issue",
+    "Improve Page",
+    "Create Content",
     "internal_link_gap",
     "schema_gap",
     "thin_evidence_page",
@@ -74,15 +73,15 @@ test("Analysis distinguishes multi-surface action task types", () => {
 
 test("Schema recommendations keep technical CTA ahead of answer-engine copy", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
-  const match = seo.match(/function actionCtaForOpportunity[\s\S]*?function sourceModeForOpportunity/);
-  assert.ok(match, "actionCtaForOpportunity body should be readable");
+  const match = seo.match(/function opportunityWorkType[\s\S]*?function actionCtaForOpportunity/);
+  assert.ok(match, "opportunityWorkType body should be readable");
   const body = match[0];
   const schemaIndex = body.indexOf('type === "schema_gap"');
   const technicalIndex = body.indexOf('type === "technical_visibility_issue"');
-  const geoIndex = body.indexOf("Create GEO asset task");
-  assert.ok(schemaIndex >= 0 && technicalIndex >= 0 && geoIndex >= 0, "CTA body should include schema, technical, and GEO branches");
-  assert.ok(schemaIndex < geoIndex, "schema_gap must route to technical task before generic answer-engine GEO copy");
-  assert.ok(technicalIndex < geoIndex, "technical_visibility_issue must route to technical task before generic answer-engine GEO copy");
+  const createContentIndex = body.indexOf('return "Create Content"');
+  assert.ok(schemaIndex >= 0 && technicalIndex >= 0 && createContentIndex >= 0, "work type body should include schema, technical, and content fallback branches");
+  assert.ok(schemaIndex < createContentIndex, "schema_gap must route to Fix Site Issue before content fallback");
+  assert.ok(technicalIndex < createContentIndex, "technical_visibility_issue must route to Fix Site Issue before content fallback");
 });
 
 test("Action cards expose why, contribution, output type, and execution result", () => {
@@ -101,13 +100,13 @@ test("Action cards expose why, contribution, output type, and execution result",
   }
 });
 
-test("Analysis surfaces reviewable direct actions as user-visible output", () => {
+test("Analysis surfaces approved site fixes as user-visible output", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   for (const snippet of [
     "isDirectAction",
     "directReviewActions",
-    "data-direct-action-queue",
-    "Direct action queue",
+    "data-site-fixes-queue",
+    "Site Fixes",
     "Reviewable output",
     "actionOutputPreviewText",
     "actionOutputTypeLabel(action)",
