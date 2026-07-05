@@ -171,6 +171,9 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
 
 test("Opportunity review drawer explains work type destination and approval source", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const drawerStart = source.indexOf('data-analysis-drawer');
+  const drawerEnd = source.indexOf('data-direct-action-drawer');
+  const drawerSource = source.slice(drawerStart, drawerEnd);
 
   for (const expected of [
     "Approve to send this to",
@@ -185,7 +188,9 @@ test("Opportunity review drawer explains work type destination and approval sour
 
   assert.match(source, /function opportunityWorkType\(opportunity: SEOOpportunity\): OpportunityWorkType/);
   assert.equal(source.includes('role="group" aria-label="Work type"'), false, "Work type should render as read-only information, not a toggle group");
-  assert.equal(source.includes("aria-pressed"), false, "Opportunity drawer should not expose work type selection buttons");
+  assert.notEqual(drawerStart, -1, "seo-client.tsx missing opportunity drawer");
+  assert.notEqual(drawerEnd, -1, "seo-client.tsx missing drawer boundary");
+  assert.equal(drawerSource.includes("aria-pressed"), false, "Opportunity drawer should not expose work type selection buttons");
   assert.equal(source.includes("setWorkTypeOverrides"), false, "Opportunity drawer should not let users change the system-selected work type");
 });
 
@@ -200,6 +205,37 @@ test("Analysis loop progress is a strip and finding dismissal is explicit", asyn
   );
   assert.equal(source.includes("Dismiss finding"), true, "dismiss action must make the destructive operation explicit");
   assert.equal(source.includes("Close finding details"), true, "finding drawer needs a separate close affordance");
+});
+
+test("Analysis loop metrics reveal selected linked content cards", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const loopStart = source.indexOf("data-analysis-loop-strip");
+  const loopEnd = source.indexOf("{readiness &&");
+  const loopSource = source.slice(loopStart, loopEnd);
+
+  assert.notEqual(loopStart, -1, "seo-client.tsx missing loop in motion section");
+  assert.notEqual(loopEnd, -1, "seo-client.tsx missing loop section boundary");
+
+  for (const expected of [
+    "selectedLoopStage",
+    "setSelectedLoopStage",
+    "selectedLoopActions",
+    "loopStageDetailTitle",
+    "loopActionCurrentHref",
+    "loopActionCurrentLabel",
+    "data-loop-stage-card",
+    "data-loop-action-card",
+    "aria-pressed={selectedLoopStage === item.key}",
+    "disabled={item.value === 0}",
+    "setSelectedLoopStage((current) => (current === item.key ? null : item.key))",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+
+  assert.equal(loopSource.includes("loopPreviewActions"), false, "loop cards should not render an unconditional Recently Sent duplicate");
+  assert.equal(loopSource.includes("Open current location"), true, "filtered cards should link to the card's current surface");
+  assert.match(source, /\/projects\/\$\{projectId\}\/review\?article=\$\{action\.draft_article_id\}/);
+  assert.match(source, /\/projects\/\$\{projectId\}\/results\?action=\$\{action\.id\}/);
 });
 
 test("Opportunity queue lays finding cards out as responsive rectangles with three per row at most", async () => {

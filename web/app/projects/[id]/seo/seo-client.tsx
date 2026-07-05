@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   ActionMeasurement,
@@ -21,6 +22,8 @@ import {
   SEOPolicy,
   SafeModeEvent,
   ResultsAction,
+  VisibilityActionInLoop,
+  VisibilityLifecycleStage,
   VisibilitySummary,
 } from "../../../lib/api";
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
@@ -28,9 +31,22 @@ import { normalizeNumeric } from "../../../lib/normalize";
 import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, formatDate } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
+type LoopAction = SEOContentAction &
+  Partial<
+    Pick<
+      VisibilityActionInLoop,
+      | "lifecycle_stage"
+      | "draft_article_id"
+      | "opportunity_page_url"
+      | "opportunity_normalized_page_url"
+      | "opportunity_query"
+      | "opportunity_recommended_action"
+      | "topic_title"
+    >
+  >;
 const drawerFocusableSelector =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -331,6 +347,29 @@ function actionHandoffLabel(action: SEOContentAction | ResultsAction) {
 
 function actionHandoffStatus(action: SEOContentAction | ResultsAction) {
   return destinationForAction(action) === "Site Fixes" ? "Sent to Site Fixes" : "Sent to Content Plan";
+}
+
+const resultLoopStages = new Set<VisibilityLifecycleStage>(["published_or_applied", "measuring", "learned"]);
+
+function loopActionCurrentSurface(action: LoopAction) {
+  const stage = deriveVisibilityLifecycleStage(action);
+  if (resultLoopStages.has(stage)) return "Results";
+  if (stage === "blocked" && hasResultsExecutionEvidence(action)) return "Results";
+  if (stage === "ready_for_review" && action.draft_article_id) return "Review";
+  if (destinationForAction(action) === "Site Fixes") return "Site Fixes";
+  return "Content Plan";
+}
+
+function loopActionCurrentHref(projectId: string, action: LoopAction) {
+  const surface = loopActionCurrentSurface(action);
+  if (surface === "Review") return `/projects/${projectId}/review?article=${action.draft_article_id}`;
+  if (surface === "Results") return `/projects/${projectId}/results?action=${action.id}`;
+  if (surface === "Site Fixes") return `#site-fix-${action.id}`;
+  return actionHandoffHref(projectId, action) ?? `/projects/${projectId}/plan?action=${action.id}`;
+}
+
+function loopActionCurrentLabel(action: LoopAction) {
+  return loopActionCurrentSurface(action);
 }
 
 const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
@@ -863,7 +902,7 @@ function lifecycleStageTone(stage: string): "green" | "amber" | "red" | "neutral
   return "neutral";
 }
 
-function loopActionTitle(action: SEOContentAction & { opportunity_recommended_action?: string | null; opportunity_query?: string | null; topic_title?: string | null }) {
+function loopActionTitle(action: LoopAction) {
   return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Visibility action";
 }
 
@@ -983,6 +1022,7 @@ export function ResultsClient({ projectId }: { projectId: string }) {
 
 export function SEOClient({ projectId, mode = "analysis" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
+  const searchParams = useSearchParams();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
@@ -1013,6 +1053,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
+  const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -1182,6 +1223,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     () => attributionActions.find((action) => action.id === selectedResultActionID) ?? null,
     [attributionActions, selectedResultActionID],
   );
+  const requestedResultActionID = mode === "results" ? searchParams.get("action") : null;
   const attributionMeasuredActions = resultsActions.length
     ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
@@ -1202,9 +1244,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
 
   useEffect(() => {
+    if (mode !== "results" || !requestedResultActionID || attributionActions.length === 0) return;
+    if (attributionActions.some((action) => action.id === requestedResultActionID)) {
+      setSelectedResultActionID(requestedResultActionID);
+    }
+  }, [attributionActions, mode, requestedResultActionID]);
+
+  useEffect(() => {
     if (!selectedResultActionID || selectedResultAction) return;
+    if (mode === "results" && selectedResultActionID === requestedResultActionID && attributionActions.length === 0) return;
     setSelectedResultActionID(null);
-  }, [selectedResultAction, selectedResultActionID]);
+  }, [attributionActions.length, mode, requestedResultActionID, selectedResultAction, selectedResultActionID]);
 
   useEffect(() => {
     if (!selectedResultAction?.id) return;
@@ -1285,7 +1335,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     loopLifecycleCounts.approved +
     loopLifecycleCounts.published_or_applied +
     loopLifecycleCounts.measuring;
-  const loopSummaryItems = [
+  const loopSummaryItems: Array<{ key: VisibilityLifecycleStage; label: string; value: number }> = [
     { key: "added_to_plan", label: "Added", value: loopLifecycleCounts.added_to_plan },
     { key: "planned", label: "Planned", value: loopLifecycleCounts.planned },
     { key: "drafting", label: "Drafting", value: loopLifecycleCounts.drafting },
@@ -1295,9 +1345,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { key: "learned", label: "Learned", value: loopLifecycleCounts.learned },
     { key: "blocked", label: "Blocked", value: loopLifecycleCounts.blocked },
   ];
-  const loopPreviewActions = loopActions
-    .filter((action) => !["learned"].includes(deriveVisibilityLifecycleStage(action)))
-    .slice(0, 3);
+  const selectedLoopActions = selectedLoopStage
+    ? loopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage).slice(0, 6)
+    : [];
+  const selectedLoopSummaryItem = loopSummaryItems.find((item) => item.key === selectedLoopStage) ?? null;
+  const loopStageDetailTitle = selectedLoopSummaryItem
+    ? `${selectedLoopSummaryItem.value} ${selectedLoopSummaryItem.value === 1 ? "opportunity" : "opportunities"} in ${selectedLoopSummaryItem.label}`
+    : "";
+
+  useEffect(() => {
+    if (!selectedLoopSummaryItem || selectedLoopSummaryItem.value > 0) return;
+    setSelectedLoopStage(null);
+  }, [selectedLoopSummaryItem]);
+
   const directReviewActions = actions
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
@@ -1998,30 +2058,85 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
                 {loopSummaryItems.map((item) => (
-                  <div key={item.key} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+                  <button
+                    key={item.key}
+                    type="button"
+                    data-loop-stage-card
+                    aria-pressed={selectedLoopStage === item.key}
+                    disabled={item.value === 0}
+                    onClick={() => setSelectedLoopStage((current) => (current === item.key ? null : item.key))}
+                    className={cx(
+                      "rounded-md border px-3 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55",
+                      selectedLoopStage === item.key
+                        ? "border-[#d93820]/40 bg-[#fff4f1] shadow-[inset_0_0_0_1px_rgba(217,56,32,0.12)]"
+                        : "border-slate-100 bg-slate-50 hover:border-slate-300 hover:bg-white",
+                    )}
+                  >
                     <div className="font-mono text-xl font-bold text-slate-950">{item.value}</div>
                     <div className="mt-1 truncate text-xs font-semibold text-slate-500">{item.label}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
-              {loopPreviewActions.length > 0 ? (
-                <div className="mt-3 grid gap-2 lg:grid-cols-3">
-                  {loopPreviewActions.map((action) => {
+              {selectedLoopStage && selectedLoopActions.length > 0 && (
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-bold text-slate-950">{loopStageDetailTitle}</div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLoopStage(null)}
+                      className="text-xs font-semibold text-slate-500 transition hover:text-slate-800"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="grid gap-2 lg:grid-cols-3">
+                  {selectedLoopActions.map((action) => {
                     const stage = deriveVisibilityLifecycleStage(action);
-                    return (
-                      <div key={action.id} className="rounded-md border border-slate-100 px-3 py-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
-                            <div className="mt-1 truncate text-xs text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}</div>
+                    const href = loopActionCurrentHref(projectId, action);
+                    const label = loopActionCurrentLabel(action);
+                    const content = (
+                      <div className="flex min-h-[78px] flex-col justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                            <ChevronRight className="mt-0.5 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={16} />
                           </div>
-                          <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                          <div className="mt-2 truncate text-sm font-semibold text-slate-900">{loopActionTitle(action)}</div>
+                          <div className="mt-1 truncate text-xs text-slate-500">
+                            {action.target_url ?? action.normalized_target_url ?? action.opportunity_page_url ?? action.id}
+                          </div>
                         </div>
+                        <div className="text-xs font-semibold text-slate-600">Open current location: {label}</div>
                       </div>
                     );
+                    if (loopActionCurrentSurface(action) === "Site Fixes") {
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          data-loop-action-card
+                          onClick={() => focusSiteFixCard(action.id)}
+                          className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                        >
+                          {content}
+                        </button>
+                      );
+                    }
+                    return (
+                      <Link
+                        key={action.id}
+                        data-loop-action-card
+                        href={href}
+                        className="group block rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                      >
+                        {content}
+                      </Link>
+                    );
                   })}
+                  </div>
                 </div>
-              ) : (
+              )}
+              {!selectedLoopStage && (
                 <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed opportunities will appear here after they enter the content loop.</p>
               )}
             </div>
