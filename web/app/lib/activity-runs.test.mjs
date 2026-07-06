@@ -51,6 +51,20 @@ test("TokenGate connectivity failures are platform incidents, not user activity 
   assert.deepEqual(userVisibleActivityRuns([oldTokengateTimeout]).map((run) => run.id), []);
 });
 
+test("admin runtime incidents omit platform failures superseded by successful context refresh", async () => {
+  const { activePlatformRuntimeIncidents } = await loadActivityRunsModule();
+  const currentTokengateTimeout = {
+    ...oldTokengateTimeout,
+    id: "current-platform-timeout",
+    created_at: "2026-07-06T01:10:00.000Z",
+  };
+
+  assert.deepEqual(
+    activePlatformRuntimeIncidents([refreshedContext, oldTokengateTimeout, currentTokengateTimeout]).map((run) => run.id),
+    ["current-platform-timeout"],
+  );
+});
+
 test("successful context refresh clears older context refresh failures from user activity", async () => {
   const { isPlatformRuntimeFailure, isUserAttentionRun, userVisibleActivityRuns } = await loadActivityRunsModule();
   const crawlInputFailure = {
