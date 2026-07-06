@@ -18,6 +18,7 @@ import {
   SafeModeEvent,
   SEOPolicy,
   SEOPolicyUpdateInput,
+  friendlyApiError,
 } from "../../../lib/api";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { readinessGateActionFor } from "../../../lib/automation-readiness";
@@ -943,6 +944,42 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Dev.to API key saved", detail: "Test the connection before enabling publishing.", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Dev.to key save failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function testDevToConnection() {
+    if (!devToPublisher) {
+      setMessage({ title: "Save Dev.to first", detail: "Create the Dev.to connection before testing an API key.", tone: "amber" });
+      return;
+    }
+    const value = devToCredentialDraft.trim();
+    if (!devToPublisher.credential_configured && !value) {
+      setMessage({ title: "Dev.to API key required", detail: "Paste a DEV API key before testing this connection.", tone: "amber" });
+      return;
+    }
+    setNotificationBusy(`test-publisher-${devToPublisher.id}`);
+    setMessage(null);
+    try {
+      if (value) {
+        const savedCredential = await api.upsertPublisherCredential(projectId, devToPublisher.id, {
+          kind: "dev_to_api_key",
+          value,
+        });
+        setDevToCredentialDraft("");
+        setPublisherConnections((current) => current.map((connection) => (connection.id === savedCredential.id ? savedCredential : connection)));
+      }
+      const tested = await api.testPublisherConnection(projectId, devToPublisher.id);
+      setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
+      setMessage({
+        title: "Dev.to connection verified",
+        detail: value ? "API key saved and verified." : undefined,
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Dev.to test failed", detail: friendlyApiError(e), tone: "red" });
+      await refreshPublisherConnections();
     } finally {
       setNotificationBusy(null);
     }
@@ -2046,12 +2083,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             />
 
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
-              <Field label="DEV username">
+              <Field label="DEV username (optional)">
                 <TextInput
                   value={devToUsername}
                   onChange={(event) => setDevToUsername(event.target.value)}
-                  placeholder="citeloop"
+                  placeholder="xiaobo_yu_936f1b4512c370f"
                 />
+                <p className="mt-1 text-xs leading-5 text-slate-500">Username is optional; the API key identifies the DEV account.</p>
               </Field>
               <Field label="Dev.to API key">
                 <TextInput
@@ -2087,10 +2125,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => devToPublisher && testPublisherConnection(devToPublisher.id)}
-                disabled={!devToPublisher || notificationBusy === `test-publisher-${devToPublisher?.id}`}
+                onClick={testDevToConnection}
+                disabled={
+                  !devToPublisher ||
+                  (!devToPublisher?.credential_configured && !devToCredentialDraft.trim()) ||
+                  notificationBusy === `test-publisher-${devToPublisher?.id}`
+                }
               >
-                <ButtonProgress busy={notificationBusy === `test-publisher-${devToPublisher?.id}`} busyLabel="Testing" idleIcon={<Send size={16} />}>
+                <ButtonProgress
+                  busy={notificationBusy === `test-publisher-${devToPublisher?.id}`}
+                  busyLabel={devToCredentialDraft.trim() ? "Saving and testing" : "Testing"}
+                  idleIcon={<Send size={16} />}
+                >
                   Test Dev.to
                 </ButtonProgress>
               </Button>

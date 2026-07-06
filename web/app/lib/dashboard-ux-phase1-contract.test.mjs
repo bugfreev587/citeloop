@@ -608,6 +608,18 @@ test("publisher settings explain how to connect each distribution platform", () 
   assert.doesNotMatch(settings, /Connect LinkedIn[\s\S]*api\.upsertDevToPublisherConnection/);
 });
 
+test("dev.to test saves a pasted API key before testing", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  assert.match(settings, /async function testDevToConnection\(\)/);
+  assert.match(settings, /api\.upsertPublisherCredential\(projectId,\s*devToPublisher\.id,\s*\{\s*kind: "dev_to_api_key"/);
+  assert.match(settings, /api\.testPublisherConnection\(projectId,\s*devToPublisher\.id\)/);
+  assert.match(settings, /onClick=\{testDevToConnection\}/);
+  assert.match(settings, /!devToPublisher\?\.credential_configured && !devToCredentialDraft\.trim\(\)/);
+  assert.match(settings, /DEV username \(optional\)/);
+  assert.match(settings, /Username is optional; the API key identifies the DEV account\./);
+});
+
 test("publisher settings restore GitHub OAuth App connection as the primary path", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
 

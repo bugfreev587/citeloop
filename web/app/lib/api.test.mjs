@@ -182,6 +182,14 @@ test("friendlyApiError maps missing project responses to onboarding copy", async
   assert.doesNotMatch(friendlyApiError(badProject), /400|bad project id|\{"error"/);
 });
 
+test("friendlyApiError uses safe backend error messages without exposing JSON", async () => {
+  const { ApiError, friendlyApiError } = await loadApiModule();
+  const missingCredential = new ApiError(424, '{"error":"publisher credential unavailable"}');
+
+  assert.equal(friendlyApiError(missingCredential), "publisher credential unavailable");
+  assert.doesNotMatch(friendlyApiError(missingCredential), /424|\{"error"/);
+});
+
 test("project config exposes content plan auto advance and defaults it off", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
