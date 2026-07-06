@@ -180,6 +180,8 @@ function ReadyNowStrip({
   projectId,
   readyNow,
   busy,
+  linkedArticleId,
+  highlightedPublishArticleId,
   activePublisherConnection,
   onPublish,
   onRetry,
@@ -191,6 +193,8 @@ function ReadyNowStrip({
   projectId: string;
   readyNow: ReturnType<typeof buildReadyNow>;
   busy: string | null;
+  linkedArticleId?: string | null;
+  highlightedPublishArticleId?: string | null;
   activePublisherConnection: PublisherConnection | null;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
@@ -198,7 +202,12 @@ function ReadyNowStrip({
   onDestination: () => void;
   onTiming: () => void;
 }) {
-  const visibleItems = readyNow.items.slice(0, 4);
+  const visibleItems = (() => {
+    const firstItems = readyNow.items.slice(0, 4);
+    if (!linkedArticleId || firstItems.some((item) => item.articleId === linkedArticleId)) return firstItems;
+    const linkedItem = readyNow.items.find((item) => item.articleId === linkedArticleId);
+    return linkedItem ? [linkedItem, ...firstItems.slice(0, 3)] : firstItems;
+  })();
 
   return (
     <section data-publish-ready-to-post className={cx("min-w-0 space-y-3", className)}>
@@ -207,67 +216,78 @@ function ReadyNowStrip({
         <EmptyState title={readyNow.emptyState.title} detail={readyNow.emptyState.detail} />
       ) : (
         <div className="grid min-w-0 gap-3">
-          {visibleItems.map((item) => (
-            <div key={item.id} className="min-w-0 rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex min-w-0 items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="line-clamp-2 break-words text-base font-bold leading-6 text-slate-950">{item.title}</div>
-                  <div className="mt-1 text-xs font-semibold text-slate-500">Canonical content</div>
+          {visibleItems.map((item) => {
+            const highlighted = highlightedPublishArticleId === item.articleId;
+            return (
+              <div
+                key={item.id}
+                data-publish-ready-article-card={item.articleId}
+                tabIndex={-1}
+                className={cx(
+                  "min-w-0 rounded-lg border bg-white p-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                  highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                )}
+              >
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 break-words text-base font-bold leading-6 text-slate-950">{item.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-slate-500">Canonical content</div>
+                  </div>
+                  <Badge tone={item.action === "retry" ? "red" : "green"}>{item.actionLabel}</Badge>
                 </div>
-                <Badge tone={item.action === "retry" ? "red" : "green"}>{item.actionLabel}</Badge>
-              </div>
-              <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
-                <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">Where</div>
-                  <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{item.destinationLabel}</div>
+                <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
+                  <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">Where</div>
+                    <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{item.destinationLabel}</div>
+                  </div>
+                  <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">When</div>
+                    <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{publishTimeLabel(item.article)}</div>
+                  </div>
                 </div>
-                <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">When</div>
-                  <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{publishTimeLabel(item.article)}</div>
-                </div>
-              </div>
-              {item.failureReason && <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700">{item.failureReason}</div>}
-              <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
-                <a
-                  href={articlePreviewHref(projectId, item.article)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  <Eye size={14} />
-                  {item.secondaryActionLabel}
-                  <ExternalLink size={13} />
-                </a>
-                <Button size="sm" onClick={() => onSeoDetails(item.article)}>
-                  <Search size={14} />
-                  SEO Details
-                </Button>
-                <Button size="sm" onClick={onDestination}>
-                  <Plug size={14} />
-                  {item.destinationActionLabel}
-                </Button>
-                <Button size="sm" title={publishTimeLabel(item.article)} onClick={onTiming}>
-                  <CalendarClock size={14} />
-                  {item.timingActionLabel}
-                </Button>
-                <Button
-                  disabled={!activePublisherConnection || busy === `${item.action}-${item.articleId}`}
-                  size="sm"
-                  variant={item.action === "retry" ? "danger" : "primary"}
-                  title={item.disabledReason}
-                  onClick={() => (item.action === "retry" ? onRetry(item.article) : onPublish(item.article))}
-                >
-                  <ButtonProgress
-                    busy={busy === `${item.action}-${item.articleId}`}
-                    busyLabel={item.action === "retry" ? "Retrying" : "Queuing"}
-                    idleIcon={item.action === "retry" ? <RotateCcw size={14} /> : <Send size={14} />}
+                {item.failureReason && <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700">{item.failureReason}</div>}
+                <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+                  <a
+                    href={articlePreviewHref(projectId, item.article)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    {item.actionLabel}
-                  </ButtonProgress>
-                </Button>
+                    <Eye size={14} />
+                    {item.secondaryActionLabel}
+                    <ExternalLink size={13} />
+                  </a>
+                  <Button size="sm" onClick={() => onSeoDetails(item.article)}>
+                    <Search size={14} />
+                    SEO Details
+                  </Button>
+                  <Button size="sm" onClick={onDestination}>
+                    <Plug size={14} />
+                    {item.destinationActionLabel}
+                  </Button>
+                  <Button size="sm" title={publishTimeLabel(item.article)} onClick={onTiming}>
+                    <CalendarClock size={14} />
+                    {item.timingActionLabel}
+                  </Button>
+                  <Button
+                    disabled={!activePublisherConnection || busy === `${item.action}-${item.articleId}`}
+                    size="sm"
+                    variant={item.action === "retry" ? "danger" : "primary"}
+                    title={item.disabledReason}
+                    onClick={() => (item.action === "retry" ? onRetry(item.article) : onPublish(item.article))}
+                  >
+                    <ButtonProgress
+                      busy={busy === `${item.action}-${item.articleId}`}
+                      busyLabel={item.action === "retry" ? "Retrying" : "Queuing"}
+                      idleIcon={item.action === "retry" ? <RotateCcw size={14} /> : <Send size={14} />}
+                    >
+                      {item.actionLabel}
+                    </ButtonProgress>
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
@@ -578,6 +598,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [selectedManualPlatform, setSelectedManualPlatform] = useState<ManualPlatformID | null>(null);
   const [selectedSEOArticle, setSelectedSEOArticle] = useState<Article | null>(null);
   const [focusedOperationalGroup, setFocusedOperationalGroup] = useState<OperationalGroup["key"] | null>(null);
+  const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -640,25 +661,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     const interval = window.setInterval(refresh, 15_000);
     return () => window.clearInterval(interval);
   }, [inflight.length, refresh]);
-
-  // A review handoff link lands here with ?article=; open the lanes drawer and
-  // point at the linked publish item.
-  useEffect(() => {
-    if (!linkedArticleId || loading) return;
-    setDrawer("view_all");
-  }, [linkedArticleId, loading]);
-
-  useEffect(() => {
-    if (!linkedArticleId || drawer !== "view_all") return;
-    const timer = window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(`[data-publish-article-card="${linkedArticleId}"]`);
-      if (!target) return;
-      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-      target.focus({ preventScroll: true });
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [linkedArticleId, drawer]);
 
   const approvedCanonicals = useMemo(
     () =>
@@ -740,6 +742,25 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     headerCta.kind === "publish_next"
       ? readyNow.items.find((item) => item.articleId === headerCta.articleId)?.article ?? null
       : null;
+
+  // A review handoff link lands here with ?article=; focus the main Publish card
+  // so the handoff mirrors Opportunities -> Content Plan instead of opening a drawer.
+  useEffect(() => {
+    if (!linkedArticleId || loading || readyNow.items.length === 0) return;
+    const focusTimer = window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(`[data-publish-ready-article-card="${linkedArticleId}"]`);
+      if (!target) return;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      setHighlightedPublishArticleId(linkedArticleId);
+    }, 150);
+    const clearTimer = window.setTimeout(() => setHighlightedPublishArticleId(null), 2_350);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [linkedArticleId, loading, readyNow.items]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -949,6 +970,8 @@ export function PublishingClient({ projectId }: { projectId: string }) {
           projectId={projectId}
           readyNow={readyNow}
           busy={busy}
+          linkedArticleId={linkedArticleId}
+          highlightedPublishArticleId={highlightedPublishArticleId}
           activePublisherConnection={activePublisherConnection}
           onPublish={publishNow}
           onRetry={retryPublish}
