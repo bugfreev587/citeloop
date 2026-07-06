@@ -25,6 +25,7 @@ import {
   contextBuildTracks,
   homeAICitationMetric,
   homeInMotionMetric,
+  homePipelineStageCounts,
   nextWorkspaceAction,
 } from "../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../lib/normalize";
@@ -173,6 +174,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [published, setPublished] = useState<Article[]>([]);
   const [approved, setApproved] = useState<Article[]>([]);
   const [failedPublish, setFailedPublish] = useState<Article[]>([]);
+  const [verifyingPublish, setVerifyingPublish] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [insightRuns, setInsightRuns] = useState<GenerationRun[]>([]);
@@ -191,7 +193,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, dist, runRows, insightRunRows, overview, summary, doctorData, projectRows, readinessData] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, verifying, dist, runRows, insightRunRows, overview, summary, doctorData, projectRows, readinessData] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -200,6 +202,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.listArticles(projectId, "published"),
         api.listArticles(projectId, "approved"),
         api.listArticles(projectId, "publish_failed"),
+        api.listArticles(projectId, "pending_url_verification"),
         api.listDistribute(projectId),
         api.listRuns(projectId, { limit: 5 }),
         api.listRuns(projectId, { agent: "insight", limit: 50 }).catch(() => []),
@@ -217,6 +220,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setPublished(pub);
       setApproved(app);
       setFailedPublish(failed);
+      setVerifyingPublish(verifying);
       setReady(dist);
       setRuns(runRows);
       setInsightRuns(insightRunRows);
@@ -348,17 +352,25 @@ export function Workspace({ projectId }: { projectId: string }) {
   const visibilityLifecycleCountsForSummary = visibilitySummary?.lifecycle_counts ?? visibilityLifecycleCounts();
   const visibilityOpenOpportunityCount = visibilityOpenOpportunities.length;
   const visibilityActionsInLoopCount = visibilityActionsInLoop.length;
-  const visibilityPlanHandoffCount = (visibilityLifecycleCountsForSummary.added_to_plan ?? 0) + (visibilityLifecycleCountsForSummary.planned ?? 0);
-  const opportunitiesInPlanCount = visibilityPlanHandoffCount;
-  const planItemCount = topics.length + opportunitiesInPlanCount;
-  const planGenerationPending = visibilityPlanHandoffCount > 0 && topics.length === 0;
+  const pipelineStageCounts = homePipelineStageCounts({
+    topics,
+    reviewGroups: review,
+    approvedArticles: approved,
+    failedPublishArticles: failedPublish,
+    verifyingArticles: verifyingPublish,
+    readyDistribute: ready,
+    visibilityLifecycleCounts: visibilityLifecycleCountsForSummary,
+  });
+  const planItemCount = pipelineStageCounts.contentPlan;
+  const planGenerationPending = pipelineStageCounts.planGenerationPending;
+  const reviewQueueCount = pipelineStageCounts.review;
+  const approvedCanonicalPublishCount = approved.filter((article) => article.kind === "canonical").length;
+  const publishQueueCount = pipelineStageCounts.publish;
   const publishedThisMonth = published.filter((article) => isThisMonth(article.published_at)).length;
   const searchDataConnected = hasConnectedSearchData(seoOverview);
   const clicks28d = normalizeNumeric(seoOverview?.last_28_days?.clicks_28d ?? null);
   const impressions28d = normalizeNumeric(seoOverview?.last_28_days?.impressions_28d ?? null);
-  const measuringActions = visibilitySummary
-    ? (visibilityLifecycleCountsForSummary.published_or_applied ?? 0) + (visibilityLifecycleCountsForSummary.measuring ?? 0) + (visibilityLifecycleCountsForSummary.learned ?? 0)
-    : sumCounts(seoOverview?.actions_by_status, ["published", "measuring", "completed"]);
+  const measuringActions = visibilitySummary ? pipelineStageCounts.results : sumCounts(seoOverview?.actions_by_status, ["published", "measuring", "completed"]);
   const visibilityCitationSignalCount = visibilityOpenOpportunities.filter((opportunity) =>
     `${opportunity.type} ${opportunity.recommended_action ?? ""} ${opportunity.expected_impact ?? ""}`.toLowerCase().match(/ai|llm|citation|answer/),
   ).length;
@@ -695,16 +707,27 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
     {
       label: "Review",
-      metricValue: reviewArticles.length,
-      statusLabel: reviewArticles.length > 0 ? "Needs approval" : "Clear",
-      tone: reviewArticles.length > 0 ? "amber" : "green",
+      metricValue: reviewQueueCount,
+      statusLabel: reviewQueueCount > 0 ? "Needs approval" : "Clear",
+      tone: reviewQueueCount > 0 ? "amber" : "green",
       href: `/projects/${projectId}/review`,
     },
     {
       label: "Publish",
-      metricValue: publishedThisMonth,
-      statusLabel: failedPublish.length > 0 ? "Needs attention" : ready.length > 0 ? "Ready to distribute" : publishedThisMonth > 0 ? "Live this month" : "Waiting",
-      tone: failedPublish.length > 0 ? "red" : ready.length > 0 ? "amber" : publishedThisMonth > 0 ? "green" : "neutral",
+      metricValue: publishQueueCount,
+      statusLabel:
+        failedPublish.length > 0
+          ? "Needs attention"
+          : verifyingPublish.length > 0
+            ? "Verifying URL"
+            : ready.length > 0
+              ? "Ready to distribute"
+              : approvedCanonicalPublishCount > 0
+                ? "Ready to publish"
+                : publishedThisMonth > 0
+                  ? "Live this month"
+                  : "Waiting",
+      tone: failedPublish.length > 0 ? "red" : publishQueueCount > 0 ? "amber" : publishedThisMonth > 0 ? "green" : "neutral",
       href: `/projects/${projectId}/publish`,
     },
     {
