@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
-import { GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, ProviderTestResult } from "../../../lib/api";
+import { AlertTriangle, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { GenerationRun, GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, ProviderTestResult } from "../../../lib/api";
+import { activityRawError, isPlatformRuntimeFailure } from "../../../lib/activity-runs";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, cx, EmptyState, Field, formatDate, Notice, SectionHeader, TextInput } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TestResult = ProviderTestResult | null;
-type AdminTabId = "runtime" | "geo";
+type AdminTabId = "runtime" | "geo" | "incidents";
 type RuntimeBusy = "save" | "test" | "delete" | null;
 type GEOBusy = `save-${GEOProviderScope}` | `test-${GEOProviderScope}` | `delete-${GEOProviderScope}` | null;
 type GEODraft = { apiKey: string; baseURL: string; model: string; enabled: boolean };
@@ -19,6 +20,7 @@ const defaultBaseURL = "https://tokengate-production.up.railway.app/v1";
 const adminTabs: Array<{ id: AdminTabId; title: string }> = [
   { id: "runtime", title: "Platform runtime" },
   { id: "geo", title: "GEO providers" },
+  { id: "incidents", title: "Runtime incidents" },
 ];
 
 const geoProviders: Array<{
@@ -59,7 +61,9 @@ const geoProviders: Array<{
 ];
 
 function adminTabFromHash(hash: string): AdminTabId {
-  return hash.replace(/^#/, "") === "geo" ? "geo" : "runtime";
+  const tab = hash.replace(/^#/, "");
+  if (tab === "geo" || tab === "incidents") return tab;
+  return "runtime";
 }
 
 function emptyGeoStatuses() {
@@ -133,7 +137,26 @@ function ConnectionResult({ result }: { result: TestResult }) {
   );
 }
 
-export function AdminClient() {
+function RuntimeIncidentRow({ run }: { run: GenerationRun }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <AlertTriangle className="text-red-500" size={16} />
+            <span className="font-bold text-slate-950">{run.agent}</span>
+            <Badge tone="red">{run.status}</Badge>
+            {run.model && <Badge tone="neutral">{run.model}</Badge>}
+          </div>
+          <p className="mt-2 break-words text-sm leading-6 text-slate-700">{activityRawError(run)}</p>
+        </div>
+        <div className="shrink-0 text-xs font-semibold text-slate-400">{formatDate(run.created_at)}</div>
+      </div>
+    </div>
+  );
+}
+
+export function AdminClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const [access, setAccess] = useState<"loading" | "granted" | "denied">("loading");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTabId>(() => {
@@ -148,6 +171,7 @@ export function AdminClient() {
   const [qaModel, setQAModel] = useState("");
   const [geoStatuses, setGeoStatuses] = useState<Record<GEOProviderScope, GEOCredentialsStatus>>(emptyGeoStatuses);
   const [geoDrafts, setGeoDrafts] = useState<Record<GEOProviderScope, GEODraft>>(emptyGeoDrafts);
+  const [runtimeIncidents, setRuntimeIncidents] = useState<GenerationRun[]>([]);
   const [busy, setBusy] = useState<RuntimeBusy>(null);
   const [geoBusy, setGeoBusy] = useState<GEOBusy>(null);
   const { notify } = useToast();
@@ -204,6 +228,12 @@ export function AdminClient() {
       setWriterModel(next.writer_model ?? "");
       setQAModel(next.qa_model ?? "");
       applyGeoStatuses(nextGeo);
+      try {
+        const runs = await api.listRuns(projectId, { limit: 100 });
+        setRuntimeIncidents(runs.filter(isPlatformRuntimeFailure));
+      } catch {
+        setRuntimeIncidents([]);
+      }
     } catch (e: any) {
       if (String(e.message).includes("403")) {
         setAccess("denied");
@@ -212,7 +242,7 @@ export function AdminClient() {
         setMessage({ title: "Admin settings unavailable", detail: e.message, tone: "amber" });
       }
     }
-  }, [api]);
+  }, [api, projectId]);
 
   useEffect(() => {
     refresh();
@@ -578,6 +608,26 @@ export function AdminClient() {
               );
             })}
           </div>
+        </section>
+      )}
+
+      {activeAdminTab === "incidents" && (
+        <section id="admin-panel-incidents" role="tabpanel" aria-labelledby="admin-tab-incidents" tabIndex={0} className="space-y-6">
+          <SectionHeader title="Runtime incidents" eyebrow="Platform AI operations" action={<Badge tone={runtimeIncidents.length ? "red" : "green"}>{runtimeIncidents.length}</Badge>} />
+          <Notice
+            title="Admin-only platform failures"
+            detail="TokenGate and model-provider connectivity failures stay out of the customer Activity Log. Fix them from Platform runtime, then refresh context."
+            tone="neutral"
+          />
+          {runtimeIncidents.length === 0 ? (
+            <EmptyState title="No runtime incidents" detail="TokenGate and model-provider connectivity failures will appear here for administrators." />
+          ) : (
+            <div className="grid gap-3">
+              {runtimeIncidents.map((run) => (
+                <RuntimeIncidentRow key={run.id} run={run} />
+              ))}
+            </div>
+          )}
         </section>
       )}
     </div>

@@ -1583,6 +1583,8 @@ test("activity log defaults to user-facing attention cards and opens fix details
     "How to fix",
     "AI-ready fix brief",
     "Copy AI fix brief",
+    "userVisibleActivityRuns",
+    "isUserAttentionRun",
     'dataAttribute="activity-run-drawer"',
     "aspect-square",
   ]) {
@@ -1593,6 +1595,7 @@ test("activity log defaults to user-facing attention cards and opens fix details
   assert.match(activity, /rawError\(run\)/);
   assert.match(activity, /fixGuidance\(run\)/);
   assert.match(activity, /aiFixBrief\(selectedRun, projectId\)/);
+  assert.match(activity, /summary\.visible\.length === 0/);
   assert.doesNotMatch(activity, /Advanced details/);
 
   for (const defaultHeader of [">Agent<", ">Cost<", ">Model<"]) {
@@ -1869,18 +1872,23 @@ test("blocking mutations expose button-level progress and keep opportunity revie
     }
   }
 
-  assert.match(adminPage, /<AdminClient \/>/);
+  assert.match(adminPage, /<AdminClient projectId=\{id\} \/>/);
   assert.ok(!adminPage.includes("redirect(`/admin?from="));
   assert.match(admin, /api\.testLLMCredentials/);
   assert.match(admin, /api\.deleteLLMCredentials/);
+  assert.match(admin, /api\.listRuns\(projectId, \{ limit: 100 \}\)/);
+  assert.match(admin, /isPlatformRuntimeFailure/);
+  assert.match(admin, /activityRawError/);
   assert.match(admin, /Test connection/);
   assert.match(admin, /Delete key/);
   assert.match(admin, /TokenGate API key/);
   assert.match(admin, /Default model/);
   assert.match(admin, /Writer model/);
   assert.match(admin, /QA model/);
-  assert.match(admin, /type AdminTabId = "runtime" \| "geo"/);
+  assert.match(admin, /type AdminTabId = "runtime" \| "geo" \| "incidents"/);
   assert.match(admin, /GEO providers/);
+  assert.match(admin, /Runtime incidents/);
+  assert.match(admin, /Platform AI operations/);
   assert.match(admin, /TokenGate key for Perplexity/);
   assert.match(admin, /OpenAI or Anthropic can run GEO workflows/);
   assert.doesNotMatch(admin, /counts for GEO automation activation/);

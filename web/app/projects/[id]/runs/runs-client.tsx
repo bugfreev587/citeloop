@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, Clipboard, ExternalLink, RefreshCw, Sparkles } from "lucide-react";
 import { GenerationRun } from "../../../lib/api";
+import { activityRawError, isUserAttentionRun, userVisibleActivityRuns } from "../../../lib/activity-runs";
 import { useApi } from "../../../lib/use-api";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
@@ -24,38 +25,8 @@ function money(value: number | null) {
   return `$${value.toFixed(4)}`;
 }
 
-function readableValue(value: unknown) {
-  if (value == null) return "";
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "";
-  }
-}
-
 function rawError(run: GenerationRun) {
-  const output = run.output ?? {};
-  const candidates = [
-    run.error,
-    output.error,
-    output.raw_error,
-    output.message,
-    output.detail,
-    output.reason,
-    output.failure,
-    output.failure_reason,
-  ];
-  const found = candidates.map(readableValue).find(Boolean);
-  if (found) return found;
-  if (run.status === "budget_stopped") return "Budget guardrail stopped this automation before it could finish.";
-  if (run.output?.degraded) return "The run completed with degraded output quality, but no raw error was recorded.";
-  return "No raw error was recorded for this automation run.";
-}
-
-function isAttention(run: GenerationRun) {
-  return ["error", "failed", "budget_stopped"].includes(run.status) || Boolean(run.output?.degraded);
+  return activityRawError(run);
 }
 
 function activityLabel(agent: string) {
@@ -356,10 +327,11 @@ export function RunsClient({ projectId, embeddedInSettings = false }: { projectI
   }, [refresh]);
 
   const summary = useMemo(() => {
-    const attention = runs.filter(isAttention);
-    const successful = runs.filter((run) => !isAttention(run));
-    const degraded = runs.filter((run) => Boolean(run.output?.degraded));
-    return { attention, successful, degraded };
+    const visible = userVisibleActivityRuns(runs);
+    const attention = visible.filter((run) => isUserAttentionRun(run, runs));
+    const successful = visible.filter((run) => !isUserAttentionRun(run, runs));
+    const degraded = visible.filter((run) => Boolean(run.output?.degraded));
+    return { visible, attention, successful, degraded };
   }, [runs]);
 
   async function copySelectedFixBrief() {
@@ -412,7 +384,7 @@ export function RunsClient({ projectId, embeddedInSettings = false }: { projectI
 
       {loading ? (
         <EmptyState title="Loading activity" detail="Fetching recent automation records." />
-      ) : runs.length === 0 ? (
+      ) : summary.visible.length === 0 ? (
         <EmptyState title="No activity yet" detail="Context refreshes, plan updates, draft creation, review checks, publishing, and notifications will appear here." />
       ) : (
         <>
