@@ -96,3 +96,7 @@ export function isUserAttentionRun(run: GenerationRun, runs: GenerationRun[]) {
 export function userVisibleActivityRuns(runs: GenerationRun[]) {
   return runs.filter((run) => isUserVisibleActivityRun(run, runs));
 }
+
+export function activePlatformRuntimeIncidents(runs: GenerationRun[]) {
+  return runs.filter((run) => isPlatformRuntimeFailure(run) && !isSupersededContextFailure(run, runs));
+}

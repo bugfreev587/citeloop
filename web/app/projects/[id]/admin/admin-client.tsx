@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { GenerationRun, GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, ProviderTestResult } from "../../../lib/api";
-import { activityRawError, isPlatformRuntimeFailure } from "../../../lib/activity-runs";
+import { activePlatformRuntimeIncidents, activityRawError } from "../../../lib/activity-runs";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, cx, EmptyState, Field, formatDate, Notice, SectionHeader, TextInput } from "../../../components/ui";
@@ -230,7 +230,7 @@ export function AdminClient({ projectId }: { projectId: string }) {
       applyGeoStatuses(nextGeo);
       try {
         const runs = await api.listRuns(projectId, { limit: 100 });
-        setRuntimeIncidents(runs.filter(isPlatformRuntimeFailure));
+        setRuntimeIncidents(activePlatformRuntimeIncidents(runs));
       } catch {
         setRuntimeIncidents([]);
       }

@@ -1877,7 +1877,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /api\.testLLMCredentials/);
   assert.match(admin, /api\.deleteLLMCredentials/);
   assert.match(admin, /api\.listRuns\(projectId, \{ limit: 100 \}\)/);
-  assert.match(admin, /isPlatformRuntimeFailure/);
+  assert.match(admin, /activePlatformRuntimeIncidents/);
   assert.match(admin, /activityRawError/);
   assert.match(admin, /Test connection/);
   assert.match(admin, /Delete key/);
