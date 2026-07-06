@@ -862,6 +862,43 @@ test("publisher connection APIs call project scoped endpoints without raw token 
   }
 });
 
+test("Dev.to publisher API uses project scoped connection and API key credential", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "devto-1", kind: "dev_to", enabled: false, capabilities: { draft_mode: true } }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const connection = await client.upsertDevToPublisherConnection("project-1", {
+      label: "Dev.to",
+      username: "citeloop",
+    });
+    await client.upsertPublisherCredential("project-1", "devto-1", {
+      kind: "dev_to_api_key",
+      value: "devto_secret",
+    });
+
+    assert.equal(connection.kind, "dev_to");
+    assert.equal(connection.capabilities.draft_mode, true);
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/publisher-connections/dev-to");
+    assert.equal(calls[0].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { label: "Dev.to", username: "citeloop" });
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/publisher-connections/devto-1/credential");
+    assert.deepEqual(JSON.parse(calls[1].init.body), { kind: "dev_to_api_key", value: "devto_secret" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("SEO APIs call project scoped endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

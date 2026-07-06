@@ -585,6 +585,29 @@ test("publisher settings show CMS connector next steps without pretending connec
   }
 });
 
+test("publisher settings explain how to connect each distribution platform", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const copy of [
+    "How to connect",
+    "Open DEV Settings > Extensions.",
+    "Paste the DEV API key into CiteLoop.",
+    "Sign in with LinkedIn.",
+    "Approve submit permissions.",
+    "Create or sign in to a Hacker News account.",
+    "Copy draft only today",
+    "Dev.to API key",
+    "Save Dev.to key",
+    "Test Dev.to",
+  ]) {
+    assert.match(settings, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(settings, /api\.upsertDevToPublisherConnection\(projectId/);
+  assert.match(settings, /kind: "dev_to_api_key"/);
+  assert.doesNotMatch(settings, /Connect LinkedIn[\s\S]*api\.upsertDevToPublisherConnection/);
+});
+
 test("publisher settings restore GitHub OAuth App connection as the primary path", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
 

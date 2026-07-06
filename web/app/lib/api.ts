@@ -286,7 +286,7 @@ export type NotificationDeliveryListOptions = {
 export type PublisherConnection = {
   id: string;
   project_id: string;
-  kind: "github_nextjs" | "webhook" | "wordpress" | string;
+  kind: "github_nextjs" | "webhook" | "wordpress" | "dev_to" | string;
   label: string;
   status: "missing" | "connected" | "error" | "revoked" | string;
   is_default: boolean;
@@ -300,6 +300,7 @@ export type PublisherConnection = {
     content_dir?: string;
     base_url?: string;
     publish_mode?: string;
+    username?: string;
   };
   last_verified_at?: any;
   last_error?: string | null;
@@ -315,8 +316,13 @@ export type GitHubNextJSPublisherInput = {
   credential_ref?: string;
 };
 
+export type DevToPublisherInput = {
+  label?: string;
+  username?: string;
+};
+
 export type PublisherCredentialInput = {
-  kind: "github_token";
+  kind: "github_token" | "dev_to_api_key";
   value: string;
 };
 
@@ -1977,6 +1983,17 @@ export function createApi(auth?: AuthOptions) {
   ): Promise<PublisherConnection> => {
     const raw = await req<any>(
       `/projects/${id}/publisher-connections/github-nextjs`,
+      { method: "PUT", body: JSON.stringify(body) },
+      auth,
+    );
+    return normalizePublisherConnection(raw);
+  },
+  upsertDevToPublisherConnection: async (
+    id: string,
+    body: DevToPublisherInput,
+  ): Promise<PublisherConnection> => {
+    const raw = await req<any>(
+      `/projects/${id}/publisher-connections/dev-to`,
       { method: "PUT", body: JSON.stringify(body) },
       auth,
     );

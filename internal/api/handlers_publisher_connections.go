@@ -45,6 +45,21 @@ type githubNextJSPublisherInput struct {
 	CredentialRef string `json:"credential_ref"`
 }
 
+type devToPublisherInput struct {
+	Label    string `json:"label"`
+	Username string `json:"username"`
+}
+
+type devToConnConfig struct {
+	Username string `json:"username,omitempty"`
+}
+
+type devToProfile struct {
+	Username string `json:"username"`
+}
+
+const devToAPIBaseURL = "https://dev.to"
+
 func githubNextJSConfigForUpsert(in githubNextJSPublisherInput, existing json.RawMessage) (json.RawMessage, string, error) {
 	cfg := githubConnConfig{
 		Repo:           strings.TrimSpace(in.Repo),
@@ -63,6 +78,13 @@ func githubNextJSConfigForUpsert(in githubNextJSPublisherInput, existing json.Ra
 		status = "connected"
 	}
 	return cfgRaw, status, nil
+}
+
+func devToConfigForUpsert(in devToPublisherInput) (json.RawMessage, string, error) {
+	cfg := devToConnConfig{
+		Username: strings.TrimSpace(in.Username),
+	}
+	return mustPublisherJSON(cfg), "missing", nil
 }
 
 func (s *Server) listPublisherConnections(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +171,68 @@ func (s *Server) upsertGitHubNextJSPublisherConnection(w http.ResponseWriter, r 
 	writeJSON(w, http.StatusOK, publisherConnectionResponse(conn))
 }
 
+func (s *Server) upsertDevToPublisherConnection(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := rejectPublisherConnectionSecrets(raw); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var in devToPublisherInput
+	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusInternalServerError, "database unavailable")
+		return
+	}
+	var credentialRef *string
+	if existing, err := s.Q.GetDefaultPublisherConnectionForProject(r.Context(), db.GetDefaultPublisherConnectionForProjectParams{
+		ProjectID: projectID,
+		Kind:      publisher.ConnectionKindDevTo,
+	}); err == nil {
+		credentialRef = existing.CredentialRef
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfgRaw, status, err := devToConfigForUpsert(in)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	label := strings.TrimSpace(in.Label)
+	if label == "" {
+		label = "Dev.to"
+	}
+	conn, err := s.Q.UpsertDefaultPublisherConnection(r.Context(), db.UpsertDefaultPublisherConnectionParams{
+		ProjectID:               projectID,
+		Kind:                    publisher.ConnectionKindDevTo,
+		Label:                   label,
+		Status:                  status,
+		Capabilities:            publisher.DevToCapabilities().JSON(),
+		CapabilitySchemaVersion: 1,
+		CredentialRef:           credentialRef,
+		Config:                  cfgRaw,
+		LastVerifiedAt:          pgtype.Timestamptz{},
+		LastError:               nil,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, publisherConnectionResponse(conn))
+}
+
 func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -169,39 +253,32 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusNotFound, "publisher connection not found")
 		return
 	}
-	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
-		writeErr(w, http.StatusBadRequest, "publisher connection test not supported for "+conn.Kind)
-		return
-	}
-	if _, err := publisher.ParseGitHubNextJSConfig(conn.Config); err != nil {
-		updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{ID: connectionID, ProjectID: projectID, LastError: strPtr(err.Error())})
-		if markErr == nil {
-			writeJSON(w, http.StatusBadRequest, publisherConnectionResponse(updated))
+	switch conn.Kind {
+	case publisher.ConnectionKindGitHubNextJS:
+		if _, err := publisher.ParseGitHubNextJSConfig(conn.Config); err != nil {
+			s.writePublisherConnectionError(w, r, http.StatusBadRequest, connectionID, projectID, err.Error())
 			return
 		}
-		writeErr(w, http.StatusBadRequest, err.Error())
+	case publisher.ConnectionKindDevTo:
+		// The Dev.to API key itself is checked after shared credential resolution.
+	default:
+		writeErr(w, http.StatusBadRequest, "publisher connection test not supported for "+conn.Kind)
 		return
 	}
 	token, err := s.publisherCredentialToken(r.Context(), projectID, conn)
 	if err != nil {
-		msg := "publisher credential cannot be resolved"
-		updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{ID: connectionID, ProjectID: projectID, LastError: &msg})
-		if markErr == nil {
-			writeJSON(w, http.StatusFailedDependency, publisherConnectionResponse(updated))
-			return
-		}
-		writeErr(w, http.StatusFailedDependency, msg)
+		s.writePublisherConnectionError(w, r, http.StatusFailedDependency, connectionID, projectID, "publisher credential cannot be resolved")
 		return
 	}
 	if token == "" {
-		msg := "publisher credential unavailable"
-		updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{ID: connectionID, ProjectID: projectID, LastError: &msg})
-		if markErr == nil {
-			writeJSON(w, http.StatusFailedDependency, publisherConnectionResponse(updated))
+		s.writePublisherConnectionError(w, r, http.StatusFailedDependency, connectionID, projectID, "publisher credential unavailable")
+		return
+	}
+	if conn.Kind == publisher.ConnectionKindDevTo {
+		if _, err := verifyDevToAPIKey(r.Context(), http.DefaultClient, devToAPIBaseURL, token); err != nil {
+			s.writePublisherConnectionError(w, r, http.StatusFailedDependency, connectionID, projectID, err.Error())
 			return
 		}
-		writeErr(w, http.StatusFailedDependency, msg)
-		return
 	}
 	updated, err := s.Q.MarkPublisherConnectionVerified(r.Context(), db.MarkPublisherConnectionVerifiedParams{ID: connectionID, ProjectID: projectID})
 	if err != nil {
@@ -209,6 +286,19 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, publisherConnectionResponse(updated))
+}
+
+func (s *Server) writePublisherConnectionError(w http.ResponseWriter, r *http.Request, status int, connectionID uuid.UUID, projectID uuid.UUID, msg string) {
+	updated, markErr := s.Q.MarkPublisherConnectionError(r.Context(), db.MarkPublisherConnectionErrorParams{
+		ID:        connectionID,
+		ProjectID: projectID,
+		LastError: &msg,
+	})
+	if markErr == nil {
+		writeJSON(w, status, publisherConnectionResponse(updated))
+		return
+	}
+	writeErr(w, status, msg)
 }
 
 func (s *Server) deletePublisherConnection(w http.ResponseWriter, r *http.Request) {
@@ -288,14 +378,6 @@ func (s *Server) upsertPublisherCredential(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	kind := strings.TrimSpace(in.Kind)
-	if kind == "" {
-		kind = publisher.CredentialKindGitHubToken
-	}
-	if kind != publisher.CredentialKindGitHubToken {
-		writeErr(w, http.StatusBadRequest, "publisher credential kind not supported")
-		return
-	}
 	value := strings.TrimSpace(in.Value)
 	if value == "" {
 		writeErr(w, http.StatusBadRequest, "publisher credential value is required")
@@ -306,8 +388,9 @@ func (s *Server) upsertPublisherCredential(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusNotFound, "publisher connection not found")
 		return
 	}
-	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
-		writeErr(w, http.StatusBadRequest, "publisher credential not supported for "+conn.Kind)
+	kind, err := publisherCredentialKindForConnection(conn, in.Kind)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	encrypted, err := secretbox.EncryptString(value, s.Env.NotificationSecretKey)
@@ -353,14 +436,15 @@ func (s *Server) revokePublisherCredential(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusNotFound, "publisher connection not found")
 		return
 	}
-	if conn.Kind != publisher.ConnectionKindGitHubNextJS {
-		writeErr(w, http.StatusBadRequest, "publisher credential not supported for "+conn.Kind)
+	kind, err := publisherCredentialKindForConnection(conn, "")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if _, err := s.Q.RevokePublisherCredentialForConnection(r.Context(), db.RevokePublisherCredentialForConnectionParams{
 		ProjectID:    projectID,
 		ConnectionID: connectionID,
-		Kind:         publisher.CredentialKindGitHubToken,
+		Kind:         kind,
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -465,6 +549,59 @@ func sanitizePublisherConfig(raw json.RawMessage) json.RawMessage {
 		}
 	}
 	return mustPublisherJSON(m)
+}
+
+func publisherCredentialKindForConnection(conn db.PublisherConnection, rawKind string) (string, error) {
+	kind := strings.TrimSpace(rawKind)
+	switch conn.Kind {
+	case publisher.ConnectionKindGitHubNextJS:
+		if kind == "" {
+			kind = publisher.CredentialKindGitHubToken
+		}
+		if kind != publisher.CredentialKindGitHubToken {
+			return "", fmt.Errorf("publisher credential kind %q not supported for %s", kind, conn.Kind)
+		}
+		return kind, nil
+	case publisher.ConnectionKindDevTo:
+		if kind == "" {
+			kind = publisher.CredentialKindDevToAPIKey
+		}
+		if kind != publisher.CredentialKindDevToAPIKey {
+			return "", fmt.Errorf("publisher credential kind %q not supported for %s", kind, conn.Kind)
+		}
+		return kind, nil
+	default:
+		return "", fmt.Errorf("publisher credential not supported for %s", conn.Kind)
+	}
+}
+
+func verifyDevToAPIKey(ctx context.Context, client *http.Client, baseURL string, apiKey string) (devToProfile, error) {
+	var profile devToProfile
+	trimmedKey := strings.TrimSpace(apiKey)
+	if trimmedKey == "" {
+		return profile, errors.New("dev.to API key is required")
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/users/me", nil)
+	if err != nil {
+		return profile, err
+	}
+	req.Header.Set("accept", "application/vnd.forem.api-v1+json")
+	req.Header.Set("api-key", trimmedKey)
+	res, err := client.Do(req)
+	if err != nil {
+		return profile, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return profile, fmt.Errorf("dev.to API key rejected with status %d", res.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 32*1024)).Decode(&profile); err != nil {
+		return profile, err
+	}
+	return profile, nil
 }
 
 func safeJSON(raw json.RawMessage, fallback string) json.RawMessage {
