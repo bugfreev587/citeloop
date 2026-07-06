@@ -110,6 +110,7 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
     "Run finding",
     "Signal Scan",
     "AI Discovery",
+    "summary.slice(0, 5)",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
