@@ -529,8 +529,9 @@ where project_id = $1
 -- name: CreateContentAction :one
 insert into content_actions
   (project_id, opportunity_id, action_type, status, target_article_id, target_url,
-   normalized_target_url, target_content_hash_before, baseline_window, measurement_window)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+   normalized_target_url, target_content_hash_before, baseline_window, measurement_window,
+   approval_source, routing_source, work_type)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 on conflict (project_id, opportunity_id, action_type) do update set
   status = excluded.status,
   target_article_id = excluded.target_article_id,
@@ -539,7 +540,82 @@ on conflict (project_id, opportunity_id, action_type) do update set
   target_content_hash_before = excluded.target_content_hash_before,
   baseline_window = excluded.baseline_window,
   measurement_window = excluded.measurement_window,
+  approval_source = excluded.approval_source,
+  routing_source = excluded.routing_source,
+  work_type = excluded.work_type,
   updated_at = now()
+returning *;
+
+-- name: SnoozeSEOOpportunity :one
+update seo_opportunities set
+  status = 'snoozed',
+  snoozed_until = sqlc.arg(snoozed_until),
+  snooze_reason = sqlc.narg(snooze_reason),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status in ('open','snoozed')
+returning *;
+
+-- name: UnsnoozeSEOOpportunity :one
+update seo_opportunities set
+  status = 'open',
+  snoozed_until = null,
+  unsnoozed_at = now(),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status = 'snoozed'
+returning *;
+
+-- name: WakeDueSnoozedSEOOpportunities :execrows
+update seo_opportunities set
+  status = 'open',
+  unsnoozed_at = now(),
+  updated_at = now()
+where project_id = $1
+  and status = 'snoozed'
+  and snoozed_until is not null
+  and snoozed_until <= now();
+
+-- name: CreateSEOWatchlistItem :one
+insert into seo_watchlist_items
+  (project_id, source_opportunity_id, observation_window_days, due_at)
+values ($1, $2, $3, $4)
+on conflict (project_id, source_opportunity_id) do update set
+  status = 'watching',
+  observation_window_days = excluded.observation_window_days,
+  due_at = excluded.due_at,
+  closed_at = null,
+  updated_at = now()
+returning *;
+
+-- name: ListSEOWatchlistItems :many
+select w.*,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.page_url as opportunity_page_url,
+  so.query as opportunity_query,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact
+from seo_watchlist_items w
+left join seo_opportunities so
+  on so.id = w.source_opportunity_id
+  and so.project_id = w.project_id
+where w.project_id = sqlc.arg(project_id)
+  and (sqlc.arg(status)::text = '' or w.status = sqlc.arg(status))
+order by w.due_at asc, w.created_at desc
+limit sqlc.arg(limit_rows);
+
+-- name: MarkDueSEOWatchlistItems :execrows
+update seo_watchlist_items set
+  status = 'due_for_review',
+  updated_at = now()
+where project_id = $1
+  and status = 'watching'
+  and due_at <= now();
+
+-- name: CloseSEOWatchlistItem :one
+update seo_watchlist_items set
+  status = sqlc.arg(status),
+  closed_at = now(),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
 -- name: ListContentActions :many
@@ -575,6 +651,9 @@ select
   ca.review_required,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.status, '')::text as opportunity_status,
   coalesce(so.type, '')::text as opportunity_type,
   so.page_url as opportunity_page_url,
@@ -749,6 +828,9 @@ select
   ca.approved_at,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.type, '')::text as opportunity_type,
   so.query as opportunity_query,
   so.page_url as opportunity_page_url,
@@ -816,6 +898,9 @@ select
   ca.approved_at,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.type, '')::text as opportunity_type,
   so.query as opportunity_query,
   so.page_url as opportunity_page_url,

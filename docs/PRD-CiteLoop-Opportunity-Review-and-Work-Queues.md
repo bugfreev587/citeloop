@@ -356,7 +356,7 @@ Site Fixes 卡片必须展示:
 Site Fix
 Schema update for /product
 Source: Approved opportunity
-Status: Waiting for review
+Status: Review
 Next step: Review suggested schema patch
 ```
 
@@ -594,32 +594,51 @@ Opportunity Queue 不允许使用 generic creation CTA。
 
 ## 10. Status 语言
 
+Revision note, 2026-07-05: shared lifecycle labels are owned by
+`docs/PRD-CiteLoop-Loop-Lifecycle-Content-Plan-UX.md` Section 7.1. The status
+terms in this section are page-specific decision, receipt, or CTA copy only.
+They must not be implemented as a competing lifecycle vocabulary.
+
 ### 10.1 Opportunity Status
 
 Opportunity Queue 使用:
 
 - Needs decision
-- Approved
 - Sent to Content Plan
 - Sent to Site Fixes
 - Watching in Results
 - Dismissed
 - Snoozed
 
+Do not show `Approved` as a stable Opportunity Queue state. Approval is the
+decision event; the visible queue state should immediately become the downstream
+receipt, such as `Sent to Content Plan` or `Sent to Site Fixes`. This avoids
+colliding with the later lifecycle label `Approved`.
+
 ### 10.2 Work Queue Status
 
-Content Plan 和 Site Fixes 使用:
+Content Plan 和 Site Fixes 的共享 lifecycle label 以 Loop Lifecycle PRD
+Section 7.1 为准:
 
-- Planned
-- Sent to Review
-- Waiting for review
+- Added
+- Topic planned
+- Drafting
+- Review
 - Approved
-- Sent to Publish
-- In progress
-- Applied
-- Sent to Results
+- Published/Applied
 - Measuring
+- Learned
 - Blocked
+
+本 PRD 可继续使用以下 page-specific receipt copy, 但它们不是 lifecycle:
+
+- Sent to Content Plan
+- Sent to Site Fixes
+- Sent to Review
+- Sent to Publish
+- Sent to Results
+- View in Review
+- View Results
 
 ### 10.3 Results Status
 
@@ -647,12 +666,16 @@ Results 使用:
 | Opportunity Queue | Sent to Content Plan | Downstream item enters Review | System | Reviewed/history | Removed from default queue |
 | Opportunity Queue | Sent to Site Fixes | Site fix applied or sent to review | System | Reviewed/history | Removed from default queue |
 | Opportunity Queue | Sent downstream | 7 days elapsed | System | Reviewed/history | Prevents queue buildup |
-| Content Plan | Planned | Create/generate draft | User or system | Sent to Review | Card becomes `View in Review` |
-| Review | Waiting for review | Approve | User or policy | Sent to Publish | Card becomes `View in Publish` |
-| Publish | Approved/In progress | Publish/apply | User or system | Sent to Results | Card becomes `View Results` |
+| Content Plan | Topic planned | Create/generate draft | User or system | Sent to Review | Card becomes `View in Review`; `Topic planned` comes from Loop Lifecycle PRD |
+| Review | Review | Approve | User or policy | Sent to Publish | Card becomes `View in Publish` |
+| Publish | Approved | Publish/apply | User or system | Sent to Results | Card becomes `View Results` |
 | Results | Measuring | Measurement window closes | System | Learned | Outcome is stored |
 
-`Sent to Review` means the planning card has handed off to a review item. `Waiting for review` means the review item itself is awaiting approval. `Sent to Publish` means review has handed off to publish. `Approved` means a user or policy has approved the current-stage item but the next stage has not necessarily taken over yet.
+`Sent to Review` means the planning card has handed off to a review item.
+`Review` means the review item itself is awaiting approval. `Sent to Publish`
+means review has handed off to publish. `Approved` means a user or policy has
+approved the current-stage item but the next stage has not necessarily taken over
+yet.
 
 ## 11. Data 和 API Implications
 

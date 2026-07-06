@@ -111,6 +111,9 @@ type VisibilityActionInLoop struct {
 	DraftArticleStatus        *string                  `json:"draft_article_status,omitempty"`
 	DraftArticleCanonicalURL  *string                  `json:"draft_article_canonical_url,omitempty"`
 	ReviewRequired            bool                     `json:"review_required"`
+	ApprovalSource            string                   `json:"approval_source"`
+	RoutingSource             string                   `json:"routing_source"`
+	WorkType                  *string                  `json:"work_type,omitempty"`
 	PublishedAt               *time.Time               `json:"published_at,omitempty"`
 	VerifiedAt                *time.Time               `json:"verified_at,omitempty"`
 	MeasurementWindow         json.RawMessage          `json:"measurement_window"`
@@ -307,6 +310,12 @@ func (s *Server) listSEOOpportunities(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad cursor")
 		return
 	}
+	// Snoozed opportunities return to Needs decision once their snooze window
+	// elapses (PRD §11.2); promote them before listing.
+	if _, err := s.Q.WakeDueSnoozedSEOOpportunities(r.Context(), projectID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	params := db.ListSEOOpportunitiesParams{
 		ProjectID: projectID,
 		Type:      r.URL.Query().Get("type"),
@@ -381,6 +390,7 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 	var in struct {
 		ActionType       string          `json:"action_type"`
 		AssetType        string          `json:"asset_type"`
+		WorkType         string          `json:"work_type"`
 		TargetSurfaceID  *uuid.UUID      `json:"target_surface_id"`
 		RiskReasons      json.RawMessage `json:"risk_reasons"`
 		EvidenceSnapshot json.RawMessage `json:"evidence_snapshot"`
@@ -394,6 +404,17 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "opportunity not found")
 		return
+	}
+	recommendedWorkType := workTypeForOpportunity(opp)
+	workType := recommendedWorkType
+	routingSource := RoutingSourceSystem
+	if requested := strings.TrimSpace(strings.ToLower(in.WorkType)); requested != "" && requested != recommendedWorkType {
+		if !workTypeAllowed(opp, requested) {
+			writeErr(w, http.StatusBadRequest, "work_type not allowed for this opportunity")
+			return
+		}
+		workType = requested
+		routingSource = RoutingSourceUserOverride
 	}
 	actionType := strings.TrimSpace(in.ActionType)
 	if actionType == "" && opp.RecommendedAction != nil {
@@ -428,6 +449,9 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 		TargetContentHashBefore: targetHash,
 		BaselineWindow:          json.RawMessage(`{"days":28}`),
 		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
+		ApprovalSource:          ApprovalSourceHumanReview,
+		RoutingSource:           routingSource,
+		WorkType:                &workType,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -1802,6 +1826,9 @@ func visibilityActionInLoop(row db.ListVisibilityActionRowsRow, stage Visibility
 		DraftArticleStatus:        row.DraftArticleStatus,
 		DraftArticleCanonicalURL:  row.DraftArticleCanonicalUrl,
 		ReviewRequired:            row.ReviewRequired,
+		ApprovalSource:            row.ApprovalSource,
+		RoutingSource:             row.RoutingSource,
+		WorkType:                  row.WorkType,
 		PublishedAt:               pgTimePtr(row.PublishedAt),
 		VerifiedAt:                pgTimePtr(row.VerifiedAt),
 		MeasurementWindow:         rawOrDefault(row.MeasurementWindow, `{}`),
@@ -1844,6 +1871,9 @@ func resultsActionFromListRow(row db.ListResultsActionRowsRow) ResultsAction {
 			ApprovedAt:              row.ApprovedAt,
 			VerifiedAt:              row.VerifiedAt,
 			VerificationSnapshot:    rawOrDefault(row.VerificationSnapshot, `{}`),
+			ApprovalSource:          row.ApprovalSource,
+			RoutingSource:           row.RoutingSource,
+			WorkType:                row.WorkType,
 		},
 		OpportunityType:              row.OpportunityType,
 		OpportunityQuery:             row.OpportunityQuery,
@@ -1890,6 +1920,9 @@ func resultsActionFromGetRow(row db.GetResultsActionRowRow) ResultsAction {
 			ApprovedAt:              row.ApprovedAt,
 			VerifiedAt:              row.VerifiedAt,
 			VerificationSnapshot:    rawOrDefault(row.VerificationSnapshot, `{}`),
+			ApprovalSource:          row.ApprovalSource,
+			RoutingSource:           row.RoutingSource,
+			WorkType:                row.WorkType,
 		},
 		OpportunityType:              row.OpportunityType,
 		OpportunityQuery:             row.OpportunityQuery,

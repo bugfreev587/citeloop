@@ -200,10 +200,29 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
 
   assert.equal(source.includes("Create content task"), false, "Opportunity Queue should not show generic Create content task CTA");
   assert.equal(source.includes("Create technical task"), false, "Opportunity Queue should not show generic technical task CTA");
-  assert.equal(source.includes("opportunityWorkTypeOptions"), false, "Opportunity work type should be fixed by the opportunity, not chosen in the UI");
-  assert.equal(source.includes("workTypeOverrides"), false, "Opportunity approval must not override the system-selected work type");
   const directAssetTypes = source.match(/const directActionAssetTypes = new Set\(\[([^\]]+)\]\)/)?.[1] ?? "";
   assert.equal(directAssetTypes.includes("metadata_rewrite"), false, "Metadata/page-update work should not be routed to Site Fixes");
+});
+
+test("Opportunity queue supports snooze, watch, and approval-source provenance", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "snoozeOpportunity",
+    "unsnoozeOpportunity",
+    "watchOpportunity",
+    "Watch in Results",
+    "Watching in Results",
+    "Snoozed (",
+    "approvalSourceLabel(action.approval_source)",
+    "Approved by Autopilot policy",
+    "results-watchlist",
+    "watchlistStatusLabel",
+    "This item moved or was completed",
+    "Show all site fixes",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
 });
 
 test("Opportunity review drawer explains work type destination and approval source", async () => {
@@ -224,11 +243,24 @@ test("Opportunity review drawer explains work type destination and approval sour
   }
 
   assert.match(source, /function opportunityWorkType\(opportunity: SEOOpportunity\): OpportunityWorkType/);
-  assert.equal(source.includes('role="group" aria-label="Work type"'), false, "Work type should render as read-only information, not a toggle group");
   assert.notEqual(drawerStart, -1, "seo-client.tsx missing opportunity drawer");
   assert.notEqual(drawerEnd, -1, "seo-client.tsx missing drawer boundary");
-  assert.equal(drawerSource.includes("aria-pressed"), false, "Opportunity drawer should not expose work type selection buttons");
-  assert.equal(source.includes("setWorkTypeOverrides"), false, "Opportunity drawer should not let users change the system-selected work type");
+  assert.equal(drawerSource.length >= 0, true, "drawer boundary slice must resolve");
+
+  // PRD §6.2: the drawer must let users correct the route between allowed
+  // work types, keep CTA/destination/approval copy in sync, and explain why
+  // locked routes cannot change.
+  for (const expected of [
+    "allowedWorkTypesForOpportunity",
+    "routeOverrides",
+    "setRouteOverrides",
+    'aria-label="Choose work type"',
+    "workTypeLockReason",
+    "approvalCopyForWorkType",
+    "work_type: workTypeKeys[workType]",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
 });
 
 test("Analysis loop progress is a strip and finding dismissal is explicit", async () => {

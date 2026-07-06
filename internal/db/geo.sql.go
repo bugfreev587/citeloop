@@ -1562,18 +1562,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = ''
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, null, $8, $9, $10, $11, $12, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from inserted
 `
 
 type UpsertCrawlerAccessOpportunityParams struct {
@@ -1612,6 +1612,9 @@ type UpsertCrawlerAccessOpportunityRow struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	OpportunityKey    string             `json:"opportunity_key"`
+	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason      *string            `json:"snooze_reason"`
+	UnsnoozedAt       pgtype.Timestamptz `json:"unsnoozed_at"`
 }
 
 func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error) {
@@ -1651,6 +1654,9 @@ func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg Upsert
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
 	)
 	return i, err
 }
@@ -1790,18 +1796,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = coalesce($8, '')
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from inserted
 `
 
 type UpsertGEOObservationOpportunityParams struct {
@@ -1841,6 +1847,9 @@ type UpsertGEOObservationOpportunityRow struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	OpportunityKey    string             `json:"opportunity_key"`
+	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason      *string            `json:"snooze_reason"`
+	UnsnoozedAt       pgtype.Timestamptz `json:"unsnoozed_at"`
 }
 
 func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error) {
@@ -1881,6 +1890,9 @@ func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg Upser
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
 	)
 	return i, err
 }

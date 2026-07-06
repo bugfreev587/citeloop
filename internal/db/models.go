@@ -178,6 +178,9 @@ type ContentAction struct {
 	ApprovedAt              pgtype.Timestamptz `json:"approved_at"`
 	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
 	VerificationSnapshot    json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource          string             `json:"approval_source"`
+	RoutingSource           string             `json:"routing_source"`
+	WorkType                *string            `json:"work_type"`
 }
 
 type ContentInventory struct {
@@ -724,6 +727,9 @@ type SeoOpportunity struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	OpportunityKey    string             `json:"opportunity_key"`
+	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason      *string            `json:"snooze_reason"`
+	UnsnoozedAt       pgtype.Timestamptz `json:"unsnoozed_at"`
 }
 
 type SeoPolicy struct {
@@ -777,6 +783,18 @@ type SeoRun struct {
 	Input      json.RawMessage    `json:"input"`
 	Output     json.RawMessage    `json:"output"`
 	Error      *string            `json:"error"`
+}
+
+type SeoWatchlistItem struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	SourceOpportunityID   uuid.UUID          `json:"source_opportunity_id"`
+	Status                string             `json:"status"`
+	ObservationWindowDays int32              `json:"observation_window_days"`
+	DueAt                 pgtype.Timestamptz `json:"due_at"`
+	ClosedAt              pgtype.Timestamptz `json:"closed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TechnicalCheck struct {
