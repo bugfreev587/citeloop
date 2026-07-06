@@ -141,8 +141,26 @@ test("home pipeline stage counts match each destination page queue", async () =>
   const { homePipelineStageCounts } = await loadDashboardUXLogicModule();
 
   const counts = homePipelineStageCounts({
-    topics: [{ id: "topic-1" }, { id: "topic-2" }],
+    topics: [
+      { id: "topic-1", status: "drafted" },
+      { id: "topic-2", status: "drafted" },
+      { id: "topic-3", status: "drafted" },
+    ],
     reviewGroups: [],
+    visibilityActionsInLoop: [
+      {
+        id: "action-1",
+        lifecycle_stage: "added_to_plan",
+        asset_type: "page_update",
+        opportunity_status: "accepted",
+      },
+      {
+        id: "action-2",
+        lifecycle_stage: "planned",
+        asset_type: "metadata_rewrite",
+        opportunity_status: "accepted",
+      },
+    ],
     approvedArticles: [
       { id: "variant-1", kind: "syndication_variant" },
       { id: "variant-2", kind: "syndication_variant" },
