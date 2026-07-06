@@ -377,12 +377,10 @@ const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "re
 function isRecentlySentAction(action: SEOContentAction | ResultsAction) {
   if (["published", "measuring", "completed", "archived", "dismissed"].includes(action.status)) return false;
   if (!action.opportunity_id) return false;
-  const stage = deriveVisibilityLifecycleStage(action);
-  if (activeHandoffStages.has(stage)) return true;
-  if (!action.created_at) return true;
-  const createdAt = new Date(action.created_at);
-  if (Number.isNaN(createdAt.getTime())) return true;
-  return Date.now() - createdAt.getTime() <= 7 * 24 * 60 * 60 * 1000;
+  // Exit is event-driven only (PRD-CiteLoop-Workflow-Handoff-Link-Cards §2.2):
+  // the card leaves when the downstream item advances past the handoff stages,
+  // never on a time window or count cap.
+  return activeHandoffStages.has(deriveVisibilityLifecycleStage(action));
 }
 
 function opportunityPriorityLabel(opportunity: SEOOpportunity) {
@@ -1574,8 +1572,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const left = a.created_at ? new Date(a.created_at).getTime() : 0;
       const right = b.created_at ? new Date(b.created_at).getTime() : 0;
       return right - left;
-    })
-    .slice(0, 10);
+    });
   const selectedDirectAction = useMemo(
     () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
     [directReviewActions, selectedDirectActionID],
@@ -2144,7 +2141,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
                   Recently sent ({sentOpportunityLinks.length})
                 </summary>
-                <div className="grid gap-2 border-t border-slate-100 p-3">
+                <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
                   {sentOpportunityLinks.map((action) => {
                     const destination = destinationForAction(action);
                     const href = actionHandoffHref(projectId, action);
@@ -2173,6 +2170,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           key={action.id}
                           type="button"
                           data-opportunity-handoff-card
+                          aria-label={`Open "${loopActionTitle(action as any)}" in Site Fixes`}
                           onClick={() => focusSiteFixCard(action.id)}
                           className="w-full rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                         >
@@ -2185,6 +2183,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <Link
                         key={action.id}
                         data-opportunity-handoff-card
+                        aria-label={`Open "${loopActionTitle(action as any)}" in Content Plan`}
                         href={href ?? `/projects/${projectId}/topics`}
                         className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                       >
