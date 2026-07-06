@@ -1,5 +1,6 @@
 import { AdminClient } from "./admin-client";
 
-export default function AdminPage() {
-  return <AdminClient />;
+export default async function AdminPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <AdminClient projectId={id} />;
 }
