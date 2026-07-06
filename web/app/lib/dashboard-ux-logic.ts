@@ -74,8 +74,8 @@ export type HomePipelineStageCountsInput = {
     lifecycle_stage?: string | null;
     opportunity_status?: string | null;
     asset_type?: string | null;
-    output_snapshot?: any;
-    diff_snapshot?: any;
+    output_snapshot?: Record<string, any> | null;
+    diff_snapshot?: Record<string, any> | null;
   }>;
   approvedArticles: Array<{ kind?: string | null }>;
   failedPublishArticles: Array<{ kind?: string | null }>;
@@ -395,16 +395,17 @@ export function homePipelineStageCounts(input: HomePipelineStageCountsInput): Ho
   const failedCanonicalCount = input.failedPublishArticles.filter(isCanonicalArticle).length;
   const verifyingCanonicalCount = (input.verifyingArticles ?? []).filter(isCanonicalArticle).length;
   const readyDistributeCount = input.readyDistribute.filter(isReadyDistributeItem).length;
+  const contentPlanCount = activePlanTopicCount + acceptedPlanActionCount;
 
   return {
-    contentPlan: activePlanTopicCount + acceptedPlanActionCount,
+    contentPlan: contentPlanCount,
     review: input.reviewGroups.reduce((total, group) => total + (group.articles?.length ?? 0), 0),
     publish: approvedCanonicalCount + failedCanonicalCount + verifyingCanonicalCount + readyDistributeCount,
     results:
       (input.visibilityLifecycleCounts?.published_or_applied ?? 0) +
       (input.visibilityLifecycleCounts?.measuring ?? 0) +
       (input.visibilityLifecycleCounts?.learned ?? 0),
-    planGenerationPending: visibilityPlanHandoffCount > 0 && input.topics.length === 0,
+    planGenerationPending: visibilityPlanHandoffCount > 0 && contentPlanCount === 0,
   };
 }
 
