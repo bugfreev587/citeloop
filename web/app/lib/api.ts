@@ -58,7 +58,7 @@ export class ApiError extends Error {
   constructor(status: number, body: string) {
     const payload = parseErrorBody(body);
     const apiMessage = typeof payload.error === "string" ? payload.error : body;
-    super(`${status}: ${body}`);
+    super(`${status}: ${apiMessage}`);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
@@ -85,6 +85,10 @@ export function friendlyApiError(error: unknown) {
     }
     if (error.status >= 500) {
       return "CiteLoop could not load this data. Try again in a moment.";
+    }
+    const detail = error.apiMessage.trim();
+    if (detail && !detail.startsWith("{") && !detail.startsWith("[")) {
+      return detail;
     }
     return "CiteLoop could not complete this request.";
   }
