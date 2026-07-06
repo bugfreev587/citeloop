@@ -134,6 +134,8 @@ func (s *Server) Router() http.Handler {
 				r.Post("/sync", s.syncSEO)
 				r.Post("/analyze", s.analyzeSEO)
 				r.Get("/runs", s.listSEORuns)
+				r.Get("/opportunity-finding/status", s.getOpportunityFindingStatus)
+				r.Post("/opportunity-finding/run", s.runOpportunityFinding)
 				r.Get("/visibility/summary", s.getVisibilitySummary)
 				r.Get("/opportunities", s.listSEOOpportunities)
 				r.Get("/opportunities/{opportunityID}", s.getSEOOpportunity)

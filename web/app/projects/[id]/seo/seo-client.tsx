@@ -19,6 +19,7 @@ import {
   SEOObjective,
   SEOOpportunity,
   SEOOverview,
+  OpportunityFindingStatus,
   SEOPolicy,
   SEOWatchlistItem,
   SafeModeEvent,
@@ -1296,6 +1297,116 @@ function GSCStatusMenu({
   );
 }
 
+function formatOpportunityFindingDuration(ms?: number) {
+  const value = Number(ms ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return "Not recorded";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  const seconds = Math.round(value / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function opportunityFindingModeLabel(status: OpportunityFindingStatus | null) {
+  if (!status) return "Loading";
+  if (status.source_mix === "signal_scan") return "Signal Scan";
+  if (status.source_mix === "ai_discovery") return "AI Discovery";
+  return "All";
+}
+
+function OpportunityFindingStatusPanel({
+  status,
+  busy,
+  projectId,
+  onRun,
+}: {
+  status: OpportunityFindingStatus | null;
+  busy: string | null;
+  projectId: string;
+  onRun: () => void;
+}) {
+  const manualMode = Boolean(status?.manual_mode);
+  const panelClass = manualMode
+    ? "border-amber-200 bg-amber-50"
+    : status
+      ? "border-emerald-200 bg-emerald-50"
+      : "border-slate-200 bg-slate-50";
+  const lastRunLabel = status?.last_run?.started_at ? formatDate(status.last_run.started_at) : "Not run yet";
+  const nextRunLabel = status?.next_finding_at ? formatDate(status.next_finding_at) : manualMode ? "Manual mode" : "Not scheduled";
+  const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
+  const summary = status?.summary?.length
+    ? status.summary
+    : [{ label: "Signal Scan", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
+  const automationLabel =
+    status?.ai_discovery_automation === "automatic"
+      ? "Automatic"
+      : status?.ai_discovery_automation === "manual"
+        ? "Manual"
+        : "Semi-automatic";
+
+  return (
+    <section data-analysis-opportunity-finding-status className={cx("rounded-xl border px-4 py-4 shadow-sm", panelClass)}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-bold text-slate-950">Opportunity Finding</div>
+            <Badge tone={manualMode ? "amber" : "green"}>{manualMode ? "Manual mode" : automationLabel}</Badge>
+            <Badge tone="neutral">{opportunityFindingModeLabel(status)}</Badge>
+          </div>
+          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+            <div>
+              <div className="text-xs font-bold uppercase text-slate-500">Last finding</div>
+              <div className="mt-1 font-semibold text-slate-950">{lastRunLabel}</div>
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase text-slate-500">Duration</div>
+              <div className="mt-1 font-semibold text-slate-950">{durationLabel}</div>
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase text-slate-500">Next finding</div>
+              <div className="mt-1 font-semibold text-slate-950">{nextRunLabel}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {manualMode && (
+            <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy}>
+              <ButtonProgress busy={busy === "opportunity-finding"} busyLabel="Finding" idleIcon={<Search size={14} />}>
+                Run finding
+              </ButtonProgress>
+            </Button>
+          )}
+          <Link
+            href={`/projects/${projectId}/settings#opportunity-finding`}
+            className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Settings
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {summary.slice(0, 4).map((item) => (
+          <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
+            <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
+            <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
+          </div>
+        ))}
+      </div>
+
+      {status && (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+          <span>{status.counts.open} open</span>
+          <span>{status.counts.in_loop} in loop</span>
+          <span>{status.counts.processed} already handled</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
 type SEOClientMode = "analysis" | "results";
 
 export function AnalysisClient({ projectId }: { projectId: string }) {
@@ -1311,6 +1422,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const searchParams = useSearchParams();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
+  const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
@@ -1366,9 +1478,30 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, summaryData, settings, briefData, opps, snoozedOpps, watchingOpps, watchlistRows, actionRows, resultsRows, policyData, readinessData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
+      const [
+        overviewData,
+        summaryData,
+        findingStatus,
+        settings,
+        briefData,
+        opps,
+        snoozedOpps,
+        watchingOpps,
+        watchlistRows,
+        actionRows,
+        resultsRows,
+        policyData,
+        readinessData,
+        objectiveRows,
+        planRows,
+        safeModeRows,
+        crawlerAudit,
+        geoData,
+        briefRows,
+      ] = await Promise.all([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
+        api.getOpportunityFindingStatus(projectId),
         api.getSEOSettings(projectId),
         api.getSEOBrief(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }),
@@ -1388,6 +1521,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       ]);
       setOverview(overviewData);
       setVisibilitySummary(summaryData);
+      setOpportunityFindingStatus(findingStatus);
       setBrief(briefData);
       setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
       setWatchlist(watchlistRows);
@@ -1848,6 +1982,24 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }
 
+  async function runOpportunityFinding() {
+    setBusy("opportunity-finding");
+    setMessage(null);
+    try {
+      const result = await api.runOpportunityFinding(projectId);
+      await refresh();
+      setMessage({
+        title: "Opportunity finding complete",
+        detail: `${result.status.counts.open} open; ${result.status.counts.processed} already handled`,
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Opportunity finding failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runCrawlerAudit() {
     setBusy("geo-crawler");
     setMessage(null);
@@ -2265,6 +2417,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       {mode === "analysis" && (
         <>
         <div className="space-y-5">
+          <OpportunityFindingStatusPanel
+            status={opportunityFindingStatus}
+            busy={busy}
+            projectId={projectId}
+            onRun={runOpportunityFinding}
+          />
+
           <section data-analysis-growth-findings-section className="space-y-3">
             <SectionHeader
               title={`Opportunity Queue · ${activeOpportunities.length} need decision`}

@@ -74,14 +74,16 @@ test("Analysis page does not render Automation readiness as a primary module", a
 test("Analysis page leads with Opportunity Queue before Site Fixes", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
-  for (const expected of ["data-analysis-growth-findings-section", "Opportunity Queue ·", "data-site-fixes-queue", "Site Fixes", "data-site-fix-card"]) {
+  for (const expected of ["data-analysis-opportunity-finding-status", "data-analysis-growth-findings-section", "Opportunity Queue ·", "data-site-fixes-queue", "Site Fixes", "data-site-fix-card"]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
 
+  const findingStatusIndex = source.indexOf("data-analysis-opportunity-finding-status");
   const opportunityQueueIndex = source.indexOf("data-analysis-growth-findings-section");
   const siteFixesIndex = source.indexOf("data-site-fixes-queue");
   const loopIndex = source.indexOf("data-analysis-loop-strip");
 
+  assert.ok(findingStatusIndex < opportunityQueueIndex, "Opportunity Finding status should sit above the queue");
   assert.ok(opportunityQueueIndex < siteFixesIndex, "Opportunity Queue should appear before Site Fixes");
   assert.ok(siteFixesIndex < loopIndex, "Site Fixes should stay before lower-priority loop diagnostics");
   assert.equal(source.includes("data-analysis-focus-cards"), false, "Analysis should not render the old top metrics board");
@@ -94,6 +96,23 @@ test("Analysis page leads with Opportunity Queue before Site Fixes", async () =>
   assert.equal(source.includes("Finish automation setup in Settings"), true);
   assert.equal(source.includes("data-analysis-search-signal"), false, "Analysis should not show search metrics as a first-level panel");
   assert.equal(source.includes("Search performance snapshot"), false, "Home owns the search-performance KPI snapshot");
+});
+
+test("Analysis page exposes Opportunity Finding run status", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+
+  for (const expected of [
+    "api.getOpportunityFindingStatus(projectId)",
+    "api.runOpportunityFinding(projectId)",
+    "Last finding",
+    "Next finding",
+    "Manual mode",
+    "Run finding",
+    "Signal Scan",
+    "AI Discovery",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
 });
 
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {

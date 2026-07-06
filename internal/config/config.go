@@ -129,6 +129,15 @@ type ProjectConfig struct {
 	BrandVoice         string     `json:"brand_voice"`
 	MonthlyBudgetUSD   float64    `json:"monthly_budget_usd"`
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
+	// OpportunityFindingSourceMix controls which discovery stages are eligible:
+	//   "all" (default) — deterministic Signal Scan plus AI Discovery;
+	//   "signal_scan" — only Search Console/crawl/profile signals;
+	//   "ai_discovery" — only the AI Discovery stage.
+	OpportunityFindingSourceMix string `json:"opportunity_finding_source_mix"`
+	// AIDiscoveryAutomation controls the AI Discovery stage only. Signal Scan
+	// keeps its own deterministic schedule so processed opportunities never
+	// depend on LLM availability.
+	AIDiscoveryAutomation string `json:"ai_discovery_automation"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
@@ -146,16 +155,32 @@ const (
 	PublishModeManual    = "manual"
 )
 
+// Opportunity finding source values.
+const (
+	OpportunityFindingSourceAll         = "all"
+	OpportunityFindingSourceSignalScan  = "signal_scan"
+	OpportunityFindingSourceAIDiscovery = "ai_discovery"
+)
+
+// AI Discovery automation values.
+const (
+	AIDiscoveryAutomationAutomatic     = "automatic"
+	AIDiscoveryAutomationSemiAutomatic = "semi_automatic"
+	AIDiscoveryAutomationManual        = "manual"
+)
+
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
-		CadencePerWeek:      3,
-		BufferDays:          5,
-		ChannelMix:          ChannelMix{Blog: 0.6, Syndication: 0.4},
-		MonthlyBudgetUSD:    50,
-		AutoAdvanceEnabled:  false,
-		PublishMode:         PublishModeManual,
-		PublishIntervalDays: 2,
+		CadencePerWeek:              3,
+		BufferDays:                  5,
+		ChannelMix:                  ChannelMix{Blog: 0.6, Syndication: 0.4},
+		MonthlyBudgetUSD:            50,
+		AutoAdvanceEnabled:          false,
+		OpportunityFindingSourceMix: OpportunityFindingSourceAll,
+		AIDiscoveryAutomation:       AIDiscoveryAutomationSemiAutomatic,
+		PublishMode:                 PublishModeManual,
+		PublishIntervalDays:         2,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,
@@ -188,6 +213,16 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	}
 	if c.PublishIntervalDays <= 0 {
 		c.PublishIntervalDays = 2
+	}
+	switch c.OpportunityFindingSourceMix {
+	case OpportunityFindingSourceAll, OpportunityFindingSourceSignalScan, OpportunityFindingSourceAIDiscovery:
+	default:
+		c.OpportunityFindingSourceMix = OpportunityFindingSourceAll
+	}
+	switch c.AIDiscoveryAutomation {
+	case AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual:
+	default:
+		c.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
 	}
 	return c, nil
 }

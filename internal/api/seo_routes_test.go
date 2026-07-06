@@ -25,6 +25,8 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "sync", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/sync"},
 		{name: "analyze", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/analyze"},
 		{name: "runs", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/runs"},
+		{name: "opportunity finding status", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunity-finding/status"},
+		{name: "opportunity finding run", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/opportunity-finding/run"},
 		{name: "opportunities", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunities"},
 		{name: "opportunity detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunities/not-an-id"},
 		{name: "accept", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/opportunities/not-an-id/accept"},
