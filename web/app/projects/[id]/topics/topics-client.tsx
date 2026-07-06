@@ -184,6 +184,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
+  const [reviewArticleByTopic, setReviewArticleByTopic] = useState<Record<string, string>>({});
   const contentPlanActionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
@@ -202,6 +203,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setVisibilitySummary(summary);
       if (project) setConfig(project.config);
       setInReview(review.reduce((sum, group) => sum + group.articles.length, 0));
+      setReviewArticleByTopic(
+        Object.fromEntries(
+          review.flatMap((group) => (group.articles[0] ? [[group.topic_id, group.articles[0].id] as const] : [])),
+        ),
+      );
       setApprovedCount(approvedArticles.length);
       setScheduleDrafts(Object.fromEntries(next.map((topic) => [topic.id, toDateTimeLocal(topic.scheduled_at)])));
       setGeneratingIds((current) => {
@@ -271,6 +277,22 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [autoEnabled, generatingIds, refresh, summaryPendingPlanActions, topics]);
 
   const backlogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
+  // Sent-to-Review handoff cards (PRD-CiteLoop-Workflow-Handoff-Link-Cards §6.2):
+  // a drafted topic whose article is still in the review queue keeps a link card
+  // here; once the article advances past Review it drops out of listReview and
+  // the card exits with it (event-driven, §2.2).
+  const sentToReviewTopics = useMemo(
+    () =>
+      topics
+        .filter((topic) => topic.status === "drafted" && reviewArticleByTopic[topic.id])
+        .slice()
+        .sort((a, b) => {
+          const left = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const right = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return right - left;
+        }),
+    [topics, reviewArticleByTopic],
+  );
   const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
   const planStatusItems = [
     { label: "Planned topics", value: planHealth.backlog },
@@ -796,6 +818,44 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           </div>
         )}
       </section>
+
+      {sentToReviewTopics.length > 0 && (
+        <section data-content-plan-recently-sent>
+          <details className="rounded-lg border border-slate-200 bg-white" open={backlogTopics.length === 0}>
+            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
+              Recently sent ({sentToReviewTopics.length})
+            </summary>
+            <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
+              {sentToReviewTopics.map((topic) => (
+                <a
+                  key={topic.id}
+                  data-content-plan-sent-card
+                  href={`/projects/${projectId}/review?article=${reviewArticleByTopic[topic.id]}`}
+                  aria-label={`Open "${topic.title}" in Review`}
+                  className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                >
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="green">Sent to Review</Badge>
+                        <Badge tone="blue">{topic.channel}</Badge>
+                      </div>
+                      <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{topic.title}</h3>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {topic.target_keyword || topic.target_prompt || "Draft is waiting for review."}
+                      </p>
+                    </div>
+                    <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700">
+                      View in Review
+                      <ArrowRight size={16} className="text-slate-400" />
+                    </span>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </details>
+        </section>
+      )}
     </div>
     {selectedContentPlanAction && (
       <RightDrawer

@@ -343,7 +343,7 @@ test("analysis handoff cards mirror Content Plan actions from visibility summary
   const seo = read("projects/[id]/seo/seo-client.tsx");
 
   assert.match(seo, /const activeHandoffStages = new Set/);
-  assert.match(seo, /activeHandoffStages\.has\(stage\)/);
+  assert.match(seo, /activeHandoffStages\.has\(deriveVisibilityLifecycleStage\(action\)\)/);
   assert.match(seo, /const sentOpportunityLinks = loopActions\s*\.filter\(isRecentlySentAction\)/);
   assert.doesNotMatch(seo, /const sentOpportunityLinks = actions\s*\.filter\(isRecentlySentAction\)/);
   assert.match(seo, /actionHandoffHref\(projectId, action\)/);
