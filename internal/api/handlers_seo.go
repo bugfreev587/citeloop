@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -148,6 +149,47 @@ type ResultsAction struct {
 	Measurements                 []ActionMeasurement `json:"measurements"`
 }
 
+type OpportunityFindingStatus struct {
+	SourceMix             string                          `json:"source_mix"`
+	AIDiscoveryAutomation string                          `json:"ai_discovery_automation"`
+	ManualMode            bool                            `json:"manual_mode"`
+	LastRun               *OpportunityFindingRun          `json:"last_run,omitempty"`
+	NextFindingAt         *time.Time                      `json:"next_finding_at,omitempty"`
+	Summary               []OpportunityFindingSummaryItem `json:"summary"`
+	Counts                OpportunityFindingCounts        `json:"counts"`
+}
+
+type OpportunityFindingRun struct {
+	ID         uuid.UUID  `json:"id"`
+	Status     string     `json:"status"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	DurationMs int64      `json:"duration_ms"`
+	Error      *string    `json:"error,omitempty"`
+}
+
+type OpportunityFindingSummaryItem struct {
+	Label  string `json:"label"`
+	Detail string `json:"detail"`
+	Tone   string `json:"tone"`
+}
+
+type OpportunityFindingCounts struct {
+	Open      int            `json:"open"`
+	Processed int            `json:"processed"`
+	InLoop    int            `json:"in_loop"`
+	Total     int            `json:"total"`
+	ByStatus  map[string]int `json:"by_status"`
+}
+
+type opportunityFindingRunOutput struct {
+	GeneratedAnomalies int      `json:"generated_anomalies"`
+	DataSourceNotes    []string `json:"data_source_notes"`
+	CheckedURLs        int      `json:"checked_urls"`
+	ConnectedGSC       bool     `json:"connected_gsc"`
+	ColdStart          bool     `json:"cold_start"`
+}
+
 func (s *Server) getVisibilitySummary(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -214,6 +256,224 @@ func (s *Server) getVisibilitySummary(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) getOpportunityFindingStatus(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	status, err := s.opportunityFindingStatus(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	svc := s.seoServiceForProject(r.Context(), projectID)
+	syncResult, err := svc.Sync(r.Context(), projectID, "")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	analyzeResult, err := svc.Analyze(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status, err := s.opportunityFindingStatus(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sync": syncResult, "analyze": analyzeResult, "status": status})
+}
+
+func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UUID) (OpportunityFindingStatus, error) {
+	project, err := s.Q.GetProject(ctx, projectID)
+	if err != nil {
+		return OpportunityFindingStatus{}, err
+	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return OpportunityFindingStatus{}, err
+	}
+	latestRun, err := s.latestOpportunityFindingRun(ctx, projectID)
+	if err != nil {
+		return OpportunityFindingStatus{}, err
+	}
+	countRows, err := s.Q.SEOOpportunityCounts(ctx, projectID)
+	if err != nil {
+		return OpportunityFindingStatus{}, err
+	}
+	counts := opportunityFindingCounts(countRows)
+	status := OpportunityFindingStatus{
+		SourceMix:             cfg.OpportunityFindingSourceMix,
+		AIDiscoveryAutomation: cfg.AIDiscoveryAutomation,
+		ManualMode:            opportunityFindingManualMode(cfg),
+		LastRun:               opportunityFindingRunView(latestRun),
+		NextFindingAt:         nextOpportunityFindingAt(time.Now().UTC(), cfg),
+		Summary:               opportunityFindingSummary(latestRun, cfg, counts),
+		Counts:                counts,
+	}
+	return status, nil
+}
+
+func (s *Server) latestOpportunityFindingRun(ctx context.Context, projectID uuid.UUID) (*db.SeoRun, error) {
+	runs, err := s.Q.ListSEORuns(ctx, db.ListSEORunsParams{
+		ProjectID: projectID,
+		Agent:     "seo_analyzer",
+		LimitRows: 1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return &runs[0], nil
+}
+
+func opportunityFindingRunView(run *db.SeoRun) *OpportunityFindingRun {
+	if run == nil {
+		return nil
+	}
+	started := pgTimePtr(run.StartedAt)
+	finished := pgTimePtr(run.FinishedAt)
+	var durationMs int64
+	if started != nil && finished != nil && finished.After(*started) {
+		durationMs = finished.Sub(*started).Milliseconds()
+	}
+	return &OpportunityFindingRun{
+		ID:         run.ID,
+		Status:     run.Status,
+		StartedAt:  started,
+		FinishedAt: finished,
+		DurationMs: durationMs,
+		Error:      run.Error,
+	}
+}
+
+func opportunityFindingCounts(rows []db.SEOOpportunityCountsRow) OpportunityFindingCounts {
+	counts := OpportunityFindingCounts{ByStatus: map[string]int{}}
+	for _, row := range rows {
+		n := int(row.Count)
+		counts.Total += n
+		counts.ByStatus[row.Status] += n
+		switch row.Status {
+		case "open":
+			counts.Open += n
+		case "converted", "watching", "due_for_review":
+			counts.InLoop += n
+			counts.Processed += n
+		default:
+			counts.Processed += n
+		}
+	}
+	return counts
+}
+
+func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts OpportunityFindingCounts) []OpportunityFindingSummaryItem {
+	items := make([]OpportunityFindingSummaryItem, 0, 6)
+	output := opportunityFindingRunOutput{}
+	if run != nil && len(run.Output) > 0 {
+		_ = json.Unmarshal(run.Output, &output)
+	}
+	if cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceAll || cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan {
+		detail := "No Signal Scan run recorded yet"
+		tone := "amber"
+		if run != nil {
+			tone = "green"
+			if output.GeneratedAnomalies > 0 {
+				detail = fmt.Sprintf("%d signals matched or updated", output.GeneratedAnomalies)
+			} else {
+				detail = "No new decision-ready findings"
+			}
+		}
+		items = append(items, OpportunityFindingSummaryItem{Label: "Signal Scan", Detail: detail, Tone: tone})
+	}
+	for _, note := range output.DataSourceNotes {
+		if item, ok := opportunityFindingSummaryFromNote(note); ok {
+			items = append(items, item)
+		}
+	}
+	if output.CheckedURLs > 0 {
+		items = append(items, OpportunityFindingSummaryItem{
+			Label:  "Crawl inventory",
+			Detail: fmt.Sprintf("%d URLs checked for technical and content signals", output.CheckedURLs),
+			Tone:   "neutral",
+		})
+	}
+	if counts.Processed > 0 {
+		items = append(items, OpportunityFindingSummaryItem{
+			Label:  "Deduplication",
+			Detail: fmt.Sprintf("%d processed opportunities kept out of the decision queue", counts.Processed),
+			Tone:   "neutral",
+		})
+	}
+	items = append(items, opportunityFindingAISummary(cfg))
+	return items
+}
+
+func opportunityFindingSummaryFromNote(note string) (OpportunityFindingSummaryItem, bool) {
+	key, value, ok := strings.Cut(note, ":")
+	if !ok {
+		return OpportunityFindingSummaryItem{}, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return OpportunityFindingSummaryItem{}, false
+	}
+	switch strings.TrimSpace(key) {
+	case "gsc_metric_opportunities":
+		return OpportunityFindingSummaryItem{Label: "GSC metrics", Detail: fmt.Sprintf("%d query/page signals matched", n), Tone: "green"}, true
+	case "actionable_seo_opportunities":
+		return OpportunityFindingSummaryItem{Label: "Site inventory", Detail: fmt.Sprintf("%d technical or page-work signals matched", n), Tone: "green"}, true
+	case "cold_start_opportunities":
+		return OpportunityFindingSummaryItem{Label: "Cold start", Detail: fmt.Sprintf("%d profile-based opportunities matched", n), Tone: "green"}, true
+	default:
+		return OpportunityFindingSummaryItem{}, false
+	}
+}
+
+func opportunityFindingAISummary(cfg config.ProjectConfig) OpportunityFindingSummaryItem {
+	if cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan {
+		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Off by settings", Tone: "neutral"}
+	}
+	switch cfg.AIDiscoveryAutomation {
+	case config.AIDiscoveryAutomationAutomatic:
+		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Configured for automatic runs", Tone: "green"}
+	case config.AIDiscoveryAutomationManual:
+		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Manual mode; run when needed", Tone: "amber"}
+	default:
+		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Semi-automatic; review before loop entry", Tone: "neutral"}
+	}
+}
+
+func opportunityFindingManualMode(cfg config.ProjectConfig) bool {
+	return cfg.OpportunityFindingSourceMix != config.OpportunityFindingSourceSignalScan && cfg.AIDiscoveryAutomation == config.AIDiscoveryAutomationManual
+}
+
+func nextOpportunityFindingAt(now time.Time, cfg config.ProjectConfig) *time.Time {
+	hasScheduledSignalScan := cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceAll || cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan
+	hasScheduledAI := cfg.OpportunityFindingSourceMix != config.OpportunityFindingSourceSignalScan && cfg.AIDiscoveryAutomation == config.AIDiscoveryAutomationAutomatic
+	if !hasScheduledSignalScan && !hasScheduledAI {
+		return nil
+	}
+	utc := now.UTC()
+	next := time.Date(utc.Year(), utc.Month(), utc.Day(), 3, 0, 0, 0, time.UTC)
+	if !next.After(utc) {
+		next = next.Add(24 * time.Hour)
+	}
+	return &next
 }
 
 func (s *Server) syncSEO(w http.ResponseWriter, r *http.Request) {

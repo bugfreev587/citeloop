@@ -50,6 +50,12 @@ func TestParseDefaults(t *testing.T) {
 	if _, ok := c.NextPublishSlot(time.Time{}, time.Now()); ok {
 		t.Fatal("default config must not schedule publishing automatically")
 	}
+	if c.OpportunityFindingSourceMix != OpportunityFindingSourceAll {
+		t.Fatalf("opportunity_finding_source_mix default = %q, want all", c.OpportunityFindingSourceMix)
+	}
+	if c.AIDiscoveryAutomation != AIDiscoveryAutomationSemiAutomatic {
+		t.Fatalf("ai_discovery_automation default = %q, want semi_automatic", c.AIDiscoveryAutomation)
+	}
 }
 
 func TestParseKeepsExplicitPublishModes(t *testing.T) {
@@ -61,6 +67,40 @@ func TestParseKeepsExplicitPublishModes(t *testing.T) {
 		if c.PublishMode != mode {
 			t.Fatalf("publish_mode = %q, want %q", c.PublishMode, mode)
 		}
+	}
+}
+
+func TestParseKeepsExplicitOpportunityFindingSettings(t *testing.T) {
+	for _, mode := range []string{OpportunityFindingSourceAll, OpportunityFindingSourceSignalScan, OpportunityFindingSourceAIDiscovery} {
+		c, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"` + mode + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.OpportunityFindingSourceMix != mode {
+			t.Fatalf("opportunity_finding_source_mix = %q, want %q", c.OpportunityFindingSourceMix, mode)
+		}
+	}
+	for _, automation := range []string{AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual} {
+		c, err := Parse(json.RawMessage(`{"ai_discovery_automation":"` + automation + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.AIDiscoveryAutomation != automation {
+			t.Fatalf("ai_discovery_automation = %q, want %q", c.AIDiscoveryAutomation, automation)
+		}
+	}
+}
+
+func TestParseNormalizesInvalidOpportunityFindingSettings(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"unknown","ai_discovery_automation":"always"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.OpportunityFindingSourceMix != OpportunityFindingSourceAll {
+		t.Fatalf("invalid opportunity_finding_source_mix normalized to %q, want all", c.OpportunityFindingSourceMix)
+	}
+	if c.AIDiscoveryAutomation != AIDiscoveryAutomationSemiAutomatic {
+		t.Fatalf("invalid ai_discovery_automation normalized to %q, want semi_automatic", c.AIDiscoveryAutomation)
 	}
 }
 

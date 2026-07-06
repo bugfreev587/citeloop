@@ -204,10 +204,49 @@ test("project config exposes content plan auto advance and defaults it off", asy
   try {
     const { createApi, defaultProjectConfig } = await loadApiModule();
     assert.equal(defaultProjectConfig().auto_advance_enabled, false);
+    assert.equal(defaultProjectConfig().opportunity_finding_source_mix, "all");
+    assert.equal(defaultProjectConfig().ai_discovery_automation, "semi_automatic");
 
     const projects = await createApi({ token: "session-token" }).listProjects();
     assert.equal(projects[0].config.auto_advance_enabled, false);
     assert.equal(projects[1].config.auto_advance_enabled, true);
+    assert.equal(projects[0].config.opportunity_finding_source_mix, "all");
+    assert.equal(projects[0].config.ai_discovery_automation, "semi_automatic");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Opportunity Finding status and manual run APIs call the SEO endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        source_mix: "all",
+        ai_discovery_automation: "manual",
+        manual_mode: true,
+        last_run: { id: "run-1", status: "completed", started_at: "2026-07-06T03:00:00Z" },
+        summary: [{ label: "Signal Scan", detail: "2 signals matched or updated" }],
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+    const status = await client.getOpportunityFindingStatus("project-1");
+    await client.runOpportunityFinding("project-1");
+
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/opportunity-finding/status");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/opportunity-finding/run");
+    assert.equal(calls[1].init.method, "POST");
+    assert.equal(status.source_mix, "all");
+    assert.equal(status.manual_mode, true);
+    assert.equal(status.summary[0].label, "Signal Scan");
   } finally {
     globalThis.fetch = originalFetch;
   }

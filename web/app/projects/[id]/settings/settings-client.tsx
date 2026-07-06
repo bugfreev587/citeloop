@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
+  AIDiscoveryAutomation,
   AutopilotReadiness,
   defaultProjectConfig,
   GSCConnection,
@@ -13,6 +14,7 @@ import {
   NotificationDelivery,
   NotificationEvent,
   NotificationSubscription,
+  OpportunityFindingSourceMix,
   PublisherConnection,
   ProjectConfig,
   SafeModeEvent,
@@ -265,6 +267,7 @@ type SettingsTabId =
   | "activity"
   | "search-console"
   | "publisher"
+  | "opportunity-finding"
   | "crawl"
   | "notifications";
 
@@ -273,6 +276,7 @@ const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "automation", title: "Automation" },
   { id: "search-console", title: "Search Console connection" },
   { id: "publisher", title: "Publisher connection" },
+  { id: "opportunity-finding", title: "Opportunity Finding" },
   { id: "notifications", title: "Notifications" },
   { id: "crawl", title: "Crawl config" },
   { id: "activity", title: "Activity Log" },
@@ -289,6 +293,7 @@ const settingsAnchorToTab: Record<string, SettingsTabId> = {
   activity: "activity",
   "search-console": "search-console",
   publisher: "publisher",
+  "opportunity-finding": "opportunity-finding",
   crawl: "crawl",
   notifications: "notifications",
 };
@@ -321,6 +326,58 @@ const defaultPolicyDraft: PolicyDraft = {
   kill_switch_enabled: false,
   safe_mode_enabled: false,
 };
+
+const opportunityFindingModes: Array<{
+  value: OpportunityFindingSourceMix;
+  label: string;
+  summary: string;
+  detail: string;
+}> = [
+  {
+    value: "all",
+    label: "All",
+    summary: "Signal Scan + AI Discovery",
+    detail: "Run deterministic site/search scans and keep AI Discovery eligible.",
+  },
+  {
+    value: "signal_scan",
+    label: "Signal Scan",
+    summary: "GSC, crawl, profile signals",
+    detail: "Use existing product, crawl, and Search Console evidence only.",
+  },
+  {
+    value: "ai_discovery",
+    label: "AI Discovery",
+    summary: "AI-led public discovery",
+    detail: "Focus the finding workflow on AI Discovery settings and review.",
+  },
+];
+
+const aiDiscoveryAutomations: Array<{
+  value: AIDiscoveryAutomation;
+  label: string;
+  summary: string;
+  detail: string;
+}> = [
+  {
+    value: "automatic",
+    label: "Automatic",
+    summary: "Runs on schedule",
+    detail: "AI Discovery can run without a manual trigger when the project is eligible.",
+  },
+  {
+    value: "semi_automatic",
+    label: "Semi-automatic",
+    summary: "Finds first, waits for review",
+    detail: "AI Discovery can prepare findings, then waits before entering the loop.",
+  },
+  {
+    value: "manual",
+    label: "Manual",
+    summary: "Run only when requested",
+    detail: "Opportunities shows a Run button instead of scheduling AI Discovery automatically.",
+  },
+];
 
 const automationPolicyLevels = [
   {
@@ -2201,6 +2258,85 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+      )}
+
+      {activeSettingsTab === "opportunity-finding" && (
+      <section id="settings-panel-opportunity-finding" role="tabpanel" aria-labelledby="settings-tab-opportunity-finding" tabIndex={0}>
+        <SectionHeader title="Opportunity Finding" eyebrow="Growth discovery" />
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-950">Finding pipeline</div>
+              <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-600">
+                Signal Scan uses connected site evidence. AI Discovery is the AI-led public discovery stage. All keeps both enabled.
+              </p>
+            </div>
+            <Badge tone={config.ai_discovery_automation === "manual" ? "amber" : "green"}>
+              {config.ai_discovery_automation === "manual" ? "Manual mode" : "Scheduled"}
+            </Badge>
+          </div>
+
+          <Field label="Mode selection">
+            <div className="grid gap-2 md:grid-cols-3">
+              {opportunityFindingModes.map((mode) => {
+                const active = config.opportunity_finding_source_mix === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => update({ opportunity_finding_source_mix: mode.value })}
+                    className={cx(
+                      "min-h-28 rounded-lg border px-3 py-3 text-left transition-colors",
+                      active ? "border-sky-400 bg-sky-50 text-slate-950 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold">{mode.label}</span>
+                      {active && <CheckCircle2 size={16} className="shrink-0 text-sky-600" />}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-slate-800">{mode.summary}</div>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">{mode.detail}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <Field label="AI Discovery Setting">
+            <div className="grid gap-2 md:grid-cols-3">
+              {aiDiscoveryAutomations.map((automation) => {
+                const active = config.ai_discovery_automation === automation.value;
+                return (
+                  <button
+                    key={automation.value}
+                    type="button"
+                    onClick={() => update({ ai_discovery_automation: automation.value })}
+                    className={cx(
+                      "min-h-28 rounded-lg border px-3 py-3 text-left transition-colors",
+                      active ? "border-emerald-400 bg-emerald-50 text-slate-950 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold">{automation.label}</span>
+                      {active && <CheckCircle2 size={16} className="shrink-0 text-emerald-600" />}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-slate-800">{automation.summary}</div>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">{automation.detail}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <div>
+            <Button disabled={busy} variant="primary" onClick={save}>
+              <ButtonProgress busy={busy} busyLabel="Saving settings" idleIcon={<Save size={16} />}>
+                Save settings
+              </ButtonProgress>
+            </Button>
           </div>
         </div>
       </section>

@@ -1314,6 +1314,7 @@ test("settings groups every top-level section behind a tab", () => {
     "Activity Log",
     "Search Console connection",
     "Publisher connection",
+    "Opportunity Finding",
     "Crawl config",
     "Notifications",
   ];
@@ -1328,6 +1329,7 @@ test("settings groups every top-level section behind a tab", () => {
   assert.match(settings, /activeSettingsTab === "activity" && \(/);
   assert.match(settings, /activeSettingsTab === "search-console" && \(/);
   assert.match(settings, /activeSettingsTab === "publisher" && \(/);
+  assert.match(settings, /activeSettingsTab === "opportunity-finding" && \(/);
   assert.match(settings, /activeSettingsTab === "crawl" && \(/);
   assert.match(settings, /activeSettingsTab === "notifications" && \(/);
   assert.doesNotMatch(settings, /activeSettingsTab === "subscriptions" && \(/);
@@ -1372,6 +1374,25 @@ test("settings deep links open the matching configuration tab", () => {
   assert.match(settings, /window\.history\.replaceState/);
   assert.match(settings, /#\$\{tabId\}/);
   assert.match(settings, /onClick=\{\(\) => activateSettingsTab\(tab\.id\)\}/);
+});
+
+test("settings expose Opportunity Finding controls", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const expected of [
+    '"opportunity-finding"',
+    "Opportunity Finding",
+    "opportunity_finding_source_mix",
+    "ai_discovery_automation",
+    "All",
+    "Signal Scan",
+    "AI Discovery",
+    "Automatic",
+    "Semi-automatic",
+    "Manual",
+  ]) {
+    assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
 
 test("settings exposes Automation as the system setup tab", () => {

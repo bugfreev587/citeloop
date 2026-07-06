@@ -105,6 +105,8 @@ export type ProjectConfig = {
   brand_voice?: string;
   monthly_budget_usd: number;
   auto_advance_enabled: boolean;
+  opportunity_finding_source_mix: OpportunityFindingSourceMix;
+  ai_discovery_automation: AIDiscoveryAutomation;
   publish_mode?: "scheduled" | "auto" | "manual";
   publish_interval_days?: number;
   crawl: {
@@ -117,6 +119,9 @@ export type ProjectConfig = {
     sitemap_url_cap: number;
   };
 };
+
+export type OpportunityFindingSourceMix = "all" | "signal_scan" | "ai_discovery";
+export type AIDiscoveryAutomation = "automatic" | "semi_automatic" | "manual";
 
 export type Project = {
   id: string;
@@ -410,6 +415,37 @@ export type SEOOverview = {
   cold_start: boolean;
   handoff_ready_for_autopilot: boolean;
   data_source_warnings?: string[];
+};
+
+export type OpportunityFindingSummaryItem = {
+  label: string;
+  detail: string;
+  tone?: "green" | "amber" | "red" | "neutral" | string;
+};
+
+export type OpportunityFindingRun = {
+  id: string;
+  status: string;
+  started_at?: any;
+  finished_at?: any;
+  duration_ms?: number;
+  error?: string | null;
+};
+
+export type OpportunityFindingStatus = {
+  source_mix: OpportunityFindingSourceMix;
+  ai_discovery_automation: AIDiscoveryAutomation;
+  manual_mode: boolean;
+  last_run?: OpportunityFindingRun | null;
+  next_finding_at?: any;
+  summary: OpportunityFindingSummaryItem[];
+  counts: {
+    open: number;
+    processed: number;
+    in_loop: number;
+    total: number;
+    by_status: Record<string, number>;
+  };
 };
 
 export type SEOOpportunity = {
@@ -1065,6 +1101,8 @@ export function defaultProjectConfig(): ProjectConfig {
     brand_voice: "",
     monthly_budget_usd: 50,
     auto_advance_enabled: false,
+    opportunity_finding_source_mix: "all",
+    ai_discovery_automation: "semi_automatic",
     publish_mode: "manual",
     publish_interval_days: 2,
     crawl: {
@@ -1079,13 +1117,34 @@ export function defaultProjectConfig(): ProjectConfig {
   };
 }
 
+function normalizeOpportunityFindingSourceMix(value: any): OpportunityFindingSourceMix {
+  return value === "signal_scan" || value === "ai_discovery" || value === "all" ? value : "all";
+}
+
+function normalizeAIDiscoveryAutomation(value: any): AIDiscoveryAutomation {
+  return value === "automatic" || value === "manual" || value === "semi_automatic" ? value : "semi_automatic";
+}
+
+function normalizeProjectConfig(raw: any): ProjectConfig {
+  const defaults = defaultProjectConfig();
+  const data = raw ?? {};
+  return {
+    ...defaults,
+    ...data,
+    channel_mix: { ...defaults.channel_mix, ...(data.channel_mix ?? {}) },
+    crawl: { ...defaults.crawl, ...(data.crawl ?? {}) },
+    opportunity_finding_source_mix: normalizeOpportunityFindingSourceMix(data.opportunity_finding_source_mix),
+    ai_discovery_automation: normalizeAIDiscoveryAutomation(data.ai_discovery_automation),
+  };
+}
+
 function normalizeProject(raw: any): Project {
   return {
     id: raw.id,
     owner_id: raw.owner_id,
     name: raw.name ?? "Untitled project",
     slug: raw.slug ?? raw.id,
-    config: { ...defaultProjectConfig(), ...(raw.config ?? {}) },
+    config: normalizeProjectConfig(raw.config),
     created_at: raw.created_at,
     updated_at: raw.updated_at,
   };
@@ -1194,6 +1253,39 @@ function normalizeSEOSettings(raw: any): { property?: SEOProperty | null; integr
   return {
     property: raw?.property ?? null,
     integrations: arrayFrom<SEOIntegration>(raw?.integrations),
+  };
+}
+
+function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
+  const data = raw ?? {};
+  const counts = data.counts ?? {};
+  return {
+    source_mix: normalizeOpportunityFindingSourceMix(data.source_mix),
+    ai_discovery_automation: normalizeAIDiscoveryAutomation(data.ai_discovery_automation),
+    manual_mode: Boolean(data.manual_mode),
+    last_run: data.last_run
+      ? {
+          id: data.last_run.id ?? "",
+          status: data.last_run.status ?? "",
+          started_at: data.last_run.started_at ?? null,
+          finished_at: data.last_run.finished_at ?? null,
+          duration_ms: Number(data.last_run.duration_ms ?? 0),
+          error: data.last_run.error ?? null,
+        }
+      : null,
+    next_finding_at: data.next_finding_at ?? null,
+    summary: arrayFrom<any>(data.summary).map((item) => ({
+      label: item?.label ?? "Opportunity Finding",
+      detail: item?.detail ?? "",
+      tone: item?.tone ?? "neutral",
+    })),
+    counts: {
+      open: Number(counts.open ?? 0),
+      processed: Number(counts.processed ?? 0),
+      in_loop: Number(counts.in_loop ?? 0),
+      total: Number(counts.total ?? 0),
+      by_status: counts.by_status ?? {},
+    },
   };
 }
 
@@ -2128,6 +2220,14 @@ export function createApi(auth?: AuthOptions) {
   },
   analyzeSEO: async (id: string) => {
     return req<any>(`/projects/${id}/seo/analyze`, { method: "POST" }, auth);
+  },
+  getOpportunityFindingStatus: async (id: string): Promise<OpportunityFindingStatus> => {
+    const raw = await req<any>(`/projects/${id}/seo/opportunity-finding/status`, undefined, auth);
+    return normalizeOpportunityFindingStatus(raw);
+  },
+  runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
+    const raw = await req<any>(`/projects/${id}/seo/opportunity-finding/run`, { method: "POST" }, auth);
+    return { ...raw, status: normalizeOpportunityFindingStatus(raw?.status ?? raw) };
   },
   getSEOSettings: async (id: string): Promise<{ property?: SEOProperty | null; integrations: SEOIntegration[] }> => {
     const raw = await req<any>(`/projects/${id}/seo/settings`, undefined, auth);
