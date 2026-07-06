@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   CalendarClock,
   Check,
@@ -439,6 +441,7 @@ function OperationalRows({
   group,
   projectId,
   busy,
+  linkedArticleId,
   onCopy,
   onPublish,
   onRetry,
@@ -447,6 +450,7 @@ function OperationalRows({
   group: OperationalGroup;
   projectId: string;
   busy: string | null;
+  linkedArticleId?: string | null;
   onCopy: (article: Article) => void;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
@@ -462,7 +466,16 @@ function OperationalRows({
         const article = operationalArticle(item);
         const distributeItem = isDistributeItem(item) ? item : null;
         return (
-          <div key={`${group.key}-${article.id}`} className="rounded-lg border border-slate-200 bg-white p-3">
+          <div
+            key={`${group.key}-${article.id}`}
+            id={`publish-article-${group.key}-${article.id}`}
+            data-publish-article-card={article.id}
+            tabIndex={-1}
+            className={cx(
+              "rounded-lg border bg-white p-3",
+              linkedArticleId === article.id ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+            )}
+          >
             <div className="flex min-w-0 items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="break-words text-sm font-bold leading-5 text-slate-900">{articleTitle(article)}</div>
@@ -488,6 +501,15 @@ function OperationalRows({
               >
                 Detail
               </a>
+              {group.key === "published" && (
+                <Link
+                  data-publish-results-link
+                  href={`/projects/${projectId}/results?article=${article.id}`}
+                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  View Results
+                </Link>
+              )}
               {group.key === "ready" && (
                 <Button disabled={busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => onPublish(article)}>
                   <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
@@ -536,6 +558,8 @@ function OperationalRows({
 
 export function PublishingClient({ projectId }: { projectId: string }) {
   const api = useApi();
+  const searchParams = useSearchParams();
+  const linkedArticleId = searchParams.get("article");
   const [published, setPublished] = useState<Article[]>([]);
   const [approved, setApproved] = useState<Article[]>([]);
   const [failed, setFailed] = useState<Article[]>([]);
@@ -616,6 +640,25 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     const interval = window.setInterval(refresh, 15_000);
     return () => window.clearInterval(interval);
   }, [inflight.length, refresh]);
+
+  // A review handoff link lands here with ?article=; open the lanes drawer and
+  // point at the linked publish item.
+  useEffect(() => {
+    if (!linkedArticleId || loading) return;
+    setDrawer("view_all");
+  }, [linkedArticleId, loading]);
+
+  useEffect(() => {
+    if (!linkedArticleId || drawer !== "view_all") return;
+    const timer = window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(`[data-publish-article-card="${linkedArticleId}"]`);
+      if (!target) return;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [linkedArticleId, drawer]);
 
   const approvedCanonicals = useMemo(
     () =>
@@ -1112,6 +1155,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 group={group}
                 projectId={projectId}
                 busy={busy}
+                linkedArticleId={linkedArticleId}
                 onCopy={copyDraft}
                 onPublish={publishNow}
                 onRetry={retryPublish}

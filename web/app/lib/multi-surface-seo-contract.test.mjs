@@ -22,7 +22,7 @@ test("SEO action API type exposes multi-surface metadata", () => {
     assert.ok(api.includes(field), `api.ts missing ${field}`);
   }
   assert.ok(
-    api.includes("body: { action_type?: string; asset_type?: string; review_required?: boolean } = {}"),
+    api.includes("body: { action_type?: string; asset_type?: string; work_type?: string; review_required?: boolean } = {}"),
     "createSEOContentAction body type should accept asset_type and review_required",
   );
 });

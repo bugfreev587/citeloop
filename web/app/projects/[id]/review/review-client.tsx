@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, ExternalLink, FileText, Loader2, RefreshCw, Save, Search, ShieldAlert, Sparkles, X, XCircle } from "lucide-react";
 import { Article, ReviewGroup } from "../../../lib/api";
 import {
   articlePreviewHref,
@@ -56,6 +57,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const searchParams = useSearchParams();
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  const [sentToPublish, setSentToPublish] = useState<Article[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -71,7 +73,14 @@ export function ReviewClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      setGroups(await api.listReview(projectId));
+      const [reviewGroups, approvedArticles] = await Promise.all([
+        api.listReview(projectId),
+        // Approved drafts have handed off to Publish; they back the
+        // sent-forward link cards until publishing takes over.
+        api.listArticles(projectId, "approved").catch(() => [] as Article[]),
+      ]);
+      setGroups(reviewGroups);
+      setSentToPublish(approvedArticles);
     } catch (e: any) {
       setMessage({ title: "Review queue unavailable", detail: e.message, tone: "amber" });
     }
@@ -309,6 +318,39 @@ export function ReviewClient({ projectId }: { projectId: string }) {
               )}
             </section>
           </>
+        )}
+
+        {sentToPublish.length > 0 && (
+          <details data-review-sent-to-publish className="rounded-lg border border-slate-200 bg-white" open={summary.total === 0}>
+            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
+              Sent to Publish ({sentToPublish.length})
+            </summary>
+            <div className="grid gap-2 border-t border-slate-100 p-3">
+              {sentToPublish.slice(0, 10).map((article) => (
+                <Link
+                  key={article.id}
+                  data-review-handoff-card
+                  href={`/projects/${projectId}/publish?article=${article.id}`}
+                  className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                >
+                  <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="green">Sent to Publish</Badge>
+                        {article.scheduled_at && <Badge tone="neutral">Scheduled</Badge>}
+                      </div>
+                      <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{articleReviewTitle(article)}</h3>
+                      <p className="mt-1 truncate text-xs text-slate-500">Approved and waiting in the publish queue.</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                      View in Publish
+                      <ChevronRight size={16} className="text-slate-400" />
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </details>
         )}
       </div>
 

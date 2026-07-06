@@ -416,8 +416,15 @@ export type SEOOpportunity = {
   expected_impact?: string | null;
   effort?: number;
   risk_level?: string;
+  snoozed_until?: any;
+  snooze_reason?: string | null;
+  unsnoozed_at?: any;
   created_at?: any;
 };
+
+export type SEOApprovalSource = "human_review" | "autopilot_policy" | "manual" | "retry_recovery" | "admin_import" | string;
+export type SEORoutingSource = "system_recommendation" | "user_override" | "policy" | string;
+export type SEOWorkTypeKey = "create_content" | "improve_page" | "fix_site_issue" | string;
 
 export type SEOContentAction = {
   id: string;
@@ -439,11 +446,30 @@ export type SEOContentAction = {
   approved_at?: any;
   verified_at?: any;
   verification_snapshot?: any;
+  approval_source?: SEOApprovalSource;
+  routing_source?: SEORoutingSource;
+  work_type?: SEOWorkTypeKey | null;
   baseline_window?: any;
   measurement_window?: any;
   published_at?: any;
   outcome_summary?: any;
   created_at?: any;
+};
+
+export type SEOWatchlistItem = {
+  id: string;
+  project_id: string;
+  source_opportunity_id: string;
+  status: "watching" | "due_for_review" | "learned" | "closed" | string;
+  observation_window_days: number;
+  due_at?: any;
+  closed_at?: any;
+  created_at?: any;
+  opportunity_type?: string;
+  opportunity_page_url?: string | null;
+  opportunity_query?: string | null;
+  opportunity_recommended_action?: string | null;
+  opportunity_expected_impact?: string | null;
 };
 
 export type SEODoctorRunStatus = "queued" | "running" | "completed" | "failed" | "blocked" | string;
@@ -2275,10 +2301,54 @@ export function createApi(auth?: AuthOptions) {
   createSEOContentAction: async (
     id: string,
     opportunityID: string,
-    body: { action_type?: string; asset_type?: string; review_required?: boolean } = {},
+    body: { action_type?: string; asset_type?: string; work_type?: string; review_required?: boolean } = {},
   ): Promise<SEOContentAction> => {
     return req<SEOContentAction>(
       `/projects/${id}/seo/opportunities/${opportunityID}/actions`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  snoozeSEOOpportunity: async (
+    id: string,
+    opportunityID: string,
+    body: { days?: number; reason?: string } = {},
+  ): Promise<SEOOpportunity> => {
+    return req<SEOOpportunity>(
+      `/projects/${id}/seo/opportunities/${opportunityID}/snooze`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  unsnoozeSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
+    return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/unsnooze`, { method: "POST" }, auth);
+  },
+  watchSEOOpportunity: async (
+    id: string,
+    opportunityID: string,
+    body: { observation_window_days?: number } = {},
+  ): Promise<SEOWatchlistItem> => {
+    return req<SEOWatchlistItem>(
+      `/projects/${id}/seo/opportunities/${opportunityID}/watch`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  listSEOWatchlist: async (id: string, options: { status?: string; limit?: number } = {}): Promise<SEOWatchlistItem[]> => {
+    const params = new URLSearchParams();
+    if (options.status) params.set("status", options.status);
+    if (options.limit) params.set("limit", String(options.limit));
+    const suffix = params.toString() ? `?${params}` : "";
+    const raw = await req<any[]>(`/projects/${id}/seo/watchlist${suffix}`, undefined, auth);
+    return arrayFrom(raw);
+  },
+  closeSEOWatchlistItem: async (
+    id: string,
+    watchlistItemID: string,
+    body: { status?: "closed" | "learned" } = {},
+  ): Promise<SEOWatchlistItem> => {
+    return req<SEOWatchlistItem>(
+      `/projects/${id}/seo/watchlist/${watchlistItemID}/close`,
       { method: "POST", body: JSON.stringify(body) },
       auth,
     );

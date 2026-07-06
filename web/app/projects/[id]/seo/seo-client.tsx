@@ -20,6 +20,7 @@ import {
   SEOOpportunity,
   SEOOverview,
   SEOPolicy,
+  SEOWatchlistItem,
   SafeModeEvent,
   ResultsAction,
   VisibilityActionInLoop,
@@ -288,14 +289,97 @@ function opportunityWorkType(opportunity: SEOOpportunity): OpportunityWorkType {
 }
 
 function opportunityDestination(opportunity: SEOOpportunity): OpportunityDestination {
-  return opportunityWorkType(opportunity) === "Fix Site Issue" ? "Site Fixes" : "Content Plan";
+  return destinationForWorkType(opportunityWorkType(opportunity));
 }
 
-function opportunityPrimaryCTA(opportunity: SEOOpportunity) {
-  const workType = opportunityWorkType(opportunity);
+function destinationForWorkType(workType: OpportunityWorkType): OpportunityDestination {
+  return workType === "Fix Site Issue" ? "Site Fixes" : "Content Plan";
+}
+
+function ctaForWorkType(workType: OpportunityWorkType) {
   if (workType === "Fix Site Issue") return { label: "Create Site Fix", busyLabel: "Creating site fix" };
   if (workType === "Improve Page") return { label: "Create Page Update", busyLabel: "Creating page update" };
   return { label: "Add to Content Plan", busyLabel: "Adding to plan" };
+}
+
+function opportunityPrimaryCTA(opportunity: SEOOpportunity) {
+  return ctaForWorkType(opportunityWorkType(opportunity));
+}
+
+const workTypeKeys: Record<OpportunityWorkType, string> = {
+  "Create Content": "create_content",
+  "Improve Page": "improve_page",
+  "Fix Site Issue": "fix_site_issue",
+};
+
+// Review drawer route override (PRD §6.2): content-route opportunities may be
+// corrected between Create Content and Improve Page; technically certain site
+// fixes stay locked to Site Fixes.
+function allowedWorkTypesForOpportunity(opportunity: SEOOpportunity): OpportunityWorkType[] {
+  if (opportunityWorkType(opportunity) === "Fix Site Issue") return ["Fix Site Issue"];
+  return ["Create Content", "Improve Page"];
+}
+
+function workTypeLockReason(opportunity: SEOOpportunity) {
+  return `This is a site fix because the finding (${humanizeInternalType(opportunity.type)}) must be corrected on the site itself.`;
+}
+
+// §5.3 approval copy per destination.
+function approvalCopyForWorkType(workType: OpportunityWorkType) {
+  if (workType === "Fix Site Issue") return "Approve to create a Site Fix.";
+  return `Approve to send this to Content Plan.`;
+}
+
+function approvalSourceLabel(source?: string | null) {
+  switch (source) {
+    case "autopilot_policy":
+      return "Approved by Autopilot policy";
+    case "manual":
+      return "Created manually by user";
+    case "retry_recovery":
+      return "Retry of approved work";
+    case "admin_import":
+      return "Imported by admin";
+    case "human_review":
+    default:
+      return "Human opportunity approval";
+  }
+}
+
+function humanizeInternalType(value: string) {
+  const spaced = value.replace(/[_-]+/g, " ").trim();
+  if (!spaced) return value;
+  return spaced
+    .replace(/\b(gsc|geo|ctr|seo|url)\b/gi, (match) => match.toUpperCase())
+    .replace(/^[a-z]/, (match) => match.toUpperCase());
+}
+
+function watchlistItemTitle(item: SEOWatchlistItem) {
+  return (
+    item.opportunity_recommended_action ??
+    (item.opportunity_type ? humanizeInternalType(item.opportunity_type) : "Watched opportunity")
+  );
+}
+
+function watchlistStatusLabel(status: string) {
+  switch (status) {
+    case "watching":
+      return "Watching";
+    case "due_for_review":
+      return "Due for review";
+    case "learned":
+      return "Learned";
+    case "closed":
+      return "Closed";
+    default:
+      return humanizeInternalType(status);
+  }
+}
+
+function watchlistStatusTone(status: string): "green" | "amber" | "red" | "neutral" {
+  if (status === "due_for_review") return "amber";
+  if (status === "learned") return "green";
+  return "neutral";
 }
 
 function assetTypeForWorkType(opportunity: SEOOpportunity, workType: OpportunityWorkType) {
@@ -1071,7 +1155,7 @@ function lifecycleStageLabel(stage: string) {
     case "added_to_plan":
       return "Added";
     case "planned":
-      return "Planned";
+      return "Topic planned";
     case "drafting":
       return "Drafting";
     case "ready_for_review":
@@ -1079,7 +1163,7 @@ function lifecycleStageLabel(stage: string) {
     case "approved":
       return "Approved";
     case "published_or_applied":
-      return "Published";
+      return "Published/Applied";
     case "measuring":
       return "Measuring";
     case "learned":
@@ -1092,7 +1176,6 @@ function lifecycleStageLabel(stage: string) {
 }
 
 function loopLifecycleSummaryLabel(stage: string) {
-  if (stage === "published_or_applied") return "Published / Applied";
   return lifecycleStageLabel(stage);
 }
 
@@ -1254,7 +1337,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [surfaceOwnerConfidence, setSurfaceOwnerConfidence] = useState("medium");
   const [objectiveName, setObjectiveName] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss">>({});
+  const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss" | "snooze" | "watch">>({});
+  const [routeOverrides, setRouteOverrides] = useState<Record<string, OpportunityWorkType>>({});
+  const [watchlist, setWatchlist] = useState<SEOWatchlistItem[]>([]);
+  const [showAllSiteFixes, setShowAllSiteFixes] = useState(false);
+  const [pendingSiteFixFocusID, setPendingSiteFixFocusID] = useState<string | null>(null);
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
@@ -1281,12 +1368,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refresh = useCallback(async () => {
     setMessage(null);
     try {
-      const [overviewData, summaryData, settings, briefData, opps, actionRows, resultsRows, policyData, readinessData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
+      const [overviewData, summaryData, settings, briefData, opps, snoozedOpps, watchingOpps, watchlistRows, actionRows, resultsRows, policyData, readinessData, objectiveRows, planRows, safeModeRows, crawlerAudit, geoData, briefRows] = await Promise.all([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
         api.getSEOSettings(projectId),
         api.getSEOBrief(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }),
+        api.listSEOOpportunities(projectId, { status: "snoozed", limit: 20 }),
+        api.listSEOOpportunities(projectId, { status: "watching", limit: 20 }),
+        api.listSEOWatchlist(projectId, { limit: 50 }),
         api.listSEOContentActions(projectId, { limit: 50 }),
         api.listResultsActions(projectId, { limit: 50 }),
         api.getSEOPolicy(projectId),
@@ -1301,7 +1391,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setOverview(overviewData);
       setVisibilitySummary(summaryData);
       setBrief(briefData);
-      setOpportunities(opps);
+      setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
+      setWatchlist(watchlistRows);
       setActions(actionRows);
       setResultsActions(resultsRows);
       setPolicy(policyData);
@@ -1429,6 +1520,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     [attributionActions, selectedResultActionID],
   );
   const requestedResultActionID = mode === "results" ? searchParams.get("action") : null;
+  const requestedResultArticleID = mode === "results" ? searchParams.get("article") : null;
+  const requestedWatchOpportunityID = mode === "results" ? searchParams.get("watch") : null;
+
+  useEffect(() => {
+    if (mode !== "results" || !requestedWatchOpportunityID || watchlist.length === 0) return;
+    const target = document.getElementById(`watchlist-item-${requestedWatchOpportunityID}`);
+    if (!target) return;
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+  }, [mode, requestedWatchOpportunityID, watchlist.length]);
   const attributionMeasuredActions = resultsActions.length
     ? resultsActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
@@ -1454,6 +1556,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setSelectedResultActionID(requestedResultActionID);
     }
   }, [attributionActions, mode, requestedResultActionID]);
+
+  // Publish handoff links land here with ?article=; open the measurement item
+  // that belongs to the published draft.
+  useEffect(() => {
+    if (mode !== "results" || !requestedResultArticleID || attributionActions.length === 0) return;
+    const match = attributionActions.find((action) => (action as any).draft_article_id === requestedResultArticleID);
+    if (match) setSelectedResultActionID(match.id);
+  }, [attributionActions, mode, requestedResultArticleID]);
 
   useEffect(() => {
     if (!selectedResultActionID || selectedResultAction) return;
@@ -1516,9 +1626,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     };
   }, [selectedResultAction?.id]);
 
-  const focusSiteFixCard = useCallback((actionID: string) => {
+  const highlightSiteFixTarget = useCallback((actionID: string) => {
     const target = siteFixCardRefs.current[actionID];
-    if (!target) return;
+    if (!target) return false;
     const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
     target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
     target.focus({ preventScroll: true });
@@ -1526,6 +1636,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     window.setTimeout(() => {
       setHighlightedSiteFixID((current) => (current === actionID ? null : current));
     }, prefersReducedMotion ? 2200 : 2600);
+    return true;
   }, []);
 
   const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
@@ -1563,10 +1674,37 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const directReviewActions = actions
+  const directReviewActionsAll = actions
     .filter((action) => isDirectAction(action))
-    .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status))
-    .slice(0, 6);
+    .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status));
+  const directReviewActions = showAllSiteFixes ? directReviewActionsAll : directReviewActionsAll.slice(0, 6);
+
+  // Same-page linked focus (PRD §8.8): if the target card is hidden by the
+  // compact list, expand the list first; if it no longer exists, explain
+  // instead of failing silently.
+  function focusSiteFixCard(actionID: string) {
+    if (highlightSiteFixTarget(actionID)) return;
+    if (directReviewActionsAll.some((action) => action.id === actionID)) {
+      setShowAllSiteFixes(true);
+      setPendingSiteFixFocusID(actionID);
+      return;
+    }
+    setMessage({
+      title: "This item moved or was completed",
+      detail: "Check Site Fixes or Results for its latest state.",
+      tone: "neutral",
+    });
+  }
+
+  useEffect(() => {
+    if (!pendingSiteFixFocusID) return;
+    if (highlightSiteFixTarget(pendingSiteFixFocusID)) {
+      setPendingSiteFixFocusID(null);
+    }
+  }, [pendingSiteFixFocusID, directReviewActions.length, highlightSiteFixTarget]);
+
+  const snoozedOpportunities = opportunities.filter((opportunity) => opportunity.status === "snoozed");
+  const watchingOpportunityLinks = opportunities.filter((opportunity) => opportunity.status === "watching");
   const sentOpportunityLinks = loopActions
     .filter(isRecentlySentAction)
     .slice()
@@ -1649,7 +1787,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     return opportunityBusy[opp.id] === "dismiss";
   }
 
-  function setOpportunityPending(id: string, value: "create" | "dismiss" | null) {
+  function setOpportunityPending(id: string, value: "create" | "dismiss" | "snooze" | "watch" | null) {
     setOpportunityBusy((current) => {
       const next = { ...current };
       if (value) {
@@ -1876,20 +2014,85 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
-      const workType = opportunityWorkType(opp);
-      const destination = opportunityDestination(opp);
+      const workType = routeOverrides[opp.id] ?? opportunityWorkType(opp);
+      const destination = destinationForWorkType(workType);
       const action = await api.createSEOContentAction(projectId, opp.id, {
         action_type: opp.recommended_action ?? undefined,
         asset_type: assetTypeForWorkType(opp, workType),
+        work_type: workTypeKeys[workType],
       });
       setOpportunities((current) => current.map((item) => (item.id === opp.id ? { ...item, status: "converted" } : item)));
       setActions((current) => [action, ...current.filter((item) => item.id !== action.id)]);
+      setRouteOverrides((current) => {
+        if (!(opp.id in current)) return current;
+        const { [opp.id]: _cleared, ...rest } = current;
+        return rest;
+      });
       setSelectedOpportunityID(null);
       setMessage({ title: `Sent to ${destination}`, detail: opp.recommended_action ?? opp.type, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not create action", detail: e.message, tone: "red" });
     } finally {
       setOpportunityPending(opp.id, null);
+    }
+  }
+
+  async function snoozeOpportunity(opp: SEOOpportunity, days: number) {
+    setOpportunityPending(opp.id, "snooze");
+    setMessage(null);
+    try {
+      const updated = await api.snoozeSEOOpportunity(projectId, opp.id, { days });
+      setOpportunities((current) => current.map((item) => (item.id === opp.id ? { ...item, ...updated } : item)));
+      setSelectedOpportunityID(null);
+      setMessage({ title: `Snoozed for ${days} days`, detail: "It returns to Needs decision when the snooze ends.", tone: "neutral" });
+    } catch (e: any) {
+      setMessage({ title: "Could not snooze opportunity", detail: e.message, tone: "red" });
+    } finally {
+      setOpportunityPending(opp.id, null);
+    }
+  }
+
+  async function unsnoozeOpportunity(opp: SEOOpportunity) {
+    setOpportunityPending(opp.id, "snooze");
+    setMessage(null);
+    try {
+      const updated = await api.unsnoozeSEOOpportunity(projectId, opp.id);
+      setOpportunities((current) => current.map((item) => (item.id === opp.id ? { ...item, ...updated } : item)));
+      setMessage({ title: "Opportunity back in the queue", detail: "It needs a decision again.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not unsnooze opportunity", detail: e.message, tone: "red" });
+    } finally {
+      setOpportunityPending(opp.id, null);
+    }
+  }
+
+  async function watchOpportunity(opp: SEOOpportunity) {
+    setOpportunityPending(opp.id, "watch");
+    setMessage(null);
+    try {
+      const item = await api.watchSEOOpportunity(projectId, opp.id);
+      setOpportunities((current) => current.map((existing) => (existing.id === opp.id ? { ...existing, status: "watching" } : existing)));
+      setWatchlist((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
+      setSelectedOpportunityID(null);
+      setMessage({ title: "Watching in Results", detail: `No changes will be made. Review again in ${item.observation_window_days} days.`, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not watch opportunity", detail: e.message, tone: "red" });
+    } finally {
+      setOpportunityPending(opp.id, null);
+    }
+  }
+
+  async function closeWatchlistItem(item: SEOWatchlistItem, status: "closed" | "learned") {
+    setBusy(`watchlist-${item.id}-${status}`);
+    setMessage(null);
+    try {
+      const updated = await api.closeSEOWatchlistItem(projectId, item.id, { status });
+      setWatchlist((current) => current.map((existing) => (existing.id === updated.id ? updated : existing)));
+      setMessage({ title: status === "learned" ? "Watchlist item marked learned" : "Watchlist item closed", detail: watchlistItemTitle(item), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not update watchlist item", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -2139,10 +2342,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </div>
             )}
 
-            {sentOpportunityLinks.length > 0 && (
+            {(sentOpportunityLinks.length > 0 || watchingOpportunityLinks.length > 0) && (
               <details className="rounded-lg border border-slate-200 bg-white" open={activeOpportunities.length === 0}>
                 <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
-                  Recently sent ({sentOpportunityLinks.length})
+                  Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})
                 </summary>
                 <div className="grid gap-2 border-t border-slate-100 p-3">
                   {sentOpportunityLinks.map((action) => {
@@ -2153,7 +2356,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="green">{actionHandoffStatus(action)}</Badge>
-                            <Badge tone="neutral">Human opportunity approval</Badge>
+                            <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
                           </div>
                           <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{loopActionTitle(action as any)}</h3>
                           <p className="mt-1 truncate text-xs text-slate-500">
@@ -2192,6 +2395,64 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       </Link>
                     );
                   })}
+                  {watchingOpportunityLinks.map((opp) => {
+                    const watchItem = watchlist.find((item) => item.source_opportunity_id === opp.id);
+                    return (
+                      <Link
+                        key={opp.id}
+                        data-opportunity-handoff-card
+                        href={`/projects/${projectId}/results?watch=${opp.id}`}
+                        className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge tone="green">Watching in Results</Badge>
+                              <Badge tone="neutral">No changes planned</Badge>
+                            </div>
+                            <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{opportunityTitle(opp)}</h3>
+                            <p className="mt-1 truncate text-xs text-slate-500">
+                              {watchItem?.due_at ? `Observation window ends ${formatDate(watchItem.due_at)}.` : "Observing signals before deciding on work."}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
+                            View in Results
+                            <ChevronRight size={16} className="text-slate-400" />
+                          </span>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+
+            {snoozedOpportunities.length > 0 && (
+              <details className="rounded-lg border border-slate-200 bg-white">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
+                  Snoozed ({snoozedOpportunities.length})
+                </summary>
+                <div className="grid gap-2 border-t border-slate-100 p-3">
+                  {snoozedOpportunities.map((opp) => (
+                    <div
+                      key={opp.id}
+                      data-opportunity-snoozed-card
+                      className="flex min-w-0 flex-col gap-2 rounded-md border border-slate-100 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="neutral">Snoozed</Badge>
+                          {opp.snoozed_until && <Badge tone="neutral">Returns {formatDate(opp.snoozed_until)}</Badge>}
+                        </div>
+                        <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{opportunityTitle(opp)}</h3>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => unsnoozeOpportunity(opp)} disabled={!!opportunityBusy[opp.id]}>
+                        <ButtonProgress busy={opportunityBusy[opp.id] === "snooze"} busyLabel="Waking" idleIcon={null}>
+                          Unsnooze
+                        </ButtonProgress>
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               </details>
             )}
@@ -2201,7 +2462,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <SectionHeader
               title="Site Fixes"
               eyebrow="Approved site work"
-              action={<Badge tone={directReviewActions.length ? "amber" : "neutral"}>{directReviewActions.length} to review</Badge>}
+              action={<Badge tone={directReviewActionsAll.length ? "amber" : "neutral"}>{directReviewActionsAll.length} to review</Badge>}
             />
             {directReviewActions.length === 0 ? (
               <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
@@ -2234,11 +2495,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
                             <Badge tone="blue">Fix Site Issue</Badge>
+                            <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
                             <Badge tone={action.review_required === false ? "neutral" : "amber"}>
                               {action.review_required === false ? "Review optional" : "Review required"}
                             </Badge>
                           </div>
-                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">{action.action_type}</h3>
+                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">
+                            {action.action_type.includes("_") ? humanizeInternalType(action.action_type) : action.action_type}
+                          </h3>
                           <p className="mt-1 truncate text-sm leading-5 text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
                         </div>
                         <div className="grid gap-2 text-sm sm:grid-cols-2">
@@ -2259,6 +2523,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </button>
                   );
                 })}
+                {!showAllSiteFixes && directReviewActionsAll.length > directReviewActions.length && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllSiteFixes(true)}
+                    className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:bg-slate-50"
+                  >
+                    Show all site fixes ({directReviewActionsAll.length})
+                  </button>
+                )}
               </div>
             )}
           </section>
@@ -2446,6 +2719,65 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </div>
               ))}
             </div>
+          </section>
+
+          <section id="results-watchlist" data-results-watchlist>
+            <SectionHeader
+              title="Watchlist"
+              eyebrow="Watch-only opportunities"
+              action={<Badge tone={watchlist.some((item) => item.status === "due_for_review") ? "amber" : "neutral"}>{watchlist.filter((item) => item.status === "watching" || item.status === "due_for_review").length} watching</Badge>}
+            />
+            {watchlist.length === 0 ? (
+              <EmptyState
+                title="Nothing on the watchlist"
+                detail="Choose Watch in Results on an opportunity to observe its signals without creating work."
+              />
+            ) : (
+              <div className="grid gap-2">
+                {watchlist.map((item) => {
+                  const highlighted = requestedWatchOpportunityID === item.source_opportunity_id;
+                  const closed = item.status === "closed" || item.status === "learned";
+                  return (
+                    <div
+                      key={item.id}
+                      id={`watchlist-item-${item.source_opportunity_id}`}
+                      data-watchlist-card
+                      tabIndex={-1}
+                      className={cx(
+                        "flex min-w-0 flex-col gap-2 rounded-lg border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between",
+                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone={watchlistStatusTone(item.status)}>{watchlistStatusLabel(item.status)}</Badge>
+                          <Badge tone="neutral">Watch Result</Badge>
+                          {item.due_at && !closed && <Badge tone="neutral">Review due {formatDate(item.due_at)}</Badge>}
+                        </div>
+                        <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{watchlistItemTitle(item)}</h3>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {item.opportunity_page_url ?? item.opportunity_query ?? `Observation window: ${item.observation_window_days} days`}
+                        </p>
+                      </div>
+                      {!closed && (
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button size="sm" variant="ghost" onClick={() => closeWatchlistItem(item, "learned")} disabled={!!busy}>
+                            <ButtonProgress busy={busy === `watchlist-${item.id}-learned`} busyLabel="Saving" idleIcon={null}>
+                              Mark learned
+                            </ButtonProgress>
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => closeWatchlistItem(item, "closed")} disabled={!!busy}>
+                            <ButtonProgress busy={busy === `watchlist-${item.id}-closed`} busyLabel="Closing" idleIcon={null}>
+                              Close
+                            </ButtonProgress>
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section>
@@ -3637,10 +3969,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     {mode === "analysis" && selectedOpportunity && (() => {
       const addingToPlan = createActionBusy(selectedOpportunity);
       const dismissingOpportunity = dismissBusy(selectedOpportunity);
-      const reviewingOpportunity = addingToPlan || dismissingOpportunity;
-      const workType = opportunityWorkType(selectedOpportunity);
-      const destination = opportunityDestination(selectedOpportunity);
-      const cta = opportunityPrimaryCTA(selectedOpportunity);
+      const snoozingOpportunity = opportunityBusy[selectedOpportunity.id] === "snooze";
+      const watchingOpportunity = opportunityBusy[selectedOpportunity.id] === "watch";
+      const reviewingOpportunity = addingToPlan || dismissingOpportunity || snoozingOpportunity || watchingOpportunity;
+      const recommendedWorkType = opportunityWorkType(selectedOpportunity);
+      const allowedWorkTypes = allowedWorkTypesForOpportunity(selectedOpportunity);
+      const workType = routeOverrides[selectedOpportunity.id] ?? recommendedWorkType;
+      const destination = destinationForWorkType(workType);
+      const cta = ctaForWorkType(workType);
       const evidence = selectedOpportunity.evidence;
       const dataSourceNotes =
         evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
@@ -3691,11 +4027,50 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Next step</div>
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-900">
-                    Approve to send this to {destination}.
+                    {approvalCopyForWorkType(workType)}
                   </p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
                     {cta.label} keeps this work in the right queue instead of creating a generic task.
                   </p>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Work type</div>
+                  {allowedWorkTypes.length > 1 ? (
+                    <>
+                      <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Choose work type">
+                        {allowedWorkTypes.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            data-work-type-option
+                            aria-pressed={option === workType}
+                            onClick={() =>
+                              setRouteOverrides((current) => ({ ...current, [selectedOpportunity.id]: option }))
+                            }
+                            className={cx(
+                              "rounded-lg border px-3 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                              option === workType
+                                ? "border-slate-900 bg-slate-900 text-white"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                            )}
+                          >
+                            {option}
+                            {option === recommendedWorkType ? " · Recommended" : ""}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        {workType === recommendedWorkType
+                          ? "System recommendation. Switch the work type if this fits another queue better."
+                          : "You changed the route. The CTA and destination follow your choice."}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-sm leading-6 text-slate-700">
+                      {workType} · {workTypeLockReason(selectedOpportunity)}
+                    </p>
+                  )}
                 </section>
 
                 <section className="grid gap-3 text-sm sm:grid-cols-3">
@@ -3756,7 +4131,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   </div>
                   <div className="sm:col-span-2">
                     <div className="text-xs font-semibold uppercase text-slate-400">Opportunity type</div>
-                    <div className="mt-1 break-words font-medium text-slate-700">{selectedOpportunity.type}</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{humanizeInternalType(selectedOpportunity.type)}</div>
                   </div>
                 </section>
 
@@ -3773,18 +4148,35 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
             <div
               aria-label="Drawer actions"
-              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
+              className="shrink-0 flex flex-col gap-3 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4"
             >
-              <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
-                <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
-                  Dismiss finding
-                </ButtonProgress>
-              </Button>
-              <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>
-                <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
-                  {cta.label}
-                </ButtonProgress>
-              </Button>
+              <div className="flex flex-wrap items-center gap-2" aria-label="Wait instead of approving">
+                <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Not now:</span>
+                {[7, 14, 30].map((days) => (
+                  <Button key={days} size="sm" variant="ghost" onClick={() => snoozeOpportunity(selectedOpportunity, days)} disabled={reviewingOpportunity}>
+                    <ButtonProgress busy={snoozingOpportunity} busyLabel="Snoozing" idleIcon={null}>
+                      Snooze {days}d
+                    </ButtonProgress>
+                  </Button>
+                ))}
+                <Button size="sm" variant="ghost" onClick={() => watchOpportunity(selectedOpportunity)} disabled={reviewingOpportunity}>
+                  <ButtonProgress busy={watchingOpportunity} busyLabel="Adding to watchlist" idleIcon={null}>
+                    Watch in Results
+                  </ButtonProgress>
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button size="sm" variant="ghost" onClick={() => dismiss(selectedOpportunity)} disabled={reviewingOpportunity}>
+                  <ButtonProgress busy={dismissingOpportunity} busyLabel="Dismissing" idleIcon={null}>
+                    Dismiss finding
+                  </ButtonProgress>
+                </Button>
+                <Button size="sm" variant="primary" onClick={() => createAction(selectedOpportunity)} disabled={reviewingOpportunity}>
+                  <ButtonProgress busy={addingToPlan} busyLabel={cta.busyLabel} idleIcon={<FileText size={14} />}>
+                    {cta.label}
+                  </ButtonProgress>
+                </Button>
+              </div>
             </div>
           </aside>
         </div>
