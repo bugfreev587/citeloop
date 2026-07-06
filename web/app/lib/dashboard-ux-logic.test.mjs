@@ -197,6 +197,41 @@ test("home pipeline stage counts match each destination page queue", async () =>
   assert.equal(counts.planGenerationPending, false);
 });
 
+test("home pipeline content plan count follows visible accepted actions instead of stale topics", async () => {
+  const { homePipelineStageCounts } = await loadDashboardUXLogicModule();
+
+  const counts = homePipelineStageCounts({
+    topics: [
+      { id: "drafted-topic-1", status: "drafted" },
+      { id: "drafted-topic-2", status: "drafted" },
+      { id: "archived-topic-1", status: "archived" },
+    ],
+    visibilityActionsInLoop: [
+      { id: "accepted-action-1", lifecycle_stage: "added_to_plan", asset_type: "page_update", opportunity_status: "accepted" },
+      { id: "accepted-action-2", lifecycle_stage: "planned", asset_type: "metadata_rewrite", opportunity_status: "accepted" },
+    ],
+    reviewGroups: [],
+    approvedArticles: [
+      { id: "canonical-1", kind: "canonical" },
+      { id: "canonical-2", kind: "canonical" },
+      { id: "canonical-3", kind: "canonical" },
+    ],
+    readyDistribute: [],
+    failedPublishArticles: [],
+    verifyingArticles: [],
+    visibilityLifecycleCounts: {
+      added_to_plan: 2,
+      planned: 0,
+      published_or_applied: 0,
+      measuring: 0,
+      learned: 0,
+    },
+  });
+
+  assert.equal(counts.contentPlan, 2);
+  assert.equal(counts.publish, 3);
+});
+
 test("buildHomeEventStream orders live work, recent events, then the next scheduled event", async () => {
   const { buildHomeEventStream } = await loadDashboardUXLogicModule();
 
