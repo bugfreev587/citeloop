@@ -1393,6 +1393,11 @@ test("settings expose Opportunity Finding controls", () => {
   ]) {
     assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+
+  assert.match(settings, /const aiDiscoveryFindingEnabled = config\.opportunity_finding_source_mix !== "signal_scan";/);
+  assert.match(settings, /opportunityFindingBadgeLabel/);
+  assert.match(settings, /"Signal Scan only"/);
+  assert.match(settings, /aiDiscoveryFindingEnabled && \(\s*<Field label="AI Discovery Setting">/);
 });
 
 test("settings exposes Automation as the system setup tab", () => {

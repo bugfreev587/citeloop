@@ -1263,6 +1263,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const selectedAutomationCard = selectedAutomationCheck
     ? automationReadinessCards.find((card) => card.id === selectedAutomationCheck) ?? null
     : null;
+  const aiDiscoveryFindingEnabled = config.opportunity_finding_source_mix !== "signal_scan";
+  const opportunityFindingBadgeLabel = aiDiscoveryFindingEnabled
+    ? config.ai_discovery_automation === "manual"
+      ? "Manual mode"
+      : "Scheduled"
+    : "Signal Scan only";
+  const opportunityFindingBadgeTone = aiDiscoveryFindingEnabled
+    ? config.ai_discovery_automation === "manual"
+      ? "amber"
+      : "green"
+    : "neutral";
 
   return (
     <div className="space-y-7">
@@ -2271,12 +2282,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <div className="min-w-0">
               <div className="text-sm font-bold text-slate-950">Finding pipeline</div>
               <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-600">
-                Signal Scan uses connected site evidence. AI Discovery is the AI-led public discovery stage. All keeps both enabled.
+                {aiDiscoveryFindingEnabled
+                  ? "Signal Scan uses connected site evidence. AI Discovery is the AI-led public discovery stage. All keeps both enabled."
+                  : "Signal Scan uses connected site evidence only. AI Discovery stays off while this mode is selected."}
               </p>
             </div>
-            <Badge tone={config.ai_discovery_automation === "manual" ? "amber" : "green"}>
-              {config.ai_discovery_automation === "manual" ? "Manual mode" : "Scheduled"}
-            </Badge>
+            <Badge tone={opportunityFindingBadgeTone}>{opportunityFindingBadgeLabel}</Badge>
           </div>
 
           <Field label="Mode selection">
@@ -2305,6 +2316,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           </Field>
 
+          {aiDiscoveryFindingEnabled && (
           <Field label="AI Discovery Setting">
             <div className="grid gap-2 md:grid-cols-3">
               {aiDiscoveryAutomations.map((automation) => {
@@ -2330,6 +2342,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               })}
             </div>
           </Field>
+          )}
 
           <div>
             <Button disabled={busy} variant="primary" onClick={save}>
