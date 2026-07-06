@@ -137,6 +137,48 @@ test("home in-motion metric lands opportunity actions on Analysis instead of Con
   assert.equal(metric.href, "/projects/project_1/analysis");
 });
 
+test("home pipeline stage counts match each destination page queue", async () => {
+  const { homePipelineStageCounts } = await loadDashboardUXLogicModule();
+
+  const counts = homePipelineStageCounts({
+    topics: [{ id: "topic-1" }, { id: "topic-2" }],
+    reviewGroups: [],
+    approvedArticles: [
+      { id: "variant-1", kind: "syndication_variant" },
+      { id: "variant-2", kind: "syndication_variant" },
+      { id: "variant-3", kind: "syndication_variant" },
+    ],
+    readyDistribute: [
+      { article: { id: "variant-1", kind: "syndication_variant" } },
+      { article: { id: "variant-2", kind: "syndication_variant" } },
+      { article: { id: "variant-3", kind: "syndication_variant" } },
+    ],
+    failedPublishArticles: [],
+    verifyingArticles: [],
+    visibilityLifecycleCounts: {
+      added_to_plan: 3,
+      planned: 0,
+      published_or_applied: 0,
+      measuring: 0,
+      learned: 0,
+    },
+  });
+
+  assert.deepEqual(
+    {
+      contentPlan: counts.contentPlan,
+      review: counts.review,
+      publish: counts.publish,
+    },
+    {
+      contentPlan: 2,
+      review: 0,
+      publish: 3,
+    },
+  );
+  assert.equal(counts.planGenerationPending, false);
+});
+
 test("buildHomeEventStream orders live work, recent events, then the next scheduled event", async () => {
   const { buildHomeEventStream } = await loadDashboardUXLogicModule();
 

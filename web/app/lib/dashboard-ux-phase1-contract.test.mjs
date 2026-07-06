@@ -1210,8 +1210,11 @@ test("home keeps every loop card fresh from page-level state", () => {
   assert.match(workspace, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(workspace, /visibilityActionsInLoopCount/);
   assert.match(workspace, /visibilityOpenOpportunityCount/);
+  assert.match(workspace, /homePipelineStageCounts/);
   assert.match(workspace, /planItemCount/);
-  assert.match(workspace, /opportunitiesInPlanCount/);
+  assert.match(workspace, /api\.listArticles\(projectId, "pending_url_verification"\)/);
+  assert.doesNotMatch(workspace, /topics\.length \+ opportunitiesInPlanCount/);
+  assert.doesNotMatch(workspace, /metricValue: publishedThisMonth/);
   // Stage statuses are derived live from page state, not hardcoded.
   assert.match(workspace, /Generating \(auto\)/);
   assert.match(workspace, /Plan ready/);

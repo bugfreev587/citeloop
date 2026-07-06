@@ -67,6 +67,24 @@ export type HomeInMotionMetricInput = {
   measuringActionCount: number;
 };
 
+export type HomePipelineStageCountsInput = {
+  topics: Array<unknown>;
+  reviewGroups: Array<{ articles?: Array<unknown> | null }>;
+  approvedArticles: Array<{ kind?: string | null }>;
+  failedPublishArticles: Array<{ kind?: string | null }>;
+  verifyingArticles?: Array<{ kind?: string | null }>;
+  readyDistribute: Array<{ article?: { kind?: string | null } | null }>;
+  visibilityLifecycleCounts?: Partial<Record<"added_to_plan" | "planned" | "published_or_applied" | "measuring" | "learned", number>> | null;
+};
+
+export type HomePipelineStageCounts = {
+  contentPlan: number;
+  review: number;
+  publish: number;
+  results: number;
+  planGenerationPending: boolean;
+};
+
 export type HomeEventInput = {
   projectId: string;
   liveActivities?: Array<{
@@ -330,6 +348,34 @@ export function buildActionableMomentum(input: ActionableMomentumInput): Actiona
       href: `/projects/${input.projectId}/analysis`,
       actionLabel: "Review opportunities",
     },
+  };
+}
+
+function isCanonicalArticle(article: { kind?: string | null }) {
+  return article.kind === "canonical";
+}
+
+function isReadyDistributeItem(item: { article?: { kind?: string | null } | null }) {
+  return item.article?.kind === "syndication_variant";
+}
+
+export function homePipelineStageCounts(input: HomePipelineStageCountsInput): HomePipelineStageCounts {
+  const visibilityPlanHandoffCount =
+    (input.visibilityLifecycleCounts?.added_to_plan ?? 0) + (input.visibilityLifecycleCounts?.planned ?? 0);
+  const approvedCanonicalCount = input.approvedArticles.filter(isCanonicalArticle).length;
+  const failedCanonicalCount = input.failedPublishArticles.filter(isCanonicalArticle).length;
+  const verifyingCanonicalCount = (input.verifyingArticles ?? []).filter(isCanonicalArticle).length;
+  const readyDistributeCount = input.readyDistribute.filter(isReadyDistributeItem).length;
+
+  return {
+    contentPlan: input.topics.length,
+    review: input.reviewGroups.reduce((total, group) => total + (group.articles?.length ?? 0), 0),
+    publish: approvedCanonicalCount + failedCanonicalCount + verifyingCanonicalCount + readyDistributeCount,
+    results:
+      (input.visibilityLifecycleCounts?.published_or_applied ?? 0) +
+      (input.visibilityLifecycleCounts?.measuring ?? 0) +
+      (input.visibilityLifecycleCounts?.learned ?? 0),
+    planGenerationPending: visibilityPlanHandoffCount > 0 && input.topics.length === 0,
   };
 }
 
