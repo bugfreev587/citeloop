@@ -355,6 +355,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const pipelineStageCounts = homePipelineStageCounts({
     topics,
     reviewGroups: review,
+    visibilityActionsInLoop,
     approvedArticles: approved,
     failedPublishArticles: failedPublish,
     verifyingArticles: verifyingPublish,

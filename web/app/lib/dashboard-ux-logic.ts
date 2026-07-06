@@ -68,8 +68,15 @@ export type HomeInMotionMetricInput = {
 };
 
 export type HomePipelineStageCountsInput = {
-  topics: Array<unknown>;
+  topics: Array<{ status?: string | null }>;
   reviewGroups: Array<{ articles?: Array<unknown> | null }>;
+  visibilityActionsInLoop?: Array<{
+    lifecycle_stage?: string | null;
+    opportunity_status?: string | null;
+    asset_type?: string | null;
+    output_snapshot?: any;
+    diff_snapshot?: any;
+  }>;
   approvedArticles: Array<{ kind?: string | null }>;
   failedPublishArticles: Array<{ kind?: string | null }>;
   verifyingArticles?: Array<{ kind?: string | null }>;
@@ -359,16 +366,38 @@ function isReadyDistributeItem(item: { article?: { kind?: string | null } | null
   return item.article?.kind === "syndication_variant";
 }
 
+const contentPlanActionStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
+const directSiteFixAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
+
+function isActivePlanTopic(topic: { status?: string | null }) {
+  return topic.status === "backlog" || topic.status === "scheduled" || topic.status === "generating";
+}
+
+function isContentPlanAction(action: NonNullable<HomePipelineStageCountsInput["visibilityActionsInLoop"]>[number]) {
+  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
+  const assetType = String(action.asset_type ?? "").toLowerCase();
+  const opportunityStatus = String(action.opportunity_status ?? "").toLowerCase();
+  return (
+    contentPlanActionStages.has(String(action.lifecycle_stage ?? "")) &&
+    outputType !== "direct_patch" &&
+    outputType !== "technical_task" &&
+    !directSiteFixAssetTypes.has(assetType) &&
+    !["dismissed", "archived"].includes(opportunityStatus)
+  );
+}
+
 export function homePipelineStageCounts(input: HomePipelineStageCountsInput): HomePipelineStageCounts {
   const visibilityPlanHandoffCount =
     (input.visibilityLifecycleCounts?.added_to_plan ?? 0) + (input.visibilityLifecycleCounts?.planned ?? 0);
+  const activePlanTopicCount = input.topics.filter(isActivePlanTopic).length;
+  const acceptedPlanActionCount = (input.visibilityActionsInLoop ?? []).filter(isContentPlanAction).length;
   const approvedCanonicalCount = input.approvedArticles.filter(isCanonicalArticle).length;
   const failedCanonicalCount = input.failedPublishArticles.filter(isCanonicalArticle).length;
   const verifyingCanonicalCount = (input.verifyingArticles ?? []).filter(isCanonicalArticle).length;
   const readyDistributeCount = input.readyDistribute.filter(isReadyDistributeItem).length;
 
   return {
-    contentPlan: input.topics.length,
+    contentPlan: activePlanTopicCount + acceptedPlanActionCount,
     review: input.reviewGroups.reduce((total, group) => total + (group.articles?.length ?? 0), 0),
     publish: approvedCanonicalCount + failedCanonicalCount + verifyingCanonicalCount + readyDistributeCount,
     results:
