@@ -13,6 +13,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeSEOWatchlistItem = `-- name: CloseSEOWatchlistItem :one
+update seo_watchlist_items set
+  status = $1,
+  closed_at = now(),
+  updated_at = now()
+where id = $2 and project_id = $3
+returning id, project_id, source_opportunity_id, status, observation_window_days, due_at, closed_at, created_at, updated_at
+`
+
+type CloseSEOWatchlistItemParams struct {
+	Status    string    `json:"status"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) CloseSEOWatchlistItem(ctx context.Context, arg CloseSEOWatchlistItemParams) (SeoWatchlistItem, error) {
+	row := q.db.QueryRow(ctx, closeSEOWatchlistItem, arg.Status, arg.ID, arg.ProjectID)
+	var i SeoWatchlistItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.Status,
+		&i.ObservationWindowDays,
+		&i.DueAt,
+		&i.ClosedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const completeSEODoctorRun = `-- name: CompleteSEODoctorRun :one
 update seo_doctor_runs set
   status = 'completed',
@@ -154,8 +186,9 @@ func (q *Queries) CountOpenSEOOpportunities(ctx context.Context, projectID uuid.
 const createContentAction = `-- name: CreateContentAction :one
 insert into content_actions
   (project_id, opportunity_id, action_type, status, target_article_id, target_url,
-   normalized_target_url, target_content_hash_before, baseline_window, measurement_window)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+   normalized_target_url, target_content_hash_before, baseline_window, measurement_window,
+   approval_source, routing_source, work_type)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 on conflict (project_id, opportunity_id, action_type) do update set
   status = excluded.status,
   target_article_id = excluded.target_article_id,
@@ -164,8 +197,11 @@ on conflict (project_id, opportunity_id, action_type) do update set
   target_content_hash_before = excluded.target_content_hash_before,
   baseline_window = excluded.baseline_window,
   measurement_window = excluded.measurement_window,
+  approval_source = excluded.approval_source,
+  routing_source = excluded.routing_source,
+  work_type = excluded.work_type,
   updated_at = now()
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type CreateContentActionParams struct {
@@ -179,6 +215,9 @@ type CreateContentActionParams struct {
 	TargetContentHashBefore *string         `json:"target_content_hash_before"`
 	BaselineWindow          json.RawMessage `json:"baseline_window"`
 	MeasurementWindow       json.RawMessage `json:"measurement_window"`
+	ApprovalSource          string          `json:"approval_source"`
+	RoutingSource           string          `json:"routing_source"`
+	WorkType                *string         `json:"work_type"`
 }
 
 func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActionParams) (ContentAction, error) {
@@ -193,6 +232,9 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 		arg.TargetContentHashBefore,
 		arg.BaselineWindow,
 		arg.MeasurementWindow,
+		arg.ApprovalSource,
+		arg.RoutingSource,
+		arg.WorkType,
 	)
 	var i ContentAction
 	err := row.Scan(
@@ -225,6 +267,9 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -293,6 +338,48 @@ func (q *Queries) CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRun
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSEOWatchlistItem = `-- name: CreateSEOWatchlistItem :one
+insert into seo_watchlist_items
+  (project_id, source_opportunity_id, observation_window_days, due_at)
+values ($1, $2, $3, $4)
+on conflict (project_id, source_opportunity_id) do update set
+  status = 'watching',
+  observation_window_days = excluded.observation_window_days,
+  due_at = excluded.due_at,
+  closed_at = null,
+  updated_at = now()
+returning id, project_id, source_opportunity_id, status, observation_window_days, due_at, closed_at, created_at, updated_at
+`
+
+type CreateSEOWatchlistItemParams struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	SourceOpportunityID   uuid.UUID          `json:"source_opportunity_id"`
+	ObservationWindowDays int32              `json:"observation_window_days"`
+	DueAt                 pgtype.Timestamptz `json:"due_at"`
+}
+
+func (q *Queries) CreateSEOWatchlistItem(ctx context.Context, arg CreateSEOWatchlistItemParams) (SeoWatchlistItem, error) {
+	row := q.db.QueryRow(ctx, createSEOWatchlistItem,
+		arg.ProjectID,
+		arg.SourceOpportunityID,
+		arg.ObservationWindowDays,
+		arg.DueAt,
+	)
+	var i SeoWatchlistItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.Status,
+		&i.ObservationWindowDays,
+		&i.DueAt,
+		&i.ClosedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -531,7 +618,7 @@ func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOA
 }
 
 const getContentAction = `-- name: GetContentAction :one
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot from content_actions
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type from content_actions
 where id = $1 and project_id = $2
 `
 
@@ -573,6 +660,9 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -608,6 +698,9 @@ select
   ca.approved_at,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.type, '')::text as opportunity_type,
   so.query as opportunity_query,
   so.page_url as opportunity_page_url,
@@ -666,6 +759,9 @@ type GetResultsActionRowRow struct {
 	ApprovedAt                   pgtype.Timestamptz `json:"approved_at"`
 	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
 	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource               string             `json:"approval_source"`
+	RoutingSource                string             `json:"routing_source"`
+	WorkType                     *string            `json:"work_type"`
 	OpportunityType              string             `json:"opportunity_type"`
 	OpportunityQuery             *string            `json:"opportunity_query"`
 	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
@@ -710,6 +806,9 @@ func (q *Queries) GetResultsActionRow(ctx context.Context, arg GetResultsActionR
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 		&i.OpportunityType,
 		&i.OpportunityQuery,
 		&i.OpportunityPageUrl,
@@ -807,7 +906,7 @@ func (q *Queries) GetSEODoctorRun(ctx context.Context, arg GetSEODoctorRunParams
 }
 
 const getSEOOpportunity = `-- name: GetSEOOpportunity :one
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from seo_opportunities
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from seo_opportunities
 where id = $1 and project_id = $2
 `
 
@@ -840,6 +939,9 @@ func (q *Queries) GetSEOOpportunity(ctx context.Context, arg GetSEOOpportunityPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
 	)
 	return i, err
 }
@@ -1150,7 +1252,7 @@ func (q *Queries) ListActionMeasurementsForProject(ctx context.Context, arg List
 }
 
 const listContentActions = `-- name: ListContentActions :many
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot from content_actions
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type from content_actions
 where project_id = $1
   and ($2::text = '' or status = $2)
   and ($3::timestamptz is null or created_at < $3)
@@ -1209,6 +1311,9 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 			&i.ApprovedAt,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+			&i.ApprovalSource,
+			&i.RoutingSource,
+			&i.WorkType,
 		); err != nil {
 			return nil, err
 		}
@@ -1221,7 +1326,7 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 }
 
 const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions :many
-select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot from content_actions ca
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type from content_actions ca
 where ca.project_id = $1
   and ca.status = 'measuring'
   and (
@@ -1284,6 +1389,9 @@ func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDu
 			&i.ApprovedAt,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+			&i.ApprovalSource,
+			&i.RoutingSource,
+			&i.WorkType,
 		); err != nil {
 			return nil, err
 		}
@@ -1530,6 +1638,9 @@ select
   ca.approved_at,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.type, '')::text as opportunity_type,
   so.query as opportunity_query,
   so.page_url as opportunity_page_url,
@@ -1604,6 +1715,9 @@ type ListResultsActionRowsRow struct {
 	ApprovedAt                   pgtype.Timestamptz `json:"approved_at"`
 	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
 	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource               string             `json:"approval_source"`
+	RoutingSource                string             `json:"routing_source"`
+	WorkType                     *string            `json:"work_type"`
 	OpportunityType              string             `json:"opportunity_type"`
 	OpportunityQuery             *string            `json:"opportunity_query"`
 	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
@@ -1659,6 +1773,9 @@ func (q *Queries) ListResultsActionRows(ctx context.Context, arg ListResultsActi
 			&i.ApprovedAt,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+			&i.ApprovalSource,
+			&i.RoutingSource,
+			&i.WorkType,
 			&i.OpportunityType,
 			&i.OpportunityQuery,
 			&i.OpportunityPageUrl,
@@ -1861,7 +1978,7 @@ func (q *Queries) ListSEOIntegrations(ctx context.Context, projectID uuid.UUID) 
 }
 
 const listSEOOpportunities = `-- name: ListSEOOpportunities :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key from seo_opportunities
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at from seo_opportunities
 where project_id = $1
   and ($2::text = '' or type = $2)
   and ($3::text = '' or status = $3)
@@ -1914,6 +2031,9 @@ func (q *Queries) ListSEOOpportunities(ctx context.Context, arg ListSEOOpportuni
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OpportunityKey,
+			&i.SnoozedUntil,
+			&i.SnoozeReason,
+			&i.UnsnoozedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1969,6 +2089,81 @@ func (q *Queries) ListSEORuns(ctx context.Context, arg ListSEORunsParams) ([]Seo
 			&i.Input,
 			&i.Output,
 			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSEOWatchlistItems = `-- name: ListSEOWatchlistItems :many
+select w.id, w.project_id, w.source_opportunity_id, w.status, w.observation_window_days, w.due_at, w.closed_at, w.created_at, w.updated_at,
+  coalesce(so.type, '')::text as opportunity_type,
+  so.page_url as opportunity_page_url,
+  so.query as opportunity_query,
+  so.recommended_action as opportunity_recommended_action,
+  so.expected_impact as opportunity_expected_impact
+from seo_watchlist_items w
+left join seo_opportunities so
+  on so.id = w.source_opportunity_id
+  and so.project_id = w.project_id
+where w.project_id = $1
+  and ($2::text = '' or w.status = $2)
+order by w.due_at asc, w.created_at desc
+limit $3
+`
+
+type ListSEOWatchlistItemsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    string    `json:"status"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+type ListSEOWatchlistItemsRow struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	SourceOpportunityID          uuid.UUID          `json:"source_opportunity_id"`
+	Status                       string             `json:"status"`
+	ObservationWindowDays        int32              `json:"observation_window_days"`
+	DueAt                        pgtype.Timestamptz `json:"due_at"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	OpportunityType              string             `json:"opportunity_type"`
+	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
+	OpportunityQuery             *string            `json:"opportunity_query"`
+	OpportunityRecommendedAction *string            `json:"opportunity_recommended_action"`
+	OpportunityExpectedImpact    *string            `json:"opportunity_expected_impact"`
+}
+
+func (q *Queries) ListSEOWatchlistItems(ctx context.Context, arg ListSEOWatchlistItemsParams) ([]ListSEOWatchlistItemsRow, error) {
+	rows, err := q.db.Query(ctx, listSEOWatchlistItems, arg.ProjectID, arg.Status, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSEOWatchlistItemsRow
+	for rows.Next() {
+		var i ListSEOWatchlistItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.Status,
+			&i.ObservationWindowDays,
+			&i.DueAt,
+			&i.ClosedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OpportunityType,
+			&i.OpportunityPageUrl,
+			&i.OpportunityQuery,
+			&i.OpportunityRecommendedAction,
+			&i.OpportunityExpectedImpact,
 		); err != nil {
 			return nil, err
 		}
@@ -2053,7 +2248,7 @@ func (q *Queries) ListSearchQueryOpportunityRollups(ctx context.Context, arg Lis
 }
 
 const listUnplannedContentActions = `-- name: ListUnplannedContentActions :many
-select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot from content_actions ca
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type from content_actions ca
 left join topics t
   on t.source_content_action_id = ca.id
 where ca.project_id = $1
@@ -2125,6 +2320,9 @@ func (q *Queries) ListUnplannedContentActions(ctx context.Context, arg ListUnpla
 			&i.ApprovedAt,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+			&i.ApprovalSource,
+			&i.RoutingSource,
+			&i.WorkType,
 		); err != nil {
 			return nil, err
 		}
@@ -2161,6 +2359,9 @@ select
   ca.review_required,
   ca.verified_at,
   ca.verification_snapshot,
+  ca.approval_source,
+  ca.routing_source,
+  ca.work_type,
   coalesce(so.status, '')::text as opportunity_status,
   coalesce(so.type, '')::text as opportunity_type,
   so.page_url as opportunity_page_url,
@@ -2220,6 +2421,9 @@ type ListVisibilityActionRowsRow struct {
 	ReviewRequired               bool               `json:"review_required"`
 	VerifiedAt                   pgtype.Timestamptz `json:"verified_at"`
 	VerificationSnapshot         json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource               string             `json:"approval_source"`
+	RoutingSource                string             `json:"routing_source"`
+	WorkType                     *string            `json:"work_type"`
 	OpportunityStatus            string             `json:"opportunity_status"`
 	OpportunityType              string             `json:"opportunity_type"`
 	OpportunityPageUrl           *string            `json:"opportunity_page_url"`
@@ -2270,6 +2474,9 @@ func (q *Queries) ListVisibilityActionRows(ctx context.Context, arg ListVisibili
 			&i.ReviewRequired,
 			&i.VerifiedAt,
 			&i.VerificationSnapshot,
+			&i.ApprovalSource,
+			&i.RoutingSource,
+			&i.WorkType,
 			&i.OpportunityStatus,
 			&i.OpportunityType,
 			&i.OpportunityPageUrl,
@@ -2302,7 +2509,7 @@ update content_actions set
   draft_article_id = $3,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type MarkContentActionDraftReadyParams struct {
@@ -2344,6 +2551,9 @@ func (q *Queries) MarkContentActionDraftReady(ctx context.Context, arg MarkConte
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -2354,7 +2564,7 @@ update content_actions set
   published_at = now(),
   updated_at = now()
 where project_id = $1 and draft_article_id = $2
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type MarkContentActionMeasuringForDraftArticleParams struct {
@@ -2395,6 +2605,9 @@ func (q *Queries) MarkContentActionMeasuringForDraftArticle(ctx context.Context,
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -2406,7 +2619,7 @@ update content_actions set
   verification_snapshot = $3::jsonb,
   updated_at = now()
 where id = $4 and project_id = $5
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type MarkContentActionVerificationParams struct {
@@ -2456,8 +2669,28 @@ func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkCon
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
+}
+
+const markDueSEOWatchlistItems = `-- name: MarkDueSEOWatchlistItems :execrows
+update seo_watchlist_items set
+  status = 'due_for_review',
+  updated_at = now()
+where project_id = $1
+  and status = 'watching'
+  and due_at <= now()
+`
+
+func (q *Queries) MarkDueSEOWatchlistItems(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markDueSEOWatchlistItems, projectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveMissingSEODoctorFindings = `-- name: ResolveMissingSEODoctorFindings :exec
@@ -2640,6 +2873,59 @@ func (q *Queries) SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) 
 	return i, err
 }
 
+const snoozeSEOOpportunity = `-- name: SnoozeSEOOpportunity :one
+update seo_opportunities set
+  status = 'snoozed',
+  snoozed_until = $1,
+  snooze_reason = $2,
+  updated_at = now()
+where id = $3 and project_id = $4 and status in ('open','snoozed')
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
+`
+
+type SnoozeSEOOpportunityParams struct {
+	SnoozedUntil pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason *string            `json:"snooze_reason"`
+	ID           uuid.UUID          `json:"id"`
+	ProjectID    uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) SnoozeSEOOpportunity(ctx context.Context, arg SnoozeSEOOpportunityParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, snoozeSEOOpportunity,
+		arg.SnoozedUntil,
+		arg.SnoozeReason,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+	)
+	return i, err
+}
+
 const startSEORun = `-- name: StartSEORun :one
 insert into seo_runs
   (project_id, agent, status, started_at, input)
@@ -2677,6 +2963,52 @@ func (q *Queries) StartSEORun(ctx context.Context, arg StartSEORunParams) (SeoRu
 	return i, err
 }
 
+const unsnoozeSEOOpportunity = `-- name: UnsnoozeSEOOpportunity :one
+update seo_opportunities set
+  status = 'open',
+  snoozed_until = null,
+  unsnoozed_at = now(),
+  updated_at = now()
+where id = $1 and project_id = $2 and status = 'snoozed'
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
+`
+
+type UnsnoozeSEOOpportunityParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UnsnoozeSEOOpportunity(ctx context.Context, arg UnsnoozeSEOOpportunityParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, unsnoozeSEOOpportunity, arg.ID, arg.ProjectID)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+	)
+	return i, err
+}
+
 const updateContentActionExecutionMetadata = `-- name: UpdateContentActionExecutionMetadata :one
 update content_actions set
   asset_type = coalesce($1::text, asset_type),
@@ -2693,7 +3025,7 @@ update content_actions set
   verification_snapshot = $12::jsonb,
   updated_at = now()
 where id = $13 and project_id = $14
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type UpdateContentActionExecutionMetadataParams struct {
@@ -2761,6 +3093,9 @@ func (q *Queries) UpdateContentActionExecutionMetadata(ctx context.Context, arg 
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -2772,7 +3107,7 @@ update content_actions set
   measurement_window = $3::jsonb,
   updated_at = now()
 where id = $4 and project_id = $5
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type UpdateContentActionOutcomeSummaryParams struct {
@@ -2822,6 +3157,9 @@ func (q *Queries) UpdateContentActionOutcomeSummary(ctx context.Context, arg Upd
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -2831,7 +3169,7 @@ update content_actions set
   status = $3,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type
 `
 
 type UpdateContentActionStatusParams struct {
@@ -2873,6 +3211,9 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 		&i.ApprovedAt,
 		&i.VerifiedAt,
 		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
 	)
 	return i, err
 }
@@ -2995,7 +3336,7 @@ update seo_opportunities set
   status = $3,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 `
 
 type UpdateSEOOpportunityStatusParams struct {
@@ -3028,6 +3369,9 @@ func (q *Queries) UpdateSEOOpportunityStatus(ctx context.Context, arg UpdateSEOO
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
 	)
 	return i, err
 }
@@ -3562,7 +3906,7 @@ on conflict (project_id, opportunity_key) where status in ('open','accepted','co
   effort = excluded.effort,
   risk_level = excluded.risk_level,
   updated_at = now()
-returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at
 `
 
 type UpsertSEOOpportunityParams struct {
@@ -3625,6 +3969,9 @@ func (q *Queries) UpsertSEOOpportunity(ctx context.Context, arg UpsertSEOOpportu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
 	)
 	return i, err
 }
@@ -3897,4 +4244,23 @@ func (q *Queries) UpsertTechnicalCheck(ctx context.Context, arg UpsertTechnicalC
 		&i.CheckedAt,
 	)
 	return i, err
+}
+
+const wakeDueSnoozedSEOOpportunities = `-- name: WakeDueSnoozedSEOOpportunities :execrows
+update seo_opportunities set
+  status = 'open',
+  unsnoozed_at = now(),
+  updated_at = now()
+where project_id = $1
+  and status = 'snoozed'
+  and snoozed_until is not null
+  and snoozed_until <= now()
+`
+
+func (q *Queries) WakeDueSnoozedSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, wakeDueSnoozedSEOOpportunities, projectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

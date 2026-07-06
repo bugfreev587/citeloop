@@ -803,6 +803,7 @@ func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uu
 			targetHash = article.ContentHash
 		}
 	}
+	autopilotWorkType := workTypeForOpportunity(opp)
 	action, err := s.Q.CreateContentAction(r.Context(), db.CreateContentActionParams{
 		ProjectID:               projectID,
 		OpportunityID:           opp.ID,
@@ -814,6 +815,9 @@ func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uu
 		TargetContentHashBefore: targetHash,
 		BaselineWindow:          json.RawMessage(`{"days":28}`),
 		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
+		ApprovalSource:          ApprovalSourceAutopilotPolicy,
+		RoutingSource:           RoutingSourcePolicy,
+		WorkType:                &autopilotWorkType,
 	})
 	if err != nil {
 		return db.ContentAction{}, err
