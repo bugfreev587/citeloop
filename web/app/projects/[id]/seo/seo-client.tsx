@@ -1387,8 +1387,8 @@ function OpportunityFindingStatusPanel({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        {summary.slice(0, 4).map((item) => (
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        {summary.slice(0, 5).map((item) => (
           <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
             <div className="text-xs font-bold uppercase text-slate-500">{item.label}</div>
             <div className="mt-1 text-sm font-semibold leading-5 text-slate-800">{item.detail}</div>
