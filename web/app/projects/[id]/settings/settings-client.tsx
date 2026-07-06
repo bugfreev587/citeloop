@@ -145,6 +145,83 @@ function GSCSetupGuide({ siteURL }: { siteURL?: string }) {
   );
 }
 
+type ConnectionGuide = {
+  name: string;
+  state: string;
+  steps: string[];
+};
+
+const distributionConnectionGuides: ConnectionGuide[] = [
+  {
+    name: "Hashnode",
+    state: "Copy draft only today",
+    steps: [
+      "Create or select a Hashnode publication.",
+      "Confirm API access is available for the publication.",
+      "Generate a Personal Access Token in Developer Settings.",
+      "Paste the token into CiteLoop when the connector is ready.",
+    ],
+  },
+  {
+    name: "LinkedIn",
+    state: "Copy draft only today",
+    steps: [
+      "Sign in with LinkedIn.",
+      "Approve CiteLoop posting permissions when OAuth is ready.",
+      "Select a personal profile or Company Page.",
+      "Keep posts in approval mode by default.",
+    ],
+  },
+  {
+    name: "Reddit",
+    state: "Submit draft only today",
+    steps: [
+      "Sign in with Reddit.",
+      "Approve submit permissions.",
+      "Choose the target subreddit per post.",
+      "Review the generated post before submitting.",
+    ],
+  },
+  {
+    name: "Hacker News",
+    state: "Manual submit",
+    steps: [
+      "Create or sign in to a Hacker News account.",
+      "Open the generated submit draft.",
+      "Paste the title and canonical URL.",
+      "Mark distributed in CiteLoop after submitting.",
+    ],
+  },
+  {
+    name: "Medium",
+    state: "Copy draft only today",
+    steps: [
+      "Create or sign in to a Medium account.",
+      "Open a new story from the prepared draft.",
+      "Paste the canonical URL when Medium allows it.",
+      "Mark distributed in CiteLoop after publishing.",
+    ],
+  },
+];
+
+function ConnectionInstructions({ steps }: { steps: string[] }) {
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <div className="text-xs font-bold uppercase text-slate-400">How to connect</div>
+      <ol className="mt-2 grid gap-1.5 text-sm leading-5 text-slate-600">
+        {steps.map((step, index) => (
+          <li key={step} className="flex gap-2">
+            <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-500">
+              {index + 1}
+            </span>
+            <span>{step}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
   { value: "slack_webhook", label: "Slack" },
   { value: "discord_webhook", label: "Discord" },
@@ -331,6 +408,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [publisherDraft, setPublisherDraft] = useState<GitHubNextJSPublisherInput>(defaultPublisherDraft);
   const [publisherCredentialDraft, setPublisherCredentialDraft] = useState("");
+  const [devToUsername, setDevToUsername] = useState("");
+  const [devToCredentialDraft, setDevToCredentialDraft] = useState("");
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
@@ -439,6 +518,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
           publish_mode: github.config?.publish_mode ?? "publish",
           credential_ref: "",
         });
+      }
+      const devTo = nextConnections.find((connection) => connection.kind === "dev_to");
+      if (devTo) {
+        setDevToUsername(devTo.config?.username ?? "");
       }
     } catch (e: any) {
       if (isProjectScopedMissing(e.message)) {
@@ -818,6 +901,68 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function saveDevToConnection() {
+    setNotificationBusy("save-devto");
+    setMessage(null);
+    try {
+      const saved = await api.upsertDevToPublisherConnection(projectId, {
+        label: "Dev.to",
+        username: devToUsername.trim(),
+      });
+      setPublisherConnections((current) => {
+        const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
+        return [saved, ...rest];
+      });
+      setMessage({ title: "Dev.to connection saved", detail: "Save an API key, then test the connection.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Dev.to save failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function saveDevToCredential() {
+    if (!devToPublisher) {
+      setMessage({ title: "Save Dev.to first", detail: "Create the Dev.to connection before saving an API key.", tone: "amber" });
+      return;
+    }
+    const value = devToCredentialDraft.trim();
+    if (!value) {
+      setMessage({ title: "Dev.to API key required", tone: "amber" });
+      return;
+    }
+    setNotificationBusy(`save-devto-credential-${devToPublisher.id}`);
+    setMessage(null);
+    try {
+      const saved = await api.upsertPublisherCredential(projectId, devToPublisher.id, {
+        kind: "dev_to_api_key",
+        value,
+      });
+      setDevToCredentialDraft("");
+      setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      setMessage({ title: "Dev.to API key saved", detail: "Test the connection before enabling publishing.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Dev.to key save failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
+  async function revokeDevToCredential() {
+    if (!devToPublisher) return;
+    setNotificationBusy(`revoke-devto-credential-${devToPublisher.id}`);
+    setMessage(null);
+    try {
+      const saved = await api.revokePublisherCredential(projectId, devToPublisher.id);
+      setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      setMessage({ title: "Dev.to API key revoked", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Dev.to key revoke failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setNotificationBusy(null);
+    }
+  }
+
   function connectGithub() {
     if (githubIntegration?.install_url) {
       rememberGithubConnectProject(projectId, `/projects/${projectId}/settings?github=connected#publisher`);
@@ -971,6 +1116,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   const githubPublisher = publisherConnections.find((connection) => connection.kind === "github_nextjs");
+  const devToPublisher = publisherConnections.find((connection) => connection.kind === "dev_to");
   const gscHasAuthorizedProperties = Boolean(gscConnection && gscConnection.configured !== false && gscConnection.properties.length > 0);
   const gscHasSelectedProperty = Boolean(gscConnection?.selected_property);
   const canStartGSCOAuth =
@@ -1698,6 +1844,16 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             </div>
           )}
 
+          <ConnectionInstructions
+            steps={[
+              "Install the CiteLoop GitHub App.",
+              "Grant access to the content repository.",
+              "Choose repo, branch, content path, and base URL.",
+              "Save and test the connection.",
+              "Enable publishing.",
+            ]}
+          />
+
           <div className="grid gap-4 lg:grid-cols-2">
             <Field label="Repository">
               <TextInput
@@ -1861,6 +2017,144 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                 Revoke token
               </ButtonProgress>
             </Button>
+          </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-bold text-slate-900">Dev.to</div>
+                  <Badge tone={devToPublisher?.status === "connected" ? "green" : devToPublisher?.status === "error" ? "red" : "amber"}>
+                    {devToPublisher?.status ?? "missing"}
+                  </Badge>
+                  <Badge tone={devToPublisher?.enabled ? "green" : "neutral"}>{devToPublisher?.enabled ? "enabled" : "disabled"}</Badge>
+                </div>
+                <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+                  Connect a DEV Community API key to verify account access. Dev.to publishing starts in approval mode.
+                </p>
+              </div>
+            </div>
+
+            <ConnectionInstructions
+              steps={[
+                "Open DEV Settings > Extensions.",
+                "Generate a DEV Community API key.",
+                "Paste the DEV API key into CiteLoop.",
+                "Test the connection.",
+                "Choose draft-only or auto publish.",
+              ]}
+            />
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <Field label="DEV username">
+                <TextInput
+                  value={devToUsername}
+                  onChange={(event) => setDevToUsername(event.target.value)}
+                  placeholder="citeloop"
+                />
+              </Field>
+              <Field label="Dev.to API key">
+                <TextInput
+                  type="password"
+                  value={devToCredentialDraft}
+                  onChange={(event) => setDevToCredentialDraft(event.target.value)}
+                  placeholder={devToPublisher?.credential_configured ? "Saved" : "Paste API key"}
+                  autoComplete="off"
+                />
+              </Field>
+            </div>
+
+            {devToPublisher?.last_error && <Notice title="Dev.to connection needs attention" detail={devToPublisher.last_error} tone="red" />}
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="primary" onClick={saveDevToConnection} disabled={notificationBusy === "save-devto"}>
+                <ButtonProgress busy={notificationBusy === "save-devto"} busyLabel="Saving Dev.to" idleIcon={<Save size={16} />}>
+                  Save Dev.to
+                </ButtonProgress>
+              </Button>
+              <Button
+                variant="outline"
+                onClick={saveDevToCredential}
+                disabled={!devToPublisher || !devToCredentialDraft.trim() || notificationBusy === `save-devto-credential-${devToPublisher?.id}`}
+              >
+                <ButtonProgress
+                  busy={notificationBusy === `save-devto-credential-${devToPublisher?.id}`}
+                  busyLabel="Saving key"
+                  idleIcon={<Save size={16} />}
+                >
+                  Save Dev.to key
+                </ButtonProgress>
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => devToPublisher && testPublisherConnection(devToPublisher.id)}
+                disabled={!devToPublisher || notificationBusy === `test-publisher-${devToPublisher?.id}`}
+              >
+                <ButtonProgress busy={notificationBusy === `test-publisher-${devToPublisher?.id}`} busyLabel="Testing" idleIcon={<Send size={16} />}>
+                  Test Dev.to
+                </ButtonProgress>
+              </Button>
+              {devToPublisher?.enabled ? (
+                <Button
+                  variant="outline"
+                  onClick={() => devToPublisher && setPublisherConnectionEnabled(devToPublisher, false)}
+                  disabled={!devToPublisher || notificationBusy === `toggle-publisher-${devToPublisher?.id}`}
+                >
+                  <ButtonProgress
+                    busy={notificationBusy === `toggle-publisher-${devToPublisher?.id}`}
+                    busyLabel="Disabling"
+                    idleIcon={<Power size={16} />}
+                  >
+                    Disable Dev.to
+                  </ButtonProgress>
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  onClick={() => devToPublisher && setPublisherConnectionEnabled(devToPublisher, true)}
+                  disabled={!devToPublisher || devToPublisher.status !== "connected" || notificationBusy === `toggle-publisher-${devToPublisher?.id}`}
+                >
+                  <ButtonProgress
+                    busy={notificationBusy === `toggle-publisher-${devToPublisher?.id}`}
+                    busyLabel="Enabling"
+                    idleIcon={<Power size={16} />}
+                  >
+                    Enable Dev.to
+                  </ButtonProgress>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={revokeDevToCredential}
+                disabled={!devToPublisher?.credential_configured || notificationBusy === `revoke-devto-credential-${devToPublisher?.id}`}
+              >
+                <ButtonProgress
+                  busy={notificationBusy === `revoke-devto-credential-${devToPublisher?.id}`}
+                  busyLabel="Revoking key"
+                  idleIcon={<Trash2 size={16} />}
+                >
+                  Revoke Dev.to key
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-4">
+            <div className="text-sm font-bold text-slate-900">Distribution platform instructions</div>
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+              These platforms stay copy or submit draft only until their connector is ready.
+            </p>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              {distributionConnectionGuides.map((guide) => (
+                <div key={guide.name} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-slate-900">{guide.name}</div>
+                    <Badge tone="neutral">{guide.state}</Badge>
+                  </div>
+                  <ConnectionInstructions steps={guide.steps} />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>

@@ -11,8 +11,10 @@ import (
 
 const (
 	ConnectionKindGitHubNextJS = "github_nextjs"
+	ConnectionKindDevTo        = "dev_to"
 
 	CredentialKindGitHubToken = "github_token"
+	CredentialKindDevToAPIKey = "dev_to_api_key"
 
 	CapabilityCreateArticle  = "create_article"
 	CapabilityUpdateArticle  = "update_article"
@@ -50,6 +52,20 @@ func GitHubNextJSCapabilities() Capabilities {
 		CapabilityCanonical:      true,
 		CapabilityMediaUpload:    false,
 		CapabilityDraftMode:      false,
+		CapabilityPublishMode:    true,
+		CapabilityDelete:         false,
+		CapabilityRollback:       false,
+	}
+}
+
+func DevToCapabilities() Capabilities {
+	return Capabilities{
+		CapabilityCreateArticle:  true,
+		CapabilityUpdateArticle:  false,
+		CapabilityMetadataUpdate: true,
+		CapabilityCanonical:      true,
+		CapabilityMediaUpload:    false,
+		CapabilityDraftMode:      true,
 		CapabilityPublishMode:    true,
 		CapabilityDelete:         false,
 		CapabilityRollback:       false,
@@ -191,6 +207,8 @@ func RedactCredentialValue(kind, value string) string {
 	switch kind {
 	case CredentialKindGitHubToken:
 		return "gh_****" + tail
+	case CredentialKindDevToAPIKey:
+		return "devto_****" + tail
 	default:
 		return "****" + tail
 	}

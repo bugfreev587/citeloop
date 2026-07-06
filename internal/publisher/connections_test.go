@@ -31,6 +31,27 @@ func TestGitHubNextJSCapabilitiesExposeSafePublishSurface(t *testing.T) {
 	}
 }
 
+func TestDevToCapabilitiesExposeDraftAndPublishSurface(t *testing.T) {
+	caps := DevToCapabilities()
+
+	for _, capability := range []string{
+		CapabilityCreateArticle,
+		CapabilityCanonical,
+		CapabilityDraftMode,
+		CapabilityPublishMode,
+	} {
+		if !caps[capability] {
+			t.Fatalf("expected %s capability to be enabled", capability)
+		}
+	}
+	if caps[CapabilityRollback] {
+		t.Fatal("dev_to should not claim rollback support")
+	}
+	if caps[CapabilityMediaUpload] {
+		t.Fatal("dev_to should not claim media upload support")
+	}
+}
+
 func TestParseGitHubNextJSConfigNormalizesDefaults(t *testing.T) {
 	raw := json.RawMessage(`{
 		"repo":" owner/unipost ",
@@ -148,5 +169,13 @@ func TestPublisherCredentialRefAndRedaction(t *testing.T) {
 	}
 	if !strings.HasSuffix(redacted, "wxyz") {
 		t.Fatalf("redaction should preserve tail for recognition: %s", redacted)
+	}
+
+	devToRedacted := RedactCredentialValue(CredentialKindDevToAPIKey, "devtoabcdefghijklmnopqrstuvwxyz")
+	if strings.Contains(devToRedacted, "abcdefghijklmnopqrstuv") {
+		t.Fatalf("dev.to redaction leaked too much secret: %s", devToRedacted)
+	}
+	if !strings.HasPrefix(devToRedacted, "devto_****") || !strings.HasSuffix(devToRedacted, "wxyz") {
+		t.Fatalf("dev.to redaction should preserve prefix and tail: %s", devToRedacted)
 	}
 }

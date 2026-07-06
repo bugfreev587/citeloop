@@ -116,6 +116,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/runs/{runID}", s.getRun)
 			r.Get("/publisher-connections", s.listPublisherConnections)
 			r.Put("/publisher-connections/github-nextjs", s.upsertGitHubNextJSPublisherConnection)
+			r.Put("/publisher-connections/dev-to", s.upsertDevToPublisherConnection)
 			r.Delete("/publisher-connections/{connectionID}", s.deletePublisherConnection)
 			r.Put("/publisher-connections/{connectionID}/enabled", s.setPublisherConnectionEnabled)
 			r.Post("/publisher-connections/{connectionID}/test", s.testPublisherConnection)

@@ -23,6 +23,7 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/projects/not-a-uuid/publisher-connections"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/github-nextjs"},
+		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/dev-to"},
 		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/enabled"},
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
@@ -35,6 +36,97 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 		if res.Code != http.StatusBadRequest {
 			t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, res.Code, http.StatusBadRequest)
 		}
+	}
+}
+
+func TestDevToUpsertUsesSafeDefaults(t *testing.T) {
+	cfgRaw, status, err := devToConfigForUpsert(devToPublisherInput{
+		Username: " citeloop ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "missing" {
+		t.Fatalf("status = %q, want missing until credential is saved", status)
+	}
+	var cfg map[string]string
+	if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["username"] != "citeloop" {
+		t.Fatalf("username = %q", cfg["username"])
+	}
+	if strings.Contains(string(cfgRaw), "api_key") || strings.Contains(string(cfgRaw), "token") {
+		t.Fatalf("dev.to config leaked secret-like fields: %s", string(cfgRaw))
+	}
+}
+
+func TestPublisherCredentialKindMatchesConnectionKind(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conn db.PublisherConnection
+		in   string
+		want string
+	}{
+		{
+			name: "github default",
+			conn: db.PublisherConnection{Kind: publisher.ConnectionKindGitHubNextJS},
+			in:   "",
+			want: publisher.CredentialKindGitHubToken,
+		},
+		{
+			name: "dev.to default",
+			conn: db.PublisherConnection{Kind: publisher.ConnectionKindDevTo},
+			in:   "",
+			want: publisher.CredentialKindDevToAPIKey,
+		},
+		{
+			name: "dev.to explicit",
+			conn: db.PublisherConnection{Kind: publisher.ConnectionKindDevTo},
+			in:   publisher.CredentialKindDevToAPIKey,
+			want: publisher.CredentialKindDevToAPIKey,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := publisherCredentialKindForConnection(tc.conn, tc.in)
+			if err != nil {
+				t.Fatalf("publisherCredentialKindForConnection returned error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("kind = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	if _, err := publisherCredentialKindForConnection(
+		db.PublisherConnection{Kind: publisher.ConnectionKindGitHubNextJS},
+		publisher.CredentialKindDevToAPIKey,
+	); err == nil {
+		t.Fatal("expected dev.to API key to be rejected for GitHub connections")
+	}
+}
+
+func TestDevToAPIKeyVerificationUsesAPIKeyHeader(t *testing.T) {
+	var gotAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("api-key")
+		if r.URL.Path != "/api/users/me" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"citeloop"}`))
+	}))
+	defer srv.Close()
+
+	profile, err := verifyDevToAPIKey(context.Background(), srv.Client(), srv.URL, "dev-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPIKey != "dev-secret" {
+		t.Fatalf("api-key header = %q", gotAPIKey)
+	}
+	if profile.Username != "citeloop" {
+		t.Fatalf("username = %q", profile.Username)
 	}
 }
 
