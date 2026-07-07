@@ -112,6 +112,7 @@ const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
   "Copy the numeric Property ID from Admin > Property settings, or from the Analytics URL segment after p (for example p123456789).",
   "Grant Viewer access to the CiteLoop Google service account.",
+  "If Google Analytics needs attention, update Google permissions so CiteLoop can read Analytics reports.",
   "Save the Property ID, then run SEO sync after Google starts collecting data.",
 ];
 
@@ -1313,6 +1314,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       : "Connect Search Console for first-party search data.";
   const ga4Integration = seoIntegrations.find((integration) => integration.provider === "google_analytics");
   const ga4Status = ga4Integration?.status;
+  const ga4NeedsGooglePermissions = ["error", "expired", "revoked"].includes(ga4Status ?? "");
   const savedGA4PropertyID = seoProperty?.ga4_property_id?.trim() ?? "";
   const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
   const githubAppConnected = Boolean(githubIntegration?.connected);
@@ -1941,6 +1943,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                       Save GA4 property
                     </ButtonProgress>
                   </Button>
+                  {ga4NeedsGooglePermissions && (
+                    <Button onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                      <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                        Update Google permissions
+                      </ButtonProgress>
+                    </Button>
+                  )}
                   <a
                     href="https://analytics.google.com/analytics/web/"
                     target="_blank"

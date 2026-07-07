@@ -1408,6 +1408,7 @@ test("settings combines Google Search Console and Google Analytics connection se
     "Search Console",
     "Google Analytics connection",
     "GA4 Property ID",
+    "Update Google permissions",
     "Open Google Analytics",
     "https://analytics.google.com/analytics/web/",
     "Analytics Home",
