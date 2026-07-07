@@ -1113,6 +1113,37 @@ test("results action normalization does not invent verification snapshots", asyn
   }
 });
 
+test("results action normalization preserves published article handoff fields", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      {
+        id: "action-1",
+        opportunity_id: "opp-1",
+        action_type: "Turn source evidence into a brief",
+        status: "measuring",
+        draft_article_id: "article-1",
+        topic_title: "Evidence-Led Social Publishing API Planning",
+        draft_article_canonical_url: "https://unipost.dev/blog/evidence-led-social-publishing-api-planning-brief",
+        published_at: "2026-07-07T16:45:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const actions = await createApi().listResultsActions("project-1");
+
+    assert.equal(actions[0].draft_article_id, "article-1");
+    assert.equal(actions[0].topic_title, "Evidence-Led Social Publishing API Planning");
+    assert.equal(actions[0].draft_article_canonical_url, "https://unipost.dev/blog/evidence-led-social-publishing-api-planning-brief");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GSC OAuth APIs call project scoped endpoints without exposing tokens", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

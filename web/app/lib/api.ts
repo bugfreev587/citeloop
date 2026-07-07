@@ -482,6 +482,7 @@ export type SEOContentAction = {
   opportunity_id: string;
   action_type: string;
   status: string;
+  draft_article_id?: string | null;
   asset_type?: string | null;
   target_surface_id?: string | null;
   target_url?: string | null;
@@ -1335,6 +1336,7 @@ function normalizeSEOContentAction(raw: any): SEOContentAction {
     published_at: data.published_at ?? undefined,
     outcome_summary: data.outcome_summary ?? {},
     created_at: data.created_at ?? undefined,
+    draft_article_id: data.draft_article_id ?? null,
   };
 }
 
