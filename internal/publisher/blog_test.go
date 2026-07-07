@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
@@ -32,6 +33,33 @@ func TestBlogPublisherRejectsUnsafeGeneratedMDX(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsafe generated mdx") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderMDXNormalizesEscapedMarkdownBeforePublish(t *testing.T) {
+	article := testArticle(t)
+	article.ContentMd = "\\# Evidence Brief\n\n\\---\n\n\\- \\*\\*Exact API surface\\*\\* (endpoints)\n\n\\> \\*\\*Pricing signal:\\*\\* Capture it."
+
+	mdx, err := renderMDX(article, "evidence-brief", "https://dev.unipost.dev/blog/evidence-brief", time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("renderMDX: %v", err)
+	}
+
+	rendered := string(mdx)
+	for _, escaped := range []string{`\#`, `\---`, `\*`, `\>`, `\-`} {
+		if strings.Contains(rendered, escaped) {
+			t.Fatalf("rendered MDX still contains escaped markdown token %q:\n%s", escaped, rendered)
+		}
+	}
+	for _, want := range []string{
+		"# Evidence Brief",
+		"---",
+		"- **Exact API surface** (endpoints)",
+		"> **Pricing signal:** Capture it.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered MDX missing %q:\n%s", want, rendered)
+		}
 	}
 }
 

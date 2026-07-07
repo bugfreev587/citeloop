@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -61,6 +62,32 @@ then:
 	}
 	if out.SEOMeta.Slug != "useful-title" {
 		t.Fatalf("slug = %q", out.SEOMeta.Slug)
+	}
+}
+
+func TestExtractWriterOutputNormalizesEscapedMarkdownSyntax(t *testing.T) {
+	raw := `{"content_md":"\\# Evidence Brief\n\n\\---\n\n\\- \\*\\*Exact API surface\\*\\* (endpoints)\n\n\\> \\*\\*Pricing signal:\\*\\* Capture it.\n\n\\| Dimension \\| Value \\|\n\\| --- \\| --- \\|","seo_meta":{"title":"Evidence Brief","meta_description":"Useful meta description","slug":"evidence-brief","h1":"Evidence Brief"}}`
+
+	out, err := extractWriterOutput(raw)
+	if err != nil {
+		t.Fatalf("extractWriterOutput: %v", err)
+	}
+
+	for _, escaped := range []string{`\#`, `\---`, `\*`, `\>`, `\|`} {
+		if strings.Contains(out.ContentMD, escaped) {
+			t.Fatalf("content_md still contains escaped markdown token %q:\n%s", escaped, out.ContentMD)
+		}
+	}
+	for _, want := range []string{
+		"# Evidence Brief",
+		"---",
+		"- **Exact API surface** (endpoints)",
+		"> **Pricing signal:** Capture it.",
+		"| Dimension | Value |",
+	} {
+		if !strings.Contains(out.ContentMD, want) {
+			t.Fatalf("content_md missing %q:\n%s", want, out.ContentMD)
+		}
 	}
 }
 

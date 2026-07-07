@@ -10,6 +10,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/markdownutil"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/topicstate"
@@ -838,7 +839,7 @@ func cleanMarkdownResponse(s string) string {
 			s = strings.Join(lines[1:len(lines)-1], "\n")
 		}
 	}
-	return strings.TrimSpace(s)
+	return strings.TrimSpace(markdownutil.NormalizeGeneratedEscapes(s))
 }
 
 func strDeref(s *string) string {

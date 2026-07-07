@@ -14,6 +14,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/markdownutil"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/google/uuid"
@@ -345,7 +346,15 @@ func extractValidJSON[T any](s string, validate func(T) error) (T, error) {
 }
 
 func extractWriterOutput(s string) (WriterOutput, error) {
-	return extractValidJSON(s, validateWriterOutput)
+	out, err := extractValidJSON(s, validateWriterOutput)
+	if err != nil {
+		return WriterOutput{}, err
+	}
+	out.ContentMD = markdownutil.NormalizeGeneratedEscapes(out.ContentMD)
+	if err := validateWriterOutput(out); err != nil {
+		return WriterOutput{}, err
+	}
+	return out, nil
 }
 
 func extractQAOutput(s string) (QAOutput, error) {
