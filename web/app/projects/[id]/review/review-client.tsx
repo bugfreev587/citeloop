@@ -19,7 +19,7 @@ import {
 } from "../../../lib/review-insights";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, SectionHeader, TextArea, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -340,7 +340,9 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                         {article.scheduled_at && <Badge tone="neutral">Scheduled</Badge>}
                       </div>
                       <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{articleReviewTitle(article)}</h3>
-                      <p className="mt-1 truncate text-xs text-slate-500">Approved and waiting in the publish queue.</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        Approved {formatDate(article.reviewed_at)} and waiting in the publish queue.
+                      </p>
                     </div>
                     <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
                       View in Publish
@@ -576,6 +578,28 @@ function ReviewInspector({
             />
           )}
           {state.kind === "ready" && <ReadyPanel />}
+
+          <section className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-bold uppercase tracking-[0.08em] text-slate-400">Draft timeline</div>
+            <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(article.created_at)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Reviewed</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(article.reviewed_at)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Scheduled</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(article.scheduled_at)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Published</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(article.published_at)}</div>
+              </div>
+            </div>
+          </section>
 
           {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
           <ClaimEvidencePanel article={article} />

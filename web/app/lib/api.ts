@@ -471,6 +471,7 @@ export type SEOOpportunity = {
   snooze_reason?: string | null;
   unsnoozed_at?: any;
   created_at?: any;
+  updated_at?: any;
 };
 
 export type SEOApprovalSource = "human_review" | "autopilot_policy" | "manual" | "retry_recovery" | "admin_import" | string;
@@ -506,6 +507,7 @@ export type SEOContentAction = {
   published_at?: any;
   outcome_summary?: any;
   created_at?: any;
+  updated_at?: any;
 };
 
 export type SEOWatchlistItem = {
@@ -1336,6 +1338,7 @@ function normalizeSEOContentAction(raw: any): SEOContentAction {
     published_at: data.published_at ?? undefined,
     outcome_summary: data.outcome_summary ?? {},
     created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
     draft_article_id: data.draft_article_id ?? null,
   };
 }
@@ -1504,6 +1507,7 @@ function normalizeVisibilityActionInLoop(raw: any): VisibilityActionInLoop {
     published_at: data.published_at ?? undefined,
     outcome_summary: data.outcome_summary ?? {},
     created_at: data.created_at ?? undefined,
+    updated_at: data.updated_at ?? undefined,
     draft_article_id: data.draft_article_id ?? null,
     opportunity_status: data.opportunity_status ?? "",
     opportunity_type: data.opportunity_type ?? "",

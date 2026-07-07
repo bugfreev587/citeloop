@@ -21,7 +21,7 @@ import type { ContentPlanPublishStrategy } from "../../../lib/content-plan-logic
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
-import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, EmptyState, Field, SectionHeader, TextArea, TextInput, cx, formatDate } from "../../../components/ui";
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -1258,6 +1258,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   Schedule
                 </ButtonProgress>
               </Button>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>
+            <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(selectedContentPlanAction.created_at ?? null)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Approved</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(selectedContentPlanAction.approved_at ?? null)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Drafted</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(selectedActionTopic?.created_at ?? selectedContentPlanAction.updated_at ?? null)}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-400">Last updated</div>
+                <div className="mt-1 font-medium text-slate-700">{formatDate(selectedContentPlanAction.updated_at ?? null)}</div>
+              </div>
             </div>
           </section>
 
