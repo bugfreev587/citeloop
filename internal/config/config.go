@@ -142,7 +142,7 @@ type ProjectConfig struct {
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
 	//     of approvals does not publish all at once;
-	//   "auto" — publish as soon as due.
+	//   "auto" — legacy value normalized to scheduled.
 	PublishMode         string      `json:"publish_mode"`
 	PublishIntervalDays int         `json:"publish_interval_days"`
 	Crawl               CrawlConfig `json:"crawl"`
@@ -206,13 +206,20 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return c, err
 	}
+	legacyAuto := c.PublishMode == PublishModeAuto
 	switch c.PublishMode {
-	case PublishModeScheduled, PublishModeAuto, PublishModeManual:
+	case PublishModeScheduled, PublishModeManual:
+	case PublishModeAuto:
+		c.PublishMode = PublishModeScheduled
 	default:
 		c.PublishMode = PublishModeManual
 	}
 	if c.PublishIntervalDays <= 0 {
-		c.PublishIntervalDays = 2
+		if legacyAuto {
+			c.PublishIntervalDays = 1
+		} else {
+			c.PublishIntervalDays = 2
+		}
 	}
 	switch c.OpportunityFindingSourceMix {
 	case OpportunityFindingSourceAll, OpportunityFindingSourceSignalScan, OpportunityFindingSourceAIDiscovery:
@@ -237,14 +244,12 @@ func (c ProjectConfig) JSON() json.RawMessage {
 // place the publish cadence lives, used by both the auto-approve loop and the
 // manual approve handler so a batch of approvals never publishes all at once.
 //   - manual: no automatic schedule (ok=false) — the operator publishes/schedules;
-//   - auto:   publish now;
+//   - auto: legacy value treated as scheduled;
 //   - scheduled: one every PublishIntervalDays after the last slot, never in the past.
 func (c ProjectConfig) NextPublishSlot(latest, now time.Time) (time.Time, bool) {
 	switch c.PublishMode {
 	case PublishModeManual:
 		return time.Time{}, false
-	case PublishModeAuto:
-		return now, true
 	default:
 		interval := c.PublishIntervalDays
 		if interval <= 0 {

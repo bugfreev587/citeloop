@@ -774,17 +774,24 @@ test("publishing first viewport is content-first Manual publish instead of platf
   assert.match(publishing, /buildReadyNow/);
   assert.match(publishing, /data-publish-c2-first-viewport/);
   assert.match(publishing, /data-publish-ready-to-post/);
+  assert.match(publishing, /data-publish-published-section/);
   assert.match(publishing, /data-publish-c2-destinations/);
   assert.match(publishing, /title="Ready to post"/);
+  assert.match(publishing, /title="Published"/);
   assert.match(publishing, /title="Publish destinations"/);
   assert.match(workflow, /Ready content first\. Choose where and when per post\./);
   assert.match(publishing, /onDestination=\{\(\) => setDrawer\("github"\)\}/);
-  assert.match(publishing, /onTiming=\{\(\) => setDrawer\("schedule"\)\}/);
+  assert.doesNotMatch(publishing, /onTiming/);
   assert.match(publishing, />\s*Schedule\s*</);
   assert.match(publishing, />\s*View all\s*</);
   assert.ok(
     publishing.indexOf("data-publish-ready-to-post") < publishing.indexOf("data-publish-c2-destinations"),
     "Ready content should appear before destinations in the first viewport source order",
+  );
+  assert.ok(
+    publishing.indexOf("data-publish-ready-to-post") < publishing.indexOf("data-publish-published-section") &&
+      publishing.indexOf("data-publish-published-section") < publishing.indexOf("data-publish-c2-destinations"),
+    "Published should sit below Ready to post and before destinations in source order",
   );
 
   for (const oldLane of [
@@ -843,7 +850,7 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
 
   const readyNowBlock = publishing.slice(
     publishing.indexOf("function ReadyNowStrip"),
-    publishing.indexOf("function ManualPlatformRows"),
+    publishing.indexOf("function SEODetailTile"),
   );
 
   assert.match(readyNowBlock, /title="Ready to post"/);
@@ -854,10 +861,12 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(readyNowBlock, /SEO Details/);
   assert.match(readyNowBlock, /onSeoDetails\(item\.article\)/);
   assert.match(readyNowBlock, /item\.destinationActionLabel/);
-  assert.match(readyNowBlock, /item\.timingActionLabel/);
-  assert.match(readyNowBlock, /publishTimeLabel\(item\.article\)/);
+  assert.match(readyNowBlock, /item\.publishStateLabel/);
+  assert.doesNotMatch(readyNowBlock, /item\.timingActionLabel/);
+  assert.doesNotMatch(readyNowBlock, /onTiming/);
   assert.match(readyNowBlock, /item\.actionLabel/);
   assert.match(readyNowBlock, /item\.action === "retry" \? "Retrying" : "Publishing"/);
+  assert.match(readyNowBlock, /item\.action === "publishing"/);
   assert.match(readyNowBlock, /line-clamp-2 break-words/);
   assert.match(readyNowBlock, /readyNow\.emptyState\.title/);
   assert.match(logic, /No approved posts ready/);
@@ -869,6 +878,30 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(publishing, /drawer === "seo_details"/);
   assert.match(publishing, /dataAttribute="publish-seo-details-drawer"/);
   assert.match(publishing, /function SEODetailsDrawerContent/);
+});
+
+test("publishing Published section owns live URLs and publish completion state", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const logic = read("lib/publish-destinations-logic.ts");
+
+  assert.match(publishing, /function PublishedSection/);
+  assert.match(publishing, /data-publish-published-section/);
+  assert.match(publishing, /data-publish-published-article-card/);
+  assert.match(publishing, /Open live article/);
+  assert.match(publishing, /Published URL missing/);
+  assert.match(publishing, /setPublishedCollapsed\(false\)/);
+  assert.match(publishing, /setHighlightedPublishedArticleId/);
+  assert.match(publishing, /publishedCanonicals: published/);
+  assert.doesNotMatch(publishing, /publishedCanonicals: \[\.\.\.inflight/);
+  assert.doesNotMatch(publishing, /Publish next/);
+  assert.doesNotMatch(publishing, /timingActionLabel/);
+  assert.doesNotMatch(publishing, /auto: \{ label: "Auto"/);
+
+  assert.match(logic, /publishedUrl/);
+  assert.match(logic, /urlMissing/);
+  assert.match(logic, /Verifying live URL/);
+  assert.match(logic, /state === "ready"/);
+  assert.doesNotMatch(logic, /auto_publish/);
 });
 
 test("publishing manual drafts and View all drawer preserve non-first-viewport states", () => {
@@ -892,9 +925,10 @@ test("publishing manual drafts and View all drawer preserve non-first-viewport s
   assert.match(publishing, /data-publish-view-all-drawer/);
   assert.match(publishing, /data-publish-operational-group/);
   assert.match(publishing, /buildPublishingOperationalGroups/);
-  for (const group of ["Ready", "Scheduled", "Published", "Failed", "Waiting on canonical", "Ready to distribute"]) {
+  for (const group of ["Ready", "Scheduled", "Failed", "Waiting on canonical", "Ready to distribute"]) {
     assert.match(logic, new RegExp(group.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.doesNotMatch(logic, /\{ key: "published", label: "Published", count: published\.length, items: published \}/);
 });
 
 test("renamed dashboard routes exist and legacy routes redirect", () => {

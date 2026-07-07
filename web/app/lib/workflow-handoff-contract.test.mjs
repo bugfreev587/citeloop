@@ -23,12 +23,13 @@ test("Review keeps approved drafts as Sent to Publish link cards", async () => {
   assert.equal(handoffCard.includes("onApprove"), false, "sent-to-publish link cards must not re-expose approve");
 });
 
-test("Publish lanes link published work to Results and focus ?article= on the main Publish card", async () => {
+test("Publish links published work to Results and focuses ?article= on the main Publish card", async () => {
   const source = await readFile(new URL("../projects/[id]/publishing/publishing-client.tsx", import.meta.url), "utf8");
   for (const expected of [
+    "data-publish-published-section",
     "data-publish-results-link",
     "View Results",
-    "results?article=${article.id}",
+    "results?article=${row.articleId}",
     "data-publish-ready-article-card={item.articleId}",
     "citeloop-linked-card-pulse",
     'searchParams.get("article")',

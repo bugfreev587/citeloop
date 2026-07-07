@@ -78,7 +78,17 @@ test("buildPublishDestinations maps GitHub Next.js connection state independentl
       waitingSyndication: [],
       projectConfig: { publish_mode: "manual" },
     }).github.stateLabel,
-    "Auto publish",
+    "Ready",
+  );
+  assert.equal(
+    buildPublishDestinations({
+      projectId: "project-1",
+      connections: [connection()],
+      readyDistribute: [],
+      waitingSyndication: [],
+      projectConfig: { publish_mode: "manual" },
+    }).github.actionLabel,
+    "Ready",
   );
 
   assert.equal(
@@ -101,6 +111,17 @@ test("buildPublishDestinations maps GitHub Next.js connection state independentl
       projectConfig: { publish_mode: "auto" },
     }).github.stateLabel,
     "Disabled",
+  );
+
+  assert.equal(
+    buildPublishDestinations({
+      projectId: "project-1",
+      connections: [connection({ status: "error", last_error: "publisher credential unavailable" })],
+      readyDistribute: [],
+      waitingSyndication: [],
+      projectConfig: { publish_mode: "scheduled" },
+    }).github.stateLabel,
+    "Needs attention",
   );
 
   assert.equal(
@@ -173,15 +194,19 @@ test("buildReadyNow shows due approved canonicals and retryable failures without
         last_publish_error: "Build failed",
       }),
     ],
+    inflightCanonicals: [article({ id: "verifying", status: "pending_url_verification" })],
     activePublisherConnection: connection(),
+    githubState: "ready",
+    publishMode: "manual",
   });
 
   assert.deepEqual(
-    readyNow.items.map((item) => [item.articleId, item.actionLabel, item.destinationLabel, item.destinationActionLabel, item.timingActionLabel]),
+    readyNow.items.map((item) => [item.articleId, item.actionLabel, item.destinationLabel, item.destinationActionLabel, item.publishStateLabel, "timingActionLabel" in item]),
     [
-      ["due", "Publish", "GitHub/Next.js", "Destination", "Timing"],
-      ["unscheduled", "Publish", "GitHub/Next.js", "Destination", "Timing"],
-      ["failed", "Retry", "GitHub/Next.js", "Destination", "Timing"],
+      ["due", "Publish", "GitHub/Next.js", "Destination", "Manual: publish when ready", false],
+      ["unscheduled", "Publish", "GitHub/Next.js", "Destination", "Manual: publish when ready", false],
+      ["verifying", "Publishing", "GitHub/Next.js", "Destination", "Verifying live URL", false],
+      ["failed", "Retry", "GitHub/Next.js", "Destination", "Failed", false],
     ],
   );
   assert.equal(readyNow.items.some((item) => item.articleId === "future"), false);
@@ -197,6 +222,7 @@ test("buildReadyNow disables publish and retry actions when no publisher is acti
     approvedCanonicals: [article({ id: "due" })],
     failedCanonicals: [article({ id: "failed", status: "publish_failed" })],
     activePublisherConnection: null,
+    githubState: "not_connected",
   });
 
   assert.deepEqual(
@@ -204,6 +230,36 @@ test("buildReadyNow disables publish and retry actions when no publisher is acti
     [
       ["due", "Connect GitHub before publishing."],
       ["failed", "Connect GitHub before retrying."],
+    ],
+  );
+
+  const disabledReady = buildReadyNow({
+    now: new Date("2026-07-02T12:00:00.000Z"),
+    approvedCanonicals: [article({ id: "due" })],
+    failedCanonicals: [article({ id: "failed", status: "publish_failed" })],
+    activePublisherConnection: null,
+    githubState: "disabled",
+  });
+  assert.deepEqual(
+    disabledReady.items.map((item) => [item.articleId, item.disabledReason]),
+    [
+      ["due", "Enable GitHub/Next.js publishing before publishing."],
+      ["failed", "Enable GitHub/Next.js publishing before retrying."],
+    ],
+  );
+
+  const attentionReady = buildReadyNow({
+    now: new Date("2026-07-02T12:00:00.000Z"),
+    approvedCanonicals: [article({ id: "due" })],
+    failedCanonicals: [article({ id: "failed", status: "publish_failed" })],
+    activePublisherConnection: null,
+    githubState: "needs_attention",
+  });
+  assert.deepEqual(
+    attentionReady.items.map((item) => [item.articleId, item.disabledReason]),
+    [
+      ["due", "Fix GitHub/Next.js before publishing."],
+      ["failed", "Fix GitHub/Next.js before retrying."],
     ],
   );
 });
@@ -243,7 +299,7 @@ test("buildManualSyndicationSummary counts only unlocked variants and keeps wait
 test("buildPublishingOperationalGroups provides one View all model for non-first-viewport state", async () => {
   const { buildPublishingOperationalGroups } = await loadPublishDestinationsModule();
 
-  const groups = buildPublishingOperationalGroups({
+  const model = buildPublishingOperationalGroups({
     now: new Date("2026-07-02T12:00:00.000Z"),
     approvedCanonicals: [
       article({ id: "ready", scheduled_at: null }),
@@ -256,14 +312,53 @@ test("buildPublishingOperationalGroups provides one View all model for non-first
   });
 
   assert.deepEqual(
-    groups.map((group) => [group.key, group.label, group.count]),
+    model.groups.map((group) => [group.key, group.label, group.count]),
     [
       ["ready", "Ready", 1],
       ["scheduled", "Scheduled", 1],
-      ["published", "Published", 1],
       ["failed", "Failed", 1],
       ["waiting_on_canonical", "Waiting on canonical", 1],
       ["ready_to_distribute", "Ready to distribute", 1],
+    ],
+  );
+  assert.equal(model.published.count, 1);
+  assert.equal(model.published.rows[0].publishedUrl, undefined);
+  assert.equal(model.published.rows[0].urlMissing, true);
+  assert.equal(model.groups.some((group) => group.key === "published"), false);
+});
+
+test("buildPublishingOperationalGroups exposes published canonical live URLs without publish_path fallback", async () => {
+  const { buildPublishingOperationalGroups } = await loadPublishDestinationsModule();
+
+  const model = buildPublishingOperationalGroups({
+    now: new Date("2026-07-02T12:00:00.000Z"),
+    approvedCanonicals: [],
+    publishedCanonicals: [
+      article({
+        id: "published-url",
+        status: "published",
+        published_at: "2026-07-01T12:00:00.000Z",
+        canonical_url: "https://example.com/live",
+        publish_path: "content/blog/live.mdx",
+      }),
+      article({
+        id: "published-missing-url",
+        status: "published",
+        published_at: "2026-07-01T13:00:00.000Z",
+        canonical_url: "",
+        publish_path: "content/blog/missing.mdx",
+      }),
+    ],
+    failedCanonicals: [],
+    waitingSyndication: [],
+    readyDistribute: [],
+  });
+
+  assert.deepEqual(
+    model.published.rows.map((row) => [row.articleId, row.publishedUrl, row.urlMissing]),
+    [
+      ["published-url", "https://example.com/live", false],
+      ["published-missing-url", undefined, true],
     ],
   );
 });
@@ -297,11 +392,7 @@ test("buildPublishHeaderCta follows the PRD state table", async () => {
     failedCanonicals: [],
     activePublisherConnection: connection(),
   });
-  assert.deepEqual(buildPublishHeaderCta({ projectId: "project-1", github: connected.github, readyNowItems: readyNow.items, scheduledCount: 0 }), {
-    label: "Publish next",
-    kind: "publish_next",
-    articleId: "ready",
-  });
+  assert.equal(buildPublishHeaderCta({ projectId: "project-1", github: connected.github, readyNowItems: readyNow.items, scheduledCount: 0 }), null);
 
   assert.deepEqual(buildPublishHeaderCta({ projectId: "project-1", github: connected.github, readyNowItems: [], scheduledCount: 2 }), {
     label: "View schedule",

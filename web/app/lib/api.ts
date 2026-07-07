@@ -108,7 +108,7 @@ export type ProjectConfig = {
   auto_advance_enabled: boolean;
   opportunity_finding_source_mix: OpportunityFindingSourceMix;
   ai_discovery_automation: AIDiscoveryAutomation;
-  publish_mode?: "scheduled" | "auto" | "manual";
+  publish_mode?: "scheduled" | "manual";
   publish_interval_days?: number;
   crawl: {
     same_origin_only: boolean;
