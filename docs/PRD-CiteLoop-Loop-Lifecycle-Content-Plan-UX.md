@@ -1,12 +1,20 @@
 # PRD: CiteLoop Loop Lifecycle and Content Plan UX Clarification
 
 > Date: 2026-07-05
-> Status: Draft revised after Claude Code review
+> Status: Superseded by `docs/PRD-CiteLoop-Content-Plan-Brief-First-Redesign.md`
 > Scope: Analysis `Loop in motion`, Content Plan handoff, topic backlog, lifecycle labels, and deep-link behavior
 > Source discussion: user observed that an opportunity appears as `Planned` in `Loop in motion` while the same item appears under `Accepted opportunities` in Content Plan, with `Planned topics` showing `0`.
 > Relationship to prior PRDs: This document supersedes the work-queue status
 > language in `docs/PRD-CiteLoop-Opportunity-Review-and-Work-Queues.md`
 > Section 10.2 for shared lifecycle labels.
+
+> Supersession note: the Topic-visible UX direction in this document has been
+> replaced by the brief-first model in
+> `docs/PRD-CiteLoop-Content-Plan-Brief-First-Redesign.md`. The still-valid
+> product intent is that lifecycle labels must be understandable from the
+> user's current work item. The superseding implementation uses Content Brief
+> labels such as `Preparing draft` instead of exposing `Topic planned`,
+> `Topic backlog`, or a primary `Planned topics` section.
 
 ## 0. Summary
 

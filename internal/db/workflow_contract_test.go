@@ -87,10 +87,16 @@ func TestOpportunityPlanningQueriesExposeBatchInputs(t *testing.T) {
 	if !strings.Contains(listUnplannedContentActions, "for update") || !strings.Contains(listUnplannedContentActions, "skip locked") {
 		t.Fatal("ListUnplannedContentActions must use skip locked inside the workflow transaction")
 	}
-	for _, direct := range []string{"metadata_rewrite", "internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"} {
+	if !strings.Contains(listUnplannedContentActions, "coalesce(ca.work_type, '') <> 'fix_site_issue'") {
+		t.Fatal("ListUnplannedContentActions must exclude site-fix work type before topic planning")
+	}
+	for _, direct := range []string{"internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"} {
 		if !strings.Contains(listUnplannedContentActions, direct) {
 			t.Fatalf("ListUnplannedContentActions must exclude direct action asset %q from topic planning", direct)
 		}
+	}
+	if strings.Contains(listUnplannedContentActions, "%metadata_rewrite%") {
+		t.Fatal("ListUnplannedContentActions must not exclude all metadata rewrite work; routing is split by work_type")
 	}
 }
 

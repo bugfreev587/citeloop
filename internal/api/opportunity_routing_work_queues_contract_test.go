@@ -80,6 +80,33 @@ func TestAcceptOpportunityStampsApprovalAndRoutingSource(t *testing.T) {
 	}
 }
 
+func TestContentBriefPlanningUsesSplitMetadataRuleAndPublishStrategy(t *testing.T) {
+	if !contentActionCreatesContent(db.ContentAction{AssetType: strPtr("metadata_rewrite"), ActionType: "rewrite title and meta description", WorkType: strPtr(WorkTypeImprovePage)}) {
+		t.Fatal("editorial metadata refresh should create a content brief")
+	}
+	if contentActionCreatesContent(db.ContentAction{AssetType: strPtr("metadata_rewrite"), ActionType: "mechanical metadata patch", WorkType: strPtr(WorkTypeFixSiteIssue)}) {
+		t.Fatal("metadata routed as a site fix should not create a content brief")
+	}
+
+	raw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(raw)
+	for _, want := range []string{
+		"PublishStrategy string `json:\"publish_strategy\"`",
+		"topicFromContentAction(projectID, action, opp, requestedPublishStrategy)",
+		"Channel:               publishStrategyForContentAction(action, opp, requestedPublishStrategy)",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("content brief planning missing %q", want)
+		}
+	}
+	if strings.Contains(source, `Channel:               "blog"`) {
+		t.Fatal("manual opportunity planning must not hardcode blog")
+	}
+}
+
 func TestAutopilotActionsCarryPolicyApprovalSource(t *testing.T) {
 	raw, err := os.ReadFile("handlers_autopilot.go")
 	if err != nil {
@@ -127,6 +154,7 @@ func TestOpportunityWorkQueuesSchemaAndRoutes(t *testing.T) {
 	}
 	routes := string(serverRaw)
 	for _, want := range []string{
+		`r.Post("/topics", s.createTopic)`,
 		`r.Post("/opportunities/{opportunityID}/snooze", s.snoozeSEOOpportunity)`,
 		`r.Post("/opportunities/{opportunityID}/unsnooze", s.unsnoozeSEOOpportunity)`,
 		`r.Post("/opportunities/{opportunityID}/watch", s.watchSEOOpportunity)`,

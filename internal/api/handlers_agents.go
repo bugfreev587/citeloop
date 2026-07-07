@@ -134,6 +134,95 @@ func validTopicChannel(value string) bool {
 	return value == "blog" || value == "syndication" || value == "both"
 }
 
+// createTopic keeps manual Content Brief creation available while Topic remains
+// the internal generation record.
+func (s *Server) createTopic(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, 400, "bad project id")
+		return
+	}
+	var in struct {
+		Channel       string           `json:"channel"`
+		Title         string           `json:"title"`
+		TargetKeyword *string          `json:"target_keyword"`
+		TargetPrompt  *string          `json:"target_prompt"`
+		Angle         *string          `json:"angle"`
+		Format        *string          `json:"format"`
+		Priority      *int             `json:"priority"`
+		InternalLinks *json.RawMessage `json:"internal_links"`
+		ScheduledAt   *string          `json:"scheduled_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	channel := strings.TrimSpace(in.Channel)
+	if channel == "" {
+		channel = "blog"
+	}
+	if !validTopicChannel(channel) {
+		writeErr(w, 400, "invalid channel")
+		return
+	}
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
+	format := nullableTopicText("article")
+	if in.Format != nil {
+		format = nullableTopicText(*in.Format)
+	}
+	priority := int32(5)
+	if in.Priority != nil {
+		priority = int32(*in.Priority)
+	}
+	internalLinks := json.RawMessage(`[]`)
+	if in.InternalLinks != nil {
+		if len(*in.InternalLinks) == 0 || !json.Valid(*in.InternalLinks) {
+			writeErr(w, 400, "invalid internal_links")
+			return
+		}
+		internalLinks = *in.InternalLinks
+	}
+	scheduledAt, err := parseTopicSchedule(in.ScheduledAt)
+	if err != nil {
+		writeErr(w, 400, "scheduled_at must be RFC3339")
+		return
+	}
+	status := string(topicstate.StatusBacklog)
+	if scheduledAt.Valid {
+		status = string(topicstate.StatusScheduled)
+	}
+	topic, err := s.Q.CreateTopic(r.Context(), db.CreateTopicParams{
+		ProjectID:             projectID,
+		Channel:               channel,
+		Title:                 title,
+		TargetKeyword:         nullableTopicTextValue(in.TargetKeyword),
+		TargetPrompt:          nullableTopicTextValue(in.TargetPrompt),
+		Angle:                 nullableTopicTextValue(in.Angle),
+		Format:                format,
+		Priority:              priority,
+		InternalLinks:         internalLinks,
+		Status:                status,
+		ScheduledAt:           scheduledAt,
+		SourceContentActionID: pgtype.UUID{},
+	})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, topic)
+}
+
+func nullableTopicTextValue(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	return nullableTopicText(*value)
+}
+
 // updateTopic allows the single operator to correct Strategist output before
 // generation while keeping every mutation scoped to the project route.
 func (s *Server) updateTopic(w http.ResponseWriter, r *http.Request) {
@@ -168,18 +257,19 @@ func (s *Server) updateTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := db.UpdateTopicParams{
-		ID:            topicID,
-		ProjectID:     projectID,
-		Channel:       cur.Channel,
-		Title:         cur.Title,
-		TargetKeyword: cur.TargetKeyword,
-		TargetPrompt:  cur.TargetPrompt,
-		Angle:         cur.Angle,
-		Format:        cur.Format,
-		Priority:      cur.Priority,
-		InternalLinks: cur.InternalLinks,
-		Status:        cur.Status,
-		ScheduledAt:   cur.ScheduledAt,
+		ID:                    topicID,
+		ProjectID:             projectID,
+		Channel:               cur.Channel,
+		Title:                 cur.Title,
+		TargetKeyword:         cur.TargetKeyword,
+		TargetPrompt:          cur.TargetPrompt,
+		Angle:                 cur.Angle,
+		Format:                cur.Format,
+		Priority:              cur.Priority,
+		InternalLinks:         cur.InternalLinks,
+		Status:                cur.Status,
+		ScheduledAt:           cur.ScheduledAt,
+		SourceContentActionID: cur.SourceContentActionID,
 	}
 	if in.Channel != nil {
 		channel := strings.TrimSpace(*in.Channel)

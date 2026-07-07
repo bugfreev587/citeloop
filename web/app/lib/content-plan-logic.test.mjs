@@ -120,3 +120,58 @@ test("hasReviewableDraft only links actions with pending Review drafts", async (
     false,
   );
 });
+
+test("publish strategy recommendations follow brief-first PRD defaults", async () => {
+  const {
+    normalizePublishStrategy,
+    publishStrategyLabel,
+    publishStrategyReasonForAction,
+    recommendedPublishStrategyForAction,
+  } = await loadContentPlanLogicModule();
+
+  assert.equal(normalizePublishStrategy("Distribution"), "syndication");
+  assert.equal(normalizePublishStrategy("source article"), "blog");
+  assert.equal(normalizePublishStrategy("blog + syndication"), "both");
+  assert.equal(publishStrategyLabel("both"), "Both");
+
+  assert.equal(
+    recommendedPublishStrategyForAction({
+      work_type: "improve_page",
+      asset_type: "metadata_rewrite",
+      action_type: "Refresh title and meta description",
+    }),
+    "blog",
+  );
+  assert.equal(
+    recommendedPublishStrategyForAction({
+      work_type: "create_content",
+      asset_type: "comparison_page",
+      opportunity_recommended_action: "Create a comparison guide",
+    }),
+    "both",
+  );
+  assert.equal(
+    recommendedPublishStrategyForAction({
+      input_snapshot: { publish_to: "syndication" },
+      work_type: "create_content",
+      asset_type: "comparison_page",
+    }),
+    "syndication",
+  );
+  assert.equal(
+    recommendedPublishStrategyForAction({
+      action_type: "Share a community discussion on Reddit",
+    }),
+    "syndication",
+  );
+  assert.equal(
+    recommendedPublishStrategyForAction({
+      action_type: "Create a guide and distribute it on dev.to",
+    }),
+    "both",
+  );
+  assert.match(
+    publishStrategyReasonForAction({ work_type: "improve_page", asset_type: "page_update" }, "blog"),
+    /existing owned page/,
+  );
+});

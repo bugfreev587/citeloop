@@ -34,7 +34,7 @@ const STAGE_META = {
   plan: {
     stepLabel: "Step 1 of 3",
     title: "Content Plan",
-    eyebrow: "Planned topics and action handoff",
+    eyebrow: "Content briefs and review handoff",
     toneClass: "border-sky-200 bg-sky-100/70",
     accentClass: "bg-sky-500",
   },

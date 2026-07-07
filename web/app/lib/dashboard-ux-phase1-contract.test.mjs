@@ -414,8 +414,8 @@ test("Phase 5 pages separate growth operating outputs", () => {
   assert.match(activity, /Operations health/);
   assert.match(activity, /Operational blockers/);
   assert.match(activity, /Diagnostics/);
-  assert.match(workflow, /planned topics/i);
-  assert.match(workflow, /action handoff/i);
+  assert.match(workflow, /content briefs/i);
+  assert.match(workflow, /review handoff/i);
   assert.doesNotMatch(`${workspace}\n${seo}\n${topics}\n${activity}`, /content pipeline/i);
   assert.doesNotMatch(resultsBlock, /Measurement and diagnostics/);
 });
@@ -1008,7 +1008,7 @@ test("content workflow stages put stage identity before step metadata", () => {
   }
 
   assert.match(workflow, /title: "Content Plan"[\s\S]*title: "Review"[\s\S]*title: "Publish"/);
-  assert.match(workflow, /eyebrow: "Planned topics and action handoff"/);
+  assert.match(workflow, /eyebrow: "Content briefs and review handoff"/);
   assert.doesNotMatch(workflow, /eyebrow: "Topic backlog and action handoff"/);
   assert.match(workflow, /toneClass: "border-sky-200 bg-sky-100\/70"/);
   assert.match(workflow, /toneClass: "border-amber-200 bg-amber-100\/70"/);
@@ -1692,8 +1692,8 @@ test("content plan exposes an Auto switch for the automatic workflow", () => {
   assert.match(topics, /aria-describedby="content-plan-auto-help"/);
   assert.match(topics, /id="content-plan-auto-help"/);
   assert.match(topics, /group-hover:opacity-100/);
-  assert.match(topics, /Auto On: accepted opportunities become planned topics and drafts on cadence\./);
-  assert.match(topics, /Auto Off: automatic planning and drafting pause; manual drafting stays available from reviewed briefs and planned topics\./);
+  assert.match(topics, /Auto On: accepted content briefs draft on cadence\./);
+  assert.match(topics, /Auto Off: automatic drafting pauses; manual drafting stays available from reviewed briefs\./);
   assert.match(topics, />Auto<\/span>/);
   assert.match(topics, /api\.updateConfig\(projectId, \{ \.\.\.base, auto_advance_enabled: nextEnabled \}\)/);
   assert.doesNotMatch(topics, /const autoPlan:/);
@@ -1729,18 +1729,39 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   const topics = read("projects/[id]/topics/topics-client.tsx");
 
   assert.match(topics, /draftAcceptedAction/);
-  assert.match(topics, /api\.planSEOContentAction\(projectId, action\.id\)/);
+  assert.match(topics, /ensureTopicForAction/);
+  assert.match(topics, /api\.planSEOContentAction\(projectId, action\.id, \{ publish_strategy: publishStrategy \}\)/);
   assert.match(topics, /generate\(topic\)/);
   assert.match(topics, /Review brief/);
   assert.match(topics, /selectedContentPlanActionID/);
   assert.match(topics, /dataAttribute="content-plan-action-drawer"/);
   assert.match(topics, /footerLabel="Content plan drawer actions"/);
   assert.match(topics, /Draft Content/);
+  assert.match(topics, /Publish to/);
+  assert.match(topics, /recommendedPublishStrategyForAction/);
+  assert.match(topics, /publishStrategyReasonForAction/);
+  assert.match(topics, /New Content Brief/);
+  assert.match(topics, /createManualBrief/);
+  assert.match(topics, /api\.createTopic\(projectId/);
   assert.match(topics, /aria-busy=\{selectedActionDraftBusy\}/);
   assert.match(topics, /disabled=\{reviewingContentPlanAction\}/);
   assert.match(topics, /reviewHrefForAction\(projectId, selectedContentPlanAction\)/);
   assert.doesNotMatch(topics, /onClick=\{\(\) => draftAcceptedAction\(action\)\}/);
   assert.doesNotMatch(topics, /Waiting in Content Plan/);
+});
+
+test("content plan schedules accepted content briefs before internal topics exist", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /scheduleAcceptedAction/);
+  assert.match(topics, /selectedActionScheduleKey/);
+  assert.match(topics, /selectedActionTopic\?\.id \?\? selectedContentPlanAction\.id/);
+  assert.match(topics, /Choose a draft date/);
+  assert.match(topics, /const topic = await ensureTopicForAction\(action\)/);
+  assert.match(topics, /api\.scheduleTopic\(projectId, topic\.id, nextScheduledAt\)/);
+  assert.match(topics, /<Field label="Draft at">/);
+  assert.match(topics, /onClick=\{\(\) => scheduleAcceptedAction\(selectedContentPlanAction\)\}/);
+  assert.doesNotMatch(topics, /\{selectedActionTopic && \(\s*<section className="rounded-xl border border-slate-200 bg-white p-4">\s*<div className="text-xs font-semibold uppercase tracking-\[0\.12em\] text-slate-400">Schedule<\/div>/);
 });
 
 test("content plan reviews accepted opportunities in the shared right drawer before drafting", () => {
@@ -1785,18 +1806,20 @@ test("content plan backlog excludes drafted topics", () => {
   assert.match(topics, /isBacklogStatus\(topic\.status\)/);
 });
 
-test("content plan presents planned topics without legacy backlog search or summary chrome", () => {
+test("content plan presents content briefs without primary planned-topic chrome", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const workflow = read("projects/[id]/content-workflow-client.tsx");
 
   assert.match(workflow, /title: "Content Plan"/);
   for (const copy of [
-    "Planned topics",
-    "Draft queue",
-    "Plan status",
+    "Content briefs",
+    "Accepted content work",
+    "Brief status",
     "Ready to draft",
-    "Scheduled intent",
+    "Scheduled briefs",
     "Needs priority",
+    "Legacy content briefs",
+    "Scheduled or manually created briefs",
     "Recommended next",
     "Why this exists",
     "High priority",
@@ -1816,6 +1839,7 @@ test("content plan presents planned topics without legacy backlog search or summ
   assert.doesNotMatch(topics, /No backlog topics found/);
   assert.doesNotMatch(topics, /adjust filters/);
   assert.doesNotMatch(topics, /No planned topics in this channel/);
+  assert.doesNotMatch(topics, /<SectionHeader title="Planned topics"/);
 
   assert.doesNotMatch(topics, /PlanView/);
   assert.doesNotMatch(topics, /const \[view, setView\]/);
@@ -1823,8 +1847,8 @@ test("content plan presents planned topics without legacy backlog search or summ
   assert.doesNotMatch(topics, /setView\("grid"\)/);
   assert.doesNotMatch(topics, /setView\("compact"\)/);
   assert.doesNotMatch(topics, /aria-pressed=\{view === "grid"\}/);
-  assert.match(topics, /planHealthForTopics\(topics\)/);
-  assert.match(topics, /planHealth\.backlog/);
+  assert.match(topics, /planHealthForTopics\(legacyBriefTopics\)/);
+  assert.match(topics, /acceptedPlanActions\.length \+ legacyBriefTopics\.length/);
   assert.match(topics, /planStatusItems/);
   assert.doesNotMatch(topics, /data-content-plan-topic-toolbar/);
   assert.doesNotMatch(topics, /Generate from domain/);
@@ -1923,7 +1947,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.doesNotMatch(dismissBlock, /await refresh\(\)/);
 
   for (const [source, markers] of [
-    [topics, ["Saving topic", "Scheduling", "Archiving"]],
+    [topics, ["Saving brief", "Scheduling", "Archiving"]],
     [review, ["Approving", "Rejecting", "Saving content"]],
     [publishing, ["Checking status", "Retrying", "Marking distributed"]],
     [settings, ["Saving publisher", "Saving token", "Testing", "Retrying", "Saving settings"]],

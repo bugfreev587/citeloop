@@ -94,6 +94,7 @@ func (s *Server) Router() http.Handler {
 
 			r.Post("/strategist", s.runStrategist)
 			r.Get("/topics", s.listTopics)
+			r.Post("/topics", s.createTopic)
 			r.Put("/topics/{topicID}", s.updateTopic)
 			r.Post("/topics/{topicID}/generate", s.generateTopic)
 			r.Post("/topics/{topicID}/schedule", s.scheduleTopic)
