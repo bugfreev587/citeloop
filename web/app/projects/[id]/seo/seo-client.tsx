@@ -1497,6 +1497,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
+  const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const refreshSequenceRef = useRef(0);
@@ -1509,6 +1510,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
+  const resultHandoffTimersRef = useRef<number[]>([]);
   const [highlightedSiteFixID, setHighlightedSiteFixID] = useState<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
@@ -1737,12 +1739,42 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const requestedResultArticleID = mode === "results" ? searchParams.get("article") : null;
   const requestedWatchOpportunityID = mode === "results" ? searchParams.get("watch") : null;
 
+  const clearResultHandoffTimers = useCallback(() => {
+    resultHandoffTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    resultHandoffTimersRef.current = [];
+  }, []);
+
   const closeResultDrawer = useCallback(() => {
+    clearResultHandoffTimers();
+    setHighlightedResultActionID(null);
     setSelectedResultActionID(null);
     if (mode === "results" && (requestedResultActionID || requestedResultArticleID)) {
       router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [mode, projectId, requestedResultActionID, requestedResultArticleID, router]);
+  }, [clearResultHandoffTimers, mode, projectId, requestedResultActionID, requestedResultArticleID, router]);
+
+  const focusResultActionForHandoff = useCallback(
+    (actionID: string) => {
+      clearResultHandoffTimers();
+      setSelectedResultActionID(null);
+      setHighlightedResultActionID(actionID);
+
+      const focusTimer = window.setTimeout(() => {
+        const target = document.querySelector<HTMLElement>(`[data-results-action-card="${actionID}"]`);
+        if (!target) return;
+        const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+        target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+        target.focus({ preventScroll: true });
+        resultReturnFocusRef.current = target;
+      }, 120);
+      const openTimer = window.setTimeout(() => setSelectedResultActionID(actionID), 900);
+      const clearTimer = window.setTimeout(() => setHighlightedResultActionID(null), 2_350);
+      resultHandoffTimersRef.current = [focusTimer, openTimer, clearTimer];
+    },
+    [clearResultHandoffTimers],
+  );
+
+  useEffect(() => clearResultHandoffTimers, [clearResultHandoffTimers]);
 
   useEffect(() => {
     if (mode !== "results" || !requestedWatchOpportunityID || watchlist.length === 0) return;
@@ -1777,10 +1809,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (consumedResultHandoffRef.current === handoffKey) return;
     if (attributionActions.some((action) => action.id === requestedResultActionID)) {
       consumedResultHandoffRef.current = handoffKey;
-      setSelectedResultActionID(requestedResultActionID);
+      focusResultActionForHandoff(requestedResultActionID);
       router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [attributionActions, mode, projectId, requestedResultActionID, router]);
+  }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultActionID, router]);
 
   // Publish handoff links land here with ?article=; open the measurement item
   // that belongs to the published draft.
@@ -1791,10 +1823,10 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     const match = attributionActions.find((action) => action.draft_article_id === requestedResultArticleID);
     if (match) {
       consumedResultHandoffRef.current = handoffKey;
-      setSelectedResultActionID(match.id);
+      focusResultActionForHandoff(match.id);
       router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [attributionActions, mode, projectId, requestedResultArticleID, router]);
+  }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultArticleID, router]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultActionID || requestedResultArticleID) return;
@@ -3116,6 +3148,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   const publishedTitle = resultPublishedArticleTitle(action);
                   const publishedURL = resultPublishedArticleUrl(action);
                   const sourceURL = resultSourceEvidenceUrl(action);
+                  const highlighted = highlightedResultActionID === action.id;
                   return (
                     <button
                       key={action.id}
@@ -3123,12 +3156,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       data-results-action-card={action.id}
                       aria-label={`Open attribution details: ${publishedTitle}`}
                       onClick={(event) => {
+                        clearResultHandoffTimers();
+                        setHighlightedResultActionID(null);
                         resultReturnFocusRef.current = event.currentTarget;
                         setSelectedResultActionID(action.id);
                       }}
-                      className={`group w-full rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
-                        selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
-                      }`}
+                      className={cx(
+                        "group w-full rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
+                      )}
                     >
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div className="min-w-0">
