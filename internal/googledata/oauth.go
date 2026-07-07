@@ -12,7 +12,7 @@ func SearchConsoleOAuthConfig(clientID, clientSecret, redirectURI string) *oauth
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURI,
-		Scopes:       []string{ScopeSearchConsoleReadonly},
+		Scopes:       []string{ScopeSearchConsoleReadonly, ScopeAnalyticsReadonly},
 		Endpoint:     google.Endpoint,
 	}
 }
