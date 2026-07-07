@@ -259,6 +259,9 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "View results",
     "GSC Connected",
     "GSC Not connected",
+    "GA4 Connected",
+    "GA4 Property saved",
+    "GA4 Not connected",
     "Search Console details",
     "Manage in Settings",
     "Connect Search Console",
@@ -279,6 +282,7 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
   }
 
   assert.match(seo, /function GSCStatusMenu/);
+  assert.match(seo, /function compactGA4Status/);
   assert.match(seo, /const \[gscMenuOpen, setGSCMenuOpen\] = useState\(false\)/);
   assert.match(seo, /const gscMenuRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(seo, /document\.addEventListener\("pointerdown", onPointerDown\)/);

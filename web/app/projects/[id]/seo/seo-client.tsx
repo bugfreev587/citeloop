@@ -17,10 +17,12 @@ import {
   SEOActionPlan,
   SEOBrief,
   SEOContentAction,
+  SEOIntegration,
   SEOObjective,
   SEOOpportunity,
   SEOOverview,
   OpportunityFindingStatus,
+  SEOProperty,
   SEOPolicy,
   SEOWatchlistItem,
   SafeModeEvent,
@@ -227,6 +229,36 @@ function compactGSCStatus(status: ReturnType<typeof analysisSearchDataStatus>) {
     label: connected ? "GSC Connected" : "GSC Not connected",
     tone: connected ? ("green" as const) : ("red" as const),
     dot: connected ? "bg-green-500" : "bg-red-500",
+  };
+}
+
+function compactGA4Status(status?: string, propertyID?: string | null) {
+  const savedPropertyID = propertyID?.trim();
+  if (status === "connected") {
+    return {
+      label: "GA4 Connected",
+      dot: "bg-green-500",
+      detail: "GA4 engagement and key event data can be used in sync and measurement.",
+    };
+  }
+  if (["error", "expired", "revoked"].includes(status ?? "")) {
+    return {
+      label: "GA4 Needs attention",
+      dot: "bg-red-500",
+      detail: "Open Google Connection settings to review the saved GA4 property and latest error.",
+    };
+  }
+  if (savedPropertyID) {
+    return {
+      label: "GA4 Property saved",
+      dot: "bg-amber-500",
+      detail: "Run Sync after GA4 has collected data and the property is accessible to CiteLoop.",
+    };
+  }
+  return {
+    label: "GA4 Not connected",
+    dot: "bg-slate-300",
+    detail: "Add the numeric GA4 Property ID in Google Connection settings.",
   };
 }
 
@@ -1337,6 +1369,30 @@ function GSCStatusMenu({
   );
 }
 
+function GA4StatusLink({
+  projectId,
+  status,
+  propertyID,
+}: {
+  projectId: string;
+  status?: string;
+  propertyID?: string | null;
+}) {
+  const compact = compactGA4Status(status, propertyID);
+
+  return (
+    <Link
+      href={`/projects/${projectId}/settings#search-console`}
+      aria-label={`${compact.label}. ${compact.detail}`}
+      title={compact.detail}
+      className="flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+    >
+      <span className={`h-2 w-2 rounded-full ${compact.dot}`} aria-hidden="true" />
+      {compact.label}
+    </Link>
+  );
+}
+
 function formatOpportunityFindingDuration(ms?: number) {
   const value = Number(ms ?? 0);
   if (!Number.isFinite(value) || value <= 0) return "Not recorded";
@@ -1478,6 +1534,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [crawlerSnapshots, setCrawlerSnapshots] = useState<AICrawlerAccessSnapshot[]>([]);
   const [geoOverview, setGeoOverview] = useState<GEOOverview | null>(null);
   const [assetBriefs, setAssetBriefs] = useState<GEOAssetBrief[]>([]);
+  const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
+  const [seoIntegrations, setSEOIntegrations] = useState<SEOIntegration[]>([]);
   const [siteURL, setSiteURL] = useState("");
   const [surfaceURL, setSurfaceURL] = useState("");
   const [surfaceSourceURL, setSurfaceSourceURL] = useState("");
@@ -1609,7 +1667,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (crawlerAudit) setCrawlerSnapshots(crawlerAudit.snapshots);
       if (geoData) setGeoOverview(geoData);
       if (briefRows) setAssetBriefs(briefRows);
-      if (settings || overviewData) setSiteURL(settings?.property?.site_url ?? overviewData?.property?.site_url ?? "");
+      if (settings || overviewData) {
+        const nextProperty = settings?.property ?? overviewData?.property ?? null;
+        setSEOProperty(nextProperty);
+        setSEOIntegrations(settings?.integrations ?? overviewData?.integrations ?? []);
+        setSiteURL(nextProperty?.site_url ?? "");
+      }
 
       if (overviewResult.status === "rejected" && gscConnectionResult.status === "rejected" && summaryResult.status === "rejected") {
         const reason = overviewResult.reason instanceof Error ? overviewResult.reason.message : "CiteLoop API request failed";
@@ -1701,6 +1764,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const geoScoreValue = normalizeNumeric(geoOverview?.score?.score);
   const showGeoScore = Boolean(geoOverview?.score && geoCoverage != null && geoCoverage >= 0.3 && geoOverview.score.confidence !== "insufficient_data");
   const analysisStatus = analysisSearchDataStatus(overview, gscStatus);
+  const ga4Integration = seoIntegrations.find((integration) => integration.provider === "google_analytics");
+  const ga4PropertyID = seoProperty?.ga4_property_id ?? overview?.property?.ga4_property_id ?? null;
   const crawlerOkCount = crawlerSnapshots.filter((snapshot) => snapshot.access_state === "ok").length;
   const latestPortfolioPlan = plans[0] ?? null;
   const readinessGates = readiness?.gates ?? [];
@@ -2527,15 +2592,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         action={
           <div className="flex flex-wrap gap-2">
             {mode === "analysis" && (
-              <GSCStatusMenu
-                projectId={projectId}
-                overview={overview}
-                gscConnection={gscConnection}
-                status={analysisStatus}
-                gscStatus={gscStatus}
-                busy={busy}
-                onConnect={startSearchConsoleOAuth}
-              />
+              <>
+                <GSCStatusMenu
+                  projectId={projectId}
+                  overview={overview}
+                  gscConnection={gscConnection}
+                  status={analysisStatus}
+                  gscStatus={gscStatus}
+                  busy={busy}
+                  onConnect={startSearchConsoleOAuth}
+                />
+                <GA4StatusLink projectId={projectId} status={ga4Integration?.status} propertyID={ga4PropertyID} />
+              </>
             )}
             <Button size="sm" onClick={manualRefresh} disabled={!!busy}>
               <ButtonProgress busy={busy === "refresh"} busyLabel="Refreshing" idleIcon={<RefreshCw size={14} />}>
