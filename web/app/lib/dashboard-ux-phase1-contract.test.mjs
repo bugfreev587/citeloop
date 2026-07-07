@@ -354,6 +354,35 @@ test("analysis handoff cards mirror Content Plan actions from visibility summary
   assert.match(seo, /\/projects\/\$\{projectId\}\/plan\?action=\$\{action\.id\}/);
 });
 
+test("analysis cards and drawers expose finding and action timestamps", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const opportunityGridStart = seo.indexOf("data-analysis-finding-grid");
+  const siteFixesStart = seo.indexOf("data-site-fixes-queue");
+  const siteFixesEnd = seo.indexOf("data-analysis-loop-strip", siteFixesStart);
+  const opportunityDrawerStart = seo.indexOf('{mode === "analysis" && selectedOpportunity');
+  const opportunityDrawerEnd = seo.indexOf("Drawer actions", opportunityDrawerStart);
+  const siteFixDrawerStart = seo.indexOf('{mode === "analysis" && selectedDirectAction');
+  const siteFixDrawerEnd = seo.indexOf('{mode === "analysis" && selectedOpportunity', siteFixDrawerStart);
+
+  const opportunityGrid = seo.slice(opportunityGridStart, siteFixesStart);
+  const siteFixesBlock = seo.slice(siteFixesStart, siteFixesEnd);
+  const opportunityDrawer = seo.slice(opportunityDrawerStart, opportunityDrawerEnd);
+  const siteFixDrawer = seo.slice(siteFixDrawerStart, siteFixDrawerEnd);
+
+  assert.match(opportunityGrid, /Detected \{formatDate\(opp\.created_at \?\? null\)\}/);
+  assert.match(opportunityDrawer, /Opportunity timeline/);
+  assert.match(opportunityDrawer, /Detected/);
+  assert.match(opportunityDrawer, /formatDate\(selectedOpportunity\.created_at \?\? null\)/);
+
+  assert.match(siteFixesBlock, /data-site-fixes-grid/);
+  assert.match(siteFixesBlock, /md:grid-cols-2 xl:grid-cols-3/);
+  assert.match(siteFixesBlock, /min-h-\[220px\]/);
+  assert.match(siteFixDrawer, /Action timeline/);
+  assert.match(siteFixDrawer, /Approved/);
+  assert.match(siteFixDrawer, /formatDate\(action\.approved_at \?\? null\)/);
+  assert.match(siteFixDrawer, /formatDate\(action\.created_at \?\? null\)/);
+});
+
 test("results surface defaults to published outcomes with card-triggered attribution details", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
@@ -395,6 +424,64 @@ test("results surface defaults to published outcomes with card-triggered attribu
   assert.doesNotMatch(resultsBlock, /Add to Content Plan/);
   assert.doesNotMatch(resultsBlock, /Dismiss/);
   assert.doesNotMatch(resultsBlock, /Opportunity queue/);
+});
+
+test("workflow drawers keep operation timestamps behind details", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const review = read("projects/[id]/review/review-client.tsx");
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const resultDrawerStart = seo.indexOf('{mode === "results" && selectedResultAction');
+  const resultDrawerEnd = seo.indexOf('{mode === "analysis" && selectedDirectAction', resultDrawerStart + 1);
+  const resultDrawerBlock = seo.slice(resultDrawerStart, resultDrawerEnd);
+
+  for (const marker of [
+    "Action timeline",
+    "Created",
+    "Approved",
+    "Published / applied",
+    "Verified",
+    "formatDate(action.created_at ?? null)",
+    "formatDate(action.approved_at ?? null)",
+  ]) {
+    assert.match(resultDrawerBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const marker of [
+    "Action timeline",
+    "Created",
+    "Approved",
+    "Drafted",
+    "Last updated",
+    "formatDate(selectedContentPlanAction.created_at ?? null)",
+    "formatDate(selectedContentPlanAction.approved_at ?? null)",
+  ]) {
+    assert.match(topics, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const marker of [
+    "Draft timeline",
+    "Created",
+    "Reviewed",
+    "Scheduled",
+    "Published",
+    "formatDate(article.created_at)",
+    "formatDate(article.reviewed_at)",
+  ]) {
+    assert.match(review, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  for (const marker of [
+    "Created",
+    "Reviewed",
+    "Scheduled",
+    "Published",
+    "formatDate(article.created_at)",
+    "formatDate(article.reviewed_at)",
+    "formatDate(article.published_at)",
+  ]) {
+    assert.match(publishing, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
 
 test("Phase 5 pages separate growth operating outputs", () => {

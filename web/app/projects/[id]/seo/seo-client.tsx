@@ -2673,6 +2673,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             <Badge tone="blue">{workType}</Badge>
                             <Badge tone={toneForOpportunityPriority(opp)}>{opportunityPriorityLabel(opp)}</Badge>
                             <Badge tone="red">Needs decision</Badge>
+                            <Badge tone="neutral">Detected {formatDate(opp.created_at ?? null)}</Badge>
                           </div>
                           <h3 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
                           <p className="mt-1 line-clamp-3 text-sm leading-5 text-slate-600">
@@ -2830,7 +2831,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             {directReviewActions.length === 0 ? (
               <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
             ) : (
-              <div className="grid gap-2">
+              <div data-site-fixes-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {directReviewActions.map((action) => {
                   const stage = deriveVisibilityLifecycleStage(action);
                   const highlighted = highlightedSiteFixID === action.id;
@@ -2849,11 +2850,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         setSelectedOpportunityID(null);
                         setSelectedDirectActionID(action.id);
                       }}
-                      className={`group w-full rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
+                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
                         highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
                       }`}
                     >
-                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto] lg:items-center">
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
@@ -2868,7 +2869,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           </h3>
                           <p className="mt-1 truncate text-sm leading-5 text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
                         </div>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                        <div className="grid gap-3 text-sm">
                           <div>
                             <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
                             <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
@@ -2878,7 +2879,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionOutputPreviewText(action)}</div>
                           </div>
                         </div>
-                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
                           <span>Open details</span>
                           <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                         </div>
@@ -4071,6 +4072,28 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   </div>
                 </section>
 
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.created_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Approved</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.approved_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Published / applied</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.published_at ?? action.verified_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Verified</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.verified_at ?? null)}</div>
+                    </div>
+                  </div>
+                </section>
+
                 <section className="grid gap-3 text-sm sm:grid-cols-2">
                   <div>
                     <div className="text-xs font-semibold uppercase text-slate-400">Asset</div>
@@ -4240,6 +4263,28 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewable output</div>
                   <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{actionOutputPreviewText(action)}</p>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.created_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Approved</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.approved_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Applied</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.verified_at ?? action.published_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Last updated</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.updated_at ?? null)}</div>
+                    </div>
+                  </div>
                 </section>
 
                 <section data-site-fix-ai-payload className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50">
@@ -4448,6 +4493,28 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       {workType} · {workTypeLockReason(selectedOpportunity)}
                     </p>
                   )}
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Opportunity timeline</div>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Detected</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(selectedOpportunity.created_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Last updated</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(selectedOpportunity.updated_at ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Snoozed until</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(selectedOpportunity.snoozed_until ?? null)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase text-slate-400">Unsnoozed</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatDate(selectedOpportunity.unsnoozed_at ?? null)}</div>
+                    </div>
+                  </div>
                 </section>
 
                 <section className="grid gap-3 text-sm sm:grid-cols-3">
