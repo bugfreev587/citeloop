@@ -327,6 +327,38 @@ test("Analysis loop metrics reveal selected linked content cards", async () => {
   assert.match(source, /\/projects\/\$\{projectId\}\/results\?action=\$\{action\.id\}/);
 });
 
+test("Analysis Site Fix handoff cards use the loop action source for same-page targets", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const loopActionsStart = source.indexOf("const actionsByID = new Map(actions.map((action) => [action.id, action]));");
+  const loopActionsEnd = source.indexOf("const measuredActions = loopActions");
+  const directStart = source.indexOf("const directReviewActionsAll =");
+  const directEnd = source.indexOf("const directReviewActions =");
+  const focusStart = source.indexOf("function focusSiteFixCard");
+  const focusEnd = source.indexOf("useEffect(() => {\n    if (!pendingSiteFixFocusID)");
+  const loopActionsSource = source.slice(loopActionsStart, loopActionsEnd);
+  const directSource = source.slice(directStart, directEnd);
+  const focusSource = source.slice(focusStart, focusEnd);
+
+  assert.notEqual(loopActionsStart, -1, "loop actions should index full content actions by id");
+  assert.notEqual(loopActionsEnd, -1, "loop action source boundary should resolve");
+  assert.notEqual(directStart, -1, "seo-client.tsx missing Site Fixes action source");
+  assert.notEqual(directEnd, -1, "Site Fixes action source boundary should resolve");
+  assert.notEqual(focusStart, -1, "seo-client.tsx missing Site Fix focus handler");
+  assert.notEqual(focusEnd, -1, "Site Fix focus handler boundary should resolve");
+
+  for (const expected of [
+    "const summaryLoopActions = (visibilitySummary?.actions_in_loop ?? []).map",
+    "const matchingAction = actionsByID.get(summaryAction.id);",
+    "return matchingAction ? { ...summaryAction, ...matchingAction } : summaryAction;",
+  ]) {
+    assert.equal(loopActionsSource.includes(expected), true, `loop action source should include ${expected}`);
+  }
+
+  assert.match(directSource, /const directReviewActionsAll = loopActions\s+\.filter\(\(action\) => isDirectAction\(action\)\)/);
+  assert.equal(directSource.includes("const directReviewActionsAll = actions"), false, "Site Fixes should not depend on the separately paged content action list");
+  assert.equal(focusSource.includes("directReviewActionsAll.some((action) => action.id === actionID)"), true, "Loop Site Fix cards should expand the same source they render from");
+});
+
 test("Opportunity queue lays finding cards out as responsive rectangles with three per row at most", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const queueStart = source.indexOf("data-analysis-growth-findings-section");
