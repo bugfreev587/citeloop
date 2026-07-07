@@ -1146,32 +1146,26 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	status := "missing"
-	var verified pgtype.Timestamptz
-	if strings.TrimSpace(in.CredentialRef) != "" {
-		status = "connected"
-		verified = pgutil.TS(time.Now().UTC())
+	existingIntegrations, err := s.Q.ListSEOIntegrations(r.Context(), projectID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	gscIntegration, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
-		ProjectID:      projectID,
-		Provider:       seopkg.ProviderGSC,
-		Status:         status,
-		CredentialRef:  strPtrFrom(in.CredentialRef),
-		LastVerifiedAt: verified,
-	})
+	now := time.Now().UTC()
+	gscIntegration, err := s.Q.UpsertSEOIntegration(
+		r.Context(),
+		seoSettingsIntegrationParams(projectID, seopkg.ProviderGSC, in.CredentialRef, existingIntegrations, now),
+	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	var ga4Integration *db.SeoIntegration
 	if strings.TrimSpace(in.GA4PropertyID) != "" || strings.TrimSpace(in.CredentialRef) != "" {
-		row, err := s.Q.UpsertSEOIntegration(r.Context(), db.UpsertSEOIntegrationParams{
-			ProjectID:      projectID,
-			Provider:       seopkg.ProviderGA4,
-			Status:         status,
-			CredentialRef:  strPtrFrom(in.CredentialRef),
-			LastVerifiedAt: verified,
-		})
+		row, err := s.Q.UpsertSEOIntegration(
+			r.Context(),
+			seoSettingsIntegrationParams(projectID, seopkg.ProviderGA4, in.CredentialRef, existingIntegrations, now),
+		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1179,6 +1173,36 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 		ga4Integration = &row
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integration": gscIntegration, "ga4_integration": ga4Integration})
+}
+
+func seoSettingsIntegrationParams(projectID uuid.UUID, provider string, credentialRef string, existing []db.SeoIntegration, now time.Time) db.UpsertSEOIntegrationParams {
+	if ref := strings.TrimSpace(credentialRef); ref != "" {
+		return db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       provider,
+			Status:         "connected",
+			CredentialRef:  &ref,
+			LastVerifiedAt: pgutil.TS(now),
+		}
+	}
+	for _, integration := range existing {
+		if integration.Provider != provider {
+			continue
+		}
+		return db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       provider,
+			Status:         integration.Status,
+			CredentialRef:  integration.CredentialRef,
+			LastVerifiedAt: integration.LastVerifiedAt,
+			LastError:      integration.LastError,
+		}
+	}
+	return db.UpsertSEOIntegrationParams{
+		ProjectID: projectID,
+		Provider:  provider,
+		Status:    "missing",
+	}
 }
 
 func (s *Server) seoIDs(w http.ResponseWriter, r *http.Request, param string) (uuid.UUID, uuid.UUID, bool) {
