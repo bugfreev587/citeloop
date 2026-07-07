@@ -58,13 +58,28 @@ test("Results action attribution opens compact cards into a detail drawer", () =
     "resultReturnFocusRef",
     "data-results-action-card",
     "data-results-drawer",
-    "aria-label={`Open attribution details: ${action.action_type}`}",
+    "aria-label={`Open attribution details: ${publishedTitle}`}",
     "Measurement details",
     "Manual verify",
     "Verification failed",
   ]) {
     assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("Results attribution cards identify the published article behind the action", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+
+  for (const marker of [
+    "resultPublishedArticleTitle(action)",
+    "resultPublishedArticleUrl(action)",
+    "data-results-action-card={action.id}",
+  ]) {
+    assert.match(resultsBlock, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(seo, /draft_article_id === requestedResultArticleID/);
 });
 
 test("Results separates impact outcomes from measurement queue states", () => {

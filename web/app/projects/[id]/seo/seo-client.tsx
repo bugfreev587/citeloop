@@ -43,6 +43,7 @@ type LoopAction = SEOContentAction &
       VisibilityActionInLoop,
       | "lifecycle_stage"
       | "draft_article_id"
+      | "draft_article_canonical_url"
       | "opportunity_page_url"
       | "opportunity_normalized_page_url"
       | "opportunity_query"
@@ -1204,6 +1205,30 @@ function lifecycleStageTone(stage: string): "green" | "amber" | "red" | "neutral
 
 function loopActionTitle(action: LoopAction) {
   return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Visibility action";
+}
+
+function cleanResultString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resultPublishedArticleTitle(action: SEOContentAction | ResultsAction | LoopAction) {
+  return (
+    cleanResultString((action as ResultsAction | LoopAction).topic_title) ||
+    cleanResultString(action.output_snapshot?.title) ||
+    cleanResultString(action.input_snapshot?.title) ||
+    cleanResultString(action.action_type) ||
+    "Published work"
+  );
+}
+
+function resultPublishedArticleUrl(action: SEOContentAction | ResultsAction | LoopAction) {
+  return cleanResultString((action as ResultsAction | LoopAction).draft_article_canonical_url);
+}
+
+function resultSourceEvidenceUrl(action: SEOContentAction | ResultsAction | LoopAction) {
+  const sourceURL = cleanResultString(action.target_url) || cleanResultString(action.normalized_target_url);
+  const publishedURL = resultPublishedArticleUrl(action);
+  return sourceURL && sourceURL !== publishedURL ? sourceURL : "";
 }
 
 function compactOutcomeText(outcome: any) {
@@ -3064,12 +3089,15 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
                   const state = actionMeasurementState(action);
                   const queue = measurementQueueState(action);
+                  const publishedTitle = resultPublishedArticleTitle(action);
+                  const publishedURL = resultPublishedArticleUrl(action);
+                  const sourceURL = resultSourceEvidenceUrl(action);
                   return (
                     <button
                       key={action.id}
                       type="button"
-                      data-results-action-card
-                      aria-label={`Open attribution details: ${action.action_type}`}
+                      data-results-action-card={action.id}
+                      aria-label={`Open attribution details: ${publishedTitle}`}
                       onClick={(event) => {
                         resultReturnFocusRef.current = event.currentTarget;
                         setSelectedResultActionID(action.id);
@@ -3085,8 +3113,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                             <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
                           </div>
-                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{action.action_type}</h3>
-                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
+                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{publishedTitle}</h3>
+                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{publishedURL || sourceURL || action.id}</p>
+                          {sourceURL && (
+                            <p className="mt-1 truncate text-xs font-medium leading-5 text-slate-400">Source: {sourceURL}</p>
+                          )}
                         </div>
                         <div className="flex shrink-0 items-start justify-between gap-3 text-sm text-slate-500 md:min-w-[150px]">
                           <div>
@@ -3852,6 +3883,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const before = measurementMetricText(measurement, "before");
       const after = measurementMetricText(measurement, "after");
       const confounders = actionConfounders(action);
+      const publishedTitle = resultPublishedArticleTitle(action);
+      const publishedURL = resultPublishedArticleUrl(action);
+      const sourceURL = resultSourceEvidenceUrl(action);
 
       return (
         <div className="fixed inset-0 z-30">
@@ -3873,11 +3907,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Attribution report</div>
                 <h3 id="result-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
-                  {action.action_type}
+                  {publishedTitle}
                 </h3>
                 <p className="mt-2 break-words text-sm leading-5 text-slate-500">
-                  {action.target_url ?? action.normalized_target_url ?? action.id}
+                  {publishedURL || sourceURL || action.id}
                 </p>
+                {sourceURL && <p className="mt-1 break-words text-xs font-medium leading-5 text-slate-400">Source action: {action.action_type} - {sourceURL}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Badge tone={state.tone}>{state.label}</Badge>
                   <Badge tone={queue.tone}>{queue.label}</Badge>
