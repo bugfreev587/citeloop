@@ -327,6 +327,23 @@ test("Analysis loop metrics reveal selected linked content cards", async () => {
   assert.match(source, /\/projects\/\$\{projectId\}\/results\?action=\$\{action\.id\}/);
 });
 
+test("Analysis refresh keeps GSC connection state independent from bulky loop data", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const refreshStart = source.indexOf("const refresh = useCallback(async () => {");
+  const refreshEnd = source.indexOf("useEffect(() => {\n    refresh();");
+  const refreshSource = source.slice(refreshStart, refreshEnd);
+
+  assert.notEqual(refreshStart, -1, "seo-client.tsx missing refresh callback");
+  assert.notEqual(refreshEnd, -1, "seo-client.tsx missing refresh effect boundary");
+
+  assert.match(source, /const \[gscConnection, setGSCConnection\] = useState<GSCConnection \| null>\(null\)/);
+  assert.match(refreshSource, /api\.getGSCConnection\(projectId\)/);
+  assert.match(refreshSource, /Promise\.allSettled\(\[/);
+  assert.doesNotMatch(refreshSource, /await Promise\.all\(\[/);
+  assert.match(source, /gscConnection\?\.status/);
+  assert.match(source, /gscConnection\?\.selected_property/);
+});
+
 test("Analysis Site Fix handoff cards use the loop action source for same-page targets", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const loopActionsStart = source.indexOf("const actionsByID = new Map(actions.map((action) => [action.id, action]));");

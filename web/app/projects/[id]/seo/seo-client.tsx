@@ -11,6 +11,7 @@ import {
   AutopilotReadiness,
   GEOAssetBrief,
   GEOCompetitor,
+  GSCConnection,
   GEOOverview,
   GEOPrompt,
   SEOActionPlan,
@@ -148,10 +149,14 @@ function measurementWindowLabel(measurement_window: any) {
   return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
 }
 
+function settledValue<T>(result: PromiseSettledResult<T>): T | null {
+  return result.status === "fulfilled" ? result.value : null;
+}
+
 function analysisSearchDataStatus(overview: SEOOverview | null, gscStatus: string) {
   const capabilityMode = overview?.capability_mode ?? "public_only";
   const integration = overview?.integrations.find((item) => item.provider === "google_search_console");
-  if (integration?.status === "connected" || capabilityMode === "customer_site_connected" || capabilityMode === "managed_content_connected") {
+  if (gscStatus === "connected") {
     return {
       tone: "green" as const,
       label: "Search Console connected",
@@ -189,6 +194,14 @@ function analysisSearchDataStatus(overview: SEOOverview | null, gscStatus: strin
       label: "Search Console needs attention",
       detail: "Reconnect Search Console before trusting fresh query, CTR, or position signals.",
       action: "Reconnect Search Console",
+    };
+  }
+  if (integration?.status === "connected" || capabilityMode === "customer_site_connected" || capabilityMode === "managed_content_connected") {
+    return {
+      tone: "green" as const,
+      label: "Search Console connected",
+      detail: "CiteLoop can use first-party search data when prioritizing recommendations.",
+      action: null,
     };
   }
   if (capabilityMode === "customer_site_pending_verification") {
@@ -1208,6 +1221,7 @@ function compactOutcomeText(outcome: any) {
 function GSCStatusMenu({
   projectId,
   overview,
+  gscConnection,
   status,
   gscStatus,
   busy,
@@ -1215,13 +1229,14 @@ function GSCStatusMenu({
 }: {
   projectId: string;
   overview: SEOOverview | null;
+  gscConnection: GSCConnection | null;
   status: ReturnType<typeof analysisSearchDataStatus>;
   gscStatus: string;
   busy: string | null;
   onConnect: () => void;
 }) {
   const compact = compactGSCStatus(status);
-  const propertyLabel = overview?.property?.gsc_site_url ?? overview?.property?.site_url ?? "Select property";
+  const propertyLabel = gscConnection?.selected_property ?? overview?.property?.gsc_site_url ?? overview?.property?.site_url ?? "Select property";
   const dataMode = searchDataModeLabel(overview, status);
   const settingsHref = `/projects/${projectId}/settings#search-console`;
   const [gscMenuOpen, setGSCMenuOpen] = useState(false);
@@ -1421,6 +1436,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const api = useApi();
   const searchParams = useSearchParams();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
+  const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [opportunityFindingStatus, setOpportunityFindingStatus] = useState<OpportunityFindingStatus | null>(null);
   const [brief, setBrief] = useState<SEOBrief | null>(null);
@@ -1457,6 +1473,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const refreshSequenceRef = useRef(0);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
   const directActionDrawerRef = useRef<HTMLElement | null>(null);
@@ -1476,33 +1493,37 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   };
 
   const refresh = useCallback(async () => {
+    const refreshSequence = refreshSequenceRef.current + 1;
+    refreshSequenceRef.current = refreshSequence;
     setMessage(null);
     try {
       const [
-        overviewData,
-        summaryData,
-        findingStatus,
-        settings,
-        briefData,
-        opps,
-        snoozedOpps,
-        watchingOpps,
-        watchlistRows,
-        actionRows,
-        resultsRows,
-        policyData,
-        readinessData,
-        objectiveRows,
-        planRows,
-        safeModeRows,
-        crawlerAudit,
-        geoData,
-        briefRows,
-      ] = await Promise.all([
+        overviewResult,
+        summaryResult,
+        findingStatusResult,
+        settingsResult,
+        gscConnectionResult,
+        briefResult,
+        oppsResult,
+        snoozedOppsResult,
+        watchingOppsResult,
+        watchlistRowsResult,
+        actionRowsResult,
+        resultsRowsResult,
+        policyResult,
+        readinessResult,
+        objectiveRowsResult,
+        planRowsResult,
+        safeModeRowsResult,
+        crawlerAuditResult,
+        geoResult,
+        briefRowsResult,
+      ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
         api.getOpportunityFindingStatus(projectId),
         api.getSEOSettings(projectId),
+        api.getGSCConnection(projectId),
         api.getSEOBrief(projectId),
         api.listSEOOpportunities(projectId, { status: "open", limit: 50 }),
         api.listSEOOpportunities(projectId, { status: "snoozed", limit: 20 }),
@@ -1519,24 +1540,54 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.getGEOOverview(projectId),
         api.listGEOAssetBriefs(projectId, { limit: 50 }),
       ]);
-      setOverview(overviewData);
-      setVisibilitySummary(summaryData);
-      setOpportunityFindingStatus(findingStatus);
-      setBrief(briefData);
-      setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
-      setWatchlist(watchlistRows);
-      setActions(actionRows);
-      setResultsActions(resultsRows);
-      setPolicy(policyData);
-      setReadiness(readinessData);
-      setObjectives(objectiveRows);
-      setPlans(planRows);
-      setSafeModes(safeModeRows);
-      setCrawlerSnapshots(crawlerAudit.snapshots);
-      setGeoOverview(geoData);
-      setAssetBriefs(briefRows);
-      setSiteURL(settings.property?.site_url ?? overviewData.property?.site_url ?? "");
+      if (refreshSequence !== refreshSequenceRef.current) return;
+
+      const overviewData = settledValue(overviewResult);
+      const summaryData = settledValue(summaryResult);
+      const findingStatus = settledValue(findingStatusResult);
+      const settings = settledValue(settingsResult);
+      const gscConnectionData = settledValue(gscConnectionResult);
+      const briefData = settledValue(briefResult);
+      const opps = settledValue(oppsResult);
+      const snoozedOpps = settledValue(snoozedOppsResult);
+      const watchingOpps = settledValue(watchingOppsResult);
+      const watchlistRows = settledValue(watchlistRowsResult);
+      const actionRows = settledValue(actionRowsResult);
+      const resultsRows = settledValue(resultsRowsResult);
+      const policyData = settledValue(policyResult);
+      const readinessData = settledValue(readinessResult);
+      const objectiveRows = settledValue(objectiveRowsResult);
+      const planRows = settledValue(planRowsResult);
+      const safeModeRows = settledValue(safeModeRowsResult);
+      const crawlerAudit = settledValue(crawlerAuditResult);
+      const geoData = settledValue(geoResult);
+      const briefRows = settledValue(briefRowsResult);
+
+      if (overviewData) setOverview(overviewData);
+      if (summaryData) setVisibilitySummary(summaryData);
+      if (findingStatus) setOpportunityFindingStatus(findingStatus);
+      if (gscConnectionData) setGSCConnection(gscConnectionData);
+      if (briefData) setBrief(briefData);
+      if (opps && snoozedOpps && watchingOpps) setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
+      if (watchlistRows) setWatchlist(watchlistRows);
+      if (actionRows) setActions(actionRows);
+      if (resultsRows) setResultsActions(resultsRows);
+      if (policyData) setPolicy(policyData);
+      if (readinessData) setReadiness(readinessData);
+      if (objectiveRows) setObjectives(objectiveRows);
+      if (planRows) setPlans(planRows);
+      if (safeModeRows) setSafeModes(safeModeRows);
+      if (crawlerAudit) setCrawlerSnapshots(crawlerAudit.snapshots);
+      if (geoData) setGeoOverview(geoData);
+      if (briefRows) setAssetBriefs(briefRows);
+      if (settings || overviewData) setSiteURL(settings?.property?.site_url ?? overviewData?.property?.site_url ?? "");
+
+      if (overviewResult.status === "rejected" && gscConnectionResult.status === "rejected" && summaryResult.status === "rejected") {
+        const reason = overviewResult.reason instanceof Error ? overviewResult.reason.message : "CiteLoop API request failed";
+        setMessage({ title: "SEO data unavailable", detail: reason, tone: "red" });
+      }
     } catch (e: any) {
+      if (refreshSequence !== refreshSequenceRef.current) return;
       setMessage({ title: "SEO data unavailable", detail: e.message, tone: "red" });
     }
   }, [api, projectId]);
@@ -1606,8 +1657,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [selectedOpportunity?.id]);
 
   const gscStatus = useMemo(() => {
-    return overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
-  }, [overview]);
+    return gscConnection?.status ?? overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
+  }, [gscConnection?.status, overview]);
 
   const promptCountBySet = useMemo(() => {
     const counts = new Map<string, number>();
@@ -2398,6 +2449,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <GSCStatusMenu
                 projectId={projectId}
                 overview={overview}
+                gscConnection={gscConnection}
                 status={analysisStatus}
                 gscStatus={gscStatus}
                 busy={busy}
