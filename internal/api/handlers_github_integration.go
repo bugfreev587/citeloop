@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -12,7 +13,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (s *Server) githubApp() *githubapp.Service {
+type githubAppAPI interface {
+	Configured() bool
+	InstallURL(string) string
+	InstallationToken(context.Context, string) (string, error)
+	ListRepos(context.Context, string) ([]githubapp.Repo, error)
+}
+
+func (s *Server) githubApp() githubAppAPI {
+	if s.githubAppClient != nil {
+		return s.githubAppClient
+	}
 	return githubapp.New(githubapp.Config{
 		AppID:         s.Env.GitHubAppID,
 		Slug:          s.Env.GitHubAppSlug,
@@ -69,8 +80,8 @@ func (s *Server) saveGithubConnection(r *http.Request, projectID uuid.UUID, cfg 
 }
 
 type githubIntegrationStatus struct {
-	Configured     bool   `json:"configured"`      // App env set on the server
-	Connected      bool   `json:"connected"`       // an installation is stored
+	Configured     bool   `json:"configured"` // App env set on the server
+	Connected      bool   `json:"connected"`  // an installation is stored
 	InstallationID string `json:"installation_id,omitempty"`
 	Repo           string `json:"repo,omitempty"`
 	Branch         string `json:"branch,omitempty"`

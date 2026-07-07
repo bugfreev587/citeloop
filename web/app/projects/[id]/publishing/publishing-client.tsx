@@ -18,7 +18,7 @@ import {
   Settings2,
   Zap,
 } from "lucide-react";
-import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig } from "../../../lib/api";
+import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig, friendlyApiError } from "../../../lib/api";
 import {
   ManualSyndicationPlatform,
   OperationalGroup,
@@ -822,7 +822,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       await loadConnections();
       setMessage({ title: "Publisher connection checked", tone: "green" });
     } catch (e: any) {
-      setMessage({ title: "Connection test failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Connection test failed", detail: friendlyApiError(e), tone: "red" });
     } finally {
       setBusy(null);
     }

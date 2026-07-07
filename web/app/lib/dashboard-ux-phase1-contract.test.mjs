@@ -815,6 +815,8 @@ test("publishing destination tiles replace the platform popover and keep setting
     assert.match(publishing, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
+  assert.match(publishing, /friendlyApiError/);
+  assert.match(publishing, /Connection test failed", detail: friendlyApiError\(e\)/);
   for (const contract of ["dev_to", "hashnode", "reddit", "medium", "linkedin", "hacker_news", "WordPress", "Webflow", "Shopify", "Custom CMS"]) {
     assert.match(logic, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

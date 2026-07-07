@@ -265,7 +265,7 @@ func (s *Server) testPublisherConnection(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "publisher connection test not supported for "+conn.Kind)
 		return
 	}
-	token, err := s.publisherCredentialToken(r.Context(), projectID, conn)
+	token, err := s.publisherConnectionToken(r.Context(), projectID, conn)
 	if err != nil {
 		s.writePublisherConnectionError(w, r, http.StatusFailedDependency, connectionID, projectID, "publisher credential cannot be resolved")
 		return
@@ -638,6 +638,25 @@ func (s *Server) publisherCredentialToken(ctx context.Context, projectID uuid.UU
 		return "", err
 	}
 	return secretbox.DecryptString(cred.EncryptedValue, s.Env.NotificationSecretKey)
+}
+
+func (s *Server) publisherConnectionToken(ctx context.Context, projectID uuid.UUID, conn db.PublisherConnection) (string, error) {
+	if conn.Kind == publisher.ConnectionKindGitHubNextJS {
+		cfg := parseGithubConnConfig(conn.Config)
+		if installationID := strings.TrimSpace(cfg.InstallationID); installationID != "" {
+			app := s.githubApp()
+			if app.Configured() {
+				token, err := app.InstallationToken(ctx, installationID)
+				if err != nil {
+					return "", err
+				}
+				if strings.TrimSpace(token) != "" {
+					return token, nil
+				}
+			}
+		}
+	}
+	return s.publisherCredentialToken(ctx, projectID, conn)
 }
 
 func mustPublisherJSON(v any) json.RawMessage {

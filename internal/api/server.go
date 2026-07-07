@@ -23,15 +23,16 @@ import (
 )
 
 type Server struct {
-	Pool    *pgxpool.Pool
-	Q       *db.Queries
-	LLM     llm.Provider
-	Search  search.Provider
-	Blog    *publisher.BlogPublisher
-	Sched   *scheduler.Scheduler
-	Env     config.Env
-	Log     *slog.Logger
-	SEOData seo.GoogleDataProvider
+	Pool            *pgxpool.Pool
+	Q               *db.Queries
+	LLM             llm.Provider
+	Search          search.Provider
+	Blog            *publisher.BlogPublisher
+	Sched           *scheduler.Scheduler
+	Env             config.Env
+	Log             *slog.Logger
+	SEOData         seo.GoogleDataProvider
+	githubAppClient githubAppAPI
 
 	OnboardingRunner         projectOnboardingRunner
 	InsightInventoryRunner   insightInventoryRunner
