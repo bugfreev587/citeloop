@@ -10,7 +10,7 @@ import (
 
 const (
 	ScopeSearchConsoleReadonly = "https://www.googleapis.com/auth/webmasters.readonly"
-	scopeAnalyticsReadonly     = "https://www.googleapis.com/auth/analytics.readonly"
+	ScopeAnalyticsReadonly     = "https://www.googleapis.com/auth/analytics.readonly"
 )
 
 func NewServiceAccountClient(ctx context.Context, credentialsJSON string) (Client, error) {
@@ -18,7 +18,7 @@ func NewServiceAccountClient(ctx context.Context, credentialsJSON string) (Clien
 	if trimmed == "" {
 		return Client{}, errors.New("google service account credentials are empty")
 	}
-	cfg, err := google.JWTConfigFromJSON([]byte(trimmed), ScopeSearchConsoleReadonly, scopeAnalyticsReadonly)
+	cfg, err := google.JWTConfigFromJSON([]byte(trimmed), ScopeSearchConsoleReadonly, ScopeAnalyticsReadonly)
 	if err != nil {
 		return Client{}, err
 	}

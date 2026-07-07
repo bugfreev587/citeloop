@@ -141,7 +141,7 @@ func TestListSearchConsoleSitesParsesAuthorizedProperties(t *testing.T) {
 	}
 }
 
-func TestSearchConsoleOAuthConfigUsesReadonlyScope(t *testing.T) {
+func TestSearchConsoleOAuthConfigUsesReadonlyScopes(t *testing.T) {
 	cfg := SearchConsoleOAuthConfig("client-id", "client-secret", "https://app.citeloop.test/callback")
 	if cfg.ClientID != "client-id" || cfg.ClientSecret != "client-secret" {
 		t.Fatalf("client config = %#v", cfg)
@@ -149,7 +149,7 @@ func TestSearchConsoleOAuthConfigUsesReadonlyScope(t *testing.T) {
 	if cfg.RedirectURL != "https://app.citeloop.test/callback" {
 		t.Fatalf("redirect URL = %q", cfg.RedirectURL)
 	}
-	if len(cfg.Scopes) != 1 || cfg.Scopes[0] != ScopeSearchConsoleReadonly {
+	if len(cfg.Scopes) != 2 || cfg.Scopes[0] != ScopeSearchConsoleReadonly || cfg.Scopes[1] != ScopeAnalyticsReadonly {
 		t.Fatalf("scopes = %#v", cfg.Scopes)
 	}
 }

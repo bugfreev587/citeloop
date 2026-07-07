@@ -146,8 +146,9 @@ func TestStartGSCOAuthReturnsGoogleAuthorizationURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Query().Get("scope") != googledata.ScopeSearchConsoleReadonly {
-		t.Fatalf("scope = %q, want %q", parsed.Query().Get("scope"), googledata.ScopeSearchConsoleReadonly)
+	scope := parsed.Query().Get("scope")
+	if !strings.Contains(scope, googledata.ScopeSearchConsoleReadonly) || !strings.Contains(scope, googledata.ScopeAnalyticsReadonly) {
+		t.Fatalf("scope = %q, want search console and analytics readonly scopes", scope)
 	}
 	if parsed.Query().Get("redirect_uri") != "https://app.citeloop.test/integrations/google/search-console/callback" {
 		t.Fatalf("redirect_uri = %q", parsed.Query().Get("redirect_uri"))
