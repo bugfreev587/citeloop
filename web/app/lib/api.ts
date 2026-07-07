@@ -244,6 +244,10 @@ export type TopicUpdateInput = {
   internal_links?: any[];
 };
 
+export type TopicCreateInput = TopicUpdateInput & {
+  scheduled_at?: string | null;
+};
+
 export type NotificationChannelKind = "slack_webhook" | "discord_webhook";
 
 export type NotificationChannel = {
@@ -2027,6 +2031,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/topics`, undefined, auth);
     return arrayFrom(raw).map(normalizeTopic);
   },
+  createTopic: async (id: string, body: TopicCreateInput) => {
+    const raw = await req<any>(`/projects/${id}/topics`, { method: "POST", body: JSON.stringify(body) }, auth);
+    return normalizeTopic(raw);
+  },
   updateTopic: async (id: string, topicID: string, body: TopicUpdateInput) => {
     const raw = await req<any>(`/projects/${id}/topics/${topicID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeTopic(raw);
@@ -2483,8 +2491,12 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
     return arrayFrom(raw);
   },
-  planSEOContentAction: async (id: string, actionID: string): Promise<Topic> => {
-    const raw = await req<any>(`/projects/${id}/seo/actions/${actionID}/plan`, { method: "POST" }, auth);
+  planSEOContentAction: async (id: string, actionID: string, body: { publish_strategy?: string; publish_to?: string } = {}): Promise<Topic> => {
+    const raw = await req<any>(
+      `/projects/${id}/seo/actions/${actionID}/plan`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
     return normalizeTopic(raw);
   },
   verifySEOContentAction: async (

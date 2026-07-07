@@ -948,12 +948,9 @@ left join topics t
 where ca.project_id = $1
   and ca.status = 'ready_for_review'
   and t.id is null
+  and coalesce(ca.work_type, '') <> 'fix_site_issue'
   and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (
     array[
-      '%metadata_rewrite%',
-      '%metadata%',
-      '%title%',
-      '%meta description%',
       '%internal_link_patch%',
       '%schema_patch%',
       '%sitemap_update%',

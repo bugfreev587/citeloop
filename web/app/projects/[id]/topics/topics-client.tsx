@@ -6,13 +6,18 @@ import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Wand2
 import { defaultProjectConfig } from "../../../lib/api";
 import type { ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
+  normalizePublishStrategy,
   hasReviewableDraft,
   isBacklogStatus,
   planHealthForTopics,
+  publishStrategyLabel,
+  publishStrategyReasonForAction,
+  recommendedPublishStrategyForAction,
   recommendedTopicIds,
   normalizedTopicPriority,
   topicWhy,
 } from "../../../lib/content-plan-logic";
+import type { ContentPlanPublishStrategy } from "../../../lib/content-plan-logic";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -30,9 +35,11 @@ type TopicDraft = {
   priority: string;
 };
 
+const PUBLISH_STRATEGIES: ContentPlanPublishStrategy[] = ["blog", "syndication", "both"];
+
 const AUTO_WORKFLOW_HELP =
-  "Auto On: accepted opportunities become planned topics and drafts on cadence. " +
-  "Auto Off: automatic planning and drafting pause; manual drafting stays available from reviewed briefs and planned topics.";
+  "Auto On: accepted content briefs draft on cadence. " +
+  "Auto Off: automatic drafting pauses; manual drafting stays available from reviewed briefs.";
 
 const siteFixAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
 
@@ -58,6 +65,18 @@ function draftFromTopic(topic: Topic): TopicDraft {
     angle: topic.angle ?? "",
     format: topic.format ?? "",
     priority: String(topic.priority),
+  };
+}
+
+function defaultContentBriefDraft(): TopicDraft {
+  return {
+    channel: "blog",
+    title: "",
+    target_keyword: "",
+    target_prompt: "",
+    angle: "",
+    format: "article",
+    priority: "5",
   };
 }
 
@@ -141,12 +160,12 @@ function contentPlanRiskReasons(action: VisibilityActionInLoop) {
   return Array.isArray(action.risk_reasons) ? action.risk_reasons.map((item) => String(item)).filter(Boolean) : [];
 }
 
-function topicFromAcceptedAction(action: VisibilityActionInLoop): Topic | null {
+function topicFromAcceptedAction(action: VisibilityActionInLoop, channel: ContentPlanPublishStrategy): Topic | null {
   if (!action.topic_id) return null;
   return {
     id: action.topic_id,
     project_id: undefined,
-    channel: "blog",
+    channel,
     title: contentPlanActionTitle(action),
     target_keyword: action.opportunity_query ?? null,
     target_prompt: action.opportunity_expected_impact ?? null,
@@ -170,6 +189,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
+  const [publishStrategyDrafts, setPublishStrategyDrafts] = useState<Record<string, ContentPlanPublishStrategy>>({});
+  const [newBriefOpen, setNewBriefOpen] = useState(false);
+  const [newBriefDraft, setNewBriefDraft] = useState<TopicDraft>(() => defaultContentBriefDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -215,11 +237,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         return Object.fromEntries(Object.entries(current).filter(([id]) => stillGenerating.has(id)));
       });
     } catch (e: any) {
-      setMessage({ title: "Topics unavailable", detail: e.message, tone: "amber" });
+      setMessage({ title: "Content briefs unavailable", detail: e.message, tone: "amber" });
     }
   }, [api, projectId]);
 
-  const acceptedPlanActions = useMemo(
+  const contentPlanActions = useMemo(
     () =>
       (visibilitySummary?.actions_in_loop ?? []).filter(
         (action) =>
@@ -228,6 +250,18 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           !["dismissed", "archived"].includes(String(action.opportunity_status ?? "").toLowerCase()),
       ),
     [visibilitySummary],
+  );
+  const sentToReviewActions = useMemo(
+    () =>
+      contentPlanActions
+        .filter((action) => hasReviewableDraft(action))
+        .slice()
+        .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))),
+    [contentPlanActions],
+  );
+  const acceptedPlanActions = useMemo(
+    () => contentPlanActions.filter((action) => !hasReviewableDraft(action)),
+    [contentPlanActions],
   );
   const selectedContentPlanAction = useMemo(
     () => acceptedPlanActions.find((action) => action.id === selectedContentPlanActionID) ?? null,
@@ -277,6 +311,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }, [autoEnabled, generatingIds, refresh, summaryPendingPlanActions, topics]);
 
   const backlogTopics = useMemo(() => topics.filter((topic) => isBacklogStatus(topic.status)), [topics]);
+  const legacyBriefTopics = useMemo(
+    () => backlogTopics.filter((topic) => !topic.source_content_action_id),
+    [backlogTopics],
+  );
   // Sent-to-Review handoff cards (PRD-CiteLoop-Workflow-Handoff-Link-Cards §6.2):
   // a drafted topic whose article is still in the review queue keeps a link card
   // here; once the article advances past Review it drops out of listReview and
@@ -285,30 +323,65 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     () =>
       topics
         .filter((topic) => topic.status === "drafted" && reviewArticleByTopic[topic.id])
+        .filter((topic) => !sentToReviewActions.some((action) => action.topic_id === topic.id))
         .slice()
         .sort((a, b) => {
           const left = a.created_at ? new Date(a.created_at).getTime() : 0;
           const right = b.created_at ? new Date(b.created_at).getTime() : 0;
           return right - left;
         }),
-    [topics, reviewArticleByTopic],
+    [topics, reviewArticleByTopic, sentToReviewActions],
   );
-  const planHealth = useMemo(() => planHealthForTopics(topics), [topics]);
+  const planHealth = useMemo(() => planHealthForTopics(legacyBriefTopics), [legacyBriefTopics]);
+  const readyContentBriefs = acceptedPlanActions.filter((action) => !action.topic_id || action.topic_status !== "scheduled").length + planHealth.readyToDraft;
   const planStatusItems = [
-    { label: "Planned topics", value: planHealth.backlog },
-    { label: "Ready to draft", value: planHealth.readyToDraft },
-    { label: "Scheduled intent", value: planHealth.scheduledIntent },
+    { label: "Content briefs", value: acceptedPlanActions.length + legacyBriefTopics.length },
+    { label: "Ready to draft", value: readyContentBriefs },
+    { label: "Scheduled briefs", value: planHealth.scheduledIntent },
     { label: "Needs priority", value: planHealth.needsPriority },
   ];
   const recommendedIds = useMemo(() => {
-    return new Set(recommendedTopicIds(backlogTopics));
-  }, [backlogTopics]);
+    return new Set(recommendedTopicIds(legacyBriefTopics));
+  }, [legacyBriefTopics]);
   const topicGridClass = "grid gap-3 lg:grid-cols-2";
   const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
   const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
   const selectedActionHasReviewContent = hasReviewableDraft(selectedContentPlanAction);
   const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
+  const selectedActionTopic = selectedContentPlanAction?.topic_id
+    ? topics.find((topic) => topic.id === selectedContentPlanAction.topic_id) ?? null
+    : null;
+  const selectedActionPublishStrategy = selectedContentPlanAction ? publishStrategyForAction(selectedContentPlanAction) : "blog";
+  const selectedActionRecommendedStrategy = selectedContentPlanAction ? recommendedPublishStrategy(selectedContentPlanAction) : "blog";
+  const selectedActionPublishReason = selectedContentPlanAction
+    ? publishStrategyReasonForAction(selectedContentPlanAction, selectedActionRecommendedStrategy)
+    : "";
+  const selectedActionScheduleKey = selectedContentPlanAction ? selectedActionTopic?.id ?? selectedContentPlanAction.id : "";
+  const selectedActionScheduleBusy = selectedContentPlanAction
+    ? busy === `schedule-action-${selectedContentPlanAction.id}` || (selectedActionTopic ? busy === `schedule-${selectedActionTopic.id}` : false)
+    : false;
+  const selectedActionScheduleValue = selectedActionScheduleKey ? scheduleDrafts[selectedActionScheduleKey] ?? "" : "";
   const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
+
+  function topicForAction(action: VisibilityActionInLoop) {
+    return action.topic_id ? topics.find((topic) => topic.id === action.topic_id) ?? null : null;
+  }
+
+  function recommendedPublishStrategy(action: VisibilityActionInLoop): ContentPlanPublishStrategy {
+    return recommendedPublishStrategyForAction(action);
+  }
+
+  function publishStrategyForAction(action: VisibilityActionInLoop): ContentPlanPublishStrategy {
+    const topicStrategy = normalizePublishStrategy(topicForAction(action)?.channel);
+    return publishStrategyDrafts[action.id] ?? topicStrategy ?? recommendedPublishStrategy(action);
+  }
+
+  async function applyTopicPublishStrategy(topic: Topic, strategy: ContentPlanPublishStrategy) {
+    if (topic.channel === strategy) return topic;
+    const updated = await api.updateTopic(projectId, topic.id, { channel: strategy });
+    replaceTopic(updated);
+    return updated;
+  }
 
   async function toggleAutoAdvance() {
     const nextEnabled = !autoEnabled;
@@ -321,8 +394,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setMessage({
         title: nextEnabled ? "Auto enabled" : "Automatic workflow paused",
         detail: nextEnabled
-          ? "Accepted opportunities can become planned topics and draft on cadence."
-          : "Accepted opportunities stay in the action handoff. Manual drafting stays available.",
+          ? "Accepted content briefs can draft on cadence."
+          : "Accepted content briefs stay available for manual drafting.",
         tone: nextEnabled ? "green" : "amber",
       });
     } catch (e: any) {
@@ -333,7 +406,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }
 
   function replaceTopic(updated: Topic) {
-    setTopics((current) => current.map((topic) => (topic.id === updated.id ? updated : topic)));
+    setTopics((current) => (current.some((topic) => topic.id === updated.id) ? current.map((topic) => (topic.id === updated.id ? updated : topic)) : [updated, ...current]));
     setScheduleDrafts((current) => ({ ...current, [updated.id]: toDateTimeLocal(updated.scheduled_at) }));
   }
 
@@ -365,9 +438,38 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       });
       replaceTopic(updated);
       cancelEdit();
-      setMessage({ title: "Topic saved", detail: updated.title, tone: "green" });
+      setMessage({ title: "Content brief saved", detail: updated.title, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Save failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createManualBrief() {
+    const title = newBriefDraft.title.trim();
+    if (!title) return;
+    const priority = Number.parseInt(newBriefDraft.priority, 10);
+    setBusy("new-content-brief");
+    setMessage(null);
+    try {
+      const created = await api.createTopic(projectId, {
+        channel: newBriefDraft.channel,
+        title,
+        target_keyword: newBriefDraft.target_keyword,
+        target_prompt: newBriefDraft.target_prompt,
+        angle: newBriefDraft.angle,
+        format: newBriefDraft.format || "article",
+        priority: Number.isFinite(priority) ? priority : 5,
+        internal_links: [],
+      });
+      setTopics((current) => [created, ...current]);
+      setScheduleDrafts((current) => ({ ...current, [created.id]: toDateTimeLocal(created.scheduled_at) }));
+      setNewBriefDraft(defaultContentBriefDraft());
+      setNewBriefOpen(false);
+      setMessage({ title: "Content brief created", detail: created.title, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Create brief failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -386,7 +488,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     try {
       const updated = await api.scheduleTopic(projectId, topic.id, nextScheduledAt);
       replaceTopic(updated);
-      setMessage({ title: updated.scheduled_at ? "Topic scheduled" : "Schedule cleared", detail: updated.title, tone: "green" });
+      setMessage({ title: updated.scheduled_at ? "Content brief scheduled" : "Schedule cleared", detail: updated.title, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Schedule failed", detail: e.message, tone: "red" });
     } finally {
@@ -403,7 +505,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       const updated = await api.archiveTopic(projectId, topic.id);
       replaceTopic(updated);
       if (editingId === topic.id) cancelEdit();
-      setMessage({ title: "Topic archived", detail: updated.title, tone: "green" });
+      setMessage({ title: "Content brief archived", detail: updated.title, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Archive failed", detail: e.message, tone: "red" });
     } finally {
@@ -437,10 +539,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         existing > 0
           ? {
               title: "Draft already exists",
-              detail: `This topic already has ${existing} draft${existing === 1 ? "" : "s"} in the review queue. Open Review to approve or regenerate.`,
+              detail: `This content brief already has ${existing} draft${existing === 1 ? "" : "s"} in the review queue. Open Review to approve or regenerate.`,
               tone: "amber",
             }
-          : { title: "Topic generated", detail: "Draft is ready in the review queue.", tone: "green" },
+          : { title: "Content brief drafted", detail: "Draft is ready in the review queue.", tone: "green" },
       );
     } catch (e: any) {
       setMessage({
@@ -459,17 +561,55 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function ensureTopicForAction(action: VisibilityActionInLoop, publishStrategy = publishStrategyForAction(action)) {
+    let topic =
+      (action.topic_id ? topics.find((item) => item.id === action.topic_id) ?? topicFromAcceptedAction(action, publishStrategy) : null) ??
+      null;
+    if (!topic) {
+      topic = await api.planSEOContentAction(projectId, action.id, { publish_strategy: publishStrategy });
+      replaceTopic(topic);
+      return topic;
+    }
+    return applyTopicPublishStrategy(topic, publishStrategy);
+  }
+
+  async function scheduleAcceptedAction(action: VisibilityActionInLoop) {
+    const key = action.topic_id ?? action.id;
+    const nextScheduledAt = fromDateTimeLocal(scheduleDrafts[key] ?? "");
+    if (nextScheduledAt === null && !action.topic_id) {
+      setMessage({ title: "Choose a draft date", detail: "Pick a date before scheduling this content brief.", tone: "amber" });
+      return;
+    }
+    setBusy(`schedule-action-${action.id}`);
+    setMessage(null);
+    try {
+      const topic = await ensureTopicForAction(action);
+      if (nextScheduledAt === null && topic.scheduled_at) {
+        const ok = window.confirm(
+          `Clear the scheduled date for “${topic.title}”? It will no longer publish on a set date.`,
+        );
+        if (!ok) return;
+      }
+      const updated = await api.scheduleTopic(projectId, topic.id, nextScheduledAt);
+      replaceTopic(updated);
+      setScheduleDrafts((current) => ({
+        ...current,
+        [action.id]: toDateTimeLocal(updated.scheduled_at),
+        [updated.id]: toDateTimeLocal(updated.scheduled_at),
+      }));
+      setMessage({ title: updated.scheduled_at ? "Content brief scheduled" : "Schedule cleared", detail: updated.title, tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Schedule failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function draftAcceptedAction(action: VisibilityActionInLoop) {
     setBusy(`draft-action-${action.id}`);
     setMessage(null);
     try {
-      let topic =
-        (action.topic_id ? topics.find((item) => item.id === action.topic_id) ?? topicFromAcceptedAction(action) : null) ??
-        null;
-      if (!topic) {
-        topic = await api.planSEOContentAction(projectId, action.id);
-        setTopics((current) => (current.some((item) => item.id === topic?.id) ? current : [topic!, ...current]));
-      }
+      const topic = await ensureTopicForAction(action);
       await generate(topic);
     } catch (e: any) {
       setMessage({ title: "Draft Content failed", detail: e.message, tone: "red" });
@@ -544,22 +684,135 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   return (
     <>
-    <div className="space-y-7">
-      <ContentWorkflowStageHeaderAction>
-        {autoSwitch}
-      </ContentWorkflowStageHeaderAction>
+      <div className="space-y-7">
+        <ContentWorkflowStageHeaderAction>
+          {autoSwitch}
+        </ContentWorkflowStageHeaderAction>
 
-      {acceptedPlanActions.length > 0 && (
-        <section data-content-plan-handoff-section className="space-y-3">
-          <SectionHeader
-            title="Accepted opportunities"
-            eyebrow="Sent from Opportunity Queue"
-            action={<Badge tone="green">{acceptedPlanActions.length}</Badge>}
+      <section data-content-plan-handoff-section className="space-y-3">
+        <SectionHeader
+          title="Content briefs"
+          eyebrow="Accepted content work"
+          action={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge tone="green">{acceptedPlanActions.length + legacyBriefTopics.length}</Badge>
+              <Button size="sm" variant="outline" onClick={() => setNewBriefOpen((open) => !open)}>
+                <Pencil size={14} />
+                New Content Brief
+              </Button>
+            </div>
+          }
+        />
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Brief status</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {planStatusItems.map((item) => (
+              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
+                <div className="text-xs font-semibold text-slate-500">{item.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {newBriefOpen && (
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-3 lg:grid-cols-[minmax(120px,160px)_minmax(0,1fr)_minmax(96px,120px)]">
+              <Field label="Publish to">
+                <select
+                  value={newBriefDraft.channel}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, channel: event.target.value })}
+                  className="h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
+                >
+                  {PUBLISH_STRATEGIES.map((strategy) => (
+                    <option key={strategy} value={strategy}>
+                      {publishStrategyLabel(strategy)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Title">
+                <TextInput
+                  className="min-w-0"
+                  value={newBriefDraft.title}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, title: event.target.value })}
+                />
+              </Field>
+              <Field label="Priority">
+                <TextInput
+                  className="min-w-0"
+                  type="number"
+                  value={newBriefDraft.priority}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, priority: event.target.value })}
+                />
+              </Field>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <Field label="Target keyword">
+                <TextInput
+                  className="min-w-0"
+                  value={newBriefDraft.target_keyword}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, target_keyword: event.target.value })}
+                />
+              </Field>
+              <Field label="Format">
+                <TextInput
+                  className="min-w-0"
+                  value={newBriefDraft.format}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, format: event.target.value })}
+                />
+              </Field>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <Field label="Angle">
+                <TextArea
+                  className="min-w-0"
+                  rows={3}
+                  value={newBriefDraft.angle}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, angle: event.target.value })}
+                />
+              </Field>
+              <Field label="Target prompt">
+                <TextArea
+                  className="min-w-0"
+                  rows={3}
+                  value={newBriefDraft.target_prompt}
+                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, target_prompt: event.target.value })}
+                />
+              </Field>
+            </div>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button
+                disabled={busy === "new-content-brief"}
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setNewBriefDraft(defaultContentBriefDraft());
+                  setNewBriefOpen(false);
+                }}
+              >
+                <X size={14} />
+                Cancel
+              </Button>
+              <Button disabled={busy === "new-content-brief" || !newBriefDraft.title.trim()} size="sm" variant="primary" onClick={createManualBrief}>
+                <ButtonProgress busy={busy === "new-content-brief"} busyLabel="Creating brief" idleIcon={<Check size={14} />}>
+                  Create
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
+        )}
+        {acceptedPlanActions.length === 0 ? (
+          <EmptyState
+            title="No content briefs yet"
+            detail="Accept content opportunities from the Opportunity Queue or create a new content brief."
           />
+        ) : (
           <div className="grid gap-2">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
               const actionHasReviewContent = hasReviewableDraft(action);
+              const publishStrategy = publishStrategyForAction(action);
+              const recommendedStrategy = recommendedPublishStrategy(action);
               return (
                 <div
                   key={action.id}
@@ -579,7 +832,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Accepted</Badge>
                         <Badge tone="blue">{contentPlanActionTypeLabel(action)}</Badge>
-                        <Badge tone="neutral">{autoEnabled ? "Queued for planning" : "Auto paused"}</Badge>
+                        <Badge tone={publishStrategy === recommendedStrategy ? "green" : "neutral"}>
+                          Publish to: {publishStrategyLabel(publishStrategy)}
+                          {publishStrategy === recommendedStrategy ? " · Recommended" : ""}
+                        </Badge>
+                        <Badge tone="neutral">{autoEnabled ? "Queued for drafting" : "Auto paused"}</Badge>
                       </div>
                       <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
@@ -610,45 +867,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               );
             })}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
-      <section className="space-y-3">
-        <SectionHeader title="Planned topics" eyebrow="Draft queue" action={<Badge tone="neutral">{backlogTopics.length}</Badge>} />
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Plan status</div>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {planStatusItems.map((item) => (
-              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
-                <div className="text-xs font-semibold text-slate-500">{item.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-        {backlogTopics.length === 0 ? (
-          <EmptyState
-            title="No planned topics yet"
-            detail="Review opportunities to add accepted content work."
-          />
-        ) : (
-          <div className={topicGridClass}>
-            {backlogTopics.map((topic) => {
-              const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";
-              const editBusy = busy === `edit-${topic.id}`;
-              const scheduleBusy = busy === `schedule-${topic.id}`;
-              const archiveBusy = busy === `archive-${topic.id}`;
-              const topicLocked = topic.status === "archived" || isGenerating;
-              const recommended = recommendedIds.has(topic.id);
-              return (
-              <div
-                key={topic.id}
-                className={cx(
-                  "flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3",
-                  "min-h-[260px]",
-                  editingId === topic.id && "lg:col-span-2",
-                )}
-              >
+        {legacyBriefTopics.length > 0 && (
+          <section className="space-y-3">
+            <SectionHeader title="Legacy content briefs" eyebrow="Scheduled or manually created briefs" action={<Badge tone="neutral">{legacyBriefTopics.length}</Badge>} />
+            <div className={topicGridClass}>
+              {legacyBriefTopics.map((topic) => {
+                const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";
+                const editBusy = busy === `edit-${topic.id}`;
+                const scheduleBusy = busy === `schedule-${topic.id}`;
+                const archiveBusy = busy === `archive-${topic.id}`;
+                const topicLocked = topic.status === "archived" || isGenerating;
+                const recommended = recommendedIds.has(topic.id);
+                return (
+                  <div
+                    key={topic.id}
+                    className={cx(
+                      "flex flex-col rounded-xl border border-slate-200 bg-white px-4 py-3",
+                      "min-h-[260px]",
+                      editingId === topic.id && "lg:col-span-2",
+                    )}
+                  >
                 <div data-content-plan-card-top className="flex flex-wrap items-center gap-2">
                   <Badge tone="blue">{topic.channel}</Badge>
                   <Badge tone={topic.status === "archived" ? "amber" : topic.status === "backlog" ? "neutral" : "green"}>
@@ -678,7 +919,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
                     <div className="grid gap-3 lg:grid-cols-[minmax(120px,160px)_minmax(0,1fr)_minmax(96px,120px)]">
                       <div className="min-w-0">
-                        <Field label="Channel">
+                        <Field label="Publish to">
                           <select
                             value={draft.channel}
                             onChange={(event) => setDraft({ ...draft, channel: event.target.value })}
@@ -758,7 +999,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         Cancel
                       </Button>
                       <Button disabled={editBusy || !draft.title.trim()} size="sm" variant="primary" onClick={() => saveEdit(topic)}>
-                        <ButtonProgress busy={editBusy} busyLabel="Saving topic" idleIcon={<Check size={14} />}>
+                        <ButtonProgress busy={editBusy} busyLabel="Saving brief" idleIcon={<Check size={14} />}>
                           Save
                         </ButtonProgress>
                       </Button>
@@ -802,7 +1043,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     </Button>
                     <Button aria-busy={isGenerating} disabled={topicLocked} size="sm" variant="outline" onClick={() => generate(topic)}>
                       <ButtonProgress busy={isGenerating} busyLabel="Drafting" idleIcon={<Wand2 size={14} />}>
-                        Draft now
+                        Draft Content
                       </ButtonProgress>
                     </Button>
                     <Button disabled={topicLocked || archiveBusy} size="sm" variant="danger" onClick={() => archive(topic)}>
@@ -812,20 +1053,46 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                     </Button>
                   </div>
                 </div>
-              </div>
-              );
-            })}
-          </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         )}
-      </section>
 
-      {sentToReviewTopics.length > 0 && (
+      {(sentToReviewActions.length > 0 || sentToReviewTopics.length > 0) && (
         <section data-content-plan-recently-sent>
-          <details className="rounded-lg border border-slate-200 bg-white" open={backlogTopics.length === 0}>
+          <details className="rounded-lg border border-slate-200 bg-white" open={acceptedPlanActions.length === 0 && legacyBriefTopics.length === 0}>
             <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
-              Recently sent ({sentToReviewTopics.length})
+              Recently sent ({sentToReviewActions.length + sentToReviewTopics.length})
             </summary>
             <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
+              {sentToReviewActions.map((action) => (
+                <a
+                  key={action.id}
+                  data-content-plan-sent-card
+                  href={reviewHrefForAction(projectId, action)}
+                  aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                  className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                >
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="green">Sent to Review</Badge>
+                        <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
+                      </div>
+                      <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{contentPlanActionTitle(action)}</h3>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {action.opportunity_query || action.opportunity_expected_impact || "Draft is waiting for review."}
+                      </p>
+                    </div>
+                    <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700">
+                      View in Review
+                      <ArrowRight size={16} className="text-slate-400" />
+                    </span>
+                  </div>
+                </a>
+              ))}
               {sentToReviewTopics.map((topic) => (
                 <a
                   key={topic.id}
@@ -856,8 +1123,8 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           </details>
         </section>
       )}
-    </div>
-    {selectedContentPlanAction && (
+      </div>
+      {selectedContentPlanAction && (
       <RightDrawer
         open={Boolean(selectedContentPlanAction)}
         dataAttribute="content-plan-action-drawer"
@@ -871,6 +1138,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <>
             <Badge tone="green">Accepted</Badge>
             <Badge tone="blue">{contentPlanActionTypeLabel(selectedContentPlanAction)}</Badge>
+            <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
+              Publish to: {publishStrategyLabel(selectedActionPublishStrategy)}
+            </Badge>
             <Badge tone="neutral">{autoEnabled ? "Auto drafting" : "Manual review"}</Badge>
           </>
         }
@@ -912,6 +1182,85 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         }
       >
         <div className="space-y-5">
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Publish to</div>
+                <p className="mt-1 text-sm leading-5 text-slate-600">
+                  Recommended: {publishStrategyLabel(selectedActionRecommendedStrategy)}
+                </p>
+              </div>
+              <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
+                {selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "Recommended" : "Overridden"}
+              </Badge>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Choose publish strategy">
+              {PUBLISH_STRATEGIES.map((strategy) => {
+                const selected = selectedActionPublishStrategy === strategy;
+                const recommended = selectedActionRecommendedStrategy === strategy;
+                return (
+                  <button
+                    key={strategy}
+                    type="button"
+                    disabled={Boolean(busy)}
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setPublishStrategyDrafts((current) => ({
+                        ...current,
+                        [selectedContentPlanAction.id]: strategy,
+                      }))
+                    }
+                    className={cx(
+                      "min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
+                      selected
+                        ? "border-[#d93820] bg-[#fff5f2] text-[#b8321d] shadow-sm"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                    )}
+                  >
+                    <span className="block">{publishStrategyLabel(strategy)}</span>
+                    {recommended && <span className="mt-0.5 block text-xs font-semibold text-emerald-700">Recommended</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-600">{selectedActionPublishReason}</p>
+            {selectedActionPublishStrategy === "syndication" && (
+              <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                V1 generates or references a source article first, then publishes distribution drafts after the source URL exists.
+              </p>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule</div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <Field label="Draft at">
+                <TextInput
+                  className="min-w-0"
+                  type="datetime-local"
+                  value={selectedActionScheduleValue}
+                  disabled={selectedActionTopic?.status === "archived"}
+                  onChange={(event) =>
+                    setScheduleDrafts((current) => ({ ...current, [selectedActionScheduleKey]: event.target.value }))
+                  }
+                />
+              </Field>
+              <Button
+                disabled={
+                  selectedActionTopic?.status === "archived" ||
+                  selectedActionScheduleBusy ||
+                  Boolean(busy && !selectedActionScheduleBusy)
+                }
+                size="sm"
+                onClick={() => scheduleAcceptedAction(selectedContentPlanAction)}
+              >
+                <ButtonProgress busy={selectedActionScheduleBusy} busyLabel="Scheduling" idleIcon={<CalendarDays size={14} />}>
+                  Schedule
+                </ButtonProgress>
+              </Button>
+            </div>
+          </section>
+
           <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Why write this</div>
             <p className="mt-2 text-sm leading-6 text-slate-700">{contentPlanActionWhyText(selectedContentPlanAction)}</p>
@@ -937,7 +1286,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               <div className="mt-1 break-words font-medium text-slate-700">{selectedContentPlanAction.opportunity_query ?? "Not query-specific"}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase text-slate-400">Plan status</div>
+              <div className="text-xs font-semibold uppercase text-slate-400">Brief status</div>
               <div className="mt-1 font-medium text-slate-700">{selectedContentPlanAction.topic_status ?? selectedContentPlanAction.lifecycle_stage}</div>
             </div>
             <div className="sm:col-span-2">

@@ -6,5 +6,17 @@ import { createApi } from "./api";
 
 export function useApi() {
   const { getToken } = useAuth();
-  return useMemo(() => createApi({ getToken }), [getToken]);
+  return useMemo(
+    () =>
+      createApi({
+        getToken: async () => {
+          try {
+            return await getToken();
+          } catch {
+            return null;
+          }
+        },
+      }),
+    [getToken],
+  );
 }

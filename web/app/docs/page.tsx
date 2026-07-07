@@ -98,7 +98,7 @@ const glanceRows = [
   ["Account owner", "You or your team, starting from one product domain."],
   ["Context source", "Public pages, confirmed facts, evidence snippets, and product rules."],
   ["Human gate", "Review is the one approval step before content can move toward publishing."],
-  ["What you get back", "Opportunity recommendations, planned topics, evidence-backed drafts, canonical URLs, and variants."],
+  ["What you get back", "Opportunity recommendations, content briefs, evidence-backed drafts, canonical URLs, and variants."],
   ["Best for", "Teams that want a steady SEO and GEO content loop without inventing private metrics."],
   ["Need audit detail?", "Use Settings > Activity Log for background events, failures, and degraded checks."],
 ];

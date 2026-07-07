@@ -804,12 +804,18 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var in struct {
+		PublishStrategy string `json:"publish_strategy"`
+		PublishTo       string `json:"publish_to"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	requestedPublishStrategy := firstNonEmpty(in.PublishStrategy, in.PublishTo)
 	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: actionID, ProjectID: projectID})
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "action not found")
 		return
 	}
-	if !contentActionNeedsTopic(contentActionAssetType(action), action.ActionType) {
+	if !contentActionCreatesContent(action) {
 		writeErr(w, http.StatusBadRequest, "content action does not create content")
 		return
 	}
@@ -817,6 +823,27 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	} else if ok {
+		if publishStrategy := normalizePublishStrategy(requestedPublishStrategy); publishStrategy != "" && topic.Channel != publishStrategy {
+			topic, err = s.Q.UpdateTopic(r.Context(), db.UpdateTopicParams{
+				ID:                    topic.ID,
+				ProjectID:             projectID,
+				Channel:               publishStrategy,
+				Title:                 topic.Title,
+				TargetKeyword:         topic.TargetKeyword,
+				TargetPrompt:          topic.TargetPrompt,
+				Angle:                 topic.Angle,
+				Format:                topic.Format,
+				Priority:              topic.Priority,
+				InternalLinks:         topic.InternalLinks,
+				Status:                topic.Status,
+				ScheduledAt:           topic.ScheduledAt,
+				SourceContentActionID: topic.SourceContentActionID,
+			})
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, topic)
 		return
 	}
@@ -825,7 +852,7 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "opportunity not found")
 		return
 	}
-	topic, err := s.Q.CreateTopic(r.Context(), topicFromContentAction(projectID, action, opp))
+	topic, err := s.Q.CreateTopic(r.Context(), topicFromContentAction(projectID, action, opp, requestedPublishStrategy))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1871,13 +1898,16 @@ func stringPtrValueAPI(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+func contentActionCreatesContent(action db.ContentAction) bool {
+	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeFixSiteIssue {
+		return false
+	}
+	return contentActionNeedsTopic(contentActionAssetType(action), action.ActionType)
+}
+
 func contentActionNeedsTopic(assetType string, actionType string) bool {
 	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
 	switch {
-	case strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "metadata patch") || strings.Contains(text, "metadata"):
-		return false
-	case strings.Contains(text, "title") || strings.Contains(text, "meta description"):
-		return false
 	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
 		return false
 	case strings.Contains(text, "schema_patch") || strings.Contains(text, "schema patch"):
@@ -1898,7 +1928,7 @@ func contentActionAssetType(action db.ContentAction) string {
 	return strings.TrimSpace(*action.AssetType)
 }
 
-func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity) db.CreateTopicParams {
+func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity, requestedPublishStrategy string) db.CreateTopicParams {
 	title := firstNonEmpty(
 		action.ActionType,
 		stringPtrValueAPI(opp.RecommendedAction),
@@ -1915,7 +1945,7 @@ func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db
 	}
 	return db.CreateTopicParams{
 		ProjectID:             projectID,
-		Channel:               "blog",
+		Channel:               publishStrategyForContentAction(action, opp, requestedPublishStrategy),
 		Title:                 title,
 		TargetKeyword:         opp.Query,
 		TargetPrompt:          strPtr(targetPrompt),
@@ -1925,6 +1955,75 @@ func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db
 		InternalLinks:         mustJSONLocal(internalLinks),
 		Status:                string(topicstate.StatusBacklog),
 		SourceContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
+	}
+}
+
+func publishStrategyForContentAction(action db.ContentAction, opp db.SeoOpportunity, requested string) string {
+	if strategy := normalizePublishStrategy(requested); strategy != "" {
+		return strategy
+	}
+	for _, raw := range []json.RawMessage{action.InputSnapshot, action.OutputSnapshot, action.EvidenceSnapshot} {
+		if strategy := snapshotPublishStrategy(raw); strategy != "" {
+			return strategy
+		}
+	}
+	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+		contentActionAssetType(action),
+		action.ActionType,
+		stringPtrValueAPI(action.WorkType),
+		opp.Type,
+		stringPtrValueAPI(opp.RecommendedAction),
+		stringPtrValueAPI(opp.ExpectedImpact),
+		stringPtrValueAPI(opp.Query),
+	}, " ")))
+	switch {
+	case strings.Contains(text, "community") || strings.Contains(text, "reddit") || strings.Contains(text, "dev.to") || strings.Contains(text, "hashnode") || strings.Contains(text, "distribution") || strings.Contains(text, "syndication"):
+		if strings.Contains(text, "page") || strings.Contains(text, "guide") || strings.Contains(text, "comparison") || strings.Contains(text, "article") {
+			return "both"
+		}
+		return "syndication"
+	case action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeImprovePage:
+		return "blog"
+	case strings.Contains(text, "page_update") || strings.Contains(text, "metadata_rewrite") || strings.Contains(text, "refresh"):
+		return "blog"
+	case action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeCreateContent:
+		return "both"
+	case strings.Contains(text, "comparison") || strings.Contains(text, "alternative") || strings.Contains(text, "guide") || strings.Contains(text, "glossary") || strings.Contains(text, "supporting section"):
+		return "both"
+	default:
+		return "blog"
+	}
+}
+
+func snapshotPublishStrategy(raw json.RawMessage) string {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return ""
+	}
+	for _, key := range []string{"publish_strategy", "publish_to", "content_destination_strategy", "channel"} {
+		if strategy := normalizePublishStrategy(fmt.Sprint(data[key])); strategy != "" {
+			return strategy
+		}
+	}
+	return ""
+}
+
+func normalizePublishStrategy(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.ReplaceAll(normalized, "-", " ")
+	switch normalized {
+	case "blog", "source", "source article", "canonical", "owned site", "owned site article":
+		return "blog"
+	case "syndication", "syndicate", "distribution", "distribution draft":
+		return "syndication"
+	case "both", "blog and syndication", "blog + syndication", "source and distribution":
+		return "both"
+	default:
+		return ""
 	}
 }
 
