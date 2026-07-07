@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
 import {
   ActionMeasurement,
@@ -1459,6 +1459,7 @@ export function ResultsClient({ projectId }: { projectId: string }) {
 
 export function SEOClient({ projectId, mode = "analysis" }: { projectId: string; mode?: SEOClientMode }) {
   const api = useApi();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [overview, setOverview] = useState<SEOOverview | null>(null);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
@@ -1507,6 +1508,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
+  const consumedResultHandoffRef = useRef<string | null>(null);
   const [highlightedSiteFixID, setHighlightedSiteFixID] = useState<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
@@ -1735,6 +1737,13 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const requestedResultArticleID = mode === "results" ? searchParams.get("article") : null;
   const requestedWatchOpportunityID = mode === "results" ? searchParams.get("watch") : null;
 
+  const closeResultDrawer = useCallback(() => {
+    setSelectedResultActionID(null);
+    if (mode === "results" && (requestedResultActionID || requestedResultArticleID)) {
+      router.replace(`/projects/${projectId}/results`, { scroll: false });
+    }
+  }, [mode, projectId, requestedResultActionID, requestedResultArticleID, router]);
+
   useEffect(() => {
     if (mode !== "results" || !requestedWatchOpportunityID || watchlist.length === 0) return;
     const target = document.getElementById(`watchlist-item-${requestedWatchOpportunityID}`);
@@ -1764,18 +1773,33 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
   useEffect(() => {
     if (mode !== "results" || !requestedResultActionID || attributionActions.length === 0) return;
+    const handoffKey = `action:${requestedResultActionID}`;
+    if (consumedResultHandoffRef.current === handoffKey) return;
     if (attributionActions.some((action) => action.id === requestedResultActionID)) {
+      consumedResultHandoffRef.current = handoffKey;
       setSelectedResultActionID(requestedResultActionID);
+      router.replace(`/projects/${projectId}/results`, { scroll: false });
     }
-  }, [attributionActions, mode, requestedResultActionID]);
+  }, [attributionActions, mode, projectId, requestedResultActionID, router]);
 
   // Publish handoff links land here with ?article=; open the measurement item
   // that belongs to the published draft.
   useEffect(() => {
     if (mode !== "results" || !requestedResultArticleID || attributionActions.length === 0) return;
-    const match = attributionActions.find((action) => (action as any).draft_article_id === requestedResultArticleID);
-    if (match) setSelectedResultActionID(match.id);
-  }, [attributionActions, mode, requestedResultArticleID]);
+    const handoffKey = `article:${requestedResultArticleID}`;
+    if (consumedResultHandoffRef.current === handoffKey) return;
+    const match = attributionActions.find((action) => action.draft_article_id === requestedResultArticleID);
+    if (match) {
+      consumedResultHandoffRef.current = handoffKey;
+      setSelectedResultActionID(match.id);
+      router.replace(`/projects/${projectId}/results`, { scroll: false });
+    }
+  }, [attributionActions, mode, projectId, requestedResultArticleID, router]);
+
+  useEffect(() => {
+    if (mode !== "results" || requestedResultActionID || requestedResultArticleID) return;
+    consumedResultHandoffRef.current = null;
+  }, [mode, requestedResultActionID, requestedResultArticleID]);
 
   useEffect(() => {
     if (!selectedResultActionID || selectedResultAction) return;
@@ -1787,7 +1811,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (!selectedResultAction?.id) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedResultActionID(null);
+      if (event.key === "Escape") closeResultDrawer();
       if (event.key === "Tab") {
         const drawer = resultDrawerRef.current;
         if (!drawer) return;
@@ -1812,7 +1836,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedResultAction?.id]);
+  }, [closeResultDrawer, selectedResultAction?.id]);
 
   useEffect(() => {
     if (!selectedResultAction?.id) return;
@@ -3892,7 +3916,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           <button
             type="button"
             aria-label="Close attribution details"
-            onClick={() => setSelectedResultActionID(null)}
+            onClick={closeResultDrawer}
             className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
           />
           <aside
@@ -3923,7 +3947,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 type="button"
                 data-drawer-close
                 aria-label="Close attribution details"
-                onClick={() => setSelectedResultActionID(null)}
+                onClick={closeResultDrawer}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
               >
                 <X size={16} />
