@@ -52,6 +52,10 @@ test("Results opens the measurement item for a published article deep link", asy
     "requestedResultArticleID",
     'searchParams.get("article")',
     "draft_article_id === requestedResultArticleID",
+    "useRouter",
+    "consumedResultHandoffRef",
+    "router.replace(`/projects/${projectId}/results`, { scroll: false })",
+    "closeResultDrawer",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
