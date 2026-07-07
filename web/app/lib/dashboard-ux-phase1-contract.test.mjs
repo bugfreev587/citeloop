@@ -1405,7 +1405,11 @@ test("settings combines Google Search Console and Google Analytics connection se
     "Google Analytics connection",
     "GA4 Property ID",
     "Open Google Analytics",
+    "https://analytics.google.com/analytics/web/",
+    "Analytics Home",
+    "setup wizard",
     "Copy the numeric Property ID",
+    "URL segment after p",
     "Grant Viewer access to the CiteLoop Google service account",
     "Save the Property ID",
     "api.getSEOSettings",
@@ -1417,6 +1421,7 @@ test("settings combines Google Search Console and Google Analytics connection se
   }
 
   assert.doesNotMatch(settings, /title: "Search Console connection"/);
+  assert.doesNotMatch(settings, /analytics\/web\/provision/);
 });
 
 test("settings deep links open the matching configuration tab", () => {

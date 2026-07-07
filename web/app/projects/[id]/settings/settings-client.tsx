@@ -109,8 +109,8 @@ function ga4StatusLabel(status?: string, propertyID?: string) {
 }
 
 const ga4ConnectionSteps = [
-  "Create or open the GA4 property for this domain.",
-  "Copy the numeric Property ID from Admin > Property settings.",
+  "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
+  "Copy the numeric Property ID from Admin > Property settings, or from the Analytics URL segment after p (for example p123456789).",
   "Grant Viewer access to the CiteLoop Google service account.",
   "Save the Property ID, then run SEO sync after Google starts collecting data.",
 ];
@@ -1942,7 +1942,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                     </ButtonProgress>
                   </Button>
                   <a
-                    href="https://analytics.google.com/analytics/web/provision/#/provision/create"
+                    href="https://analytics.google.com/analytics/web/"
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
