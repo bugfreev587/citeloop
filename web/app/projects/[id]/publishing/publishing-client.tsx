@@ -278,7 +278,7 @@ function ReadyNowStrip({
                   >
                     <ButtonProgress
                       busy={busy === `${item.action}-${item.articleId}`}
-                      busyLabel={item.action === "retry" ? "Retrying" : "Queuing"}
+                      busyLabel={item.action === "retry" ? "Retrying" : "Publishing"}
                       idleIcon={item.action === "retry" ? <RotateCcw size={14} /> : <Send size={14} />}
                     >
                       {item.actionLabel}
@@ -532,7 +532,7 @@ function OperationalRows({
               )}
               {group.key === "ready" && (
                 <Button disabled={busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => onPublish(article)}>
-                  <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
+                  <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Publishing" idleIcon={<Send size={14} />}>
                     Publish
                   </ButtonProgress>
                 </Button>
@@ -787,7 +787,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     try {
       await api.publishNow(projectId, article.id);
       await refresh();
-      setMessage({ title: "Queued to publish now", detail: articleTitle(article), tone: "green" });
+      setMessage({ title: "Publishing started", detail: articleTitle(article), tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not publish now", detail: e.message, tone: "red" });
     } finally {
@@ -911,7 +911,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     }
     return (
       <Button disabled={!nextHeaderArticle || busy === `publish-${headerCta.articleId}`} size="sm" variant="primary" onClick={() => nextHeaderArticle && publishNow(nextHeaderArticle)}>
-        <ButtonProgress busy={busy === `publish-${headerCta.articleId}`} busyLabel="Queuing" idleIcon={<Send size={14} />}>
+        <ButtonProgress busy={busy === `publish-${headerCta.articleId}`} busyLabel="Publishing" idleIcon={<Send size={14} />}>
           {headerCta.label}
         </ButtonProgress>
       </Button>
@@ -1056,7 +1056,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
                 disabled={!nextHeaderArticle || busy === `publish-${nextHeaderArticle?.id}`}
                 onClick={() => nextHeaderArticle && publishNow(nextHeaderArticle)}
               >
-                <ButtonProgress busy={Boolean(nextHeaderArticle && busy === `publish-${nextHeaderArticle.id}`)} busyLabel="Queuing" idleIcon={<Send size={14} />}>
+                <ButtonProgress busy={Boolean(nextHeaderArticle && busy === `publish-${nextHeaderArticle.id}`)} busyLabel="Publishing" idleIcon={<Send size={14} />}>
                   Publish next
                 </ButtonProgress>
               </Button>

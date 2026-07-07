@@ -428,6 +428,9 @@ func (s *Server) publishProjectArticleNow(w http.ResponseWriter, r *http.Request
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if s.Sched != nil {
+		s.Sched.TickPublish(r.Context())
+	}
 	writeJSON(w, 200, a)
 }
 
