@@ -11,6 +11,8 @@ The Publish page currently mixes four concepts in ways that make the flow hard t
 
 This PRD redesigns the Publish page around a content-first workflow. In Manual mode, the only primary publish action is on the specific content card. Destination drawers show destination status and recovery actions only. Publish cadence is controlled from the top Schedule control. Published content appears directly below Ready to Post in a collapsible Published section with a live URL that users can open in one click.
 
+Most publishing data requirements already exist in the backend. The implementation is primarily a frontend state-model and presentation cleanup plus one explicit legacy `auto` mode migration decision.
+
 ## 2. Problem Statement
 
 The current experience creates ambiguity:
@@ -68,7 +70,25 @@ The user-facing publish cadence options are:
 
 `Auto` is removed from the UI. The frontend must not render or submit `publish_mode: "auto"` from the Publish schedule control.
 
-Legacy backend data with `publish_mode: "auto"` must not break the UI. Implementation should normalize legacy `auto` to a safe visible state. The recommended visible fallback is `Manual` unless product explicitly chooses a migration path.
+This is a behavior change, not only a label change. Existing backend behavior treats `publish_mode: "auto"` as "publish immediately when due." Hiding `Auto` in the UI while leaving stored configs unchanged would create a hidden automation mode, and silently mapping `auto` to `manual` would stop publishing for any existing auto projects.
+
+Product decision for this remediation:
+
+- Run a preflight production query before implementation to count projects with `config.publish_mode = "auto"`.
+- Remove user-facing `Auto`.
+- Add a one-time data migration that rewrites legacy `auto` projects to `scheduled`, not `manual`.
+- Preserve each project's existing `publish_interval_days` when it is valid.
+- If an auto project has no valid `publish_interval_days`, set `publish_interval_days` to `1` so the behavior remains closer to automatic publishing than manual publishing.
+- Add a backend parser fallback so any future stale `auto` config is normalized to `scheduled`.
+- Frontend mode updates must only save `manual` or `scheduled`.
+
+Preflight query:
+
+```sql
+select count(*) as auto_publish_projects
+from projects
+where config->>'publish_mode' = 'auto';
+```
 
 ### 5.3 GitHub/Next.js Is The Canonical Blog Destination
 
@@ -97,7 +117,8 @@ Header CTA rules:
 | No GitHub/Next.js connection | `Connect GitHub` |
 | GitHub/Next.js disabled | `Enable publishing` |
 | GitHub/Next.js error or revoked | `Fix connection` |
-| GitHub/Next.js connected and healthy | No `Publish next` header CTA in Manual mode |
+| GitHub/Next.js connected and healthy in Manual mode | No primary publish CTA; show `Schedule`, `View all`, `Check status`, and `Refresh` |
+| GitHub/Next.js connected and healthy in Scheduled mode | No primary publish CTA unless only scheduled content exists, in which case `View schedule` may appear as a secondary operational entry |
 | Only scheduled content exists | `View schedule` may appear as a secondary operational entry |
 
 Manual mode must not render a global `Publish next` CTA. Publishing must happen from the content card so users know exactly which article they are shipping.
@@ -114,6 +135,8 @@ Desktop and mobile order:
 6. Operational `View all` drawer for less common groups.
 
 The Published section must sit immediately under Ready to Post. It can be collapsed by default when there are many published items, but a newly published article should be visible or highlighted after a successful publish/verification cycle.
+
+When the dedicated Published section exists, `View all` must not render a second `Published` group. Published content has exactly one home on the Publish page.
 
 ### 6.3 Ready To Post
 
@@ -135,6 +158,8 @@ Each ready canonical card shows:
 
 The per-card `Timing` button is removed. Users adjust cadence from the top Schedule control only.
 
+Future scheduled content stays in the Scheduled operational state until it is due. There is no undefined "due soon" window in this remediation. A scheduled article becomes Ready to Post only when `scheduled_at <= now`.
+
 ### 6.4 Published Section
 
 The Published section appears directly below Ready to Post.
@@ -154,6 +179,7 @@ Requirements:
 - If a published article has no `canonical_url`, do not silently show it as complete. Show `Published URL missing` with a recovery action to `Check status`.
 - Newly published content should move out of Ready to Post after the backend reports `status: "published"` and a live URL is available.
 - Content in `pending_url_verification` must not appear as fully published. It should remain in an in-flight state until verification succeeds or fails.
+- If the Published section is collapsed and a publish/verification succeeds, automatically expand it and focus or highlight the newly published row.
 
 ### 6.5 Publish Destinations
 
@@ -177,6 +203,8 @@ Destination drawer content should explain:
 
 Destination drawer must not contain a primary publish action.
 
+This remediation does not add a multi-connection picker. The canonical destination resolution keeps the existing rule: use the default GitHub/Next.js connection when present, otherwise use the first GitHub/Next.js connection returned by the API. Settings remains responsible for connection setup and defaulting.
+
 ## 7. State Model
 
 ### 7.1 Connection State
@@ -198,6 +226,14 @@ Recommended copy:
 - Main state: `Needs attention`.
 - Detail: `Publishing is enabled, but the GitHub/Next.js connection is failing. Fix the connection before publishing.`
 
+Disabled publish button reasons:
+
+| User-facing state | Publish disabled reason | Retry disabled reason |
+| --- | --- | --- |
+| `Not connected` | `Connect GitHub before publishing.` | `Connect GitHub before retrying.` |
+| `Disabled` | `Enable GitHub/Next.js publishing before publishing.` | `Enable GitHub/Next.js publishing before retrying.` |
+| `Needs attention` | `Fix GitHub/Next.js before publishing.` | `Fix GitHub/Next.js before retrying.` |
+
 ### 7.2 Publish Item State
 
 Canonical articles should use an explicit publish state ladder:
@@ -205,7 +241,7 @@ Canonical articles should use an explicit publish state ladder:
 | State | UI placement | User copy |
 | --- | --- | --- |
 | Approved and manual | Ready to Post | `Manual: publish when ready` |
-| Approved and scheduled future | View all Scheduled, optionally Ready to Post if due soon | `Scheduled for {time}` |
+| Approved and scheduled future | Scheduled operational state | `Scheduled for {time}` |
 | Publish request accepted | Ready to Post in-flight state | `Queued` |
 | Backend publishing | Ready to Post in-flight state | `Publishing` |
 | URL verification pending | Ready to Post in-flight state | `Verifying live URL` |
@@ -213,6 +249,14 @@ Canonical articles should use an explicit publish state ladder:
 | Publish failed | Ready to Post retry state | Short reason plus `Retry` |
 
 Do not use `Publishes {time}` for queued or already-clicked manual publish work. That phrasing is reserved for future scheduled content.
+
+In-flight labels are derived from the available frontend and API state:
+
+| Source state | Label |
+| --- | --- |
+| Client request is in flight after clicking `Publish` | `Queued` |
+| API exposes `publish_phase: "publishing"` or `status: "publishing"` in the future | `Publishing` |
+| API exposes `status: "pending_url_verification"` or `publish_phase: "pending_url_verification"` | `Verifying live URL` |
 
 ## 8. Interaction Requirements
 
@@ -246,7 +290,7 @@ If connection health is blocked:
 
 1. Ready to Post cards remain visible.
 2. `Publish` and `Retry` are disabled.
-3. Inline reason appears near disabled action: `Fix GitHub/Next.js before publishing.`
+3. Inline reason appears near the disabled action and uses the state-specific copy in the disabled reason table.
 4. Destination tile shows `Needs attention`.
 5. Drawer offers `Retry test` and `Manage in Settings`, not `Publish next`.
 
@@ -289,13 +333,21 @@ Publisher connection fields needed:
 - `config.base_url`.
 - `is_default`.
 
-Backend behavior:
+Existing backend behavior already supports:
 
-1. Publish endpoint must not report success as published until the live URL is known or verification has completed.
-2. `pending_url_verification` remains an in-flight state.
-3. Connection `error` or `revoked` must make the connection ineligible even when `enabled` is true.
-4. Legacy `publish_mode: "auto"` should be normalized for UI safety. Recommended: render as Manual and save as Manual on the next mode update.
+1. Article publish metadata fields such as `canonical_url`, `publish_path`, `canonical_url_verified_at`, `publish_attempts`, `next_publish_retry_at`, and `last_publish_error`.
+2. `pending_url_verification` as an in-flight state after GitHub commit and before verified publication.
+3. URL verification before final published completion.
+4. Publisher connection `enabled` and `status` fields.
+
+Required backend and data changes for this remediation:
+
+1. Add a migration for legacy `publish_mode: "auto"` to `publish_mode: "scheduled"`.
+2. In that migration, preserve valid `publish_interval_days`; set it to `1` when missing or invalid.
+3. Update config parsing so future stale `auto` values normalize to `scheduled`, not `manual`.
+4. Connection `error` or `revoked` must make the connection ineligible even when `enabled` is true.
 5. API errors should preserve machine detail for logs but provide frontend enough context to show friendly copy.
+6. Frontend must receive enough article state to distinguish request-in-flight, `pending_url_verification`, `published`, and `publish_failed`.
 
 ## 11. Frontend Implementation Shape
 
@@ -308,8 +360,10 @@ Suggested model changes:
 - Remove `timingActionLabel` from `ReadyNowItem`.
 - Add `publishStateLabel` to `ReadyNowItem`.
 - Add `disabledReason` copy specific to unhealthy GitHub/Next.js.
-- Add `buildPublishedCanonicals(input)` or extend operational groups to expose a first-class Published section model.
-- Add a `publishedUrl` field derived from `canonical_url` first, then `publish_path` only if it is a usable URL.
+- Extend the existing `buildPublishingOperationalGroups(input)` published group into a first-class Published section model instead of adding a parallel builder.
+- Add a `publishedUrl` field derived from `canonical_url` only.
+- Do not use `publish_path` as an href. It is a repository file path, not a public URL. It may be displayed as repository metadata only.
+- If `canonical_url` is missing, render `Published URL missing`; do not fall back to `publish_path`.
 
 Component changes:
 
@@ -320,6 +374,7 @@ Component changes:
 - Render Published directly below Ready to Post with collapse behavior.
 - Display live URLs and open actions in Published rows.
 - Disable publish buttons when GitHub/Next.js is not user-facing `Ready`.
+- Remove the duplicate `Published` group from `View all` once the first-class Published section exists.
 
 ## 12. Testing Requirements
 
@@ -334,18 +389,21 @@ Required assertions:
 5. GitHub destination drawer model does not expose a publish action.
 6. Ready to Post items do not include a Timing action.
 7. Schedule mode options are exactly `manual` and `scheduled`.
-8. Legacy `auto` mode is normalized to a safe visible mode.
+8. Legacy `auto` mode is normalized to `scheduled`.
 9. Published canonical articles appear in the first-class Published section.
 10. Published rows include a live URL and `Open live article` action when `canonical_url` is present.
 11. Published rows with missing URL show a warning and do not claim a complete live article.
 12. Manual publish in-flight state shows `Queued`, `Publishing`, or `Verifying live URL`, not `Publishes {time}`.
 13. Raw error `publisher credential unavailable` maps to friendly recovery copy.
+14. `View all` does not duplicate the first-class Published section.
+15. `publish_path` is not used as a live article href.
 
 Backend or integration tests:
 
 1. Publish endpoint leaves article in pending verification until URL verification completes.
 2. Connection eligibility requires both `enabled: true` and `status: "connected"`.
 3. Error and revoked connections are never eligible, regardless of enabled value.
+4. Legacy `publish_mode: "auto"` migrates or parses to `scheduled`, preserving or setting a safe interval.
 
 ## 13. Accessibility Requirements
 
@@ -369,6 +427,8 @@ Backend or integration tests:
 10. Users see recovery-oriented copy for credential or repository access failures.
 11. The page no longer uses `Auto publish` to describe a destination capability.
 12. Queued or verifying content is never labeled as already published.
+13. Legacy `auto` publish mode is not hidden in the UI while continuing to run as hidden backend auto-publish.
+14. Published live links use `canonical_url`; `publish_path` is never used as the href for `Open live article`.
 
 ## 15. Rollout Notes
 
@@ -376,9 +436,11 @@ This should ship as a focused Publish page UX remediation before any broader pub
 
 Recommended implementation order:
 
-1. Update pure publish logic and contract tests.
-2. Remove `Auto` from Schedule UI and normalize legacy mode.
-3. Remove `Timing` and destination drawer `Publish next`.
-4. Add Published section under Ready to Post.
-5. Add friendly connection error copy and disabled publish reasons.
-6. Verify the full manual publish path from ready article to live URL.
+1. Run the preflight production query for `publish_mode = "auto"` and record the count in the implementation PR notes.
+2. Add data/config handling so legacy `auto` becomes `scheduled`.
+3. Update pure publish logic and contract tests.
+4. Remove `Auto` from Schedule UI.
+5. Remove `Timing` and destination drawer `Publish next`.
+6. Add Published section under Ready to Post and remove duplicate Published from `View all`.
+7. Add friendly connection error copy and disabled publish reasons.
+8. Verify the full manual publish path from ready article to live URL with a test project that has a healthy GitHub/Next.js connection.
