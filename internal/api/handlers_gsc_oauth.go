@@ -600,5 +600,17 @@ func (s *Server) googleDataProviderForProject(ctx context.Context, projectID uui
 	if token.AccessTokenExpiresAt.Valid {
 		oauthToken.Expiry = token.AccessTokenExpiresAt.Time
 	}
-	return googledata.NewSearchConsoleOAuthClient(ctx, s.Env.GoogleOAuthClientID, s.Env.GoogleOAuthClientSecret, "", oauthToken), true
+	provider := googledata.NewSearchConsoleOAuthClient(ctx, s.Env.GoogleOAuthClientID, s.Env.GoogleOAuthClientSecret, "", oauthToken)
+	if !googledata.HasOAuthScope(token.Scope, googledata.ScopeAnalyticsReadonly) {
+		return analyticsScopeGuard{GoogleDataProvider: provider}, true
+	}
+	return provider, true
+}
+
+type analyticsScopeGuard struct {
+	seopkg.GoogleDataProvider
+}
+
+func (g analyticsScopeGuard) FetchAnalytics(ctx context.Context, req googledata.AnalyticsRequest) ([]googledata.AnalyticsPageRow, error) {
+	return nil, googledata.ErrAnalyticsScopeMissing
 }

@@ -2,6 +2,7 @@ package googledata
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -151,6 +152,23 @@ func TestSearchConsoleOAuthConfigUsesReadonlyScopes(t *testing.T) {
 	}
 	if len(cfg.Scopes) != 2 || cfg.Scopes[0] != ScopeSearchConsoleReadonly || cfg.Scopes[1] != ScopeAnalyticsReadonly {
 		t.Fatalf("scopes = %#v", cfg.Scopes)
+	}
+}
+
+func TestHasOAuthScopeMatchesSpaceSeparatedScopes(t *testing.T) {
+	raw := ScopeSearchConsoleReadonly + " " + ScopeAnalyticsReadonly
+	if !HasOAuthScope(raw, ScopeAnalyticsReadonly) {
+		t.Fatalf("scope %q should include %q", raw, ScopeAnalyticsReadonly)
+	}
+	if HasOAuthScope(ScopeSearchConsoleReadonly, ScopeAnalyticsReadonly) {
+		t.Fatalf("search console-only scope should not include analytics readonly")
+	}
+}
+
+func TestInsufficientAuthenticationScopesErrorIsRecognized(t *testing.T) {
+	err := errors.New(`google api status 403: { "error": { "message": "Request had insufficient authentication scopes.", "details": [ { "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT" } ] } }`)
+	if !IsInsufficientAuthenticationScopes(err) {
+		t.Fatalf("expected insufficient authentication scopes error to be recognized")
 	}
 }
 

@@ -2,6 +2,7 @@ package seo
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -88,5 +89,36 @@ func TestCheckURLExtractsRepairMetadataFacts(t *testing.T) {
 	}
 	if got := result.RawDetails["site_search_observed"]; got != false {
 		t.Fatalf("site_search_observed = %#v, want false", got)
+	}
+}
+
+func TestGA4IntegrationFailureRequiresReconnectForInsufficientScope(t *testing.T) {
+	err := errors.New(`google api status 403: { "error": { "code": 403, "message": "Request had insufficient authentication scopes.", "status": "PERMISSION_DENIED", "details": [ { "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT" } ] } }`)
+
+	status, message, note := ga4IntegrationFailureForError(err)
+
+	if status != "reconnect_required" {
+		t.Fatalf("status = %q, want reconnect_required", status)
+	}
+	want := "Google Analytics permission is missing. Reconnect Google from Search Console settings so CiteLoop can request Analytics read access, then run SEO sync again."
+	if message != want {
+		t.Fatalf("message = %q, want %q", message, want)
+	}
+	if note != "ga4_reconnect_required" {
+		t.Fatalf("note = %q, want ga4_reconnect_required", note)
+	}
+}
+
+func TestGA4IntegrationFailurePreservesOtherErrors(t *testing.T) {
+	status, message, note := ga4IntegrationFailureForError(errors.New("google api status 404: property not found"))
+
+	if status != "error" {
+		t.Fatalf("status = %q, want error", status)
+	}
+	if message != "google api status 404: property not found" {
+		t.Fatalf("message = %q", message)
+	}
+	if note != "ga4_error" {
+		t.Fatalf("note = %q, want ga4_error", note)
 	}
 }

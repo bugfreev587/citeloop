@@ -31,6 +31,8 @@ const (
 	DefaultBriefLimit = 10
 )
 
+const ga4ReconnectRequiredMessage = "Google Analytics permission is missing. Reconnect Google from Search Console settings so CiteLoop can request Analytics read access, then run SEO sync again."
+
 type GoogleDataProvider interface {
 	FetchSearchConsole(context.Context, googledata.SearchConsoleRequest) (googledata.SearchConsoleData, error)
 	FetchAnalytics(context.Context, googledata.AnalyticsRequest) ([]googledata.AnalyticsPageRow, error)
@@ -401,16 +403,16 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 		RowLimit:   25000,
 	})
 	if err != nil {
-		errText := err.Error()
+		status, errText, note := ga4IntegrationFailureForError(err)
 		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
 			ProjectID:      projectID,
 			Provider:       ProviderGA4,
-			Status:         "error",
+			Status:         status,
 			CredentialRef:  integrationCredentialRef(integrations, ProviderGA4),
 			LastVerifiedAt: pgtype.Timestamptz{},
 			LastError:      &errText,
 		})
-		result.DataSourceNotes = append(result.DataSourceNotes, "ga4_error")
+		result.DataSourceNotes = append(result.DataSourceNotes, note)
 		return nil
 	}
 	for _, row := range ga4Rows {
@@ -443,6 +445,13 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 		LastVerifiedAt: pgutil.TS(s.now()),
 	})
 	return nil
+}
+
+func ga4IntegrationFailureForError(err error) (status string, message string, note string) {
+	if googledata.IsInsufficientAuthenticationScopes(err) {
+		return "reconnect_required", ga4ReconnectRequiredMessage, "ga4_reconnect_required"
+	}
+	return "error", err.Error(), "ga4_error"
 }
 
 func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, error) {
