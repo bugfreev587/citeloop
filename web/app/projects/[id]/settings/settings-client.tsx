@@ -113,6 +113,7 @@ const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
   "Copy the numeric Property ID from Admin > Property settings, or from the Analytics URL segment after p (for example p123456789).",
   "Connect or reconnect Google from the Search Console card so CiteLoop can request Analytics read access.",
+  "If Google Analytics needs attention, update Google permissions so CiteLoop can read Analytics reports.",
   "Save the Property ID, then run SEO sync after Google starts collecting data.",
 ];
 
@@ -1314,9 +1315,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       : "Connect Search Console for first-party search data.";
   const ga4Integration = seoIntegrations.find((integration) => integration.provider === "google_analytics");
   const ga4Status = ga4Integration?.status;
-  const ga4NeedsReconnect = ga4Status === "reconnect_required";
+  const ga4NeedsGooglePermissions = ["error", "expired", "reconnect_required", "revoked"].includes(ga4Status ?? "");
   const savedGA4PropertyID = seoProperty?.ga4_property_id?.trim() ?? "";
-  const canReconnectGoogle = !canStartGSCOAuth && Boolean(gscConnection?.configured !== false && (gscHasAuthorizedProperties || gscHasSelectedProperty || ga4NeedsReconnect));
   const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
   const githubAppConnected = Boolean(githubIntegration?.connected);
   const githubAppReusable = Boolean(!githubIntegration?.connected && githubIntegration?.reusable_installation_id);
@@ -1853,13 +1853,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   </ButtonProgress>
                 </Button>
               )}
-              {canReconnectGoogle && (
-                <Button variant={ga4NeedsReconnect ? "primary" : "outline"} onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy)}>
-                  <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<RefreshCw size={16} />}>
-                    Reconnect Google
-                  </ButtonProgress>
-                </Button>
-              )}
               <Button
                 variant="outline"
                 onClick={revokeGSCConnection}
@@ -1951,10 +1944,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                       Save GA4 property
                     </ButtonProgress>
                   </Button>
-                  {ga4NeedsReconnect && (
-                    <Button variant="outline" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || ga4Busy}>
-                      <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<RefreshCw size={16} />}>
-                        Reconnect Google
+                  {ga4NeedsGooglePermissions && (
+                    <Button onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                      <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                        Update Google permissions
                       </ButtonProgress>
                     </Button>
                   )}
