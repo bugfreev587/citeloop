@@ -1627,7 +1627,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const blockedReadinessGates = readinessGates.filter((gate) => gate.blocking);
   const readinessTone = readiness?.ready_for_level_2 ? "green" : readiness ? "amber" : "neutral";
   const latestRecoveryPlans = executionResult?.recovery_plans ?? [];
-  const summaryLoopActions = visibilitySummary?.actions_in_loop ?? [];
+  const actionsByID = new Map(actions.map((action) => [action.id, action]));
+  const summaryLoopActions = (visibilitySummary?.actions_in_loop ?? []).map((summaryAction) => {
+    const matchingAction = actionsByID.get(summaryAction.id);
+    return matchingAction ? { ...summaryAction, ...matchingAction } : summaryAction;
+  });
   const summaryLoopActionIds = new Set(summaryLoopActions.map((action) => action.id));
   const loopActions = [
     ...summaryLoopActions,
@@ -1806,7 +1810,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const directReviewActionsAll = actions
+  const directReviewActionsAll = loopActions
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status));
   const directReviewActions = showAllSiteFixes ? directReviewActionsAll : directReviewActionsAll.slice(0, 6);
