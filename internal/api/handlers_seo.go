@@ -1154,7 +1154,7 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	gscIntegration, err := s.Q.UpsertSEOIntegration(
 		r.Context(),
-		seoSettingsIntegrationParams(projectID, seopkg.ProviderGSC, in.CredentialRef, existingIntegrations, now),
+		seoSettingsIntegrationParams(projectID, seopkg.ProviderGSC, in.CredentialRef, existingIntegrations, now, nil),
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -1164,7 +1164,7 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.GA4PropertyID) != "" || strings.TrimSpace(in.CredentialRef) != "" {
 		row, err := s.Q.UpsertSEOIntegration(
 			r.Context(),
-			seoSettingsIntegrationParams(projectID, seopkg.ProviderGA4, in.CredentialRef, existingIntegrations, now),
+			seoSettingsIntegrationParams(projectID, seopkg.ProviderGA4, in.CredentialRef, existingIntegrations, now, &gscIntegration),
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
@@ -1175,7 +1175,7 @@ func (s *Server) updateSEOSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"property": prop, "integration": gscIntegration, "ga4_integration": ga4Integration})
 }
 
-func seoSettingsIntegrationParams(projectID uuid.UUID, provider string, credentialRef string, existing []db.SeoIntegration, now time.Time) db.UpsertSEOIntegrationParams {
+func seoSettingsIntegrationParams(projectID uuid.UUID, provider string, credentialRef string, existing []db.SeoIntegration, now time.Time, fallback *db.SeoIntegration) db.UpsertSEOIntegrationParams {
 	if ref := strings.TrimSpace(credentialRef); ref != "" {
 		return db.UpsertSEOIntegrationParams{
 			ProjectID:      projectID,
@@ -1189,6 +1189,9 @@ func seoSettingsIntegrationParams(projectID uuid.UUID, provider string, credenti
 		if integration.Provider != provider {
 			continue
 		}
+		if integration.Status == "missing" && fallback != nil && fallback.Status == "connected" && fallback.CredentialRef != nil {
+			break
+		}
 		return db.UpsertSEOIntegrationParams{
 			ProjectID:      projectID,
 			Provider:       provider,
@@ -1196,6 +1199,15 @@ func seoSettingsIntegrationParams(projectID uuid.UUID, provider string, credenti
 			CredentialRef:  integration.CredentialRef,
 			LastVerifiedAt: integration.LastVerifiedAt,
 			LastError:      integration.LastError,
+		}
+	}
+	if fallback != nil && fallback.Status == "connected" && fallback.CredentialRef != nil {
+		return db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       provider,
+			Status:         "connected",
+			CredentialRef:  fallback.CredentialRef,
+			LastVerifiedAt: fallback.LastVerifiedAt,
 		}
 	}
 	return db.UpsertSEOIntegrationParams{
