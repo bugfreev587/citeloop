@@ -857,7 +857,7 @@ test("publishing Ready now strip uses publish retry and preview actions", () => 
   assert.match(readyNowBlock, /item\.timingActionLabel/);
   assert.match(readyNowBlock, /publishTimeLabel\(item\.article\)/);
   assert.match(readyNowBlock, /item\.actionLabel/);
-  assert.match(readyNowBlock, /item\.action === "retry" \? "Retrying" : "Queuing"/);
+  assert.match(readyNowBlock, /item\.action === "retry" \? "Retrying" : "Publishing"/);
   assert.match(readyNowBlock, /line-clamp-2 break-words/);
   assert.match(readyNowBlock, /readyNow\.emptyState\.title/);
   assert.match(logic, /No approved posts ready/);
