@@ -545,7 +545,7 @@ test("gsc oauth entry points are self-serve and action-first", () => {
     [
       "projects/[id]/settings/settings-client.tsx",
       [
-        "Search Console connection",
+        "Google connection",
         "Connect Search Console",
         "Authorized properties",
         "Set up Search Console property",
@@ -1348,7 +1348,7 @@ test("settings groups every top-level section behind a tab", () => {
   const expectedTabs = [
     "Project config",
     "Activity Log",
-    "Search Console connection",
+    "Google connection",
     "Publisher connection",
     "Opportunity Finding",
     "Crawl config",
@@ -1393,6 +1393,30 @@ test("settings groups every top-level section behind a tab", () => {
     const escapedTab = tab.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(settings, new RegExp(`title: "${escapedTab}"`));
   }
+});
+
+test("settings combines Google Search Console and Google Analytics connection setup", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const expected of [
+    'title="Google connection"',
+    'eyebrow="Google data connections"',
+    "Search Console",
+    "Google Analytics connection",
+    "GA4 Property ID",
+    "Open Google Analytics",
+    "Copy the numeric Property ID",
+    "Grant Viewer access to the CiteLoop Google service account",
+    "Save the Property ID",
+    "api.getSEOSettings",
+    "ga4_property_id",
+    "ga4PropertyID",
+    "saveGA4Connection",
+  ]) {
+    assert.equal(settings.includes(expected), true, `settings-client.tsx missing ${expected}`);
+  }
+
+  assert.doesNotMatch(settings, /title: "Search Console connection"/);
 });
 
 test("settings deep links open the matching configuration tab", () => {

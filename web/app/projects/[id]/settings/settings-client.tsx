@@ -18,8 +18,10 @@ import {
   PublisherConnection,
   ProjectConfig,
   SafeModeEvent,
+  SEOIntegration,
   SEOPolicy,
   SEOPolicyUpdateInput,
+  SEOProperty,
   friendlyApiError,
 } from "../../../lib/api";
 import { normalizeNumeric } from "../../../lib/normalize";
@@ -91,6 +93,27 @@ function gscStatusLabel(status?: string) {
   if (status === "mismatch") return "mismatch";
   return status ?? "missing";
 }
+
+function ga4Tone(status?: string, propertyID?: string): "green" | "amber" | "red" | "neutral" {
+  if (status === "connected") return "green";
+  if (["error", "expired", "revoked"].includes(status ?? "")) return "red";
+  if (propertyID?.trim()) return "amber";
+  return "neutral";
+}
+
+function ga4StatusLabel(status?: string, propertyID?: string) {
+  if (status === "connected") return "connected";
+  if (status === "error") return "needs attention";
+  if (propertyID?.trim()) return "property saved";
+  return "not connected";
+}
+
+const ga4ConnectionSteps = [
+  "Create or open the GA4 property for this domain.",
+  "Copy the numeric Property ID from Admin > Property settings.",
+  "Grant Viewer access to the CiteLoop Google service account.",
+  "Save the Property ID, then run SEO sync after Google starts collecting data.",
+];
 
 function EmptyGSCProperties() {
   return (
@@ -274,7 +297,7 @@ type SettingsTabId =
 const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "project", title: "Project config" },
   { id: "automation", title: "Automation" },
-  { id: "search-console", title: "Search Console connection" },
+  { id: "search-console", title: "Google connection" },
   { id: "publisher", title: "Publisher connection" },
   { id: "opportunity-finding", title: "Opportunity Finding" },
   { id: "notifications", title: "Notifications" },
@@ -471,6 +494,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
+  const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
+  const [seoIntegrations, setSEOIntegrations] = useState<SEOIntegration[]>([]);
+  const [ga4PropertyID, setGA4PropertyID] = useState("");
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
@@ -485,6 +511,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [eventSelection, setEventSelection] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
+  const [ga4Busy, setGA4Busy] = useState(false);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
   const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(defaultPolicyDraft);
@@ -560,6 +587,28 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const refreshSEOSettings = useCallback(async () => {
+    try {
+      const settings = await api.getSEOSettings(projectId);
+      const property = settings.property ?? null;
+      setSEOProperty(property);
+      setSEOIntegrations(settings.integrations);
+      setGA4PropertyID(property?.ga4_property_id ?? "");
+    } catch (e: any) {
+      if (isProjectScopedMissing(e.message)) {
+        setSEOProperty(null);
+        setSEOIntegrations([]);
+        setGA4PropertyID("");
+        return;
+      }
+      setMessage({ title: "Google Analytics settings unavailable", detail: friendlyError(e.message), tone: "amber" });
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    refreshSEOSettings();
+  }, [refreshSEOSettings]);
 
   const refreshPublisherConnections = useCallback(async () => {
     try {
@@ -639,6 +688,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     refreshGSCConnection();
   }, [refreshGSCConnection]);
+
+  const refreshGoogleConnections = useCallback(async () => {
+    setGSCBusy("refresh");
+    try {
+      await Promise.all([refreshGSCConnection(), refreshSEOSettings()]);
+    } finally {
+      setGSCBusy(null);
+    }
+  }, [refreshGSCConnection, refreshSEOSettings]);
 
   const refreshNotifications = useCallback(async () => {
     try {
@@ -1113,6 +1171,37 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
+  async function saveGA4Connection() {
+    const propertyID = ga4PropertyID.trim();
+    if (!propertyID) {
+      setMessage({ title: "GA4 Property ID required", detail: "Paste the numeric Property ID from Google Analytics property settings.", tone: "amber" });
+      return;
+    }
+    const siteURL = (seoProperty?.site_url || config.site_url || "").trim();
+    if (!siteURL) {
+      setMessage({ title: "Site URL required", detail: "Save the project domain before connecting Google Analytics.", tone: "amber" });
+      return;
+    }
+    setGA4Busy(true);
+    setMessage(null);
+    try {
+      await api.updateSEOSettings(projectId, {
+        site_url: siteURL,
+        gsc_site_url: seoProperty?.gsc_site_url ?? gscConnection?.selected_property ?? "",
+        ga4_property_id: propertyID,
+        url_normalization_config: seoProperty?.url_normalization_config ?? {},
+        default_country: seoProperty?.default_country ?? "",
+        default_language: seoProperty?.default_language ?? "",
+      });
+      await refreshSEOSettings();
+      setMessage({ title: "Google Analytics property saved", detail: "Run SEO sync after GA4 has collected data for this property.", tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Google Analytics save failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setGA4Busy(false);
+    }
+  }
+
   async function testPublisherConnection(connectionID: string) {
     setNotificationBusy(`test-publisher-${connectionID}`);
     setMessage(null);
@@ -1222,6 +1311,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     : gscHasAuthorizedProperties
       ? "Select a Search Console property."
       : "Connect Search Console for first-party search data.";
+  const ga4Integration = seoIntegrations.find((integration) => integration.provider === "google_analytics");
+  const ga4Status = ga4Integration?.status;
+  const savedGA4PropertyID = seoProperty?.ga4_property_id?.trim() ?? "";
   const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
   const githubAppConnected = Boolean(githubIntegration?.connected);
   const githubAppReusable = Boolean(!githubIntegration?.connected && githubIntegration?.reusable_installation_id);
@@ -1711,97 +1803,159 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       {activeSettingsTab === "search-console" && (
       <section id="settings-panel-search-console" role="tabpanel" aria-labelledby="settings-tab-search-console" tabIndex={0}>
         <SectionHeader
-          title="Search Console connection"
-          eyebrow="Search signal data"
+          title="Google connection"
+          eyebrow="Google data connections"
           action={
-            <Button size="sm" onClick={refreshGSCConnection} disabled={Boolean(gscBusy)}>
+            <Button size="sm" onClick={refreshGoogleConnections} disabled={Boolean(gscBusy) || ga4Busy}>
               <RefreshCw size={14} />
               Refresh
             </Button>
           }
         />
-        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="flex gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                <Search size={18} />
+        <div className="grid gap-4">
+          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="flex gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                  <Search size={18} />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Search Console</div>
+                  <div className="mt-1 text-sm font-bold text-slate-900">{gscCardTitle}</div>
+                  <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+                    CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Opportunities and Results.
+                  </p>
+                </div>
               </div>
-              <div>
-                <div className="text-sm font-bold text-slate-900">{gscCardTitle}</div>
-                <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
-                  CiteLoop uses the selected property for query, CTR, position, and content-decay signals in Opportunities and Results.
-                </p>
-              </div>
+              <Badge tone={gscTone(gscConnection?.status)}>{gscStatusLabel(gscConnection?.status)}</Badge>
             </div>
-            <Badge tone={gscTone(gscConnection?.status)}>{gscStatusLabel(gscConnection?.status)}</Badge>
-          </div>
 
-          {gscConnection && !gscConnection.configured && (
-            <Notice
-              title="Google OAuth is not configured"
-              detail="Add GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and PUBLIC_APP_URL before customers can connect Search Console."
-              tone="amber"
-            />
-          )}
+            {gscConnection && !gscConnection.configured && (
+              <Notice
+                title="Google OAuth is not configured"
+                detail="Add GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and PUBLIC_APP_URL before customers can connect Search Console."
+                tone="amber"
+              />
+            )}
 
-          {gscConnection?.last_error && <Notice title="Search Console needs attention" detail={gscConnection.last_error} tone="red" />}
+            {gscConnection?.last_error && <Notice title="Search Console needs attention" detail={gscConnection.last_error} tone="red" />}
 
-          {(!gscConnection || gscConnection.status === "missing" || gscConnection.properties.length === 0) && <GSCSetupGuide siteURL={config.site_url} />}
+            {(!gscConnection || gscConnection.status === "missing" || gscConnection.properties.length === 0) && <GSCSetupGuide siteURL={config.site_url} />}
 
-          <div className="flex flex-wrap gap-2">
-            {canStartGSCOAuth && (
-              <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
-                <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
-                  Connect Search Console
+            <div className="flex flex-wrap gap-2">
+              {canStartGSCOAuth && (
+                <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                  <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                    Connect Search Console
+                  </ButtonProgress>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={revokeGSCConnection}
+                disabled={!canDisconnectGSC || Boolean(gscBusy)}
+              >
+                <ButtonProgress busy={gscBusy === "revoke"} busyLabel="Disconnecting" idleIcon={<Trash2 size={16} />}>
+                  Disconnect
                 </ButtonProgress>
               </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={revokeGSCConnection}
-              disabled={!canDisconnectGSC || Boolean(gscBusy)}
-            >
-              <ButtonProgress busy={gscBusy === "revoke"} busyLabel="Disconnecting" idleIcon={<Trash2 size={16} />}>
-                Disconnect
-              </ButtonProgress>
-            </Button>
-          </div>
-
-          <div className="grid gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-bold text-slate-900">Authorized properties</div>
-                <p className="mt-1 text-sm leading-5 text-slate-500">Select property that matches this project domain.</p>
-              </div>
-              {gscConnection?.recommended_property && <Badge tone="green">Recommended: {gscConnection.recommended_property}</Badge>}
             </div>
 
-            {gscConnection && gscConnection.properties.length > 0 ? (
-              <div className="grid gap-2">
-                {gscConnection.properties.map((property) => {
-                  const selected = gscConnection.selected_property === property.site_url;
-                  return (
-                    <div key={property.site_url} className="flex flex-col gap-2 rounded-lg bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-semibold text-slate-900">{property.site_url}</span>
-                          {property.recommended && <Badge tone="green">Recommended</Badge>}
-                          {selected && <Badge tone="blue">Selected</Badge>}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold text-slate-400">{property.permission_level || "permission available"}</div>
-                      </div>
-                      <Button size="sm" variant={selected ? "ghost" : "outline"} onClick={() => selectGSCProperty(property.site_url)} disabled={selected || Boolean(gscBusy)}>
-                        <ButtonProgress busy={gscBusy === `select-${property.site_url}`} busyLabel="Selecting" idleIcon={<CheckCircle2 size={14} />}>
-                          Select property
-                        </ButtonProgress>
-                      </Button>
-                    </div>
-                  );
-                })}
+            <div className="grid gap-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-bold text-slate-900">Authorized properties</div>
+                  <p className="mt-1 text-sm leading-5 text-slate-500">Select property that matches this project domain.</p>
+                </div>
+                {gscConnection?.recommended_property && <Badge tone="green">Recommended: {gscConnection.recommended_property}</Badge>}
               </div>
-            ) : (
-              <EmptyGSCProperties />
-            )}
+
+              {gscConnection && gscConnection.properties.length > 0 ? (
+                <div className="grid gap-2">
+                  {gscConnection.properties.map((property) => {
+                    const selected = gscConnection.selected_property === property.site_url;
+                    return (
+                      <div key={property.site_url} className="flex flex-col gap-2 rounded-lg bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-sm font-semibold text-slate-900">{property.site_url}</span>
+                            {property.recommended && <Badge tone="green">Recommended</Badge>}
+                            {selected && <Badge tone="blue">Selected</Badge>}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-slate-400">{property.permission_level || "permission available"}</div>
+                        </div>
+                        <Button size="sm" variant={selected ? "ghost" : "outline"} onClick={() => selectGSCProperty(property.site_url)} disabled={selected || Boolean(gscBusy)}>
+                          <ButtonProgress busy={gscBusy === `select-${property.site_url}`} busyLabel="Selecting" idleIcon={<CheckCircle2 size={14} />}>
+                            Select property
+                          </ButtonProgress>
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyGSCProperties />
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="flex gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                  <Settings2 size={18} />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-slate-900">Google Analytics connection</div>
+                  <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-500">
+                    Connect GA4 engagement and key event data so CiteLoop can measure published work against search and business outcomes.
+                  </p>
+                </div>
+              </div>
+              <Badge tone={ga4Tone(ga4Status, savedGA4PropertyID)}>{ga4StatusLabel(ga4Status, savedGA4PropertyID)}</Badge>
+            </div>
+
+            {ga4Integration?.last_error && <Notice title="Google Analytics needs attention" detail={ga4Integration.last_error} tone="red" />}
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+              <div className="grid gap-3">
+                <Field
+                  label="GA4 Property ID"
+                  helper="Use the numeric property ID from GA4 Property settings, not the G- measurement ID."
+                >
+                  <TextInput
+                    inputMode="numeric"
+                    value={ga4PropertyID}
+                    placeholder="123456789"
+                    onChange={(event) => setGA4PropertyID(event.target.value)}
+                  />
+                </Field>
+                {savedGA4PropertyID && (
+                  <div className="text-sm text-slate-500">
+                    Saved property: <span className="font-semibold text-slate-800">{savedGA4PropertyID}</span>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="primary" onClick={saveGA4Connection} disabled={ga4Busy || !ga4PropertyID.trim()}>
+                    <ButtonProgress busy={ga4Busy} busyLabel="Saving" idleIcon={<Save size={16} />}>
+                      Save GA4 property
+                    </ButtonProgress>
+                  </Button>
+                  <a
+                    href="https://analytics.google.com/analytics/web/provision/#/provision/create"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                  >
+                    Open Google Analytics
+                  </a>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <ConnectionInstructions steps={ga4ConnectionSteps} />
+              </div>
+            </div>
           </div>
         </div>
       </section>
