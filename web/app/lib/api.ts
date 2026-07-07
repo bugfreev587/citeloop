@@ -41,7 +41,7 @@ function isReadRequest(init?: RequestInit) {
   return (init?.method ?? "GET").toUpperCase() === "GET";
 }
 
-function parseErrorBody(body: string): { error?: string } {
+function parseErrorBody(body: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(body);
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -57,7 +57,8 @@ export class ApiError extends Error {
 
   constructor(status: number, body: string) {
     const payload = parseErrorBody(body);
-    const apiMessage = typeof payload.error === "string" ? payload.error : body;
+    const detail = typeof payload.error === "string" ? payload.error : typeof payload.last_error === "string" ? payload.last_error : "";
+    const apiMessage = detail.trim() || body;
     super(`${status}: ${apiMessage}`);
     this.name = "ApiError";
     this.status = status;

@@ -190,6 +190,23 @@ test("friendlyApiError uses safe backend error messages without exposing JSON", 
   assert.doesNotMatch(friendlyApiError(missingCredential), /424|\{"error"/);
 });
 
+test("friendlyApiError reads publisher connection error bodies without exposing JSON", async () => {
+  const { ApiError, friendlyApiError } = await loadApiModule();
+  const connectionFailure = new ApiError(
+    424,
+    JSON.stringify({
+      id: "publisher-1",
+      kind: "github_nextjs",
+      status: "error",
+      last_error: "publisher credential unavailable",
+    }),
+  );
+
+  assert.equal(connectionFailure.apiMessage, "publisher credential unavailable");
+  assert.equal(friendlyApiError(connectionFailure), "publisher credential unavailable");
+  assert.doesNotMatch(connectionFailure.message, /\{"id"/);
+});
+
 test("project config exposes content plan auto advance and defaults it off", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

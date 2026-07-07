@@ -10,6 +10,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 )
@@ -199,6 +200,36 @@ func TestGitHubNextJSUpsertPreservesGitHubAppInstallation(t *testing.T) {
 	}
 }
 
+func TestPublisherConnectionTokenUsesGitHubAppInstallation(t *testing.T) {
+	app := &fakeGitHubAppClient{configured: true, token: "installation-token"}
+	s := &Server{githubAppClient: app}
+	projectID := uuid.New()
+	conn := db.PublisherConnection{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		Kind:      publisher.ConnectionKindGitHubNextJS,
+		Status:    "connected",
+		Enabled:   true,
+		Config: json.RawMessage(`{
+			"installation_id":"12345",
+			"repo":"owner/site",
+			"branch":"main",
+			"base_url":"https://example.com/blog"
+		}`),
+	}
+
+	token, err := s.publisherConnectionToken(context.Background(), projectID, conn)
+	if err != nil {
+		t.Fatalf("publisherConnectionToken returned error: %v", err)
+	}
+	if token != "installation-token" {
+		t.Fatalf("token = %q, want installation-token", token)
+	}
+	if app.gotInstallationID != "12345" {
+		t.Fatalf("installation id = %q, want 12345", app.gotInstallationID)
+	}
+}
+
 func TestPublisherCredentialTokenRejectsEnvFallback(t *testing.T) {
 	s := &Server{Env: config.Env{GitHubToken: "fallback-token"}}
 	conn := db.PublisherConnection{
@@ -247,4 +278,23 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 	if strings.Contains(string(body), "token") {
 		t.Fatalf("response leaked token-like text: %s", string(body))
 	}
+}
+
+type fakeGitHubAppClient struct {
+	configured        bool
+	token             string
+	gotInstallationID string
+}
+
+func (f *fakeGitHubAppClient) Configured() bool { return f.configured }
+
+func (f *fakeGitHubAppClient) InstallURL(string) string { return "" }
+
+func (f *fakeGitHubAppClient) InstallationToken(_ context.Context, installationID string) (string, error) {
+	f.gotInstallationID = installationID
+	return f.token, nil
+}
+
+func (f *fakeGitHubAppClient) ListRepos(context.Context, string) ([]githubapp.Repo, error) {
+	return nil, nil
 }
