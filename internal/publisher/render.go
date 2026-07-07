@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/markdownutil"
 )
 
 type seoMeta struct {
@@ -69,7 +70,8 @@ func NormalizeBlogSlug(s string) string {
 
 // renderMDX builds the MDX file with frontmatter for the canonical blog post.
 func renderMDX(a *db.Article, slug, publicURL string, now time.Time) ([]byte, error) {
-	if err := validateGeneratedMDX(a.ContentMd); err != nil {
+	content := markdownutil.NormalizeGeneratedEscapes(a.ContentMd)
+	if err := validateGeneratedMDX(content); err != nil {
 		return nil, err
 	}
 	m := parseSEO(a)
@@ -90,7 +92,7 @@ func renderMDX(a *db.Article, slug, publicURL string, now time.Time) ([]byte, er
 	b.WriteString("keywords: []\n")
 	fmt.Fprintf(&b, "canonical: %q\n", publicURL)
 	b.WriteString("---\n\n")
-	b.WriteString(a.ContentMd)
+	b.WriteString(content)
 	b.WriteString("\n")
 	return []byte(b.String()), nil
 }
