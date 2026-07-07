@@ -151,6 +151,26 @@ func TestPublisherConnectionQueriesRespectEnabledEligibility(t *testing.T) {
 	}
 }
 
+func TestLegacyAutoPublishModeMigrationNormalizesToScheduled(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0040_publish_auto_to_scheduled.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"update projects",
+		"publish_mode",
+		`"scheduled"`,
+		"publish_interval_days",
+		"else 1",
+		"where config->>'publish_mode' = 'auto'",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("legacy auto publish migration missing %q", want)
+		}
+	}
+}
+
 func TestPublishingQueriesRequireVerifiedCanonicalURL(t *testing.T) {
 	if !strings.Contains(markPublished, "canonical_url_verified_at = now()") {
 		t.Fatal("MarkPublished must set canonical_url_verified_at")

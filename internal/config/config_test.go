@@ -20,10 +20,11 @@ func TestNextPublishSlotStaggersAndModes(t *testing.T) {
 		t.Fatalf("scheduled next = %v ok=%v, want %v", got, ok, now.AddDate(0, 0, 2))
 	}
 
-	auto := Default()
-	auto.PublishMode = PublishModeAuto
-	if got, ok := auto.NextPublishSlot(now.AddDate(0, 0, 5), now); !ok || !got.Equal(now) {
-		t.Fatalf("auto = %v ok=%v, want now", got, ok)
+	legacyAuto := Default()
+	legacyAuto.PublishMode = PublishModeAuto
+	legacyAuto.PublishIntervalDays = 1
+	if got, ok := legacyAuto.NextPublishSlot(now, now); !ok || !got.Equal(now.AddDate(0, 0, 1)) {
+		t.Fatalf("legacy auto = %v ok=%v, want scheduled next day", got, ok)
 	}
 
 	manual := Default()
@@ -59,7 +60,7 @@ func TestParseDefaults(t *testing.T) {
 }
 
 func TestParseKeepsExplicitPublishModes(t *testing.T) {
-	for _, mode := range []string{PublishModeScheduled, PublishModeAuto, PublishModeManual} {
+	for _, mode := range []string{PublishModeScheduled, PublishModeManual} {
 		c, err := Parse(json.RawMessage(`{"publish_mode":"` + mode + `"}`))
 		if err != nil {
 			t.Fatal(err)
@@ -67,6 +68,32 @@ func TestParseKeepsExplicitPublishModes(t *testing.T) {
 		if c.PublishMode != mode {
 			t.Fatalf("publish_mode = %q, want %q", c.PublishMode, mode)
 		}
+	}
+}
+
+func TestParseNormalizesLegacyAutoPublishModeToScheduled(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"publish_mode":"auto","publish_interval_days":5}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublishMode != PublishModeScheduled {
+		t.Fatalf("legacy auto normalized to %q, want scheduled", c.PublishMode)
+	}
+	if c.PublishIntervalDays != 5 {
+		t.Fatalf("publish_interval_days = %d, want preserved 5", c.PublishIntervalDays)
+	}
+}
+
+func TestParseNormalizesLegacyAutoPublishModeWithInvalidInterval(t *testing.T) {
+	c, err := Parse(json.RawMessage(`{"publish_mode":"auto","publish_interval_days":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublishMode != PublishModeScheduled {
+		t.Fatalf("legacy auto normalized to %q, want scheduled", c.PublishMode)
+	}
+	if c.PublishIntervalDays != 1 {
+		t.Fatalf("legacy auto interval = %d, want 1", c.PublishIntervalDays)
 	}
 }
 

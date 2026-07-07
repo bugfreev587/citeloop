@@ -1,13 +1,12 @@
 import type { Article, DistributeItem, ProjectConfig, PublisherConnection } from "./api";
 
-type PublishConnectionState = "auto_publish" | "not_connected" | "disabled" | "needs_attention";
+type PublishConnectionState = "ready" | "not_connected" | "disabled" | "needs_attention";
 type DestinationKind = "canonical" | "manual" | "roadmap";
 type ManualPlatformId = "dev_to" | "hashnode" | "reddit" | "medium" | "linkedin" | "hacker_news";
-type ReadyNowAction = "publish" | "retry";
+type ReadyNowAction = "publish" | "retry" | "publishing";
 type OperationalGroupKey =
   | "ready"
   | "scheduled"
-  | "published"
   | "failed"
   | "waiting_on_canonical"
   | "ready_to_distribute";
@@ -61,11 +60,11 @@ export type ReadyNowItem = {
   articleId: string;
   title: string;
   action: ReadyNowAction;
-  actionLabel: "Publish" | "Retry";
+  actionLabel: "Publish" | "Retry" | "Publishing";
   secondaryActionLabel: "Preview";
   destinationLabel: "GitHub/Next.js";
   destinationActionLabel: "Destination";
-  timingActionLabel: "Timing";
+  publishStateLabel: string;
   disabled: boolean;
   disabledReason?: string;
   failureReason?: string;
@@ -111,6 +110,27 @@ export type OperationalGroup = {
   items: Array<Article | DistributeItem>;
 };
 
+export type PublishedCanonicalRow = {
+  articleId: string;
+  title: string;
+  publishedAt?: string | null;
+  publishedUrl?: string;
+  urlMissing: boolean;
+  article: Article;
+};
+
+export type PublishedCanonicalsSection = {
+  key: "published";
+  label: "Published";
+  count: number;
+  rows: PublishedCanonicalRow[];
+};
+
+export type PublishingOperationalModel = {
+  published: PublishedCanonicalsSection;
+  groups: OperationalGroup[];
+};
+
 type BuildDestinationsInput = {
   projectId: string;
   connections: PublisherConnection[];
@@ -123,7 +143,10 @@ type BuildReadyNowInput = {
   now?: Date | string | number;
   approvedCanonicals: Article[];
   failedCanonicals: Article[];
+  inflightCanonicals?: Article[];
   activePublisherConnection: PublisherConnection | null;
+  githubState?: PublishConnectionState;
+  publishMode?: "scheduled" | "manual";
 };
 
 type BuildManualSyndicationInput = {
@@ -149,8 +172,8 @@ type BuildHeaderCtaInput = {
 
 export type PublishHeaderCta =
   | { label: "Connect GitHub" | "Enable publishing" | "Fix connection" | "Manage destinations"; kind: "settings"; href: string }
-  | { label: "Publish next"; kind: "publish_next"; articleId: string }
-  | { label: "View schedule"; kind: "view_all"; groupKey: "scheduled" };
+  | { label: "View schedule"; kind: "view_all"; groupKey: "scheduled" }
+  | null;
 
 function settingsHref(projectId: string) {
   return `/projects/${projectId}/settings#publisher`;
@@ -201,6 +224,11 @@ function isScheduled(article: Article, nowMs: number) {
   return scheduled !== null && scheduled > nowMs;
 }
 
+function isPendingUrlVerification(article: Article) {
+  const publishPhase = (article as Article & { publish_phase?: string | null }).publish_phase;
+  return article.status === "pending_url_verification" || publishPhase === "pending_url_verification";
+}
+
 function githubConnection(connections: PublisherConnection[]) {
   const githubConnections = connections.filter((connection) => connection.kind === "github_nextjs");
   return githubConnections.find((connection) => connection.is_default) ?? githubConnections[0] ?? null;
@@ -210,14 +238,14 @@ function githubState(connection: PublisherConnection | null): PublishConnectionS
   if (!connection || connection.status === "missing") return "not_connected";
   if (connection.status === "error" || connection.status === "revoked") return "needs_attention";
   if (connection.status === "connected" && !connection.enabled) return "disabled";
-  if (connection.status === "connected" && connection.enabled) return "auto_publish";
+  if (connection.status === "connected" && connection.enabled) return "ready";
   return "not_connected";
 }
 
 function githubStateLabel(state: PublishConnectionState) {
   switch (state) {
-    case "auto_publish":
-      return "Auto publish";
+    case "ready":
+      return "Ready";
     case "disabled":
       return "Disabled";
     case "needs_attention":
@@ -226,6 +254,34 @@ function githubStateLabel(state: PublishConnectionState) {
     default:
       return "Not connected";
   }
+}
+
+function disabledReasonFor(state: PublishConnectionState, action: "publishing" | "retrying") {
+  if (state === "disabled") {
+    return `Enable GitHub/Next.js publishing before ${action}.`;
+  }
+  if (state === "needs_attention") {
+    return `Fix GitHub/Next.js before ${action}.`;
+  }
+  return `Connect GitHub before ${action}.`;
+}
+
+function publishStateLabel(article: Article, publishMode?: "scheduled" | "manual") {
+  if (isPendingUrlVerification(article)) {
+    return "Verifying live URL";
+  }
+  if (article.status === "publish_failed") {
+    return "Failed";
+  }
+  if (publishMode === "scheduled") {
+    return "Ready to publish";
+  }
+  return "Manual: publish when ready";
+}
+
+function canonicalUrl(article: Article) {
+  const value = (article.canonical_url ?? "").trim();
+  return value || undefined;
 }
 
 function connectionTarget(connection: PublisherConnection | null) {
@@ -328,8 +384,8 @@ export function buildPublishDestinations(input: BuildDestinationsInput): Publish
     state,
     stateLabel: githubStateLabel(state),
     actionLabel:
-      state === "auto_publish"
-        ? "Publish canonical"
+      state === "ready"
+        ? "Ready"
         : state === "disabled"
           ? "Enable publishing"
           : state === "needs_attention"
@@ -360,8 +416,10 @@ export function buildPublishDestinations(input: BuildDestinationsInput): Publish
 
 export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
   const nowMs = resolveNow(input.now);
-  const active = Boolean(input.activePublisherConnection);
+  const state = input.githubState ?? (input.activePublisherConnection ? "ready" : "not_connected");
+  const active = state === "ready" && Boolean(input.activePublisherConnection);
   const readyCanonicals = input.approvedCanonicals.filter((article) => isCanonical(article) && isDue(article, nowMs));
+  const inflightCanonicals = (input.inflightCanonicals ?? []).filter((article) => isCanonical(article) && isPendingUrlVerification(article));
   const failedCanonicals = input.failedCanonicals.filter(isCanonical);
   const publishItems: ReadyNowItem[] = readyCanonicals.map((article) => ({
     id: `publish-${article.id}`,
@@ -372,9 +430,22 @@ export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
     secondaryActionLabel: "Preview",
     destinationLabel: "GitHub/Next.js",
     destinationActionLabel: "Destination",
-    timingActionLabel: "Timing",
+    publishStateLabel: publishStateLabel(article, input.publishMode),
     disabled: !active,
-    disabledReason: active ? undefined : "Connect GitHub before publishing.",
+    disabledReason: active ? undefined : disabledReasonFor(state, "publishing"),
+    article,
+  }));
+  const publishingItems: ReadyNowItem[] = inflightCanonicals.map((article) => ({
+    id: `publishing-${article.id}`,
+    articleId: article.id,
+    title: articleTitle(article),
+    action: "publishing",
+    actionLabel: "Publishing",
+    secondaryActionLabel: "Preview",
+    destinationLabel: "GitHub/Next.js",
+    destinationActionLabel: "Destination",
+    publishStateLabel: publishStateLabel(article, input.publishMode),
+    disabled: true,
     article,
   }));
   const retryItems: ReadyNowItem[] = failedCanonicals.map((article) => ({
@@ -386,15 +457,15 @@ export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
     secondaryActionLabel: "Preview",
     destinationLabel: "GitHub/Next.js",
     destinationActionLabel: "Destination",
-    timingActionLabel: "Timing",
+    publishStateLabel: publishStateLabel(article, input.publishMode),
     disabled: !active,
-    disabledReason: active ? undefined : "Connect GitHub before retrying.",
+    disabledReason: active ? undefined : disabledReasonFor(state, "retrying"),
     failureReason: article.last_publish_error || undefined,
     article,
   }));
 
   return {
-    items: [...publishItems, ...retryItems],
+    items: [...publishItems, ...publishingItems, ...retryItems],
     emptyState: {
       title: "No approved posts ready",
       detail: "Approved canonical posts appear here after review.",
@@ -402,24 +473,41 @@ export function buildReadyNow(input: BuildReadyNowInput): ReadyNowModel {
   };
 }
 
-export function buildPublishingOperationalGroups(input: BuildOperationalGroupsInput): OperationalGroup[] {
+export function buildPublishingOperationalGroups(input: BuildOperationalGroupsInput): PublishingOperationalModel {
   const nowMs = resolveNow(input.now);
   const approvedCanonicals = input.approvedCanonicals.filter(isCanonical);
   const ready = approvedCanonicals.filter((article) => isDue(article, nowMs));
   const scheduled = approvedCanonicals.filter((article) => isScheduled(article, nowMs));
-  const published = input.publishedCanonicals.filter(isCanonical);
+  const publishedRows = input.publishedCanonicals.filter(isCanonical).map((article) => {
+    const publishedUrl = canonicalUrl(article);
+    return {
+      articleId: article.id,
+      title: articleTitle(article),
+      publishedAt: article.published_at,
+      publishedUrl,
+      urlMissing: !publishedUrl,
+      article,
+    };
+  });
   const failed = input.failedCanonicals.filter(isCanonical);
   const waiting = input.waitingSyndication.filter(isSyndicationVariant);
   const readyToDistribute = input.readyDistribute.filter((item) => isSyndicationVariant(item.article));
 
-  return [
-    { key: "ready", label: "Ready", count: ready.length, items: ready },
-    { key: "scheduled", label: "Scheduled", count: scheduled.length, items: scheduled },
-    { key: "published", label: "Published", count: published.length, items: published },
-    { key: "failed", label: "Failed", count: failed.length, items: failed },
-    { key: "waiting_on_canonical", label: "Waiting on canonical", count: waiting.length, items: waiting },
-    { key: "ready_to_distribute", label: "Ready to distribute", count: readyToDistribute.length, items: readyToDistribute },
-  ];
+  return {
+    published: {
+      key: "published",
+      label: "Published",
+      count: publishedRows.length,
+      rows: publishedRows,
+    },
+    groups: [
+      { key: "ready", label: "Ready", count: ready.length, items: ready },
+      { key: "scheduled", label: "Scheduled", count: scheduled.length, items: scheduled },
+      { key: "failed", label: "Failed", count: failed.length, items: failed },
+      { key: "waiting_on_canonical", label: "Waiting on canonical", count: waiting.length, items: waiting },
+      { key: "ready_to_distribute", label: "Ready to distribute", count: readyToDistribute.length, items: readyToDistribute },
+    ],
+  };
 }
 
 export function buildPublishHeaderCta(input: BuildHeaderCtaInput): PublishHeaderCta {
@@ -433,12 +521,8 @@ export function buildPublishHeaderCta(input: BuildHeaderCtaInput): PublishHeader
     return { label: "Fix connection", kind: "settings", href: settingsHref(input.projectId) };
   }
 
-  const nextPublish = input.readyNowItems.find((item) => item.action === "publish" && !item.disabled);
-  if (nextPublish) {
-    return { label: "Publish next", kind: "publish_next", articleId: nextPublish.articleId };
-  }
   if (input.scheduledCount > 0) {
     return { label: "View schedule", kind: "view_all", groupKey: "scheduled" };
   }
-  return { label: "Manage destinations", kind: "settings", href: settingsHref(input.projectId) };
+  return null;
 }

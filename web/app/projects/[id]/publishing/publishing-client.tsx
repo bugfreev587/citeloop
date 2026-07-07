@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   CalendarClock,
   Check,
+  ChevronDown,
   Copy,
   Eye,
   ExternalLink,
@@ -16,7 +17,6 @@ import {
   Search,
   Send,
   Settings2,
-  Zap,
 } from "lucide-react";
 import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig, friendlyApiError } from "../../../lib/api";
 import {
@@ -37,13 +37,12 @@ import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader
 import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-actions";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
-type PublishMode = "scheduled" | "auto" | "manual";
+type PublishMode = "scheduled" | "manual";
 type DrawerKind = "schedule" | "view_all" | "github" | "manual" | "more" | "cms" | "seo_details" | null;
 type ManualPlatformID = ManualSyndicationPlatform["id"];
 
 const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; detail: string }> = {
   scheduled: { label: "Scheduled", icon: <CalendarClock size={15} />, detail: "One every few days" },
-  auto: { label: "Auto", icon: <Zap size={15} />, detail: "Publish as soon as ready" },
   manual: { label: "Manual", icon: <Send size={15} />, detail: "You publish each one" },
 };
 
@@ -51,8 +50,12 @@ function articleTitle(article: Article) {
   return article.seo_meta?.title || article.seo_meta?.slug || `${article.kind} article`;
 }
 
-function publishTimeLabel(article: Article) {
-  return article.scheduled_at ? `Publishes ${formatDate(article.scheduled_at)}` : "Manual: when you publish";
+function publishTimeLabel(article: Article, publishMode?: PublishMode) {
+  if (article.status === "pending_url_verification") return "Verifying live URL";
+  if (article.status === "published" && article.published_at) return `Published ${formatDate(article.published_at)}`;
+  if (article.scheduled_at) return `Scheduled for ${formatDate(article.scheduled_at)}`;
+  if (publishMode === "scheduled") return "Ready to publish";
+  return "Manual: publish when ready";
 }
 
 function connectionTargetLabel(connection: PublisherConnection | null) {
@@ -86,7 +89,7 @@ function platformTone(destination: PublishDestination): "neutral" | "red" | "amb
   if (destination.kind === "roadmap") return "neutral";
   if (destination.state === "needs_attention") return "red";
   if (destination.state === "disabled") return "amber";
-  if (destination.state === "auto_publish" || destination.readyCount > 0) return "green";
+  if (destination.state === "ready" || destination.readyCount > 0) return "green";
   if (destination.kind === "manual") return "blue";
   return "neutral";
 }
@@ -182,12 +185,10 @@ function ReadyNowStrip({
   busy,
   linkedArticleId,
   highlightedPublishArticleId,
-  activePublisherConnection,
   onPublish,
   onRetry,
   onSeoDetails,
   onDestination,
-  onTiming,
 }: {
   className?: string;
   projectId: string;
@@ -195,12 +196,10 @@ function ReadyNowStrip({
   busy: string | null;
   linkedArticleId?: string | null;
   highlightedPublishArticleId?: string | null;
-  activePublisherConnection: PublisherConnection | null;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
   onSeoDetails: (article: Article) => void;
   onDestination: () => void;
-  onTiming: () => void;
 }) {
   const visibleItems = (() => {
     const firstItems = readyNow.items.slice(0, 4);
@@ -233,7 +232,7 @@ function ReadyNowStrip({
                     <div className="line-clamp-2 break-words text-base font-bold leading-6 text-slate-950">{item.title}</div>
                     <div className="mt-1 text-xs font-semibold text-slate-500">Canonical content</div>
                   </div>
-                  <Badge tone={item.action === "retry" ? "red" : "green"}>{item.actionLabel}</Badge>
+                  <Badge tone={item.action === "retry" ? "red" : item.action === "publishing" ? "amber" : "green"}>{item.actionLabel}</Badge>
                 </div>
                 <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
                   <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
@@ -242,7 +241,7 @@ function ReadyNowStrip({
                   </div>
                   <div className="min-w-0 rounded-lg bg-slate-50 px-3 py-2">
                     <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">When</div>
-                    <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{publishTimeLabel(item.article)}</div>
+                    <div className="mt-0.5 truncate text-xs font-semibold text-slate-700">{item.publishStateLabel}</div>
                   </div>
                 </div>
                 {item.failureReason && <div className="mt-2 line-clamp-2 break-words text-xs leading-5 text-red-700">{item.failureReason}</div>}
@@ -265,25 +264,28 @@ function ReadyNowStrip({
                     <Plug size={14} />
                     {item.destinationActionLabel}
                   </Button>
-                  <Button size="sm" title={publishTimeLabel(item.article)} onClick={onTiming}>
-                    <CalendarClock size={14} />
-                    {item.timingActionLabel}
-                  </Button>
-                  <Button
-                    disabled={!activePublisherConnection || busy === `${item.action}-${item.articleId}`}
-                    size="sm"
-                    variant={item.action === "retry" ? "danger" : "primary"}
-                    title={item.disabledReason}
-                    onClick={() => (item.action === "retry" ? onRetry(item.article) : onPublish(item.article))}
-                  >
-                    <ButtonProgress
-                      busy={busy === `${item.action}-${item.articleId}`}
-                      busyLabel={item.action === "retry" ? "Retrying" : "Publishing"}
-                      idleIcon={item.action === "retry" ? <RotateCcw size={14} /> : <Send size={14} />}
+                  {item.action === "publishing" ? (
+                    <Button disabled size="sm">
+                      <Loader2 className="animate-spin" size={14} />
+                      Publishing
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={item.disabled || busy === `${item.action}-${item.articleId}`}
+                      size="sm"
+                      variant={item.action === "retry" ? "danger" : "primary"}
+                      title={item.disabledReason}
+                      onClick={() => (item.action === "retry" ? onRetry(item.article) : onPublish(item.article))}
                     >
-                      {item.actionLabel}
-                    </ButtonProgress>
-                  </Button>
+                      <ButtonProgress
+                        busy={busy === `${item.action}-${item.articleId}`}
+                        busyLabel={item.action === "retry" ? "Retrying" : "Publishing"}
+                        idleIcon={item.action === "retry" ? <RotateCcw size={14} /> : <Send size={14} />}
+                      >
+                        {item.actionLabel}
+                      </ButtonProgress>
+                    </Button>
+                  )}
                 </div>
               </div>
             );
@@ -457,6 +459,115 @@ function ManualPlatformRows({
   );
 }
 
+function PublishedSection({
+  section,
+  projectId,
+  collapsed,
+  highlightedArticleId,
+  busy,
+  onToggle,
+  onCheckStatus,
+}: {
+  section: ReturnType<typeof buildPublishingOperationalGroups>["published"];
+  projectId: string;
+  collapsed: boolean;
+  highlightedArticleId?: string | null;
+  busy: string | null;
+  onToggle: () => void;
+  onCheckStatus: () => void;
+}) {
+  return (
+    <section data-publish-published-section className="min-w-0 space-y-3">
+      <SectionHeader
+        title="Published"
+        action={
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge tone={section.count ? "green" : "neutral"}>{section.count}</Badge>
+            <Button size="sm" onClick={onToggle} aria-expanded={!collapsed}>
+              <ChevronDown size={14} className={cx("transition-transform", collapsed ? "-rotate-90" : "")} />
+              {collapsed ? "Show" : "Hide"}
+            </Button>
+          </div>
+        }
+      />
+      {!collapsed && (
+        section.count === 0 ? (
+          <EmptyState title="No published posts yet" detail="Published canonical posts appear here with their live URL." />
+        ) : (
+          <div className="grid gap-3">
+            {section.rows.map((row) => {
+              const highlighted = highlightedArticleId === row.articleId;
+              return (
+                <div
+                  key={row.articleId}
+                  id={`publish-published-${row.articleId}`}
+                  data-publish-published-article-card={row.articleId}
+                  tabIndex={-1}
+                  className={cx(
+                    "min-w-0 rounded-lg border bg-white p-4 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                    highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
+                  )}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-950">{row.title}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">
+                        {row.publishedAt ? `Published ${formatDate(row.publishedAt)}` : "Published"}
+                      </div>
+                    </div>
+                    <Badge tone={row.urlMissing ? "amber" : "green"}>{row.urlMissing ? "URL missing" : "Live"}</Badge>
+                  </div>
+                  <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-[11px] font-bold uppercase tracking-normal text-slate-400">URL</div>
+                    {row.publishedUrl ? (
+                      <a
+                        href={row.publishedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 block truncate text-xs font-semibold text-slate-700 hover:text-slate-950"
+                      >
+                        {row.publishedUrl}
+                      </a>
+                    ) : (
+                      <div className="mt-0.5 text-xs font-semibold text-amber-800">Published URL missing</div>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+                    <Link
+                      data-publish-results-link
+                      href={`/projects/${projectId}/results?article=${row.articleId}`}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      View Results
+                    </Link>
+                    {row.publishedUrl ? (
+                      <a
+                        href={row.publishedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <ExternalLink size={14} />
+                        Open live article
+                      </a>
+                    ) : (
+                      <Button disabled={busy === "reconcile"} size="sm" onClick={onCheckStatus}>
+                        <ButtonProgress busy={busy === "reconcile"} busyLabel="Checking status" idleIcon={<RotateCcw size={14} />}>
+                          Check status
+                        </ButtonProgress>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+    </section>
+  );
+}
+
 function OperationalRows({
   group,
   projectId,
@@ -502,11 +613,7 @@ function OperationalRows({
                 <div className="mt-1 break-words text-xs font-semibold text-slate-500">
                   {group.key === "scheduled"
                     ? publishTimeLabel(article)
-                    : group.key === "published"
-                      ? article.published_at
-                        ? `Published ${formatDate(article.published_at)}`
-                        : "Publishing / verifying"
-                      : article.platform || "GitHub/Next.js"}
+                    : article.platform || "GitHub/Next.js"}
                 </div>
               </div>
               <Badge tone={group.key === "failed" ? "red" : group.key === "scheduled" ? "blue" : "neutral"}>{group.label}</Badge>
@@ -521,15 +628,6 @@ function OperationalRows({
               >
                 Detail
               </a>
-              {group.key === "published" && (
-                <Link
-                  data-publish-results-link
-                  href={`/projects/${projectId}/results?article=${article.id}`}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  View Results
-                </Link>
-              )}
               {group.key === "ready" && (
                 <Button disabled={busy === `publish-${article.id}`} size="sm" variant="primary" onClick={() => onPublish(article)}>
                   <ButtonProgress busy={busy === `publish-${article.id}`} busyLabel="Publishing" idleIcon={<Send size={14} />}>
@@ -599,6 +697,9 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [selectedSEOArticle, setSelectedSEOArticle] = useState<Article | null>(null);
   const [focusedOperationalGroup, setFocusedOperationalGroup] = useState<OperationalGroup["key"] | null>(null);
   const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
+  const [publishedCollapsed, setPublishedCollapsed] = useState(false);
+  const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
+  const seenPublishedIdsRef = useRef<Set<string> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -669,7 +770,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         .sort((a, b) => (a.scheduled_at ?? "").localeCompare(b.scheduled_at ?? "")),
     [approved],
   );
-  const now = useMemo(() => new Date(), [approvedCanonicals, failed, published, ready]);
+  const now = useMemo(() => new Date(), [approvedCanonicals, failed, inflight, published, ready]);
   const readyCanonicals = useMemo(
     () => approvedCanonicals.filter((article) => !article.scheduled_at || new Date(article.scheduled_at).getTime() <= now.getTime()),
     [approvedCanonicals, now],
@@ -678,7 +779,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     () => approvedCanonicals.filter((article) => article.scheduled_at && new Date(article.scheduled_at).getTime() > now.getTime()),
     [approvedCanonicals, now],
   );
-  const publishMode: PublishMode = (config?.publish_mode as PublishMode) ?? "manual";
+  const publishMode: PublishMode = config?.publish_mode === "scheduled" || config?.publish_mode === "manual" ? config.publish_mode : "scheduled";
   const publishIntervalDays = config?.publish_interval_days ?? 2;
   const eligiblePublisherConnections = useMemo(() => connections.filter((connection) => connection.enabled && connection.status === "connected"), [connections]);
   const activePublisherConnection = useMemo(
@@ -708,28 +809,40 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       }),
     [projectId, connections, ready, waiting, config],
   );
+  const githubPublishState =
+    destinations.github.state === "ready" ||
+    destinations.github.state === "not_connected" ||
+    destinations.github.state === "disabled" ||
+    destinations.github.state === "needs_attention"
+      ? destinations.github.state
+      : "not_connected";
   const readyNow = useMemo(
     () =>
       buildReadyNow({
         now,
         approvedCanonicals,
         failedCanonicals: failed,
+        inflightCanonicals: inflight,
         activePublisherConnection,
+        githubState: githubPublishState,
+        publishMode,
       }),
-    [now, approvedCanonicals, failed, activePublisherConnection],
+    [now, approvedCanonicals, failed, inflight, activePublisherConnection, githubPublishState, publishMode],
   );
-  const operationalGroups = useMemo(
+  const publishingOperational = useMemo(
     () =>
       buildPublishingOperationalGroups({
         now,
         approvedCanonicals,
-        publishedCanonicals: [...inflight, ...published],
+        publishedCanonicals: published,
         failedCanonicals: failed,
         waitingSyndication: waiting,
         readyDistribute: ready,
       }),
-    [now, approvedCanonicals, inflight, published, failed, waiting, ready],
+    [now, approvedCanonicals, published, failed, waiting, ready],
   );
+  const publishedSection = publishingOperational.published;
+  const operationalGroups = publishingOperational.groups;
   const selectedPlatform =
     manualSummary.platforms.find((platform) => platform.id === selectedManualPlatform) ?? manualSummary.platforms[0] ?? null;
   const headerCta = buildPublishHeaderCta({
@@ -738,10 +851,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     readyNowItems: readyNow.items,
     scheduledCount: scheduledCanonicals.length,
   });
-  const nextHeaderArticle =
-    headerCta.kind === "publish_next"
-      ? readyNow.items.find((item) => item.articleId === headerCta.articleId)?.article ?? null
-      : null;
 
   // A review handoff link lands here with ?article=; focus the main Publish card
   // so the handoff mirrors Opportunities -> Content Plan instead of opening a drawer.
@@ -761,6 +870,30 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       window.clearTimeout(clearTimer);
     };
   }, [linkedArticleId, loading, readyNow.items]);
+
+  useEffect(() => {
+    const nextIds = new Set(published.map((article) => article.id));
+    const previousIds = seenPublishedIdsRef.current;
+    seenPublishedIdsRef.current = nextIds;
+    if (!previousIds) return;
+    const newlyPublishedId = [...nextIds].find((id) => !previousIds.has(id));
+    if (!newlyPublishedId) return;
+
+    setPublishedCollapsed(false);
+    setHighlightedPublishedArticleId(newlyPublishedId);
+    const focusTimer = window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(`[data-publish-published-article-card="${newlyPublishedId}"]`);
+      if (!target) return;
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+      target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+    }, 120);
+    const clearTimer = window.setTimeout(() => setHighlightedPublishedArticleId(null), 2_350);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [published]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
@@ -890,6 +1023,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }
 
   function renderPrimaryCta() {
+    if (!headerCta) return null;
     if (headerCta.kind === "settings") {
       return (
         <a
@@ -909,13 +1043,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         </Button>
       );
     }
-    return (
-      <Button disabled={!nextHeaderArticle || busy === `publish-${headerCta.articleId}`} size="sm" variant="primary" onClick={() => nextHeaderArticle && publishNow(nextHeaderArticle)}>
-        <ButtonProgress busy={busy === `publish-${headerCta.articleId}`} busyLabel="Publishing" idleIcon={<Send size={14} />}>
-          {headerCta.label}
-        </ButtonProgress>
-      </Button>
-    );
+    return null;
   }
 
   const publishingHeaderAction = (
@@ -966,19 +1094,28 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       )}
 
       <div data-publish-c2-first-viewport className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.46fr)] xl:items-start">
-        <ReadyNowStrip
-          projectId={projectId}
-          readyNow={readyNow}
-          busy={busy}
-          linkedArticleId={linkedArticleId}
-          highlightedPublishArticleId={highlightedPublishArticleId}
-          activePublisherConnection={activePublisherConnection}
-          onPublish={publishNow}
-          onRetry={retryPublish}
-          onSeoDetails={openSEODetails}
-          onDestination={() => setDrawer("github")}
-          onTiming={() => setDrawer("schedule")}
-        />
+        <div className="min-w-0 space-y-5">
+          <ReadyNowStrip
+            projectId={projectId}
+            readyNow={readyNow}
+            busy={busy}
+            linkedArticleId={linkedArticleId}
+            highlightedPublishArticleId={highlightedPublishArticleId}
+            onPublish={publishNow}
+            onRetry={retryPublish}
+            onSeoDetails={openSEODetails}
+            onDestination={() => setDrawer("github")}
+          />
+          <PublishedSection
+            section={publishedSection}
+            projectId={projectId}
+            collapsed={publishedCollapsed}
+            highlightedArticleId={highlightedPublishedArticleId}
+            busy={busy}
+            onToggle={() => setPublishedCollapsed((value) => !value)}
+            onCheckStatus={reconcile}
+          />
+        </div>
 
         <section data-publish-c2-destinations className="min-w-0 space-y-3">
           <SectionHeader title="Publish destinations" action={<Badge tone="neutral">{destinations.firstViewport.length} visible</Badge>} />
@@ -1049,18 +1186,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             )}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
-            {readyNow.items.some((item) => item.action === "publish" && !item.disabled) && (
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={!nextHeaderArticle || busy === `publish-${nextHeaderArticle?.id}`}
-                onClick={() => nextHeaderArticle && publishNow(nextHeaderArticle)}
-              >
-                <ButtonProgress busy={Boolean(nextHeaderArticle && busy === `publish-${nextHeaderArticle.id}`)} busyLabel="Publishing" idleIcon={<Send size={14} />}>
-                  Publish next
-                </ButtonProgress>
-              </Button>
-            )}
             {scheduledCanonicals.length > 0 && (
               <Button size="sm" onClick={() => openViewAll("scheduled")}>
                 <CalendarClock size={14} />
@@ -1167,7 +1292,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       <Drawer
         open={drawer === "view_all"}
         title="View all"
-        subtitle="Ready, scheduled, published, failed, waiting, and ready-to-distribute items."
+        subtitle="Ready, scheduled, failed, waiting, and ready-to-distribute items."
         onClose={() => setDrawer(null)}
       >
         <div data-publish-view-all-drawer className="space-y-5">
