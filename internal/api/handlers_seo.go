@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -15,6 +16,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/citeloop/citeloop/internal/workflow"
@@ -1053,37 +1055,200 @@ func (s *Server) applyPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	claimed, err := s.Q.ClaimPageUpdateDraftForApply(r.Context(), db.ClaimPageUpdateDraftForApplyParams{ID: draftID, ProjectID: projectID})
+	ctx := r.Context()
+	claimed, err := s.Q.ClaimPageUpdateDraftForApply(ctx, db.ClaimPageUpdateDraftForApplyParams{ID: draftID, ProjectID: projectID})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "page update draft is not approved or is already being applied")
 		return
 	}
-	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: claimed.ContentActionID, ProjectID: projectID})
+	action, err := s.Q.GetContentAction(ctx, db.GetContentActionParams{ID: claimed.ContentActionID, ProjectID: projectID})
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "content action not found")
 		return
 	}
+	fallbackReason := "No exact CiteLoop-published MDX/Markdown source mapping and connected GitHub publisher were available for this V1 page update."
+	if draft, applied, applyErr := s.applyPageUpdateDraftViaGitHubPR(ctx, projectID, claimed, action); applied {
+		writeJSON(w, http.StatusOK, draft)
+		return
+	} else if applyErr != nil {
+		fallbackReason = applyErr.Error()
+	}
+	draft, err := s.markPageUpdateDraftManualApply(ctx, projectID, claimed, action, fallbackReason)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) applyPageUpdateDraftViaGitHubPR(ctx context.Context, projectID uuid.UUID, claimed db.PageUpdateDraft, action db.ContentAction) (db.PageUpdateDraft, bool, error) {
+	if !claimed.TargetArticleID.Valid {
+		return db.PageUpdateDraft{}, false, fmt.Errorf("page update draft has no target article")
+	}
+	article, err := s.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: uuid.UUID(claimed.TargetArticleID.Bytes), ProjectID: projectID})
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	mapping, ok := pageUpdateExactSourceMapping(article)
+	if !ok {
+		return db.PageUpdateDraft{}, false, fmt.Errorf("target article is not an exact CiteLoop-published Markdown source")
+	}
+	conn, err := s.Q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
+		ProjectID: projectID,
+		Kind:      publisher.ConnectionKindGitHubNextJS,
+	})
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	if target, ok := publisher.GitHubNextJSTargetForSiteURL(claimed.TargetUrl); ok {
+		cfg.Branch = target.Branch
+		cfg.BaseURL = target.BaseURL
+	}
+	token, err := s.publisherConnectionToken(ctx, projectID, conn)
+	if err != nil || strings.TrimSpace(token) == "" {
+		if err == nil {
+			err = fmt.Errorf("github publisher token is empty")
+		}
+		return db.PageUpdateDraft{}, false, err
+	}
+	workingBranch := pageUpdateWorkingBranch(claimed)
+	repo := cfg.Repo
+	baseBranch := cfg.Branch
+	sourceFilePath := mapping.SourceFilePath
+	sourceFilePaths := mustJSONLocal([]string{sourceFilePath})
+	baseCommitSHA := strPtrFrom(mapping.BaseCommitSHA)
+	proposedHash := pageUpdateContentHash(claimed.ProposedContentMd)
+	app, err := s.Q.CreateOrReuseSiteChangeApplication(ctx, db.CreateOrReuseSiteChangeApplicationParams{
+		ProjectID:               projectID,
+		SourceOpportunityID:     pgtype.UUID{Bytes: action.OpportunityID, Valid: true},
+		ContentActionID:         action.ID,
+		PageUpdateDraftID:       pgtype.UUID{Bytes: claimed.ID, Valid: true},
+		ApplicationKind:         "page_update",
+		TargetUrl:               claimed.TargetUrl,
+		NormalizedTargetUrl:     claimed.NormalizedTargetUrl,
+		OpportunityKey:          claimed.OpportunityKey,
+		PublisherConnectionID:   pgtype.UUID{Bytes: conn.ID, Valid: true},
+		RepoFullName:            &repo,
+		BaseBranch:              &baseBranch,
+		WorkingBranch:           &workingBranch,
+		BaseCommitSha:           baseCommitSHA,
+		HeadCommitSha:           nil,
+		SourceFilePath:          &sourceFilePath,
+		SourceFilePaths:         sourceFilePaths,
+		SourceMappingConfidence: mapping.Confidence,
+		SourceMappingReason:     mapping.Reason,
+		BaseFileSha:             nil,
+		BaseContentHash:         claimed.BaseContentHash,
+		ProposedContentHash:     &proposedHash,
+		PatchSnapshot:           jsonOrEmptyObject(claimed.Patch),
+		DiffSnapshot:            jsonOrEmptyObject(claimed.DiffSnapshot),
+		ResolutionCriteria:      jsonOrEmptyObject(claimed.ResolutionCriteria),
+		Status:                  "ready_for_pr",
+	})
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	if app.Status == "github_pr_open" && strings.TrimSpace(stringPtrValueAPI(app.GithubPrUrl)) != "" {
+		draft, err := s.markPageUpdateDraftGitHubPRResult(ctx, projectID, claimed, action, app)
+		return draft, err == nil, err
+	}
+	pr, err := publisher.NewGitHubPRClient(token, cfg.Repo, cfg.Branch, s.Log).CreatePageUpdatePR(ctx, publisher.GitHubPRInput{
+		SourcePath:        mapping.SourceFilePath,
+		WorkingBranch:     workingBranch,
+		BaseFileSHA:       "",
+		ProposedContentMD: claimed.ProposedContentMd,
+		CommitMessage:     pageUpdatePRCommitMessage(action),
+		Title:             pageUpdatePRTitle(action),
+		Body:              pageUpdatePRBody(claimed, action, mapping),
+	})
+	if err != nil {
+		_, _ = s.Q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+			ID:                   app.ID,
+			ProjectID:            projectID,
+			Status:               "manual_apply_required",
+			GithubPrState:        nil,
+			DeploymentSnapshot:   json.RawMessage(`{}`),
+			VerificationSnapshot: json.RawMessage(`{}`),
+			FailureReason:        strPtrFrom(err.Error()),
+		})
+		return db.PageUpdateDraft{}, false, err
+	}
+	prNumber := int32(pr.Number)
+	app, err = s.Q.MarkSiteChangeApplicationGitHubPR(ctx, db.MarkSiteChangeApplicationGitHubPRParams{
+		ID:             app.ID,
+		ProjectID:      projectID,
+		WorkingBranch:  &pr.WorkingBranch,
+		HeadCommitSha:  &pr.HeadCommitSHA,
+		BaseFileSha:    &pr.BaseFileSHA,
+		GithubPrNumber: &prNumber,
+		GithubPrUrl:    &pr.URL,
+		GithubPrState:  &pr.State,
+	})
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	draft, err := s.markPageUpdateDraftGitHubPRResult(ctx, projectID, claimed, action, app)
+	if err != nil {
+		return db.PageUpdateDraft{}, false, err
+	}
+	return draft, true, nil
+}
+
+func (s *Server) markPageUpdateDraftGitHubPRResult(ctx context.Context, projectID uuid.UUID, claimed db.PageUpdateDraft, action db.ContentAction, app db.SiteChangeApplication) (db.PageUpdateDraft, error) {
+	result := mustJSONLocal(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "github_pr_open",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            app.GithubPrState,
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"working_branch":             app.WorkingBranch,
+		"head_commit_sha":            app.HeadCommitSha,
+		"base_file_sha":              app.BaseFileSha,
+		"source_file_path":           app.SourceFilePath,
+		"target_url":                 claimed.TargetUrl,
+	})
+	draft, err := s.Q.MarkPageUpdateDraftApplyResult(ctx, db.MarkPageUpdateDraftApplyResultParams{
+		ID:              claimed.ID,
+		ProjectID:       projectID,
+		Status:          "verification_pending",
+		PublisherResult: result,
+	})
+	if err != nil {
+		return db.PageUpdateDraft{}, err
+	}
+	if _, err := s.Q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "verification_pending"}); err != nil {
+		return db.PageUpdateDraft{}, err
+	}
+	return draft, nil
+}
+
+func (s *Server) markPageUpdateDraftManualApply(ctx context.Context, projectID uuid.UUID, claimed db.PageUpdateDraft, action db.ContentAction, reason string) (db.PageUpdateDraft, error) {
 	result := mustJSONLocal(map[string]any{
 		"mode":       "manual_patch",
 		"status":     "manual_apply_required",
 		"target_url": claimed.TargetUrl,
-		"reason":     "No source-backed update publisher is connected for this V1 page update.",
+		"reason":     reason,
 	})
-	draft, err := s.Q.MarkPageUpdateDraftApplyResult(r.Context(), db.MarkPageUpdateDraftApplyResultParams{
+	draft, err := s.Q.MarkPageUpdateDraftApplyResult(ctx, db.MarkPageUpdateDraftApplyResultParams{
 		ID:              claimed.ID,
 		ProjectID:       projectID,
 		Status:          "manual_apply_required",
 		PublisherResult: result,
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return db.PageUpdateDraft{}, err
 	}
-	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "manual_apply_required"}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+	if _, err := s.Q.UpdateContentActionStatus(ctx, db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "manual_apply_required"}); err != nil {
+		return db.PageUpdateDraft{}, err
 	}
-	writeJSON(w, http.StatusOK, draft)
+	return draft, nil
 }
 
 func (s *Server) verifyPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
@@ -1164,6 +1329,114 @@ func (s *Server) pageUpdateDraftWithAction(ctx context.Context, projectID uuid.U
 		return db.PageUpdateDraft{}, db.ContentAction{}, err
 	}
 	return draft, action, nil
+}
+
+type pageUpdateSourceMapping struct {
+	SourceFilePath string
+	BaseCommitSHA  string
+	Confidence     string
+	Reason         string
+}
+
+func pageUpdateExactSourceMapping(article db.Article) (pageUpdateSourceMapping, bool) {
+	publishPath := strings.TrimSpace(stringPtrValueAPI(article.PublishPath))
+	var result struct {
+		Path      string `json:"path"`
+		CommitSHA string `json:"commit_sha"`
+	}
+	if len(article.PublishResult) > 0 && json.Valid(article.PublishResult) {
+		_ = json.Unmarshal(article.PublishResult, &result)
+		if publishPath == "" {
+			publishPath = strings.TrimSpace(result.Path)
+		}
+	}
+	if publishPath == "" {
+		return pageUpdateSourceMapping{}, false
+	}
+	lower := strings.ToLower(publishPath)
+	if !strings.HasSuffix(lower, ".mdx") && !strings.HasSuffix(lower, ".md") {
+		return pageUpdateSourceMapping{}, false
+	}
+	return pageUpdateSourceMapping{
+		SourceFilePath: publishPath,
+		BaseCommitSHA:  strings.TrimSpace(result.CommitSHA),
+		Confidence:     "exact",
+		Reason:         "Matched CiteLoop-published article publish path.",
+	}, true
+}
+
+func pageUpdateWorkingBranch(draft db.PageUpdateDraft) string {
+	suffix := strings.ReplaceAll(draft.ID.String(), "-", "")
+	if len(suffix) > 12 {
+		suffix = suffix[:12]
+	}
+	return "citeloop/page-update-" + suffix
+}
+
+func pageUpdateContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+func pageUpdatePRTitle(action db.ContentAction) string {
+	title := compactPageUpdateText(action.ActionType)
+	if title == "" {
+		title = "Apply page update"
+	}
+	if len(title) > 88 {
+		title = strings.TrimSpace(title[:88])
+	}
+	return "CiteLoop: " + title
+}
+
+func pageUpdatePRCommitMessage(action db.ContentAction) string {
+	title := compactPageUpdateText(action.ActionType)
+	if title == "" {
+		title = "Apply CiteLoop page update"
+	}
+	return title
+}
+
+func pageUpdatePRBody(draft db.PageUpdateDraft, action db.ContentAction, mapping pageUpdateSourceMapping) string {
+	criteria := compactJSONSummary(draft.ResolutionCriteria)
+	if criteria == "" {
+		criteria = "No structured criteria were recorded."
+	}
+	return fmt.Sprintf(`## CiteLoop Page Update
+
+Target URL: %s
+Opportunity key: %s
+Source file: %s
+Source mapping: %s
+
+## Requested Change
+
+%s
+
+## Resolution Criteria
+
+%s
+
+After this PR merges and deploys, CiteLoop should verify the target page before closing the opportunity.
+`,
+		draft.TargetUrl,
+		draft.OpportunityKey,
+		mapping.SourceFilePath,
+		mapping.Reason,
+		compactPageUpdateText(action.ActionType),
+		criteria,
+	)
+}
+
+func jsonOrEmptyObject(raw json.RawMessage) json.RawMessage {
+	if len(raw) > 0 && json.Valid(raw) {
+		return raw
+	}
+	return json.RawMessage(`{}`)
+}
+
+func compactPageUpdateText(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 }
 
 func (s *Server) existingTopicForContentAction(ctx context.Context, projectID uuid.UUID, actionID uuid.UUID) (db.Topic, bool, error) {

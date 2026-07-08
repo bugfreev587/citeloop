@@ -809,6 +809,155 @@ order by updated_at asc
 limit sqlc.arg(limit_rows)
 for update skip locked;
 
+-- name: CreateOrReuseSiteChangeApplication :one
+insert into site_change_applications
+  (project_id, source_opportunity_id, content_action_id, page_update_draft_id,
+   application_kind, target_url, normalized_target_url, opportunity_key,
+   publisher_connection_id, repo_full_name, base_branch, working_branch,
+   base_commit_sha, head_commit_sha, source_file_path, source_file_paths,
+   source_mapping_confidence, source_mapping_reason, base_file_sha,
+   base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot,
+   resolution_criteria, status)
+values (
+  sqlc.arg(project_id),
+  sqlc.narg(source_opportunity_id),
+  sqlc.arg(content_action_id),
+  sqlc.narg(page_update_draft_id),
+  sqlc.arg(application_kind),
+  sqlc.arg(target_url),
+  sqlc.arg(normalized_target_url),
+  sqlc.arg(opportunity_key),
+  sqlc.narg(publisher_connection_id),
+  sqlc.narg(repo_full_name),
+  sqlc.narg(base_branch),
+  sqlc.narg(working_branch),
+  sqlc.narg(base_commit_sha),
+  sqlc.narg(head_commit_sha),
+  sqlc.narg(source_file_path),
+  sqlc.arg(source_file_paths)::jsonb,
+  sqlc.arg(source_mapping_confidence),
+  sqlc.arg(source_mapping_reason),
+  sqlc.narg(base_file_sha),
+  sqlc.narg(base_content_hash),
+  sqlc.narg(proposed_content_hash),
+  sqlc.arg(patch_snapshot)::jsonb,
+  sqlc.arg(diff_snapshot)::jsonb,
+  sqlc.arg(resolution_criteria)::jsonb,
+  sqlc.arg(status)
+)
+on conflict (project_id, opportunity_key)
+where status in (
+  'draft_ready',
+  'source_mapping_required',
+  'ready_for_pr',
+  'creating_pr',
+  'github_pr_open',
+  'github_pr_closed',
+  'github_pr_merged',
+  'deployment_pending',
+  'verification_pending',
+  'needs_follow_up',
+  'conflict',
+  'manual_apply_required'
+) do update set
+  source_opportunity_id = coalesce(excluded.source_opportunity_id, site_change_applications.source_opportunity_id),
+  content_action_id = excluded.content_action_id,
+  page_update_draft_id = coalesce(excluded.page_update_draft_id, site_change_applications.page_update_draft_id),
+  application_kind = excluded.application_kind,
+  target_url = excluded.target_url,
+  normalized_target_url = excluded.normalized_target_url,
+  publisher_connection_id = coalesce(excluded.publisher_connection_id, site_change_applications.publisher_connection_id),
+  repo_full_name = coalesce(excluded.repo_full_name, site_change_applications.repo_full_name),
+  base_branch = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.base_branch
+    else coalesce(excluded.base_branch, site_change_applications.base_branch)
+  end,
+  working_branch = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.working_branch
+    else coalesce(excluded.working_branch, site_change_applications.working_branch)
+  end,
+  base_commit_sha = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.base_commit_sha
+    else coalesce(excluded.base_commit_sha, site_change_applications.base_commit_sha)
+  end,
+  head_commit_sha = coalesce(excluded.head_commit_sha, site_change_applications.head_commit_sha),
+  source_file_path = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.source_file_path
+    else coalesce(excluded.source_file_path, site_change_applications.source_file_path)
+  end,
+  source_file_paths = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.source_file_paths
+    when excluded.source_file_paths <> '[]'::jsonb then excluded.source_file_paths
+    else site_change_applications.source_file_paths
+  end,
+  source_mapping_confidence = excluded.source_mapping_confidence,
+  source_mapping_reason = excluded.source_mapping_reason,
+  base_file_sha = coalesce(excluded.base_file_sha, site_change_applications.base_file_sha),
+  base_content_hash = coalesce(excluded.base_content_hash, site_change_applications.base_content_hash),
+  proposed_content_hash = coalesce(excluded.proposed_content_hash, site_change_applications.proposed_content_hash),
+  patch_snapshot = excluded.patch_snapshot,
+  diff_snapshot = excluded.diff_snapshot,
+  resolution_criteria = excluded.resolution_criteria,
+  status = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending','verified') then site_change_applications.status
+    else excluded.status
+  end,
+  updated_at = now()
+returning *;
+
+-- name: GetSiteChangeApplicationForProject :one
+select * from site_change_applications
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+
+-- name: GetActiveSiteChangeApplicationByOpportunityKey :one
+select * from site_change_applications
+where project_id = sqlc.arg(project_id)
+  and opportunity_key = sqlc.arg(opportunity_key)
+  and status in (
+    'draft_ready',
+    'source_mapping_required',
+    'ready_for_pr',
+    'creating_pr',
+    'github_pr_open',
+    'github_pr_closed',
+    'github_pr_merged',
+    'deployment_pending',
+    'verification_pending',
+    'needs_follow_up',
+    'conflict',
+    'manual_apply_required'
+  )
+order by updated_at desc
+limit 1;
+
+-- name: MarkSiteChangeApplicationGitHubPR :one
+update site_change_applications set
+  status = 'github_pr_open',
+  working_branch = sqlc.arg(working_branch),
+  head_commit_sha = sqlc.narg(head_commit_sha),
+  base_file_sha = coalesce(sqlc.narg(base_file_sha), base_file_sha),
+  github_pr_number = sqlc.arg(github_pr_number),
+  github_pr_url = sqlc.arg(github_pr_url),
+  github_pr_state = sqlc.arg(github_pr_state),
+  pr_created_at = coalesce(pr_created_at, now()),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: MarkSiteChangeApplicationStatus :one
+update site_change_applications set
+  status = sqlc.arg(status),
+  github_pr_state = coalesce(sqlc.narg(github_pr_state), github_pr_state),
+  deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  failure_reason = sqlc.narg(failure_reason),
+  merged_at = case when sqlc.arg(status) = 'github_pr_merged' then coalesce(merged_at, now()) else merged_at end,
+  deployed_at = case when sqlc.arg(status) in ('verification_pending','verified') then coalesce(deployed_at, now()) else deployed_at end,
+  verified_at = case when sqlc.arg(status) = 'verified' then coalesce(verified_at, now()) else verified_at end,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: MarkContentActionMeasuringForDraftArticle :one
 update content_actions set
   status = 'measuring',

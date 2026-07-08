@@ -410,6 +410,203 @@ func (q *Queries) CreateOrReusePageUpdateDraft(ctx context.Context, arg CreateOr
 	return i, err
 }
 
+const createOrReuseSiteChangeApplication = `-- name: CreateOrReuseSiteChangeApplication :one
+insert into site_change_applications
+  (project_id, source_opportunity_id, content_action_id, page_update_draft_id,
+   application_kind, target_url, normalized_target_url, opportunity_key,
+   publisher_connection_id, repo_full_name, base_branch, working_branch,
+   base_commit_sha, head_commit_sha, source_file_path, source_file_paths,
+   source_mapping_confidence, source_mapping_reason, base_file_sha,
+   base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot,
+   resolution_criteria, status)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8,
+  $9,
+  $10,
+  $11,
+  $12,
+  $13,
+  $14,
+  $15,
+  $16::jsonb,
+  $17,
+  $18,
+  $19,
+  $20,
+  $21,
+  $22::jsonb,
+  $23::jsonb,
+  $24::jsonb,
+  $25
+)
+on conflict (project_id, opportunity_key)
+where status in (
+  'draft_ready',
+  'source_mapping_required',
+  'ready_for_pr',
+  'creating_pr',
+  'github_pr_open',
+  'github_pr_closed',
+  'github_pr_merged',
+  'deployment_pending',
+  'verification_pending',
+  'needs_follow_up',
+  'conflict',
+  'manual_apply_required'
+) do update set
+  source_opportunity_id = coalesce(excluded.source_opportunity_id, site_change_applications.source_opportunity_id),
+  content_action_id = excluded.content_action_id,
+  page_update_draft_id = coalesce(excluded.page_update_draft_id, site_change_applications.page_update_draft_id),
+  application_kind = excluded.application_kind,
+  target_url = excluded.target_url,
+  normalized_target_url = excluded.normalized_target_url,
+  publisher_connection_id = coalesce(excluded.publisher_connection_id, site_change_applications.publisher_connection_id),
+  repo_full_name = coalesce(excluded.repo_full_name, site_change_applications.repo_full_name),
+  base_branch = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.base_branch
+    else coalesce(excluded.base_branch, site_change_applications.base_branch)
+  end,
+  working_branch = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.working_branch
+    else coalesce(excluded.working_branch, site_change_applications.working_branch)
+  end,
+  base_commit_sha = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.base_commit_sha
+    else coalesce(excluded.base_commit_sha, site_change_applications.base_commit_sha)
+  end,
+  head_commit_sha = coalesce(excluded.head_commit_sha, site_change_applications.head_commit_sha),
+  source_file_path = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.source_file_path
+    else coalesce(excluded.source_file_path, site_change_applications.source_file_path)
+  end,
+  source_file_paths = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending') then site_change_applications.source_file_paths
+    when excluded.source_file_paths <> '[]'::jsonb then excluded.source_file_paths
+    else site_change_applications.source_file_paths
+  end,
+  source_mapping_confidence = excluded.source_mapping_confidence,
+  source_mapping_reason = excluded.source_mapping_reason,
+  base_file_sha = coalesce(excluded.base_file_sha, site_change_applications.base_file_sha),
+  base_content_hash = coalesce(excluded.base_content_hash, site_change_applications.base_content_hash),
+  proposed_content_hash = coalesce(excluded.proposed_content_hash, site_change_applications.proposed_content_hash),
+  patch_snapshot = excluded.patch_snapshot,
+  diff_snapshot = excluded.diff_snapshot,
+  resolution_criteria = excluded.resolution_criteria,
+  status = case
+    when site_change_applications.status in ('github_pr_open','github_pr_merged','deployment_pending','verification_pending','verified') then site_change_applications.status
+    else excluded.status
+  end,
+  updated_at = now()
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at
+`
+
+type CreateOrReuseSiteChangeApplicationParams struct {
+	ProjectID               uuid.UUID       `json:"project_id"`
+	SourceOpportunityID     pgtype.UUID     `json:"source_opportunity_id"`
+	ContentActionID         uuid.UUID       `json:"content_action_id"`
+	PageUpdateDraftID       pgtype.UUID     `json:"page_update_draft_id"`
+	ApplicationKind         string          `json:"application_kind"`
+	TargetUrl               string          `json:"target_url"`
+	NormalizedTargetUrl     string          `json:"normalized_target_url"`
+	OpportunityKey          string          `json:"opportunity_key"`
+	PublisherConnectionID   pgtype.UUID     `json:"publisher_connection_id"`
+	RepoFullName            *string         `json:"repo_full_name"`
+	BaseBranch              *string         `json:"base_branch"`
+	WorkingBranch           *string         `json:"working_branch"`
+	BaseCommitSha           *string         `json:"base_commit_sha"`
+	HeadCommitSha           *string         `json:"head_commit_sha"`
+	SourceFilePath          *string         `json:"source_file_path"`
+	SourceFilePaths         json.RawMessage `json:"source_file_paths"`
+	SourceMappingConfidence string          `json:"source_mapping_confidence"`
+	SourceMappingReason     string          `json:"source_mapping_reason"`
+	BaseFileSha             *string         `json:"base_file_sha"`
+	BaseContentHash         *string         `json:"base_content_hash"`
+	ProposedContentHash     *string         `json:"proposed_content_hash"`
+	PatchSnapshot           json.RawMessage `json:"patch_snapshot"`
+	DiffSnapshot            json.RawMessage `json:"diff_snapshot"`
+	ResolutionCriteria      json.RawMessage `json:"resolution_criteria"`
+	Status                  string          `json:"status"`
+}
+
+func (q *Queries) CreateOrReuseSiteChangeApplication(ctx context.Context, arg CreateOrReuseSiteChangeApplicationParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, createOrReuseSiteChangeApplication,
+		arg.ProjectID,
+		arg.SourceOpportunityID,
+		arg.ContentActionID,
+		arg.PageUpdateDraftID,
+		arg.ApplicationKind,
+		arg.TargetUrl,
+		arg.NormalizedTargetUrl,
+		arg.OpportunityKey,
+		arg.PublisherConnectionID,
+		arg.RepoFullName,
+		arg.BaseBranch,
+		arg.WorkingBranch,
+		arg.BaseCommitSha,
+		arg.HeadCommitSha,
+		arg.SourceFilePath,
+		arg.SourceFilePaths,
+		arg.SourceMappingConfidence,
+		arg.SourceMappingReason,
+		arg.BaseFileSha,
+		arg.BaseContentHash,
+		arg.ProposedContentHash,
+		arg.PatchSnapshot,
+		arg.DiffSnapshot,
+		arg.ResolutionCriteria,
+		arg.Status,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
 const createSEODoctorRun = `-- name: CreateSEODoctorRun :one
 insert into seo_doctor_runs
   (project_id, trigger, status, stage, progress_percent, message, input_snapshot, created_by_user_id, started_at)
@@ -749,6 +946,79 @@ func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOA
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveSiteChangeApplicationByOpportunityKey = `-- name: GetActiveSiteChangeApplicationByOpportunityKey :one
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at from site_change_applications
+where project_id = $1
+  and opportunity_key = $2
+  and status in (
+    'draft_ready',
+    'source_mapping_required',
+    'ready_for_pr',
+    'creating_pr',
+    'github_pr_open',
+    'github_pr_closed',
+    'github_pr_merged',
+    'deployment_pending',
+    'verification_pending',
+    'needs_follow_up',
+    'conflict',
+    'manual_apply_required'
+  )
+order by updated_at desc
+limit 1
+`
+
+type GetActiveSiteChangeApplicationByOpportunityKeyParams struct {
+	ProjectID      uuid.UUID `json:"project_id"`
+	OpportunityKey string    `json:"opportunity_key"`
+}
+
+func (q *Queries) GetActiveSiteChangeApplicationByOpportunityKey(ctx context.Context, arg GetActiveSiteChangeApplicationByOpportunityKeyParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, getActiveSiteChangeApplicationByOpportunityKey, arg.ProjectID, arg.OpportunityKey)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
@@ -1185,6 +1455,62 @@ func (q *Queries) GetSEOPropertyForProject(ctx context.Context, projectID uuid.U
 		&i.DefaultLanguage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSiteChangeApplicationForProject = `-- name: GetSiteChangeApplicationForProject :one
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at from site_change_applications
+where id = $1 and project_id = $2
+`
+
+type GetSiteChangeApplicationForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetSiteChangeApplicationForProject(ctx context.Context, arg GetSiteChangeApplicationForProjectParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, getSiteChangeApplicationForProject, arg.ID, arg.ProjectID)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
@@ -3069,6 +3395,166 @@ func (q *Queries) MarkPageUpdateDraftVerification(ctx context.Context, arg MarkP
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markSiteChangeApplicationGitHubPR = `-- name: MarkSiteChangeApplicationGitHubPR :one
+update site_change_applications set
+  status = 'github_pr_open',
+  working_branch = $1,
+  head_commit_sha = $2,
+  base_file_sha = coalesce($3, base_file_sha),
+  github_pr_number = $4,
+  github_pr_url = $5,
+  github_pr_state = $6,
+  pr_created_at = coalesce(pr_created_at, now()),
+  updated_at = now()
+where id = $7 and project_id = $8
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at
+`
+
+type MarkSiteChangeApplicationGitHubPRParams struct {
+	WorkingBranch  *string   `json:"working_branch"`
+	HeadCommitSha  *string   `json:"head_commit_sha"`
+	BaseFileSha    *string   `json:"base_file_sha"`
+	GithubPrNumber *int32    `json:"github_pr_number"`
+	GithubPrUrl    *string   `json:"github_pr_url"`
+	GithubPrState  *string   `json:"github_pr_state"`
+	ID             uuid.UUID `json:"id"`
+	ProjectID      uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg MarkSiteChangeApplicationGitHubPRParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, markSiteChangeApplicationGitHubPR,
+		arg.WorkingBranch,
+		arg.HeadCommitSha,
+		arg.BaseFileSha,
+		arg.GithubPrNumber,
+		arg.GithubPrUrl,
+		arg.GithubPrState,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const markSiteChangeApplicationStatus = `-- name: MarkSiteChangeApplicationStatus :one
+update site_change_applications set
+  status = $1,
+  github_pr_state = coalesce($2, github_pr_state),
+  deployment_snapshot = $3::jsonb,
+  verification_snapshot = $4::jsonb,
+  failure_reason = $5,
+  merged_at = case when $1 = 'github_pr_merged' then coalesce(merged_at, now()) else merged_at end,
+  deployed_at = case when $1 in ('verification_pending','verified') then coalesce(deployed_at, now()) else deployed_at end,
+  verified_at = case when $1 = 'verified' then coalesce(verified_at, now()) else verified_at end,
+  updated_at = now()
+where id = $6 and project_id = $7
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at
+`
+
+type MarkSiteChangeApplicationStatusParams struct {
+	Status               string          `json:"status"`
+	GithubPrState        *string         `json:"github_pr_state"`
+	DeploymentSnapshot   json.RawMessage `json:"deployment_snapshot"`
+	VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+	FailureReason        *string         `json:"failure_reason"`
+	ID                   uuid.UUID       `json:"id"`
+	ProjectID            uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkSiteChangeApplicationStatusParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, markSiteChangeApplicationStatus,
+		arg.Status,
+		arg.GithubPrState,
+		arg.DeploymentSnapshot,
+		arg.VerificationSnapshot,
+		arg.FailureReason,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
 	)
 	return i, err
 }
