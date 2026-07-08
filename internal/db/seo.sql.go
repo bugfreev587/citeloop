@@ -3538,6 +3538,62 @@ func (q *Queries) MarkContentActionReturnedToOpportunity(ctx context.Context, ar
 	return i, err
 }
 
+const markContentActionSiteFixPRResult = `-- name: MarkContentActionSiteFixPRResult :one
+update content_actions set
+  status = 'verification_pending',
+  output_snapshot = coalesce(output_snapshot, '{}'::jsonb) || jsonb_build_object('publisher_result', $1::jsonb),
+  updated_at = now()
+where id = $2 and project_id = $3
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason
+`
+
+type MarkContentActionSiteFixPRResultParams struct {
+	PublisherResult json.RawMessage `json:"publisher_result"`
+	ID              uuid.UUID       `json:"id"`
+	ProjectID       uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) MarkContentActionSiteFixPRResult(ctx context.Context, arg MarkContentActionSiteFixPRResultParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, markContentActionSiteFixPRResult, arg.PublisherResult, arg.ID, arg.ProjectID)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
+	)
+	return i, err
+}
+
 const markContentActionVerification = `-- name: MarkContentActionVerification :one
 update content_actions set
   status = $1::text,

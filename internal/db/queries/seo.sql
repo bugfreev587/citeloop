@@ -897,6 +897,14 @@ update content_actions set
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
+-- name: MarkContentActionSiteFixPRResult :one
+update content_actions set
+  status = 'verification_pending',
+  output_snapshot = coalesce(output_snapshot, '{}'::jsonb) || jsonb_build_object('publisher_result', sqlc.arg(publisher_result)::jsonb),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: MarkContentActionDraftReady :one
 update content_actions set
   status = 'ready_for_review',

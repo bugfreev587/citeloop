@@ -196,6 +196,32 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
   }
 });
 
+test("Analysis Site Fixes switch from JSON copy to GitHub PR when connected", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const refreshStart = source.indexOf("const refresh = useCallback(async () => {");
+  const refreshEnd = source.indexOf("useEffect(() => {\n    refresh();", refreshStart);
+  const drawerStart = source.indexOf("data-direct-action-drawer");
+  const drawerEnd = source.indexOf('{mode === "analysis" && selectedOpportunity', drawerStart);
+  const refreshSource = source.slice(refreshStart, refreshEnd);
+  const drawerSource = source.slice(drawerStart, drawerEnd);
+
+  assert.notEqual(refreshStart, -1, "seo-client.tsx missing refresh callback");
+  assert.notEqual(drawerStart, -1, "seo-client.tsx missing Site Fix drawer");
+  assert.match(source, /const \[publisherConnections, setPublisherConnections\] = useState<PublisherConnection\[\]>\(\[\]\)/);
+  assert.match(refreshSource, /api\.listPublisherConnections\(projectId\)/);
+  assert.match(refreshSource, /if \(publisherRows\) setPublisherConnections\(publisherRows\)/);
+  assert.match(source, /const hasConnectedGitHubPublisher = useMemo/);
+  assert.match(source, /siteFixGitHubPRURL\(action\)/);
+  assert.match(source, /async function createSiteFixGitHubPR\(action: SEOContentAction\)/);
+  assert.match(source, /api\.createSiteFixGitHubPR\(projectId, action\.id\)/);
+  assert.match(drawerSource, /hasConnectedGitHubPublisher/);
+  assert.match(drawerSource, /Create GitHub PR/);
+  assert.match(drawerSource, /Open PR/);
+  assert.match(drawerSource, /Copy fix JSON/);
+  assert.match(drawerSource, /site-fix-create-pr-button/);
+  assert.match(drawerSource, /site-fix-open-pr-button/);
+});
+
 test("Analysis Loop in motion makes Site Fixes visible inside the lifecycle", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 

@@ -153,6 +153,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/actions/{actionID}", s.getSEOContentAction)
 				r.Post("/actions/{actionID}/plan", s.planSEOContentAction)
 				r.Post("/actions/{actionID}/return-to-opportunity", s.returnSEOContentActionToOpportunity)
+				r.Post("/actions/{actionID}/site-fix-pr", s.createSiteFixGitHubPR)
 				r.Post("/actions/{actionID}/page-update-drafts", s.createPageUpdateDraftForAction)
 				r.Get("/page-update-drafts/{draftID}", s.getPageUpdateDraft)
 				r.Post("/page-update-drafts/{draftID}/generate", s.generatePageUpdateDraft)
