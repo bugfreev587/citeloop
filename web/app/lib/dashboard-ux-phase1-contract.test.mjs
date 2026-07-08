@@ -1025,6 +1025,30 @@ test("publishing manual drafts and View all drawer preserve non-first-viewport s
   assert.doesNotMatch(logic, /\{ key: "published", label: "Published", count: published\.length, items: published \}/);
 });
 
+test("publishing seeds published ids after initial load before highlighting new rows", () => {
+  const publishing = read("projects/[id]/publishing/publishing-client.tsx");
+  const marker = "const nextIds = new Set(published.map((article) => article.id));";
+  const start = publishing.lastIndexOf("useEffect", publishing.indexOf(marker));
+  const end = publishing.indexOf("  async function saveMode", start);
+  const publishedHighlightEffect = publishing.slice(start, end);
+
+  assert.match(
+    publishedHighlightEffect,
+    /if \(loading\) return;/,
+    "initial empty loading state must not seed seenPublishedIdsRef",
+  );
+  assert.match(
+    publishedHighlightEffect,
+    /seenPublishedIdsRef\.current = nextIds;[\s\S]*if \(!previousIds\) return;/,
+    "first loaded published rows seed the baseline instead of highlighting existing content",
+  );
+  assert.match(
+    publishedHighlightEffect,
+    /\}, \[loading, published\]\);/,
+    "the highlight effect should rerun when loading finishes with the first published rows",
+  );
+});
+
 test("renamed dashboard routes exist and legacy routes redirect", () => {
   for (const route of [
     "projects/[id]/context/page.tsx",

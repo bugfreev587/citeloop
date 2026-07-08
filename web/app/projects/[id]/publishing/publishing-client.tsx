@@ -872,6 +872,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   }, [linkedArticleId, loading, readyNow.items]);
 
   useEffect(() => {
+    if (loading) return;
     const nextIds = new Set(published.map((article) => article.id));
     const previousIds = seenPublishedIdsRef.current;
     seenPublishedIdsRef.current = nextIds;
@@ -893,7 +894,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       window.clearTimeout(focusTimer);
       window.clearTimeout(clearTimer);
     };
-  }, [published]);
+  }, [loading, published]);
 
   async function saveMode(next: Partial<Pick<ProjectConfig, "publish_mode" | "publish_interval_days">>) {
     const base = config ?? defaultProjectConfig();
