@@ -3,14 +3,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../../components/ui";
 import { CONTENT_WORKFLOW_PATH_CHANGE_EVENT } from "../../lib/dashboard-routing";
+import { CONTENT_WORKFLOW_STEPS, selectActiveContentWorkflowStep, type ContentWorkflowStep } from "../../lib/content-workflow-routing";
 import { ContentWorkflowStageHeaderActionContext } from "./content-workflow-stage-actions";
 import { PublishingClient } from "./publishing/publishing-client";
 import { ReviewClient } from "./review/review-client";
 import { TopicsClient } from "./topics/topics-client";
 
-export type ContentWorkflowStep = "plan" | "review" | "publish";
-
-const WORKFLOW_STEPS: ContentWorkflowStep[] = ["plan", "review", "publish"];
 const SECTION_IDS: Record<ContentWorkflowStep, string> = {
   plan: "content-workflow-plan",
   review: "content-workflow-review",
@@ -123,15 +121,13 @@ export function ContentWorkflowClient({
 
     // Keep short top-aligned stages active until the next stage is meaningfully near the top.
     const marker = Math.min(window.innerHeight * 0.35, TARGET_TOP_OFFSET + ACTIVE_STEP_MARKER_MAX_OFFSET);
-    let nextStep: ContentWorkflowStep = "plan";
-
-    for (const step of WORKFLOW_STEPS) {
-      const section = sectionRefs.current[step];
-      if (!section) continue;
-      if (section.getBoundingClientRect().top - marker <= 0) {
-        nextStep = step;
-      }
-    }
+    const nextStep = selectActiveContentWorkflowStep(
+      CONTENT_WORKFLOW_STEPS.map((step) => {
+        const section = sectionRefs.current[step];
+        return { step, top: section ? section.getBoundingClientRect().top : null };
+      }),
+      { marker, targetTopOffset: TARGET_TOP_OFFSET },
+    );
 
     if (activeStepRef.current === nextStep) return;
     syncPathToStep(nextStep);
