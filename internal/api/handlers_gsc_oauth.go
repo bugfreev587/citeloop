@@ -123,7 +123,8 @@ func (s *Server) completeGSCOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "google oauth exchange failed")
 		return
 	}
-	sites, err := googledata.NewSearchConsoleOAuthClient(r.Context(), s.Env.GoogleOAuthClientID, s.Env.GoogleOAuthClientSecret, claims.RedirectURI, token).ListSearchConsoleSites(r.Context())
+	googleClient := googledata.NewSearchConsoleOAuthClient(r.Context(), s.Env.GoogleOAuthClientID, s.Env.GoogleOAuthClientSecret, claims.RedirectURI, token)
+	sites, err := googleClient.ListSearchConsoleSites(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "search console property lookup failed")
 		return
@@ -178,7 +179,7 @@ func (s *Server) completeGSCOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.clearGA4ScopeErrorAfterOAuth(r.Context(), projectID, scope, time.Now().UTC())
+	s.refreshGA4IntegrationAfterOAuth(r.Context(), projectID, scope, googleClient, time.Now().UTC())
 	writeJSON(w, http.StatusOK, s.gscConnectionFromToken(projectID, row, siteURL, status))
 }
 
@@ -421,6 +422,78 @@ func (s *Server) clearGA4ScopeErrorAfterOAuth(ctx context.Context, projectID uui
 			LastVerifiedAt: pgutil.TS(now),
 		})
 	}
+}
+
+func (s *Server) refreshGA4IntegrationAfterOAuth(ctx context.Context, projectID uuid.UUID, scope string, provider seopkg.GoogleDataProvider, now time.Time) {
+	if s.Q == nil || provider == nil {
+		return
+	}
+	if !googledata.HasOAuthScope(scope, googledata.ScopeAnalyticsReadonly) {
+		return
+	}
+	prop, err := s.Q.GetSEOPropertyForProject(ctx, projectID)
+	if err != nil || prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" {
+		s.clearGA4ScopeErrorAfterOAuth(ctx, projectID, scope, now)
+		return
+	}
+	integrations, err := s.Q.ListSEOIntegrations(ctx, projectID)
+	if err != nil {
+		return
+	}
+	probeErr := probeGA4PropertyAccess(ctx, provider, *prop.Ga4PropertyID, now)
+	params, ok := ga4OAuthValidationIntegrationParams(projectID, scope, *prop.Ga4PropertyID, integrations, probeErr, now)
+	if !ok {
+		return
+	}
+	_, _ = s.Q.UpsertSEOIntegration(ctx, params)
+}
+
+func probeGA4PropertyAccess(ctx context.Context, provider seopkg.GoogleDataProvider, propertyID string, now time.Time) error {
+	_, err := provider.FetchAnalytics(ctx, googledata.AnalyticsRequest{
+		PropertyID: strings.TrimSpace(propertyID),
+		StartDate:  now.AddDate(0, 0, -7),
+		EndDate:    now.AddDate(0, 0, -1),
+		RowLimit:   1,
+	})
+	return err
+}
+
+func ga4OAuthValidationIntegrationParams(projectID uuid.UUID, scope string, propertyID string, existing []db.SeoIntegration, probeErr error, now time.Time) (db.UpsertSEOIntegrationParams, bool) {
+	if !googledata.HasOAuthScope(scope, googledata.ScopeAnalyticsReadonly) || strings.TrimSpace(propertyID) == "" {
+		return db.UpsertSEOIntegrationParams{}, false
+	}
+	if probeErr != nil {
+		status, message, _ := seopkg.GA4IntegrationFailureForError(probeErr)
+		return db.UpsertSEOIntegrationParams{
+			ProjectID:     projectID,
+			Provider:      seopkg.ProviderGA4,
+			Status:        status,
+			CredentialRef: ga4OAuthCredentialRef(existing),
+			LastError:     &message,
+		}, true
+	}
+	return db.UpsertSEOIntegrationParams{
+		ProjectID:      projectID,
+		Provider:       seopkg.ProviderGA4,
+		Status:         "connected",
+		CredentialRef:  ga4OAuthCredentialRef(existing),
+		LastVerifiedAt: pgutil.TS(now),
+	}, true
+}
+
+func ga4OAuthCredentialRef(existing []db.SeoIntegration) *string {
+	for _, integration := range existing {
+		if integration.Provider == seopkg.ProviderGA4 && integration.CredentialRef != nil && strings.TrimSpace(*integration.CredentialRef) != "" {
+			return integration.CredentialRef
+		}
+	}
+	for _, integration := range existing {
+		if integration.Provider == seopkg.ProviderGSC && integration.CredentialRef != nil && strings.TrimSpace(*integration.CredentialRef) != "" {
+			return integration.CredentialRef
+		}
+	}
+	ref := gscOAuthCredentialRef
+	return &ref
 }
 
 func (s *Server) projectSiteURL(ctx context.Context, projectID uuid.UUID) string {

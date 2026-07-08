@@ -74,6 +74,18 @@ function friendlyError(raw: unknown) {
   return message || "Something went wrong. Please try again.";
 }
 
+function friendlyGA4Error(raw: unknown) {
+  const message = String(raw ?? "").trim();
+  const lower = message.toLowerCase();
+  if (lower.includes("user does not have sufficient permissions for this property")) {
+    return "Google Analytics property access is missing. Confirm the numeric GA4 Property ID and that the connected Google account can read this GA4 property, then update Analytics access again.";
+  }
+  if (lower.includes("access_token_scope_insufficient") || lower.includes("insufficient authentication scopes")) {
+    return "Google Analytics permission is missing. Update Analytics access so CiteLoop can request Analytics read access, then run SEO sync again.";
+  }
+  return friendlyError(message);
+}
+
 function isProjectScopedMissing(raw: unknown) {
   const lower = String(raw ?? "").toLowerCase();
   return lower.includes("404") && lower.includes("project not found");
@@ -1924,7 +1936,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               <Badge tone={ga4Tone(ga4Status, savedGA4PropertyID)}>{ga4StatusLabel(ga4Status, savedGA4PropertyID)}</Badge>
             </div>
 
-            {ga4Integration?.last_error && <Notice title="Google Analytics needs attention" detail={ga4Integration.last_error} tone="red" />}
+            {ga4Integration?.last_error && <Notice title="Google Analytics needs attention" detail={friendlyGA4Error(ga4Integration.last_error)} tone="red" />}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
               <div className="grid gap-3">

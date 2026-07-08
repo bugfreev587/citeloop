@@ -754,11 +754,14 @@ test("context edit buttons stay single-line in section headers", () => {
 test("settings maps raw errors to user copy, confirms a budget pause, and drops dev jargon", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   assert.match(settings, /function friendlyError/);
+  assert.match(settings, /function friendlyGA4Error/);
   assert.match(settings, /detail: friendlyError\(e\.message\)/);
+  assert.match(settings, /detail=\{friendlyGA4Error\(ga4Integration\.last_error\)\}/);
   assert.match(settings, /function isProjectScopedMissing/);
   assert.match(settings, /if \(isProjectScopedMissing\(e\.message\)\)/);
   assert.doesNotMatch(settings, /Publisher connections unavailable", detail: e\.message/);
   assert.doesNotMatch(settings, /Search Console connection unavailable", detail: e\.message/);
+  assert.doesNotMatch(settings, /detail=\{ga4Integration\.last_error\}/);
   assert.doesNotMatch(settings, /Notifications unavailable", detail: e\.message/);
   // Budget -> $0 pauses automation; it must confirm first.
   assert.match(settings, /pauses all automated generation/);

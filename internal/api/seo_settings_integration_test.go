@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -111,5 +112,59 @@ func TestShouldNotClearNonScopeGA4ErrorAfterAnalyticsScopeGranted(t *testing.T) 
 
 	if shouldClearGA4ScopeErrorAfterOAuth(googledata.SearchConsoleOAuthScopeString(), integration) {
 		t.Fatal("non-scope GA4 errors should not be cleared by OAuth reconnect")
+	}
+}
+
+func TestGA4OAuthValidationConnectsAndClearsStalePropertyError(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Date(2026, 7, 8, 6, 10, 0, 0, time.UTC)
+	credentialRef := "seo_oauth_tokens:google_search_console"
+	lastError := `google api status 403: { "error": { "message": "User does not have sufficient permissions for this property.", "status": "PERMISSION_DENIED" } }`
+	existing := []db.SeoIntegration{{
+		ProjectID:     projectID,
+		Provider:      seopkg.ProviderGA4,
+		Status:        "error",
+		CredentialRef: &credentialRef,
+		LastError:     &lastError,
+	}}
+
+	params, ok := ga4OAuthValidationIntegrationParams(projectID, googledata.SearchConsoleOAuthScopeString(), "544348649", existing, nil, now)
+
+	if !ok {
+		t.Fatal("expected Analytics OAuth validation to update GA4 integration")
+	}
+	if params.Status != "connected" {
+		t.Fatalf("status = %q, want connected", params.Status)
+	}
+	if params.CredentialRef == nil || *params.CredentialRef != credentialRef {
+		t.Fatalf("credential ref = %v, want %q", params.CredentialRef, credentialRef)
+	}
+	if !params.LastVerifiedAt.Valid || !params.LastVerifiedAt.Time.Equal(now) {
+		t.Fatalf("last verified = %v, want %v", params.LastVerifiedAt, now)
+	}
+	if params.LastError != nil {
+		t.Fatalf("last error = %q, want nil", *params.LastError)
+	}
+}
+
+func TestGA4OAuthValidationMapsPropertyDeniedProbe(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Date(2026, 7, 8, 6, 11, 0, 0, time.UTC)
+	err := errors.New(`google api status 403: { "error": { "code": 403, "message": "User does not have sufficient permissions for this property. To learn more about Property ID, see https://developers.google.com/analytics/devguides/reporting/data/v1/property-id.", "status": "PERMISSION_DENIED" } }`)
+
+	params, ok := ga4OAuthValidationIntegrationParams(projectID, googledata.SearchConsoleOAuthScopeString(), "544348649", nil, err, now)
+
+	if !ok {
+		t.Fatal("expected Analytics OAuth validation to update GA4 integration")
+	}
+	if params.Status != "property_access_required" {
+		t.Fatalf("status = %q, want property_access_required", params.Status)
+	}
+	want := "Google Analytics property access is missing. Confirm the numeric GA4 Property ID and grant the connected Google account Viewer access in GA4 Property Access Management, then run SEO sync again."
+	if params.LastError == nil || *params.LastError != want {
+		t.Fatalf("last error = %v, want %q", params.LastError, want)
+	}
+	if params.LastVerifiedAt.Valid {
+		t.Fatalf("last verified = %v, want invalid after failed probe", params.LastVerifiedAt)
 	}
 }
