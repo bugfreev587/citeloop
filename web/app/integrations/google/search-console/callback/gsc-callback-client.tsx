@@ -41,15 +41,15 @@ export function StaticGSCCallbackClient({ code, state, error }: { code: string; 
       if (error) {
         setResult({
           kind: "error",
-          title: "Search Console connection was not approved",
-          detail: "You can restart the connection when you are ready to grant read-only Search Console access.",
+          title: "Google data connection was not approved",
+          detail: "You can restart the connection when you are ready to grant read-only Search Console and Analytics access.",
         });
         return;
       }
       if (!code || !state) {
         setResult({
           kind: "error",
-          title: "Search Console callback is missing information",
+          title: "Google data callback is missing information",
           detail: "Return to Settings and start the connection again.",
         });
         return;
@@ -57,7 +57,7 @@ export function StaticGSCCallbackClient({ code, state, error }: { code: string; 
       if (!projectId) {
         setResult({
           kind: "error",
-          title: "Search Console callback is missing the project_id",
+          title: "Google data callback is missing the project_id",
           detail: "Return to Settings and start the connection again.",
         });
         return;
@@ -69,7 +69,7 @@ export function StaticGSCCallbackClient({ code, state, error }: { code: string; 
         if (!cancelled) {
           setResult({
             kind: "error",
-            title: "Search Console connection failed",
+            title: "Google data connection failed",
             detail: e.message,
           });
         }
@@ -89,23 +89,23 @@ export function StaticGSCCallbackClient({ code, state, error }: { code: string; 
         </div>
         <div>
           <Badge tone={result.kind === "success" ? "green" : result.kind === "error" ? "amber" : "blue"}>
-            Search Console
+            Google data
           </Badge>
-          <h1 className="mt-2 text-2xl font-bold leading-8 text-slate-950">Finishing Search Console connection</h1>
+          <h1 className="mt-2 text-2xl font-bold leading-8 text-slate-950">Finishing Google data connection</h1>
           <p className="mt-1 text-sm leading-6 text-slate-600">
-            CiteLoop is completing the read-only authorization and preparing your Search Console property choices.
+            CiteLoop is completing the read-only Google authorization and preparing Search Console property choices. Analytics access is stored on the same Google connection.
           </p>
         </div>
       </div>
 
-      {result.kind === "loading" && <Notice title="Connecting Search Console" detail="This usually takes a few seconds." tone="neutral" />}
+      {result.kind === "loading" && <Notice title="Connecting Google data" detail="This usually takes a few seconds." tone="neutral" />}
       {result.kind === "error" && <Notice title={result.title} detail={result.detail} tone="amber" />}
       {result.kind === "success" && (
         <Notice
-          title={result.connection.status === "connected" ? "Search Console connected" : "Choose a Search Console property"}
+          title={result.connection.status === "connected" ? "Google data connected" : "Choose a Search Console property"}
           detail={
             result.connection.status === "connected"
-              ? `CiteLoop can now use ${result.connection.selected_property ?? "your selected property"} for first-party search data.`
+              ? `CiteLoop can now use ${result.connection.selected_property ?? "your selected property"} for first-party search data. Analytics access uses the same Google connection.`
               : "Your Google account is authorized. Select the matching property in Settings so CiteLoop knows which domain to measure."
           }
           tone={result.connection.status === "connected" ? "green" : "amber"}

@@ -96,7 +96,7 @@ function gscStatusLabel(status?: string) {
 
 function ga4Tone(status?: string, propertyID?: string): "green" | "amber" | "red" | "neutral" {
   if (status === "connected") return "green";
-  if (["error", "expired", "reconnect_required", "revoked"].includes(status ?? "")) return "red";
+  if (["error", "expired", "reconnect_required", "property_access_required", "revoked"].includes(status ?? "")) return "red";
   if (propertyID?.trim()) return "amber";
   return "neutral";
 }
@@ -104,6 +104,7 @@ function ga4Tone(status?: string, propertyID?: string): "green" | "amber" | "red
 function ga4StatusLabel(status?: string, propertyID?: string) {
   if (status === "connected") return "connected";
   if (status === "reconnect_required") return "reconnect required";
+  if (status === "property_access_required") return "property access required";
   if (status === "error") return "needs attention";
   if (propertyID?.trim()) return "property saved";
   return "not connected";
@@ -1320,7 +1321,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       : "Connect Search Console for first-party search data.";
   const ga4Integration = seoIntegrations.find((integration) => integration.provider === "google_analytics");
   const ga4Status = ga4Integration?.status;
-  const ga4NeedsGooglePermissions = ["error", "expired", "reconnect_required", "revoked"].includes(ga4Status ?? "");
+  const ga4NeedsGooglePermissions = ["error", "expired", "reconnect_required", "property_access_required", "revoked"].includes(ga4Status ?? "");
   const savedGA4PropertyID = seoProperty?.ga4_property_id?.trim() ?? "";
   const activeEventsBusy = Boolean(activeEventsChannel && notificationBusy === `events-${activeEventsChannel.id}`);
   const githubAppConnected = Boolean(githubIntegration?.connected);

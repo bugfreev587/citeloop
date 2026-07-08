@@ -100,12 +100,29 @@ func TestGA4IntegrationFailureRequiresReconnectForInsufficientScope(t *testing.T
 	if status != "reconnect_required" {
 		t.Fatalf("status = %q, want reconnect_required", status)
 	}
-	want := "Google Analytics permission is missing. Reconnect Google from Search Console settings so CiteLoop can request Analytics read access, then run SEO sync again."
+	want := "Google Analytics permission is missing. Update Analytics access from Settings so CiteLoop can request Analytics read access, then run SEO sync again."
 	if message != want {
 		t.Fatalf("message = %q, want %q", message, want)
 	}
 	if note != "ga4_reconnect_required" {
 		t.Fatalf("note = %q, want ga4_reconnect_required", note)
+	}
+}
+
+func TestGA4IntegrationFailureRequiresPropertyAccessForPermissionDeniedProperty(t *testing.T) {
+	err := errors.New(`google api status 403: { "error": { "code": 403, "message": "User does not have sufficient permissions for this property. To learn more about Property ID, see https://developers.google.com/analytics/devguides/reporting/data/v1/property-id.", "status": "PERMISSION_DENIED" } }`)
+
+	status, message, note := ga4IntegrationFailureForError(err)
+
+	if status != "property_access_required" {
+		t.Fatalf("status = %q, want property_access_required", status)
+	}
+	want := "Google Analytics property access is missing. Confirm the numeric GA4 Property ID and grant the connected Google account Viewer access in GA4 Property Access Management, then run SEO sync again."
+	if message != want {
+		t.Fatalf("message = %q, want %q", message, want)
+	}
+	if note != "ga4_property_access_required" {
+		t.Fatalf("note = %q, want ga4_property_access_required", note)
 	}
 }
 
