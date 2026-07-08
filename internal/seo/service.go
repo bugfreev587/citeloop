@@ -450,6 +450,10 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 }
 
 func ga4IntegrationFailureForError(err error) (status string, message string, note string) {
+	return GA4IntegrationFailureForError(err)
+}
+
+func GA4IntegrationFailureForError(err error) (status string, message string, note string) {
 	if googledata.IsInsufficientAuthenticationScopes(err) {
 		return "reconnect_required", ga4ReconnectRequiredMessage, "ga4_reconnect_required"
 	}
