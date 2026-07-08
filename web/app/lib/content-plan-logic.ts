@@ -33,6 +33,11 @@ export type ContentPlanPublishAction = {
   evidence_snapshot?: any;
 };
 
+export type ContentPlanPageUpdateDraft = {
+  status?: string | null;
+  publisher_result?: any;
+};
+
 export function isPageUpdateAction(action: ContentPlanPublishAction | null | undefined) {
   if (!action) return false;
   const assetType = String(action.asset_type ?? "").trim().toLowerCase();
@@ -63,6 +68,78 @@ export function pageUpdateDraftIDForAction(action: ContentPlanPublishAction | nu
     action?.diff_snapshot?.page_update_draft_id ??
     action?.input_snapshot?.page_update_draft_id;
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+export function pageUpdateDraftGitHubPRURL(draft: ContentPlanPageUpdateDraft | null | undefined) {
+  const raw = draft?.publisher_result?.github_pr_url;
+  if (draft?.publisher_result?.mode !== "github_pr" || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.startsWith("https://github.com/") ? trimmed : null;
+}
+
+export function pageUpdateDraftHasOpenGitHubPR(draft: ContentPlanPageUpdateDraft | null | undefined) {
+  const url = pageUpdateDraftGitHubPRURL(draft);
+  const resultStatus = String(draft?.publisher_result?.status ?? "").trim().toLowerCase();
+  const prState = String(draft?.publisher_result?.github_pr_state ?? "").trim().toLowerCase();
+  return Boolean(url && (resultStatus === "github_pr_open" || prState === "open"));
+}
+
+export function pageUpdateDraftPrimaryCTA(draft: ContentPlanPageUpdateDraft | null | undefined) {
+  if (pageUpdateDraftHasOpenGitHubPR(draft)) return "Open PR";
+  switch (draft?.status) {
+    case "ready_for_review":
+      return "Approve Update";
+    case "approved":
+      return "Apply Update";
+    case "applied":
+    case "verification_pending":
+    case "manual_apply_required":
+    case "needs_follow_up":
+    case "verification_failed":
+      return "Verify Update";
+    case "verified":
+      return "Verified";
+    default:
+      return "Draft Update";
+  }
+}
+
+export function pageUpdateDraftBusyCTA(draft: ContentPlanPageUpdateDraft | null | undefined) {
+  if (pageUpdateDraftHasOpenGitHubPR(draft)) return "Opening PR";
+  switch (draft?.status) {
+    case "ready_for_review":
+      return "Approving";
+    case "approved":
+      return "Applying";
+    case "applied":
+    case "verification_pending":
+    case "manual_apply_required":
+    case "needs_follow_up":
+    case "verification_failed":
+      return "Verifying";
+    default:
+      return "Drafting update";
+  }
+}
+
+export function pageUpdateDraftStatusTone(status: string | undefined): "neutral" | "red" | "amber" | "green" | "blue" {
+  switch (status) {
+    case "verified":
+      return "green";
+    case "ready_for_review":
+    case "approved":
+    case "applied":
+    case "verification_pending":
+      return "blue";
+    case "manual_apply_required":
+    case "needs_follow_up":
+      return "amber";
+    case "verification_failed":
+    case "rejected":
+      return "red";
+    default:
+      return "neutral";
+  }
 }
 
 export function isBacklogStatus(status: string) {

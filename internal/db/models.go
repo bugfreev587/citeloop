@@ -823,6 +823,47 @@ type SeoWatchlistItem struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SiteChangeApplication struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	SourceOpportunityID     pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID         uuid.UUID          `json:"content_action_id"`
+	PageUpdateDraftID       pgtype.UUID        `json:"page_update_draft_id"`
+	ApplicationKind         string             `json:"application_kind"`
+	TargetUrl               string             `json:"target_url"`
+	NormalizedTargetUrl     string             `json:"normalized_target_url"`
+	OpportunityKey          string             `json:"opportunity_key"`
+	PublisherConnectionID   pgtype.UUID        `json:"publisher_connection_id"`
+	RepoFullName            *string            `json:"repo_full_name"`
+	BaseBranch              *string            `json:"base_branch"`
+	WorkingBranch           *string            `json:"working_branch"`
+	BaseCommitSha           *string            `json:"base_commit_sha"`
+	HeadCommitSha           *string            `json:"head_commit_sha"`
+	SourceFilePath          *string            `json:"source_file_path"`
+	SourceFilePaths         json.RawMessage    `json:"source_file_paths"`
+	SourceMappingConfidence string             `json:"source_mapping_confidence"`
+	SourceMappingReason     string             `json:"source_mapping_reason"`
+	BaseFileSha             *string            `json:"base_file_sha"`
+	BaseContentHash         *string            `json:"base_content_hash"`
+	ProposedContentHash     *string            `json:"proposed_content_hash"`
+	PatchSnapshot           json.RawMessage    `json:"patch_snapshot"`
+	DiffSnapshot            json.RawMessage    `json:"diff_snapshot"`
+	ResolutionCriteria      json.RawMessage    `json:"resolution_criteria"`
+	GithubPrNumber          *int32             `json:"github_pr_number"`
+	GithubPrUrl             *string            `json:"github_pr_url"`
+	GithubPrState           *string            `json:"github_pr_state"`
+	DeploymentSnapshot      json.RawMessage    `json:"deployment_snapshot"`
+	VerificationSnapshot    json.RawMessage    `json:"verification_snapshot"`
+	FailureReason           *string            `json:"failure_reason"`
+	Status                  string             `json:"status"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	PrCreatedAt             pgtype.Timestamptz `json:"pr_created_at"`
+	MergedAt                pgtype.Timestamptz `json:"merged_at"`
+	DeployedAt              pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
+}
+
 type TechnicalCheck struct {
 	ID                    uuid.UUID          `json:"id"`
 	ProjectID             uuid.UUID          `json:"project_id"`

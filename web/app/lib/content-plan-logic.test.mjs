@@ -208,3 +208,34 @@ test("page update actions hide publishing controls and use update language", asy
   assert.equal(contentPlanActionPrimaryCTA(newContent), "Draft Content");
   assert.equal(contentPlanActionSurfaceLabel(newContent), "Content briefs");
 });
+
+test("page update GitHub PR apply results expose PR action instead of publish flow", async () => {
+  const {
+    pageUpdateDraftGitHubPRURL,
+    pageUpdateDraftHasOpenGitHubPR,
+    pageUpdateDraftPrimaryCTA,
+    pageUpdateDraftBusyCTA,
+  } = await loadContentPlanLogicModule();
+
+  const githubDraft = {
+    status: "verification_pending",
+    publisher_result: {
+      mode: "github_pr",
+      status: "github_pr_open",
+      github_pr_url: "https://github.com/acme/site/pull/42",
+    },
+  };
+  const manualDraft = {
+    status: "manual_apply_required",
+    publisher_result: { mode: "manual_patch", status: "manual_apply_required" },
+  };
+
+  assert.equal(pageUpdateDraftGitHubPRURL(githubDraft), "https://github.com/acme/site/pull/42");
+  assert.equal(pageUpdateDraftHasOpenGitHubPR(githubDraft), true);
+  assert.equal(pageUpdateDraftPrimaryCTA(githubDraft), "Open PR");
+  assert.equal(pageUpdateDraftBusyCTA(githubDraft), "Opening PR");
+
+  assert.equal(pageUpdateDraftGitHubPRURL(manualDraft), null);
+  assert.equal(pageUpdateDraftHasOpenGitHubPR(manualDraft), false);
+  assert.equal(pageUpdateDraftPrimaryCTA(manualDraft), "Verify Update");
+});

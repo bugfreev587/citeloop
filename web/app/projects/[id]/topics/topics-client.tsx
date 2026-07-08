@@ -13,7 +13,12 @@ import {
   hasReviewableDraft,
   isBacklogStatus,
   isPageUpdateAction,
+  pageUpdateDraftBusyCTA,
+  pageUpdateDraftGitHubPRURL,
+  pageUpdateDraftHasOpenGitHubPR,
   pageUpdateDraftIDForAction,
+  pageUpdateDraftPrimaryCTA,
+  pageUpdateDraftStatusTone,
   planHealthForTopics,
   publishStrategyLabel,
   publishStrategyReasonForAction,
@@ -163,62 +168,6 @@ function contentPlanActionEvidenceText(action: VisibilityActionInLoop) {
 
 function contentPlanRiskReasons(action: VisibilityActionInLoop) {
   return Array.isArray(action.risk_reasons) ? action.risk_reasons.map((item) => String(item)).filter(Boolean) : [];
-}
-
-function pageUpdateDraftPrimaryCTA(draft: PageUpdateDraft | null) {
-  switch (draft?.status) {
-    case "ready_for_review":
-      return "Approve Update";
-    case "approved":
-      return "Apply Update";
-    case "applied":
-    case "verification_pending":
-    case "manual_apply_required":
-    case "needs_follow_up":
-    case "verification_failed":
-      return "Verify Update";
-    case "verified":
-      return "Verified";
-    default:
-      return "Draft Update";
-  }
-}
-
-function pageUpdateDraftBusyCTA(draft: PageUpdateDraft | null) {
-  switch (draft?.status) {
-    case "ready_for_review":
-      return "Approving";
-    case "approved":
-      return "Applying";
-    case "applied":
-    case "verification_pending":
-    case "manual_apply_required":
-    case "needs_follow_up":
-    case "verification_failed":
-      return "Verifying";
-    default:
-      return "Drafting update";
-  }
-}
-
-function pageUpdateDraftStatusTone(status: string | undefined): "neutral" | "red" | "amber" | "green" | "blue" {
-  switch (status) {
-    case "verified":
-      return "green";
-    case "ready_for_review":
-    case "approved":
-    case "applied":
-    case "verification_pending":
-      return "blue";
-    case "manual_apply_required":
-    case "needs_follow_up":
-      return "amber";
-    case "verification_failed":
-    case "rejected":
-      return "red";
-    default:
-      return "neutral";
-  }
 }
 
 function formatPageUpdateJSON(value: any) {
@@ -470,6 +419,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedActionRecommendedStrategy = selectedContentPlanAction ? recommendedPublishStrategy(selectedContentPlanAction) : "blog";
   const selectedActionShowsPublishControls = contentPlanActionPublishControlsVisible(selectedContentPlanAction);
   const selectedActionPrimaryCTA = selectedActionShowsPublishControls ? contentPlanActionPrimaryCTA(selectedContentPlanAction) : pageUpdateDraftPrimaryCTA(selectedPageUpdateDraft);
+  const selectedPageUpdatePRURL = pageUpdateDraftGitHubPRURL(selectedPageUpdateDraft);
   const selectedActionPublishReason = selectedContentPlanAction
     ? publishStrategyReasonForAction(selectedContentPlanAction, selectedActionRecommendedStrategy)
     : "";
@@ -784,9 +734,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       draft = await api.applyPageUpdateDraft(projectId, draft.id);
       setPageUpdateDrafts((current) => ({ ...current, [action.id]: draft }));
       await refresh();
+      const prURL = pageUpdateDraftGitHubPRURL(draft);
       setMessage({
-        title: draft.status === "manual_apply_required" ? "Manual patch ready" : "Page update applied",
-        detail: contentPlanActionDetail(action),
+        title: prURL ? "GitHub PR opened" : draft.status === "manual_apply_required" ? "Manual patch ready" : "Page update applied",
+        detail: prURL ?? contentPlanActionDetail(action),
         tone: draft.status === "manual_apply_required" ? "amber" : "green",
       });
     } catch (e: any) {
@@ -821,6 +772,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
   async function advancePageUpdateAction(action: VisibilityActionInLoop) {
     const draft = pageUpdateDrafts[action.id] ?? null;
+    const prURL = pageUpdateDraftGitHubPRURL(draft);
+    if (prURL && pageUpdateDraftHasOpenGitHubPR(draft)) {
+      window.open(prURL, "_blank", "noopener,noreferrer");
+      return;
+    }
     switch (draft?.status) {
       case "ready_for_review":
         await approvePageUpdateAction(action);
@@ -1580,6 +1536,33 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       </pre>
                     </div>
                   </section>
+
+                  {selectedPageUpdatePRURL && (
+                    <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-700">GitHub PR</div>
+                          <p className="mt-2 text-sm leading-6 text-sky-950">
+                            The update is proposed as a repository diff. Merge and deploy the PR, then CiteLoop can verify the existing target URL.
+                          </p>
+                          <div className="mt-3 grid gap-1 text-xs leading-5 text-sky-900">
+                            {selectedPageUpdateDraft.publisher_result?.repo && <div>Repo: {selectedPageUpdateDraft.publisher_result.repo}</div>}
+                            {selectedPageUpdateDraft.publisher_result?.source_file_path && <div>Source: {selectedPageUpdateDraft.publisher_result.source_file_path}</div>}
+                            {selectedPageUpdateDraft.publisher_result?.working_branch && <div>Branch: {selectedPageUpdateDraft.publisher_result.working_branch}</div>}
+                          </div>
+                        </div>
+                        <a
+                          href={selectedPageUpdatePRURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg border border-sky-200 bg-white px-3 text-xs font-medium text-sky-800 transition-colors hover:bg-sky-100"
+                        >
+                          Open PR
+                          <ArrowRight size={14} />
+                        </a>
+                      </div>
+                    </section>
+                  )}
 
                   {(selectedPageUpdateDraft.status === "manual_apply_required" || selectedPageUpdateDraft.status === "verification_failed" || selectedPageUpdateDraft.status === "needs_follow_up") && (
                     <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">

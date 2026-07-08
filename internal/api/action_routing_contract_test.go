@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/google/uuid"
 )
 
 func TestCreateSEOContentActionInfersMultiSurfaceAssetAndReviewOutput(t *testing.T) {
@@ -344,6 +345,70 @@ func TestImprovePageActionsUsePageUpdateDraftsInsteadOfTopics(t *testing.T) {
 	} {
 		if !strings.Contains(handlerSource, want) {
 			t.Fatalf("Page Update Draft handler contract missing %q", want)
+		}
+	}
+}
+
+func TestPageUpdateExactSourceMappingRequiresPublishedMDXArticle(t *testing.T) {
+	path := "content/citeloop/blog/evidence.mdx"
+	article := db.Article{
+		ID:            uuid.New(),
+		ProjectID:     uuid.New(),
+		PublishPath:   &path,
+		PublishResult: []byte(`{"path":"content/citeloop/blog/evidence.mdx","commit_sha":"base-commit-sha"}`),
+	}
+	mapping, ok := pageUpdateExactSourceMapping(article)
+	if !ok {
+		t.Fatal("expected published MDX article to resolve exact source mapping")
+	}
+	if mapping.SourceFilePath != path || mapping.BaseCommitSHA != "base-commit-sha" || mapping.Confidence != "exact" {
+		t.Fatalf("unexpected mapping: %#v", mapping)
+	}
+
+	article.PublishPath = nil
+	article.PublishResult = []byte(`{"path":"content/citeloop/blog/evidence.mdx","commit_sha":"base-commit-sha"}`)
+	mapping, ok = pageUpdateExactSourceMapping(article)
+	if !ok || mapping.SourceFilePath != path {
+		t.Fatalf("expected publish_result.path fallback, got ok=%v mapping=%#v", ok, mapping)
+	}
+
+	tsxPath := "app/blog/evidence/page.tsx"
+	article.PublishPath = &tsxPath
+	article.PublishResult = []byte(`{"commit_sha":"base-commit-sha"}`)
+	if mapping, ok := pageUpdateExactSourceMapping(article); ok {
+		t.Fatalf("non-MDX path must not be exact V1 mapping: %#v", mapping)
+	}
+
+	article.PublishPath = nil
+	article.PublishResult = []byte(`{"commit_sha":"base-commit-sha"}`)
+	if mapping, ok := pageUpdateExactSourceMapping(article); ok {
+		t.Fatalf("article without publish path must not be exact mapping: %#v", mapping)
+	}
+}
+
+func TestPageUpdateApplyCreatesSourceBackedGitHubPRApplication(t *testing.T) {
+	raw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(raw)
+	for _, want := range []string{
+		"GetEnabledPublisherConnectionForProject",
+		"publisher.ConnectionKindGitHubNextJS",
+		"pageUpdateExactSourceMapping",
+		"CreateOrReuseSiteChangeApplication",
+		`app.Status == "github_pr_open"`,
+		"markPageUpdateDraftGitHubPRResult",
+		"publisher.NewGitHubPRClient",
+		"CreatePageUpdatePR",
+		"MarkSiteChangeApplicationGitHubPR",
+		`"github_pr"`,
+		`"github_pr_open"`,
+		`"manual_patch"`,
+		`"manual_apply_required"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("page update apply source-backed PR contract missing %q", want)
 		}
 	}
 }
