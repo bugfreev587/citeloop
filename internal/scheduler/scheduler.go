@@ -628,6 +628,12 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 }
 
 func contentActionCreatesContent(action db.ContentAction) bool {
+	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == "improve_page" {
+		return false
+	}
+	if strings.TrimSpace(contentActionAssetType(action)) == "page_update" {
+		return false
+	}
 	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == "fix_site_issue" {
 		return false
 	}
@@ -637,6 +643,8 @@ func contentActionCreatesContent(action db.ContentAction) bool {
 func contentActionNeedsTopic(assetType string, actionType string) bool {
 	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
 	switch {
+	case strings.Contains(text, "page_update"):
+		return false
 	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
 		return false
 	case strings.Contains(text, "schema_patch") || strings.Contains(text, "schema patch"):

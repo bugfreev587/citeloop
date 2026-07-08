@@ -81,8 +81,8 @@ func TestAcceptOpportunityStampsApprovalAndRoutingSource(t *testing.T) {
 }
 
 func TestContentBriefPlanningUsesSplitMetadataRuleAndPublishStrategy(t *testing.T) {
-	if !contentActionCreatesContent(db.ContentAction{AssetType: strPtr("metadata_rewrite"), ActionType: "rewrite title and meta description", WorkType: strPtr(WorkTypeImprovePage)}) {
-		t.Fatal("editorial metadata refresh should create a content brief")
+	if contentActionCreatesContent(db.ContentAction{AssetType: strPtr("metadata_rewrite"), ActionType: "rewrite title and meta description", WorkType: strPtr(WorkTypeImprovePage)}) {
+		t.Fatal("Improve Page metadata refresh should create a Page Update Draft, not a content brief")
 	}
 	if contentActionCreatesContent(db.ContentAction{AssetType: strPtr("metadata_rewrite"), ActionType: "mechanical metadata patch", WorkType: strPtr(WorkTypeFixSiteIssue)}) {
 		t.Fatal("metadata routed as a site fix should not create a content brief")

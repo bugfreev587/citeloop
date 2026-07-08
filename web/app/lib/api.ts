@@ -510,6 +510,32 @@ export type SEOContentAction = {
   updated_at?: any;
 };
 
+export type PageUpdateDraft = {
+  id: string;
+  project_id: string;
+  content_action_id: string;
+  target_url: string;
+  normalized_target_url: string;
+  opportunity_key?: string;
+  target_article_id?: string | null;
+  source_file_path?: string | null;
+  base_content_hash?: string | null;
+  proposed_content_md?: string;
+  patch?: any;
+  diff_snapshot?: any;
+  qa_feedback?: any;
+  resolution_criteria?: any;
+  publisher_result?: any;
+  verification_snapshot?: any;
+  original_source_snapshot?: any;
+  status: string;
+  approved_at?: any;
+  applied_at?: any;
+  verified_at?: any;
+  created_at?: any;
+  updated_at?: any;
+};
+
 export type SEOWatchlistItem = {
   id: string;
   project_id: string;
@@ -2505,6 +2531,52 @@ export function createApi(auth?: AuthOptions) {
       auth,
     );
     return normalizeTopic(raw);
+  },
+  createPageUpdateDraft: async (id: string, actionID: string): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(
+      `/projects/${id}/seo/actions/${actionID}/page-update-drafts`,
+      { method: "POST" },
+      auth,
+    );
+  },
+  getPageUpdateDraft: async (id: string, draftID: string): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(`/projects/${id}/seo/page-update-drafts/${draftID}`, undefined, auth);
+  },
+  generatePageUpdateDraft: async (
+    id: string,
+    draftID: string,
+    body: { proposed_content_md?: string; patch?: any; diff_snapshot?: any; qa_feedback?: any } = {},
+  ): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(
+      `/projects/${id}/seo/page-update-drafts/${draftID}/generate`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
+  },
+  approvePageUpdateDraft: async (id: string, draftID: string): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(
+      `/projects/${id}/seo/page-update-drafts/${draftID}/approve`,
+      { method: "POST" },
+      auth,
+    );
+  },
+  applyPageUpdateDraft: async (id: string, draftID: string): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(
+      `/projects/${id}/seo/page-update-drafts/${draftID}/apply`,
+      { method: "POST" },
+      auth,
+    );
+  },
+  verifyPageUpdateDraft: async (
+    id: string,
+    draftID: string,
+    body: { status?: "verified" | "failed" | "needs_follow_up" | string; verification_snapshot?: any } = {},
+  ): Promise<PageUpdateDraft> => {
+    return req<PageUpdateDraft>(
+      `/projects/${id}/seo/page-update-drafts/${draftID}/verify`,
+      { method: "POST", body: JSON.stringify(body) },
+      auth,
+    );
   },
   verifySEOContentAction: async (
     id: string,

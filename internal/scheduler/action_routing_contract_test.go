@@ -46,6 +46,14 @@ func TestContentActionRoutingSeparatesTopicBackedAndDirectAssets(t *testing.T) {
 	if contentActionCreatesContent(db.ContentAction{AssetType: ptr("metadata_rewrite"), ActionType: "rewrite title", WorkType: &fixSiteIssue}) {
 		t.Fatal("metadata routed as a site fix should not create a topic")
 	}
+
+	improvePage := "improve_page"
+	if contentActionCreatesContent(db.ContentAction{AssetType: ptr("page_update"), ActionType: "strengthen evidence block", WorkType: &improvePage}) {
+		t.Fatal("Improve Page actions should schedule Page Update Drafts, not topic generation")
+	}
+	if contentActionNeedsTopic("page_update", "strengthen evidence block") {
+		t.Fatal("page_update assets should bypass topic generation")
+	}
 }
 
 func TestDirectActionPlanningIsSkippedWithoutMarkingFailed(t *testing.T) {

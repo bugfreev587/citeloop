@@ -530,6 +530,49 @@ test("planSEOContentAction creates a topic from an accepted opportunity action",
   }
 });
 
+test("page update draft APIs call existing-page update endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "draft-1",
+        project_id: "project-1",
+        content_action_id: "action-1",
+        target_url: "https://unipost.dev/blog/existing",
+        normalized_target_url: "https://unipost.dev/blog/existing",
+        status: "ready_for_review",
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const api = createApi();
+    await api.createPageUpdateDraft("project-1", "action-1");
+    await api.generatePageUpdateDraft("project-1", "draft-1");
+    await api.approvePageUpdateDraft("project-1", "draft-1");
+    await api.applyPageUpdateDraft("project-1", "draft-1");
+    await api.verifyPageUpdateDraft("project-1", "draft-1", { status: "verified" });
+
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.init.method]),
+      [
+        ["https://api.example.test/api/projects/project-1/seo/actions/action-1/page-update-drafts", "POST"],
+        ["https://api.example.test/api/projects/project-1/seo/page-update-drafts/draft-1/generate", "POST"],
+        ["https://api.example.test/api/projects/project-1/seo/page-update-drafts/draft-1/approve", "POST"],
+        ["https://api.example.test/api/projects/project-1/seo/page-update-drafts/draft-1/apply", "POST"],
+        ["https://api.example.test/api/projects/project-1/seo/page-update-drafts/draft-1/verify", "POST"],
+      ],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

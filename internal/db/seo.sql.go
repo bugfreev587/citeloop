@@ -13,6 +13,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimPageUpdateDraftForApply = `-- name: ClaimPageUpdateDraftForApply :one
+with candidate as (
+  select page_update_drafts.id from page_update_drafts
+  where page_update_drafts.id = $1
+    and page_update_drafts.project_id = $2
+    and page_update_drafts.status = 'approved'
+  for update skip locked
+)
+update page_update_drafts set
+  status = 'applying',
+  updated_at = now()
+from candidate
+where page_update_drafts.id = candidate.id
+returning page_update_drafts.id, page_update_drafts.project_id, page_update_drafts.content_action_id, page_update_drafts.target_url, page_update_drafts.normalized_target_url, page_update_drafts.opportunity_key, page_update_drafts.target_article_id, page_update_drafts.source_file_path, page_update_drafts.base_content_hash, page_update_drafts.proposed_content_md, page_update_drafts.patch, page_update_drafts.diff_snapshot, page_update_drafts.qa_feedback, page_update_drafts.resolution_criteria, page_update_drafts.publisher_result, page_update_drafts.verification_snapshot, page_update_drafts.original_source_snapshot, page_update_drafts.status, page_update_drafts.approved_at, page_update_drafts.applied_at, page_update_drafts.verified_at, page_update_drafts.created_at, page_update_drafts.updated_at
+`
+
+type ClaimPageUpdateDraftForApplyParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) ClaimPageUpdateDraftForApply(ctx context.Context, arg ClaimPageUpdateDraftForApplyParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, claimPageUpdateDraftForApply, arg.ID, arg.ProjectID)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const closeSEOWatchlistItem = `-- name: CloseSEOWatchlistItem :one
 update seo_watchlist_items set
   status = $1,
@@ -270,6 +322,90 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 		&i.ApprovalSource,
 		&i.RoutingSource,
 		&i.WorkType,
+	)
+	return i, err
+}
+
+const createOrReusePageUpdateDraft = `-- name: CreateOrReusePageUpdateDraft :one
+insert into page_update_drafts
+  (project_id, content_action_id, target_url, normalized_target_url, opportunity_key,
+   target_article_id, source_file_path, base_content_hash, resolution_criteria, original_source_snapshot)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8,
+  $9::jsonb,
+  $10::jsonb
+)
+on conflict (project_id, content_action_id) do update set
+  target_url = excluded.target_url,
+  normalized_target_url = excluded.normalized_target_url,
+  opportunity_key = excluded.opportunity_key,
+  target_article_id = excluded.target_article_id,
+  source_file_path = coalesce(excluded.source_file_path, page_update_drafts.source_file_path),
+  base_content_hash = coalesce(excluded.base_content_hash, page_update_drafts.base_content_hash),
+  resolution_criteria = excluded.resolution_criteria,
+  original_source_snapshot = excluded.original_source_snapshot,
+  updated_at = now()
+returning id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at
+`
+
+type CreateOrReusePageUpdateDraftParams struct {
+	ProjectID              uuid.UUID       `json:"project_id"`
+	ContentActionID        uuid.UUID       `json:"content_action_id"`
+	TargetUrl              string          `json:"target_url"`
+	NormalizedTargetUrl    string          `json:"normalized_target_url"`
+	OpportunityKey         string          `json:"opportunity_key"`
+	TargetArticleID        pgtype.UUID     `json:"target_article_id"`
+	SourceFilePath         *string         `json:"source_file_path"`
+	BaseContentHash        *string         `json:"base_content_hash"`
+	ResolutionCriteria     json.RawMessage `json:"resolution_criteria"`
+	OriginalSourceSnapshot json.RawMessage `json:"original_source_snapshot"`
+}
+
+func (q *Queries) CreateOrReusePageUpdateDraft(ctx context.Context, arg CreateOrReusePageUpdateDraftParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, createOrReusePageUpdateDraft,
+		arg.ProjectID,
+		arg.ContentActionID,
+		arg.TargetUrl,
+		arg.NormalizedTargetUrl,
+		arg.OpportunityKey,
+		arg.TargetArticleID,
+		arg.SourceFilePath,
+		arg.BaseContentHash,
+		arg.ResolutionCriteria,
+		arg.OriginalSourceSnapshot,
+	)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -663,6 +799,88 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 		&i.ApprovalSource,
 		&i.RoutingSource,
 		&i.WorkType,
+	)
+	return i, err
+}
+
+const getPageUpdateDraftForContentAction = `-- name: GetPageUpdateDraftForContentAction :one
+select id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at from page_update_drafts
+where project_id = $1 and content_action_id = $2
+`
+
+type GetPageUpdateDraftForContentActionParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	ContentActionID uuid.UUID `json:"content_action_id"`
+}
+
+func (q *Queries) GetPageUpdateDraftForContentAction(ctx context.Context, arg GetPageUpdateDraftForContentActionParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, getPageUpdateDraftForContentAction, arg.ProjectID, arg.ContentActionID)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPageUpdateDraftForProject = `-- name: GetPageUpdateDraftForProject :one
+select id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at from page_update_drafts
+where id = $1 and project_id = $2
+`
+
+type GetPageUpdateDraftForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetPageUpdateDraftForProject(ctx context.Context, arg GetPageUpdateDraftForProjectParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, getPageUpdateDraftForProject, arg.ID, arg.ProjectID)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -2247,6 +2465,65 @@ func (q *Queries) ListSearchQueryOpportunityRollups(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const listStalePageUpdateDrafts = `-- name: ListStalePageUpdateDrafts :many
+select id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at from page_update_drafts
+where project_id = $1
+  and status in ('drafting','applying','verification_pending')
+  and updated_at < now() - interval '30 minutes'
+order by updated_at asc
+limit $2
+for update skip locked
+`
+
+type ListStalePageUpdateDraftsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+func (q *Queries) ListStalePageUpdateDrafts(ctx context.Context, arg ListStalePageUpdateDraftsParams) ([]PageUpdateDraft, error) {
+	rows, err := q.db.Query(ctx, listStalePageUpdateDrafts, arg.ProjectID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PageUpdateDraft
+	for rows.Next() {
+		var i PageUpdateDraft
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ContentActionID,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.TargetArticleID,
+			&i.SourceFilePath,
+			&i.BaseContentHash,
+			&i.ProposedContentMd,
+			&i.Patch,
+			&i.DiffSnapshot,
+			&i.QaFeedback,
+			&i.ResolutionCriteria,
+			&i.PublisherResult,
+			&i.VerificationSnapshot,
+			&i.OriginalSourceSnapshot,
+			&i.Status,
+			&i.ApprovedAt,
+			&i.AppliedAt,
+			&i.VerifiedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnplannedContentActions = `-- name: ListUnplannedContentActions :many
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type from content_actions ca
 left join topics t
@@ -2688,6 +2965,112 @@ func (q *Queries) MarkDueSEOWatchlistItems(ctx context.Context, projectID uuid.U
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markPageUpdateDraftApplyResult = `-- name: MarkPageUpdateDraftApplyResult :one
+update page_update_drafts set
+  status = $1,
+  publisher_result = $2::jsonb,
+  applied_at = now(),
+  updated_at = now()
+where id = $3 and project_id = $4
+returning id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at
+`
+
+type MarkPageUpdateDraftApplyResultParams struct {
+	Status          string          `json:"status"`
+	PublisherResult json.RawMessage `json:"publisher_result"`
+	ID              uuid.UUID       `json:"id"`
+	ProjectID       uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) MarkPageUpdateDraftApplyResult(ctx context.Context, arg MarkPageUpdateDraftApplyResultParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, markPageUpdateDraftApplyResult,
+		arg.Status,
+		arg.PublisherResult,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markPageUpdateDraftVerification = `-- name: MarkPageUpdateDraftVerification :one
+update page_update_drafts set
+  status = $1,
+  verification_snapshot = $2::jsonb,
+  verified_at = case when $1 = 'verified' then now() else verified_at end,
+  updated_at = now()
+where id = $3 and project_id = $4
+returning id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at
+`
+
+type MarkPageUpdateDraftVerificationParams struct {
+	Status               string          `json:"status"`
+	VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+	ID                   uuid.UUID       `json:"id"`
+	ProjectID            uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) MarkPageUpdateDraftVerification(ctx context.Context, arg MarkPageUpdateDraftVerificationParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, markPageUpdateDraftVerification,
+		arg.Status,
+		arg.VerificationSnapshot,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const resolveMissingSEODoctorFindings = `-- name: ResolveMissingSEODoctorFindings :exec
@@ -3211,6 +3594,112 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 		&i.ApprovalSource,
 		&i.RoutingSource,
 		&i.WorkType,
+	)
+	return i, err
+}
+
+const updatePageUpdateDraftContent = `-- name: UpdatePageUpdateDraftContent :one
+update page_update_drafts set
+  proposed_content_md = $1,
+  patch = $2::jsonb,
+  diff_snapshot = $3::jsonb,
+  qa_feedback = $4::jsonb,
+  status = 'ready_for_review',
+  updated_at = now()
+where id = $5 and project_id = $6
+returning id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at
+`
+
+type UpdatePageUpdateDraftContentParams struct {
+	ProposedContentMd string          `json:"proposed_content_md"`
+	Patch             json.RawMessage `json:"patch"`
+	DiffSnapshot      json.RawMessage `json:"diff_snapshot"`
+	QaFeedback        json.RawMessage `json:"qa_feedback"`
+	ID                uuid.UUID       `json:"id"`
+	ProjectID         uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdatePageUpdateDraftContent(ctx context.Context, arg UpdatePageUpdateDraftContentParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, updatePageUpdateDraftContent,
+		arg.ProposedContentMd,
+		arg.Patch,
+		arg.DiffSnapshot,
+		arg.QaFeedback,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updatePageUpdateDraftStatus = `-- name: UpdatePageUpdateDraftStatus :one
+update page_update_drafts set
+  status = $1,
+  approved_at = case when $1 = 'approved' then now() else approved_at end,
+  applied_at = case when $1 in ('applied','verification_pending','manual_apply_required') then now() else applied_at end,
+  updated_at = now()
+where id = $2 and project_id = $3
+returning id, project_id, content_action_id, target_url, normalized_target_url, opportunity_key, target_article_id, source_file_path, base_content_hash, proposed_content_md, patch, diff_snapshot, qa_feedback, resolution_criteria, publisher_result, verification_snapshot, original_source_snapshot, status, approved_at, applied_at, verified_at, created_at, updated_at
+`
+
+type UpdatePageUpdateDraftStatusParams struct {
+	Status    string    `json:"status"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UpdatePageUpdateDraftStatus(ctx context.Context, arg UpdatePageUpdateDraftStatusParams) (PageUpdateDraft, error) {
+	row := q.db.QueryRow(ctx, updatePageUpdateDraftStatus, arg.Status, arg.ID, arg.ProjectID)
+	var i PageUpdateDraft
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ContentActionID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.TargetArticleID,
+		&i.SourceFilePath,
+		&i.BaseContentHash,
+		&i.ProposedContentMd,
+		&i.Patch,
+		&i.DiffSnapshot,
+		&i.QaFeedback,
+		&i.ResolutionCriteria,
+		&i.PublisherResult,
+		&i.VerificationSnapshot,
+		&i.OriginalSourceSnapshot,
+		&i.Status,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

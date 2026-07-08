@@ -29,8 +29,41 @@ export type ContentPlanPublishAction = {
   opportunity_query?: string | null;
   input_snapshot?: any;
   output_snapshot?: any;
+  diff_snapshot?: any;
   evidence_snapshot?: any;
 };
+
+export function isPageUpdateAction(action: ContentPlanPublishAction | null | undefined) {
+  if (!action) return false;
+  const assetType = String(action.asset_type ?? "").trim().toLowerCase();
+  const workType = String(action.work_type ?? "").trim().toLowerCase();
+  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").trim().toLowerCase();
+  return workType === "improve_page" || assetType === "page_update" || outputType === "page_update_diff";
+}
+
+export function contentPlanActionPublishControlsVisible(action: ContentPlanPublishAction | null | undefined) {
+  return !isPageUpdateAction(action);
+}
+
+export function contentPlanActionPrimaryCTA(action: ContentPlanPublishAction | null | undefined) {
+  return isPageUpdateAction(action) ? "Draft Update" : "Draft Content";
+}
+
+export function contentPlanActionBusyCTA(action: ContentPlanPublishAction | null | undefined) {
+  return isPageUpdateAction(action) ? "Drafting update" : "Drafting";
+}
+
+export function contentPlanActionSurfaceLabel(action: ContentPlanPublishAction | null | undefined) {
+  return isPageUpdateAction(action) ? "Page updates" : "Content briefs";
+}
+
+export function pageUpdateDraftIDForAction(action: ContentPlanPublishAction | null | undefined) {
+  const raw =
+    action?.output_snapshot?.page_update_draft_id ??
+    action?.diff_snapshot?.page_update_draft_id ??
+    action?.input_snapshot?.page_update_draft_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
 
 export function isBacklogStatus(status: string) {
   return status === "backlog" || status === "scheduled" || status === "generating";
