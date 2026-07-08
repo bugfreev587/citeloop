@@ -11,6 +11,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 )
 
 func TestSEORoutesAreRegistered(t *testing.T) {
@@ -158,6 +159,22 @@ func TestStartGSCOAuthReturnsGoogleAuthorizationURL(t *testing.T) {
 	}
 	if strings.Contains(out.AuthorizationURL, "client_secret") {
 		t.Fatalf("authorization_url leaked client_secret: %q", out.AuthorizationURL)
+	}
+}
+
+func TestGSCOAuthStoredScopeFallsBackToAllRequestedReadonlyScopes(t *testing.T) {
+	scope := gscOAuthStoredScope(&oauth2.Token{})
+	for _, required := range []string{googledata.ScopeSearchConsoleReadonly, googledata.ScopeAnalyticsReadonly} {
+		if !googledata.HasOAuthScope(scope, required) {
+			t.Fatalf("scope = %q, missing %q", scope, required)
+		}
+	}
+}
+
+func TestGSCOAuthStoredScopePreservesGoogleScopeResponse(t *testing.T) {
+	token := (&oauth2.Token{}).WithExtra(map[string]any{"scope": googledata.ScopeAnalyticsReadonly})
+	if got := gscOAuthStoredScope(token); got != googledata.ScopeAnalyticsReadonly {
+		t.Fatalf("scope = %q, want token response scope", got)
 	}
 }
 

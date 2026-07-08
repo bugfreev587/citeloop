@@ -153,10 +153,7 @@ func (s *Server) completeGSCOAuth(w http.ResponseWriter, r *http.Request) {
 	if tokenType == "" {
 		tokenType = "Bearer"
 	}
-	scope := googledata.ScopeSearchConsoleReadonly
-	if rawScope, ok := token.Extra("scope").(string); ok && strings.TrimSpace(rawScope) != "" {
-		scope = strings.TrimSpace(rawScope)
-	}
+	scope := gscOAuthStoredScope(token)
 	row, err := s.Q.UpsertSEOOAuthToken(r.Context(), db.UpsertSEOOAuthTokenParams{
 		ProjectID:             projectID,
 		Provider:              seopkg.ProviderGSC,
@@ -181,6 +178,7 @@ func (s *Server) completeGSCOAuth(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.clearGA4ScopeErrorAfterOAuth(r.Context(), projectID, scope, time.Now().UTC())
 	writeJSON(w, http.StatusOK, s.gscConnectionFromToken(projectID, row, siteURL, status))
 }
 
@@ -374,6 +372,55 @@ func (s *Server) gscOAuthRedirectURI() (string, error) {
 	publicURL.RawQuery = ""
 	publicURL.Fragment = ""
 	return publicURL.String(), nil
+}
+
+func gscOAuthStoredScope(token *oauth2.Token) string {
+	if token != nil {
+		if rawScope, ok := token.Extra("scope").(string); ok && strings.TrimSpace(rawScope) != "" {
+			return strings.TrimSpace(rawScope)
+		}
+	}
+	return googledata.SearchConsoleOAuthScopeString()
+}
+
+func shouldClearGA4ScopeErrorAfterOAuth(scope string, integration db.SeoIntegration) bool {
+	if integration.Provider != seopkg.ProviderGA4 {
+		return false
+	}
+	if !googledata.HasOAuthScope(scope, googledata.ScopeAnalyticsReadonly) {
+		return false
+	}
+	if integration.Status == "reconnect_required" {
+		return true
+	}
+	return integration.LastError != nil && googledata.IsInsufficientAuthenticationScopes(errors.New(*integration.LastError))
+}
+
+func (s *Server) clearGA4ScopeErrorAfterOAuth(ctx context.Context, projectID uuid.UUID, scope string, now time.Time) {
+	if s.Q == nil {
+		return
+	}
+	integrations, err := s.Q.ListSEOIntegrations(ctx, projectID)
+	if err != nil {
+		return
+	}
+	for _, integration := range integrations {
+		if !shouldClearGA4ScopeErrorAfterOAuth(scope, integration) {
+			continue
+		}
+		credentialRef := integration.CredentialRef
+		if credentialRef == nil || strings.TrimSpace(*credentialRef) == "" {
+			ref := gscOAuthCredentialRef
+			credentialRef = &ref
+		}
+		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+			ProjectID:      projectID,
+			Provider:       seopkg.ProviderGA4,
+			Status:         "connected",
+			CredentialRef:  credentialRef,
+			LastVerifiedAt: pgutil.TS(now),
+		})
+	}
 }
 
 func (s *Server) projectSiteURL(ctx context.Context, projectID uuid.UUID) string {
