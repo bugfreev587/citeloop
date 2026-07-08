@@ -751,6 +751,162 @@ function siteFixObservedMetadata(action: SEOContentAction | ResultsAction) {
   return observed;
 }
 
+function siteFixCompactPayload(value: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => {
+      if (entry == null) return false;
+      if (typeof entry === "string") return entry.trim() !== "";
+      if (Array.isArray(entry)) return entry.length > 0;
+      if (typeof entry === "object") return Object.keys(entry).length > 0;
+      return true;
+    }),
+  );
+}
+
+function metadataRewriteSources(action: SEOContentAction | ResultsAction) {
+  const change = firstProposedChange(action);
+  const diff = action.diff_snapshot ?? {};
+  const output = action.output_snapshot ?? {};
+  const input = action.input_snapshot ?? {};
+  const evidence = action.evidence_snapshot ?? {};
+  return [
+    change,
+    diff.ai_repair,
+    output.ai_repair,
+    evidence.source_evidence,
+    evidence,
+    input,
+    diff,
+    output,
+  ].filter(Boolean);
+}
+
+function firstSiteFixScalar(value: any) {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  return null;
+}
+
+function firstSiteFixValueIn(value: any, wanted: Set<string>): any {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = firstSiteFixValueIn(entry, wanted);
+      if (found != null) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+
+  const record = value as Record<string, any>;
+  for (const [key, entry] of Object.entries(record)) {
+    if (!wanted.has(normalizeMetadataKey(key))) continue;
+    const scalar = firstSiteFixScalar(entry);
+    if (scalar != null) return scalar;
+  }
+
+  for (const preferred of ["observed", "observed_metadata", "metadata", "page_metadata", "seo_metadata", "technical", "raw_details", "opportunity", "proposed_change"]) {
+    const foundEntry = Object.entries(record).find(([key]) => normalizeMetadataKey(key) === normalizeMetadataKey(preferred));
+    const found = firstSiteFixValueIn(foundEntry?.[1], wanted);
+    if (found != null) return found;
+  }
+
+  for (const key of Object.keys(record).sort()) {
+    const found = firstSiteFixValueIn(record[key], wanted);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+function firstSiteFixValue(sources: any[], aliases: string[]) {
+  const wanted = new Set(aliases.map(normalizeMetadataKey));
+  for (const source of sources) {
+    const found = firstSiteFixValueIn(source, wanted);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+function firstSiteFixValueInContainers(value: any, containerNames: Set<string>, aliases: Set<string>): any {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = firstSiteFixValueInContainers(entry, containerNames, aliases);
+      if (found != null) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+
+  const record = value as Record<string, any>;
+  for (const key of Object.keys(record).sort()) {
+    if (!containerNames.has(normalizeMetadataKey(key))) continue;
+    const found = firstSiteFixValueIn(record[key], aliases);
+    if (found != null) return found;
+  }
+  for (const key of Object.keys(record).sort()) {
+    const found = firstSiteFixValueInContainers(record[key], containerNames, aliases);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+function firstMetadataRewriteProposedValue(sources: any[], aliases: string[]) {
+  const containers = new Set(["proposed_change", "proposedChange", "proposed_metadata", "proposedMetadata", "metadata_rewrite", "metadataRewrite", "recommended_metadata", "recommendedMetadata", "recommendation"].map(normalizeMetadataKey));
+  const wanted = new Set(aliases.map(normalizeMetadataKey));
+  for (const source of sources) {
+    const found = firstSiteFixValueInContainers(source, containers, wanted);
+    if (found != null) return found;
+  }
+  return firstSiteFixValue(sources, aliases.filter((alias) => normalizeMetadataKey(alias).startsWith("proposed") || normalizeMetadataKey(alias).startsWith("recommended") || normalizeMetadataKey(alias).startsWith("new")));
+}
+
+function firstMetadataRewriteObservedValue(sources: any[], aliases: string[]) {
+  const containers = new Set(["observed", "observed_metadata", "observedMetadata", "metadata", "page_metadata", "pageMetadata", "seo_metadata", "seoMetadata", "technical", "raw_details", "rawDetails"].map(normalizeMetadataKey));
+  const wanted = new Set(aliases.map(normalizeMetadataKey));
+  for (const source of sources) {
+    const found = firstSiteFixValueInContainers(source, containers, wanted);
+    if (found != null) return found;
+  }
+  return firstSiteFixValue(sources, aliases.filter((alias) => normalizeMetadataKey(alias).startsWith("observed") || normalizeMetadataKey(alias).startsWith("current")));
+}
+
+function metadataRewriteObservedSnapshot(action: SEOContentAction | ResultsAction) {
+  const sources = metadataRewriteSources(action);
+  return siteFixCompactPayload({
+    status: firstMetadataRewriteObservedValue(sources, ["status", "http_status", "httpStatus", "status_code", "statusCode"]),
+    title: firstMetadataRewriteObservedValue(sources, ["title", "page_title", "pageTitle", "current_title", "currentTitle", "observed_title", "observedTitle"]),
+    meta_description: firstMetadataRewriteObservedValue(sources, ["meta_description", "metaDescription", "description", "current_meta_description", "currentMetaDescription", "observed_meta_description", "observedMetaDescription"]),
+    canonical: firstMetadataRewriteObservedValue(sources, ["canonical", "canonical_url", "canonicalUrl", "canonical_href", "canonicalHref"]),
+    robots: firstMetadataRewriteObservedValue(sources, ["robots", "robots_status", "robotsStatus", "robots_state", "robotsState", "meta_robots", "metaRobots", "indexability"]),
+    observed_at: firstMetadataRewriteObservedValue(sources, ["observed_at", "observedAt", "checked_at", "checkedAt", "crawled_at", "crawledAt", "fetched_at", "fetchedAt"]),
+  });
+}
+
+function metadataRewriteOpportunityContext(action: SEOContentAction | ResultsAction) {
+  const sources = metadataRewriteSources(action);
+  return siteFixCompactPayload({
+    query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? firstSiteFixValue(sources, ["query", "opportunity_query", "opportunityQuery"]),
+    intent: firstSiteFixValue(sources, ["query_intent", "queryIntent", "intent", "intent_type", "intentType"]),
+    problem_detail: firstSiteFixValue(sources, ["problem_detail", "problemDetail", "snippet_issue", "snippetIssue", "current_snippet_issue", "currentSnippetIssue", "issue_detail", "issueDetail"]),
+    confidence: firstSiteFixValue(sources, ["confidence", "confidence_score", "confidenceScore"]),
+    priority: firstSiteFixValue(sources, ["priority", "priority_score", "priorityScore"]),
+    recommended_action: action.action_type,
+  });
+}
+
+function metadataRewriteProposedChange(action: SEOContentAction | ResultsAction) {
+  const sources = metadataRewriteSources(action);
+  return siteFixCompactPayload({
+    title: firstMetadataRewriteProposedValue(sources, ["title", "proposed_title", "proposedTitle", "recommended_title", "recommendedTitle", "new_title", "newTitle"]),
+    meta_description: firstMetadataRewriteProposedValue(sources, ["meta_description", "metaDescription", "description", "proposed_meta_description", "proposedMetaDescription", "recommended_meta_description", "recommendedMetaDescription", "new_meta_description", "newMetaDescription"]),
+    seo_impact: firstMetadataRewriteProposedValue(sources, ["seo_impact", "seoImpact", "seo_contribution", "seoContribution"]),
+    geo_impact: firstMetadataRewriteProposedValue(sources, ["geo_impact", "geoImpact", "geo_contribution", "geoContribution"]),
+    content_support_required: firstMetadataRewriteProposedValue(sources, ["content_support_required", "contentSupportRequired", "requires_content_support", "requiresContentSupport"]),
+    preserve: ["canonical", "indexability", "production URL"],
+  });
+}
+
 function isHomepageTarget(targetURL: string) {
   try {
     const parsed = new URL(targetURL);
@@ -790,6 +946,13 @@ function siteFixLikelySurfaces(assetType: string, targetURL: string) {
 }
 
 function siteFixImplementationSteps(assetType: string, actionType: string, targetURL: string) {
+  if (assetType === "metadata_rewrite") {
+    return [
+      `Locate the page route, layout metadata, or SEO config that emits the production <title> and meta description for ${targetURL}.`,
+      "Replace the existing title and meta description with the exact proposed_change values in this JSON.",
+      "Preserve the canonical URL, indexability, and production host while checking OpenGraph and Twitter card metadata for intentional consistency.",
+    ];
+  }
   if (assetType === "schema_patch") {
     return [
       "Locate the route/template that renders the target URL and confirm whether JSON-LD already exists.",
@@ -819,6 +982,9 @@ function siteFixImplementationSteps(assetType: string, actionType: string, targe
 }
 
 function siteFixDeduplicationRule(assetType: string) {
+  if (assetType === "metadata_rewrite") {
+    return "Update the existing title/meta description source of truth; check OpenGraph and Twitter card metadata for duplicates or conflicting values instead of adding parallel SEO signals.";
+  }
   if (assetType === "schema_patch") {
     return "If JSON-LD already exists, update or extend the existing graph instead of adding duplicate Organization, WebSite, or WebPage nodes.";
   }
@@ -960,6 +1126,19 @@ function siteFixPatchContract(assetType: string, targetURL: string) {
       ],
     };
   }
+  if (assetType === "metadata_rewrite") {
+    return {
+      change_type: "metadata_rewrite",
+      target_url: targetURL,
+      constraints: [
+        "Update the existing title and meta description signal instead of creating new page content.",
+        "Use only reviewed production copy values from proposed_change.",
+        "Do not use staging, preview, localhost, or placeholder URLs.",
+        "Verify the exact crawler-facing values in production after deployment.",
+      ],
+      preserve: ["canonical", "indexability", "production URL"],
+    };
+  }
   return {
     change_type: assetType,
     target_url: targetURL,
@@ -1002,14 +1181,39 @@ function fallbackSiteFixAcceptanceTests(assetType: string, actionType: string, t
   ];
 }
 
+function metadataRewriteAcceptanceTests(action: SEOContentAction | ResultsAction, targetURL: string) {
+  const proposed = metadataRewriteProposedChange(action);
+  const observed = metadataRewriteObservedSnapshot(action);
+  const tests: string[] = [];
+  if (typeof proposed.title === "string" && proposed.title.trim()) {
+    tests.push("Fetch " + targetURL + " and confirm the initial HTML <title> equals " + JSON.stringify(proposed.title.trim()) + ".");
+  }
+  if (typeof proposed.meta_description === "string" && proposed.meta_description.trim()) {
+    tests.push("Fetch " + targetURL + " and confirm meta[name=\"description\"] equals " + JSON.stringify(proposed.meta_description.trim()) + ".");
+  }
+  if (typeof observed.canonical === "string" && observed.canonical.trim()) {
+    tests.push(`Confirm canonical URL remains "${observed.canonical.trim()}".`);
+  } else {
+    tests.push(`Confirm canonical URL remains the production canonical URL for ${targetURL}.`);
+  }
+  tests.push(
+    "Confirm the page remains indexable: no noindex robots meta, no blocking X-Robots-Tag, and robots.txt does not disallow the URL.",
+    "Check OpenGraph and Twitter card title/description values for duplicate or conflicting metadata signals.",
+    "Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
+  );
+  return tests;
+}
+
 function siteFixAcceptanceTests(action: SEOContentAction | ResultsAction) {
   const diff = action.diff_snapshot ?? {};
   const change = firstProposedChange(action);
+  const assetType = siteFixAssetType(action);
+  if (assetType === "metadata_rewrite") return metadataRewriteAcceptanceTests(action, siteFixTargetURL(action));
   const direct = stringArrayValue(diff.acceptance_tests);
   if (direct.length > 0) return direct;
   const changeTests = stringArrayValue(change?.verification_steps);
   if (changeTests.length > 0) return changeTests;
-  return fallbackSiteFixAcceptanceTests(siteFixAssetType(action), action.action_type, siteFixTargetURL(action));
+  return fallbackSiteFixAcceptanceTests(assetType, action.action_type, siteFixTargetURL(action));
 }
 
 function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
@@ -1024,6 +1228,10 @@ function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
   const implementationSteps = stringArrayValue(change?.implementation_steps);
   const likelySurfaces = stringArrayValue(change?.likely_surfaces);
   const observedMetadata = siteFixObservedMetadata(action);
+  const metadataRewrite = assetType === "metadata_rewrite";
+  const observed = metadataRewrite ? metadataRewriteObservedSnapshot(action) : {};
+  const opportunity = metadataRewrite ? metadataRewriteOpportunityContext(action) : {};
+  const proposedChange = metadataRewrite ? metadataRewriteProposedChange(action) : {};
   return {
     issue: {
       category: "site_fix",
@@ -1032,10 +1240,11 @@ function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
       problem: action.action_type,
       why_it_matters: actionSEOContributionText(action),
     },
+    ...(metadataRewrite ? { observed, opportunity, proposed_change: proposedChange } : {}),
     evidence: {
       page_url: target,
       opportunity_query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? null,
-      recommended_action: (action as ResultsAction).opportunity_recommended_action ?? action.input_snapshot?.recommended_action ?? action.action_type,
+      recommended_action: metadataRewrite ? action.action_type : (action as ResultsAction).opportunity_recommended_action ?? action.input_snapshot?.recommended_action ?? action.action_type,
       proposed_changes: diff.proposed_changes ?? [],
       ...(Object.keys(observedMetadata).length > 0 ? { observed_metadata: observedMetadata } : {}),
     },

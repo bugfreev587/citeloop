@@ -600,7 +600,14 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 	if err != nil {
 		return 0, err
 	}
-	candidates := searchMetricOpportunityCandidates(toSearchQueryRollups(queryRows), toPageDecayRollups(decayRows))
+	checkRows, err := s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
+		ProjectID: projectID,
+		LimitRows: 100,
+	})
+	if err != nil {
+		return 0, err
+	}
+	candidates := searchMetricOpportunityCandidates(toSearchQueryRollups(queryRows, observedMetadataByNormalizedURL(checkRows)), toPageDecayRollups(decayRows))
 	generated := 0
 	for _, candidate := range candidates {
 		query := strings.TrimSpace(candidate.Query)
@@ -762,9 +769,20 @@ func stringPtrValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func toSearchQueryRollups(rows []db.ListSearchQueryOpportunityRollupsRow) []searchQueryRollup {
+func toSearchQueryRollups(rows []db.ListSearchQueryOpportunityRollupsRow, observedByURL ...map[string]map[string]any) []searchQueryRollup {
+	var observedMap map[string]map[string]any
+	if len(observedByURL) > 0 {
+		observedMap = observedByURL[0]
+	}
 	out := make([]searchQueryRollup, 0, len(rows))
 	for _, row := range rows {
+		observed := map[string]any(nil)
+		if observedMap != nil {
+			observed = observedMap[row.NormalizedPageUrl]
+			if len(observed) == 0 {
+				observed = observedMap[row.PageUrl]
+			}
+		}
 		out = append(out, searchQueryRollup{
 			PageURL:           row.PageUrl,
 			NormalizedPageURL: row.NormalizedPageUrl,
@@ -775,7 +793,75 @@ func toSearchQueryRollups(rows []db.ListSearchQueryOpportunityRollupsRow) []sear
 			Position:          pgutil.Float(row.Position28d),
 			WindowStart:       dateFromPG(row.WindowStart),
 			WindowEnd:         dateFromPG(row.WindowEnd),
+			ObservedMetadata:  copyObservedMetadata(observed),
 		})
+	}
+	return out
+}
+
+func observedMetadataByNormalizedURL(rows []db.TechnicalCheck) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, row := range rows {
+		observed := observedMetadataFromTechnicalCheck(row)
+		if len(observed) == 0 {
+			continue
+		}
+		for _, key := range []string{row.NormalizedPageUrl, row.PageUrl} {
+			if trimmed := strings.TrimSpace(key); trimmed != "" {
+				out[trimmed] = observed
+			}
+		}
+	}
+	return out
+}
+
+func observedMetadataFromTechnicalCheck(row db.TechnicalCheck) map[string]any {
+	details := jsonObject(row.RawDetails)
+	out := map[string]any{}
+	if row.HttpStatus != nil {
+		out["status"] = int(*row.HttpStatus)
+	}
+	if value := firstMetadataEvidenceString(details, "page_title", "title"); value != "" {
+		out["title"] = value
+	}
+	if value := firstMetadataEvidenceString(details, "meta_description", "description"); value != "" {
+		out["meta_description"] = value
+	}
+	if value := firstMetadataEvidenceString(details, "canonical_url", "canonical"); value != "" {
+		out["canonical"] = value
+	}
+	robots := stringPtrValue(row.RobotsStatus)
+	if robots == "" {
+		robots = firstMetadataEvidenceString(details, "robots", "robots_status", "meta_robots")
+	}
+	if robots != "" {
+		out["robots"] = robots
+	}
+	if row.CheckedAt.Valid {
+		out["observed_at"] = row.CheckedAt.Time.UTC().Format("2006-01-02")
+	} else if value := firstMetadataEvidenceString(details, "observed_at", "checked_at", "crawled_at", "fetched_at"); value != "" {
+		out["observed_at"] = value
+	}
+	return out
+}
+
+func firstMetadataEvidenceString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(fmt.Sprint(values[key]))
+		if value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
+}
+
+func copyObservedMetadata(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
 	return out
 }

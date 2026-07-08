@@ -144,6 +144,125 @@ func TestDefaultDiffSnapshotForSiteFixIncludesAIRepairPayload(t *testing.T) {
 	}
 }
 
+func TestMetadataRewriteAIRepairPayloadIncludesActionableContract(t *testing.T) {
+	pageURL := "https://unipost.dev/"
+	query := "unipost"
+	action := "Rewrite homepage title and meta description for query relevance"
+	broadRecommendation := "Expand the existing page or create a supporting section for the query intent"
+	impact := "Improve search appearance and click-through for an existing page."
+	opp := db.SeoOpportunity{
+		Type:              "low_ctr_page",
+		PageUrl:           &pageURL,
+		NormalizedPageUrl: pageURL,
+		Query:             &query,
+		Evidence: json.RawMessage(`{
+			"observed": {
+				"status": 200,
+				"title": "UniPost - Social publishing for teams",
+				"meta_description": "Publish and repurpose social content from one workspace.",
+				"canonical": "https://unipost.dev/",
+				"robots": "indexable",
+				"observed_at": "2026-07-08"
+			},
+			"opportunity": {
+				"intent": "branded + product category",
+				"problem_detail": "Meta description is long and feature-list-like; rewrite for clearer search snippet and product positioning.",
+				"confidence": 0.72,
+				"priority": "low_to_medium",
+				"recommended_action": "Expand the existing page or create a supporting section for the query intent"
+			},
+			"proposed_change": {
+				"title": "UniPost | Social Media Posting API for Developers",
+				"meta_description": "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.",
+				"seo_impact": "search snippet relevance / CTR",
+				"geo_impact": "entity clarity / product category clarity",
+				"content_support_required": false
+			}
+		}`),
+		RecommendedAction: &broadRecommendation,
+		ExpectedImpact:    &impact,
+		RiskLevel:         "low",
+	}
+
+	raw := defaultDiffSnapshotForAction(nil, "metadata_rewrite", action, opp)
+	var payload struct {
+		AIRepair map[string]any `json:"ai_repair"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal default diff snapshot: %v\n%s", err, raw)
+	}
+	repairJSON, _ := json.Marshal(payload.AIRepair)
+	if strings.Contains(string(repairJSON), broadRecommendation) {
+		t.Fatalf("metadata repair JSON should not carry conflicting content-expansion scope: %s", repairJSON)
+	}
+
+	observed, ok := payload.AIRepair["observed"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata repair JSON must include current observed values: %#v", payload.AIRepair)
+	}
+	if observed["status"] != float64(200) || observed["title"] != "UniPost - Social publishing for teams" || observed["meta_description"] != "Publish and repurpose social content from one workspace." {
+		t.Fatalf("observed values should preserve status/title/meta description, got %#v", observed)
+	}
+	if observed["canonical"] != pageURL || observed["robots"] != "indexable" || observed["observed_at"] != "2026-07-08" {
+		t.Fatalf("observed values should preserve canonical, robots, and timestamp, got %#v", observed)
+	}
+
+	opportunity, ok := payload.AIRepair["opportunity"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata repair JSON must include opportunity context: %#v", payload.AIRepair)
+	}
+	if opportunity["query"] != query || opportunity["intent"] != "branded + product category" || opportunity["confidence"] != 0.72 || opportunity["priority"] != "low_to_medium" {
+		t.Fatalf("opportunity context should preserve query intent, confidence, and priority, got %#v", opportunity)
+	}
+	if !strings.Contains(opportunity["problem_detail"].(string), "clearer search snippet") {
+		t.Fatalf("opportunity context should explain why metadata is weak, got %#v", opportunity)
+	}
+
+	proposed, ok := payload.AIRepair["proposed_change"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata repair JSON must include proposed title and meta description: %#v", payload.AIRepair)
+	}
+	if proposed["title"] != "UniPost | Social Media Posting API for Developers" {
+		t.Fatalf("proposed title not carried through: %#v", proposed)
+	}
+	if proposed["meta_description"] != "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms." {
+		t.Fatalf("proposed meta description not carried through: %#v", proposed)
+	}
+	preserve, ok := proposed["preserve"].([]any)
+	if !ok || len(preserve) < 3 {
+		t.Fatalf("proposed metadata change must name signals to preserve, got %#v", proposed["preserve"])
+	}
+
+	fix, ok := payload.AIRepair["fix"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata repair JSON must include fix contract: %#v", payload.AIRepair)
+	}
+	dedupe, _ := fix["deduplication_rule"].(string)
+	if !strings.Contains(dedupe, "OpenGraph") || !strings.Contains(dedupe, "Twitter") {
+		t.Fatalf("metadata repair dedupe should require OG/Twitter conflict checks, got %q", dedupe)
+	}
+
+	tests, ok := payload.AIRepair["acceptance_tests"].([]any)
+	if !ok || len(tests) == 0 {
+		t.Fatalf("metadata repair JSON must include acceptance tests: %#v", payload.AIRepair["acceptance_tests"])
+	}
+	testTexts := make([]string, 0, len(tests))
+	for _, entry := range tests {
+		testTexts = append(testTexts, entry.(string))
+	}
+	joined := strings.Join(testTexts, "\n")
+	for _, want := range []string{
+		`<title> equals "UniPost | Social Media Posting API for Developers"`,
+		`meta[name="description"] equals "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms."`,
+		`canonical URL remains "https://unipost.dev/"`,
+		"page remains indexable",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("metadata acceptance tests missing %q in %s", want, joined)
+		}
+	}
+}
+
 func TestPlanSEOContentActionCreatesTopicForManualDrafting(t *testing.T) {
 	serverRaw, err := os.ReadFile("server.go")
 	if err != nil {
