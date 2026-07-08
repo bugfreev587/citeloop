@@ -1421,7 +1421,8 @@ func directActionProposedChange(assetType string, actionType string, targetURL s
 
 func directActionAIRepairPayload(assetType string, actionType string, opp db.SeoOpportunity) map[string]any {
 	targetURL := opportunityTargetURL(opp)
-	return map[string]any{
+	evidence := directActionRepairEvidence(opp, assetType, actionType)
+	payload := map[string]any{
 		"issue": compactActionPayload(map[string]any{
 			"category":        "site_fix",
 			"issue_type":      assetType,
@@ -1430,7 +1431,7 @@ func directActionAIRepairPayload(assetType string, actionType string, opp db.Seo
 			"problem":         actionType,
 			"why_it_matters":  firstNonEmptyString(stringPtrValueAPI(opp.ExpectedImpact), seoGeoContributionForAsset(assetType)),
 		}),
-		"evidence": directActionRepairEvidence(opp),
+		"evidence": evidence,
 		"fix": compactActionPayload(map[string]any{
 			"goal":               actionType,
 			"instructions":       directActionImplementationSteps(assetType, actionType, targetURL),
@@ -1440,20 +1441,57 @@ func directActionAIRepairPayload(assetType string, actionType string, opp db.Seo
 			"do_not":             directActionDoNot(assetType),
 			"risk_level":         opp.RiskLevel,
 		}),
-		"acceptance_tests": directActionAcceptanceTests(assetType, actionType, targetURL),
+		"acceptance_tests": directActionAIRepairAcceptanceTests(assetType, actionType, targetURL, opp),
 		"human_review":     directActionHumanReview(assetType),
 	}
+	if assetType == "metadata_rewrite" {
+		payload["observed"] = metadataRewriteObservedSnapshot(opp)
+		payload["opportunity"] = metadataRewriteOpportunityContext(opp, actionType)
+		payload["proposed_change"] = metadataRewriteProposedChange(opp)
+	}
+	return payload
 }
 
-func directActionRepairEvidence(opp db.SeoOpportunity) map[string]any {
-	evidence := compactActionPayload(map[string]any{
+func directActionAIRepairAcceptanceTests(assetType string, actionType string, targetURL string, opp db.SeoOpportunity) []string {
+	if assetType != "metadata_rewrite" {
+		return directActionAcceptanceTests(assetType, actionType, targetURL)
+	}
+	proposed := metadataRewriteProposedChange(opp)
+	observed := metadataRewriteObservedSnapshot(opp)
+	tests := []string{}
+	if title, ok := proposed["title"].(string); ok && strings.TrimSpace(title) != "" {
+		tests = append(tests, "Fetch "+targetURL+" and confirm the initial HTML <title> equals "+strconv.Quote(title)+".")
+	}
+	if description, ok := proposed["meta_description"].(string); ok && strings.TrimSpace(description) != "" {
+		tests = append(tests, "Fetch "+targetURL+" and confirm meta[name=\"description\"] equals "+strconv.Quote(description)+".")
+	}
+	if canonical, ok := observed["canonical"].(string); ok && strings.TrimSpace(canonical) != "" {
+		tests = append(tests, "Confirm canonical URL remains "+strconv.Quote(canonical)+".")
+	} else {
+		tests = append(tests, "Confirm canonical URL remains the production canonical URL for "+targetURL+".")
+	}
+	tests = append(tests,
+		"Confirm the page remains indexable: no noindex robots meta, no blocking X-Robots-Tag, and robots.txt does not disallow the URL.",
+		"Check OpenGraph and Twitter card title/description values for duplicate or conflicting metadata signals.",
+		"Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
+	)
+	return tests
+}
+
+func directActionRepairEvidence(opp db.SeoOpportunity, assetType string, actionType string) map[string]any {
+	recommendedAction := stringPtrValueAPI(opp.RecommendedAction)
+	if assetType == "metadata_rewrite" && strings.TrimSpace(actionType) != "" {
+		recommendedAction = strings.TrimSpace(actionType)
+	}
+	payload := map[string]any{
 		"page_url":            opportunityTargetURL(opp),
 		"normalized_page_url": opp.NormalizedPageUrl,
 		"opportunity_type":    opp.Type,
 		"query":               stringPtrValueAPI(opp.Query),
-		"recommended_action":  stringPtrValueAPI(opp.RecommendedAction),
+		"recommended_action":  recommendedAction,
 		"expected_impact":     stringPtrValueAPI(opp.ExpectedImpact),
-	})
+	}
+	evidence := compactActionPayload(payload)
 	if rawHasMeaningfulJSON(opp.Evidence) {
 		var parsed any
 		if err := json.Unmarshal(opp.Evidence, &parsed); err == nil {
@@ -1464,6 +1502,193 @@ func directActionRepairEvidence(opp db.SeoOpportunity) map[string]any {
 		}
 	}
 	return evidence
+}
+
+func metadataRewriteObservedSnapshot(opp db.SeoOpportunity) map[string]any {
+	parsed := parsedActionEvidence(opp.Evidence)
+	observedContainers := []string{"observed", "observed_metadata", "observedMetadata", "metadata", "page_metadata", "pageMetadata", "seo_metadata", "seoMetadata", "technical", "raw_details", "rawDetails"}
+	return compactActionPayload(map[string]any{
+		"status":           firstEvidenceValueInContainers(parsed, observedContainers, []string{"status", "http_status", "httpStatus", "status_code", "statusCode"}),
+		"title":            firstEvidenceStringInContainers(parsed, observedContainers, []string{"title", "page_title", "pageTitle", "current_title", "currentTitle", "observed_title", "observedTitle"}),
+		"meta_description": firstEvidenceStringInContainers(parsed, observedContainers, []string{"meta_description", "metaDescription", "description", "current_meta_description", "currentMetaDescription", "observed_meta_description", "observedMetaDescription"}),
+		"canonical":        firstEvidenceStringInContainers(parsed, observedContainers, []string{"canonical", "canonical_url", "canonicalUrl", "canonical_href", "canonicalHref"}),
+		"robots":           firstEvidenceStringInContainers(parsed, observedContainers, []string{"robots", "robots_status", "robotsStatus", "robots_state", "robotsState", "meta_robots", "metaRobots", "indexability"}),
+		"observed_at":      firstEvidenceStringInContainers(parsed, observedContainers, []string{"observed_at", "observedAt", "checked_at", "checkedAt", "crawled_at", "crawledAt", "fetched_at", "fetchedAt"}),
+	})
+}
+
+func metadataRewriteOpportunityContext(opp db.SeoOpportunity, actionType string) map[string]any {
+	parsed := parsedActionEvidence(opp.Evidence)
+	return compactActionPayload(map[string]any{
+		"query":              stringPtrValueAPI(opp.Query),
+		"intent":             firstEvidenceString(parsed, []string{"query_intent", "queryIntent", "intent", "intent_type", "intentType"}),
+		"problem_detail":     firstEvidenceString(parsed, []string{"problem_detail", "problemDetail", "snippet_issue", "snippetIssue", "current_snippet_issue", "currentSnippetIssue", "issue_detail", "issueDetail"}),
+		"confidence":         firstEvidenceValue(parsed, []string{"confidence", "confidence_score", "confidenceScore"}),
+		"priority":           firstEvidenceValue(parsed, []string{"priority", "priority_score", "priorityScore"}),
+		"recommended_action": strings.TrimSpace(actionType),
+	})
+}
+
+func metadataRewriteProposedChange(opp db.SeoOpportunity) map[string]any {
+	parsed := parsedActionEvidence(opp.Evidence)
+	proposedContainers := []string{"proposed_change", "proposedChange", "proposed_metadata", "proposedMetadata", "metadata_rewrite", "metadataRewrite", "recommended_metadata", "recommendedMetadata", "recommendation"}
+	title := firstEvidenceStringInContainers(parsed, proposedContainers, []string{"title", "proposed_title", "proposedTitle", "recommended_title", "recommendedTitle", "new_title", "newTitle"})
+	if title == "" {
+		title = firstEvidenceString(parsed, []string{"proposed_title", "proposedTitle", "recommended_title", "recommendedTitle", "new_title", "newTitle"})
+	}
+	description := firstEvidenceStringInContainers(parsed, proposedContainers, []string{"meta_description", "metaDescription", "description", "proposed_meta_description", "proposedMetaDescription", "recommended_meta_description", "recommendedMetaDescription", "new_meta_description", "newMetaDescription"})
+	if description == "" {
+		description = firstEvidenceString(parsed, []string{"proposed_meta_description", "proposedMetaDescription", "recommended_meta_description", "recommendedMetaDescription", "new_meta_description", "newMetaDescription"})
+	}
+	return compactActionPayload(map[string]any{
+		"title":                    title,
+		"meta_description":         description,
+		"seo_impact":               firstEvidenceStringInContainers(parsed, proposedContainers, []string{"seo_impact", "seoImpact", "seo_contribution", "seoContribution"}),
+		"geo_impact":               firstEvidenceStringInContainers(parsed, proposedContainers, []string{"geo_impact", "geoImpact", "geo_contribution", "geoContribution"}),
+		"content_support_required": firstEvidenceValueInContainers(parsed, proposedContainers, []string{"content_support_required", "contentSupportRequired", "requires_content_support", "requiresContentSupport"}),
+		"preserve":                 []string{"canonical", "indexability", "production URL"},
+	})
+}
+
+func parsedActionEvidence(raw json.RawMessage) any {
+	if !rawHasMeaningfulJSON(raw) {
+		return nil
+	}
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil
+	}
+	return parsed
+}
+
+func firstEvidenceString(value any, aliases []string) string {
+	found := firstEvidenceValue(value, aliases)
+	if text, ok := found.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func firstEvidenceStringInContainers(value any, containers []string, aliases []string) string {
+	found := firstEvidenceValueInContainers(value, containers, aliases)
+	if text, ok := found.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func firstEvidenceValue(value any, aliases []string) any {
+	wanted := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		wanted[normalizeMetadataKey(alias)] = struct{}{}
+	}
+	return firstEvidenceValueIn(value, wanted)
+}
+
+func firstEvidenceValueInContainers(value any, containers []string, aliases []string) any {
+	wantedContainers := make(map[string]struct{}, len(containers))
+	for _, container := range containers {
+		wantedContainers[normalizeMetadataKey(container)] = struct{}{}
+	}
+	wantedAliases := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		wantedAliases[normalizeMetadataKey(alias)] = struct{}{}
+	}
+	return firstEvidenceValueInNamedContainer(value, wantedContainers, wantedAliases)
+}
+
+func firstEvidenceValueInNamedContainer(value any, wantedContainers map[string]struct{}, wantedAliases map[string]struct{}) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			entry := typed[key]
+			if _, ok := wantedContainers[normalizeMetadataKey(key)]; ok {
+				if found := firstEvidenceValueIn(entry, wantedAliases); found != nil {
+					return found
+				}
+			}
+		}
+		for _, key := range keys {
+			if found := firstEvidenceValueInNamedContainer(typed[key], wantedContainers, wantedAliases); found != nil {
+				return found
+			}
+		}
+	case []any:
+		for _, entry := range typed {
+			if found := firstEvidenceValueInNamedContainer(entry, wantedContainers, wantedAliases); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+func firstEvidenceValueIn(value any, wanted map[string]struct{}) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, entry := range typed {
+			if _, ok := wanted[normalizeMetadataKey(key)]; !ok {
+				continue
+			}
+			if found := normalizeEvidenceScalar(entry); found != nil {
+				return found
+			}
+		}
+
+		preferredContainers := []string{"observed", "observed_metadata", "metadata", "page_metadata", "seo_metadata", "technical", "raw_details", "opportunity", "proposed_change"}
+		for _, preferred := range preferredContainers {
+			normalizedPreferred := normalizeMetadataKey(preferred)
+			for key, entry := range typed {
+				if normalizeMetadataKey(key) != normalizedPreferred {
+					continue
+				}
+				if found := firstEvidenceValueIn(entry, wanted); found != nil {
+					return found
+				}
+			}
+		}
+
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if found := firstEvidenceValueIn(typed[key], wanted); found != nil {
+				return found
+			}
+		}
+	case []any:
+		for _, entry := range typed {
+			if found := firstEvidenceValueIn(entry, wanted); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeEvidenceScalar(value any) any {
+	switch typed := value.(type) {
+	case string:
+		if trimmed := strings.TrimSpace(typed); trimmed != "" {
+			return trimmed
+		}
+	case float64, bool:
+		return typed
+	case int:
+		return typed
+	case int64:
+		return typed
+	case json.Number:
+		return typed.String()
+	}
+	return nil
 }
 
 func directActionObservedMetadata(parsed any) map[string]any {
@@ -1578,6 +1803,12 @@ func directActionLikelySurfaces(assetType string, targetURL string) []string {
 
 func directActionImplementationSteps(assetType string, actionType string, targetURL string) []string {
 	switch assetType {
+	case "metadata_rewrite":
+		return []string{
+			"Locate the page route, layout metadata, or SEO config that emits the production <title> and meta description for " + targetURL + ".",
+			"Replace the existing title and meta description with the exact proposed_change values in this JSON.",
+			"Preserve the canonical URL, indexability, and production host while checking OpenGraph and Twitter card metadata for intentional consistency.",
+		}
 	case "schema_patch":
 		return []string{
 			"Locate the route/template that renders the target URL and confirm whether JSON-LD already exists.",
@@ -1670,6 +1901,18 @@ func directActionPatchContract(assetType string, targetURL string) map[string]an
 				"Use canonical production URLs and avoid redirect chains.",
 			},
 		}
+	case "metadata_rewrite":
+		return map[string]any{
+			"change_type": "metadata_rewrite",
+			"target_url":  targetURL,
+			"constraints": []string{
+				"Update the existing title and meta description signal instead of creating new page content.",
+				"Use only reviewed production copy values from proposed_change.",
+				"Do not use staging, preview, localhost, or placeholder URLs.",
+				"Verify the exact crawler-facing values in production after deployment.",
+			},
+			"preserve": []string{"canonical", "indexability", "production URL"},
+		}
 	default:
 		return map[string]any{
 			"change_type": assetType,
@@ -1685,6 +1928,8 @@ func directActionPatchContract(assetType string, targetURL string) map[string]an
 
 func directActionDeduplicationRule(assetType string) string {
 	switch assetType {
+	case "metadata_rewrite":
+		return "Update the existing title/meta description source of truth; check OpenGraph and Twitter card metadata for duplicates or conflicting values instead of adding parallel SEO signals."
 	case "schema_patch":
 		return "If JSON-LD already exists, update or extend the existing graph instead of adding duplicate Organization, WebSite, or WebPage nodes."
 	case "internal_link_patch":
