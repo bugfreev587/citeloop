@@ -31,7 +31,9 @@ const (
 	DefaultBriefLimit = 10
 )
 
-const ga4ReconnectRequiredMessage = "Google Analytics permission is missing. Reconnect Google from Search Console settings so CiteLoop can request Analytics read access, then run SEO sync again."
+const ga4ReconnectRequiredMessage = "Google Analytics permission is missing. Update Analytics access from Settings so CiteLoop can request Analytics read access, then run SEO sync again."
+
+const ga4PropertyAccessRequiredMessage = "Google Analytics property access is missing. Confirm the numeric GA4 Property ID and grant the connected Google account Viewer access in GA4 Property Access Management, then run SEO sync again."
 
 type GoogleDataProvider interface {
 	FetchSearchConsole(context.Context, googledata.SearchConsoleRequest) (googledata.SearchConsoleData, error)
@@ -450,6 +452,9 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 func ga4IntegrationFailureForError(err error) (status string, message string, note string) {
 	if googledata.IsInsufficientAuthenticationScopes(err) {
 		return "reconnect_required", ga4ReconnectRequiredMessage, "ga4_reconnect_required"
+	}
+	if googledata.IsAnalyticsPropertyAccessDenied(err) {
+		return "property_access_required", ga4PropertyAccessRequiredMessage, "ga4_property_access_required"
 	}
 	return "error", err.Error(), "ga4_error"
 }

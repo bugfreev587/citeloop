@@ -648,8 +648,8 @@ test("gsc oauth entry points are self-serve and action-first", () => {
         "mismatch",
       ],
     ],
-    ["integrations/google/search-console/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings", "project_id"]],
-    ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Search Console connection", "Return to Settings"]],
+    ["integrations/google/search-console/callback/gsc-callback-client.tsx", ["Finishing Google data connection", "Google data connected", "Return to Settings", "project_id"]],
+    ["projects/[id]/settings/gsc/callback/gsc-callback-client.tsx", ["Finishing Google data connection", "Google data connected", "Return to Settings"]],
   ]) {
     const source = read(file);
     for (const copy of copies) {
@@ -1505,6 +1505,8 @@ test("settings combines Google Search Console and Google Analytics connection se
     "URL segment after p",
     "Click Update Analytics access so Google asks for Analytics read access",
     "reconnect_required",
+    "property_access_required",
+    "property access required",
     "Save the Property ID",
     "api.getSEOSettings",
     "ga4_property_id",
@@ -1516,6 +1518,7 @@ test("settings combines Google Search Console and Google Analytics connection se
 
   assert.doesNotMatch(settings, /title: "Search Console connection"/);
   assert.doesNotMatch(settings, /Connect or reconnect Google from the Search Console card/);
+  assert.doesNotMatch(read("integrations/google/search-console/callback/gsc-callback-client.tsx"), /Finishing Search Console connection/);
   assert.doesNotMatch(settings, /analytics\/web\/provision/);
 });
 

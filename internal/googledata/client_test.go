@@ -172,6 +172,16 @@ func TestInsufficientAuthenticationScopesErrorIsRecognized(t *testing.T) {
 	}
 }
 
+func TestAnalyticsPropertyAccessDeniedErrorIsRecognized(t *testing.T) {
+	err := errors.New(`google api status 403: { "error": { "message": "User does not have sufficient permissions for this property. To learn more about Property ID, see https://developers.google.com/analytics/devguides/reporting/data/v1/property-id.", "status": "PERMISSION_DENIED" } }`)
+	if !IsAnalyticsPropertyAccessDenied(err) {
+		t.Fatalf("expected Analytics property access error to be recognized")
+	}
+	if IsAnalyticsPropertyAccessDenied(errors.New("Request had insufficient authentication scopes.")) {
+		t.Fatal("scope errors should not be classified as property access errors")
+	}
+}
+
 func date(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }

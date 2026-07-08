@@ -42,6 +42,14 @@ func IsInsufficientAuthenticationScopes(err error) bool {
 		strings.Contains(msg, "insufficient authentication scopes")
 }
 
+func IsAnalyticsPropertyAccessDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "user does not have sufficient permissions for this property")
+}
+
 func NewServiceAccountClient(ctx context.Context, credentialsJSON string) (Client, error) {
 	trimmed := strings.TrimSpace(credentialsJSON)
 	if trimmed == "" {
