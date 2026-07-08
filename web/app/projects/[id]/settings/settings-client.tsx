@@ -112,8 +112,8 @@ function ga4StatusLabel(status?: string, propertyID?: string) {
 const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
   "Copy the numeric Property ID from Admin > Property settings, or from the Analytics URL segment after p (for example p123456789).",
-  "Connect or reconnect Google from the Search Console card so CiteLoop can request Analytics read access.",
-  "If Google Analytics needs attention, update Google permissions so CiteLoop can read Analytics reports.",
+  "Click Update Analytics access so Google asks for Analytics read access on the same Google connection.",
+  "If Google Analytics still needs attention, run SEO sync again after reconnecting Analytics access.",
   "Save the Property ID, then run SEO sync after Google starts collecting data.",
 ];
 
@@ -1132,14 +1132,19 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function startSearchConsoleOAuth() {
-    setGSCBusy("connect");
+  async function startSearchConsoleOAuth(source: "search-console" | "analytics" = "search-console") {
+    const analytics = source === "analytics";
+    setGSCBusy(analytics ? "analytics-permissions" : "connect");
     setMessage(null);
     try {
       const result = await api.startGSCOAuth(projectId);
       window.location.assign(result.authorization_url);
     } catch (e: any) {
-      setMessage({ title: "Search Console connect failed", detail: friendlyError(e.message), tone: "red" });
+      setMessage({
+        title: analytics ? "Analytics permission update failed" : "Search Console connect failed",
+        detail: friendlyError(e.message),
+        tone: "red",
+      });
       setGSCBusy(null);
     }
   }
@@ -1847,7 +1852,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
             <div className="flex flex-wrap gap-2">
               {canStartGSCOAuth && (
-                <Button variant="primary" onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                <Button variant="primary" onClick={() => startSearchConsoleOAuth()} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
                   <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
                     Connect Search Console
                   </ButtonProgress>
@@ -1945,9 +1950,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                     </ButtonProgress>
                   </Button>
                   {ga4NeedsGooglePermissions && (
-                    <Button onClick={startSearchConsoleOAuth} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
-                      <ButtonProgress busy={gscBusy === "connect"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
-                        Update Google permissions
+                    <Button onClick={() => startSearchConsoleOAuth("analytics")} disabled={Boolean(gscBusy) || gscConnection?.configured === false}>
+                      <ButtonProgress busy={gscBusy === "analytics-permissions"} busyLabel="Opening Google" idleIcon={<Search size={16} />}>
+                        Update Analytics access
                       </ButtonProgress>
                     </Button>
                   )}

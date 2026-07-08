@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
@@ -84,5 +85,31 @@ func TestSEOSettingsIntegrationParamsUsesFallbackCredentialForGA4(t *testing.T) 
 	}
 	if params.LastError != nil {
 		t.Fatalf("last error = %v, want nil", *params.LastError)
+	}
+}
+
+func TestShouldClearGA4ScopeErrorAfterAnalyticsScopeGranted(t *testing.T) {
+	lastError := `google api status 403: {"error":{"message":"Request had insufficient authentication scopes.","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}`
+	integration := db.SeoIntegration{
+		Provider:  seopkg.ProviderGA4,
+		Status:    "error",
+		LastError: &lastError,
+	}
+
+	if !shouldClearGA4ScopeErrorAfterOAuth(googledata.SearchConsoleOAuthScopeString(), integration) {
+		t.Fatal("expected Analytics scope reconnect to clear a stale GA4 scope error")
+	}
+}
+
+func TestShouldNotClearNonScopeGA4ErrorAfterAnalyticsScopeGranted(t *testing.T) {
+	lastError := "google api status 404: property not found"
+	integration := db.SeoIntegration{
+		Provider:  seopkg.ProviderGA4,
+		Status:    "error",
+		LastError: &lastError,
+	}
+
+	if shouldClearGA4ScopeErrorAfterOAuth(googledata.SearchConsoleOAuthScopeString(), integration) {
+		t.Fatal("non-scope GA4 errors should not be cleared by OAuth reconnect")
 	}
 }

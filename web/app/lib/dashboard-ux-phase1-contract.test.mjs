@@ -1495,14 +1495,15 @@ test("settings combines Google Search Console and Google Analytics connection se
     "Search Console",
     "Google Analytics connection",
     "GA4 Property ID",
-    "Update Google permissions",
+    "Update Analytics access",
+    "Analytics permission update failed",
     "Open Google Analytics",
     "https://analytics.google.com/analytics/web/",
     "Analytics Home",
     "setup wizard",
     "Copy the numeric Property ID",
     "URL segment after p",
-    "Connect or reconnect Google from the Search Console card",
+    "Click Update Analytics access so Google asks for Analytics read access",
     "reconnect_required",
     "Save the Property ID",
     "api.getSEOSettings",
@@ -1514,6 +1515,7 @@ test("settings combines Google Search Console and Google Analytics connection se
   }
 
   assert.doesNotMatch(settings, /title: "Search Console connection"/);
+  assert.doesNotMatch(settings, /Connect or reconnect Google from the Search Console card/);
   assert.doesNotMatch(settings, /analytics\/web\/provision/);
 });
 
