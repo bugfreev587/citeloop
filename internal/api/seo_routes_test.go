@@ -35,6 +35,8 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "create action", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/opportunities/not-an-id/actions"},
 		{name: "actions", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/actions"},
 		{name: "action detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/actions/not-an-id"},
+		{name: "action return to opportunity", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/actions/not-an-id/return-to-opportunity"},
+		{name: "action dismiss", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/actions/not-an-id/dismiss"},
 		{name: "brief", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/briefs/latest"},
 		{name: "doctor summary", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/doctor"},
 		{name: "doctor create run", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/doctor/runs"},

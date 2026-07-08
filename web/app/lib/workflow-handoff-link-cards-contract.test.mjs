@@ -53,13 +53,17 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
 });
 
-test("Sent to Review cards carry no current-layer actions", async () => {
+test("Sent to Review cards only expose review links and pre-publish reconsideration actions", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
   const sectionStart = source.indexOf("data-content-plan-recently-sent");
   const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
   assert.ok(section.length > 0, "recently sent section must exist");
 
-  for (const forbidden of ["Schedule", "Archive", "Draft Content", "onClick", "aria-expanded", "RightDrawer"]) {
+  assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "return", action \}\)/);
+  assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "dismiss", action \}\)/);
+  assert.match(section, /href=\{reviewHrefForAction\(projectId, action\)\}/);
+
+  for (const forbidden of ["Schedule", "Archive", "Draft Content", "aria-expanded", "RightDrawer"]) {
     assert.equal(section.includes(forbidden), false, `sent card section must not contain ${forbidden}`);
   }
 });

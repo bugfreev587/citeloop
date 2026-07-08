@@ -616,6 +616,20 @@ func (s *Server) dismissSEOOpportunity(w http.ResponseWriter, r *http.Request) {
 	s.updateSEOOpportunityStatus(w, r, "dismissed")
 }
 
+func (s *Server) recordSEOOpportunityReviewState(ctx context.Context, q *db.Queries, projectID uuid.UUID, oppID uuid.UUID, contentActionID pgtype.UUID, reviewStatus string, snoozedUntil pgtype.Timestamptz) error {
+	if q == nil {
+		return nil
+	}
+	_, err := q.CreateOrUpdateSEOOpportunityReviewState(ctx, db.CreateOrUpdateSEOOpportunityReviewStateParams{
+		ProjectID:           projectID,
+		SourceOpportunityID: oppID,
+		ContentActionID:     contentActionID,
+		ReviewStatus:        reviewStatus,
+		SnoozedUntil:        snoozedUntil,
+	})
+	return err
+}
+
 func (s *Server) updateSEOOpportunityStatus(w http.ResponseWriter, r *http.Request, status string) {
 	projectID, oppID, ok := s.seoIDs(w, r, "opportunityID")
 	if !ok {
@@ -629,6 +643,12 @@ func (s *Server) updateSEOOpportunityStatus(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "opportunity not found")
 		return
+	}
+	if status == "dismissed" {
+		if err := s.recordSEOOpportunityReviewState(r.Context(), s.Q, projectID, oppID, pgtype.UUID{}, "dismissed", pgtype.Timestamptz{}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", oppID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, oppID, status), map[string]any{
 		"opportunity_id": oppID,
@@ -1580,6 +1600,94 @@ func (s *Server) updateSEOContentActionStatus(w http.ResponseWriter, r *http.Req
 	})
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) returnSEOContentActionToOpportunity(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	if s.Pool == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	tx, err := s.Pool.Begin(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	q := db.New(tx)
+	action, err := q.MarkContentActionReturnedToOpportunity(r.Context(), db.MarkContentActionReturnedToOpportunityParams{
+		ActionID:  actionID,
+		ProjectID: projectID,
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found or no longer reversible")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", action.OpportunityID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, action.OpportunityID, "returned_to_opportunities"), map[string]any{
+		"opportunity_id": action.OpportunityID,
+		"action_id":      action.ID,
+		"status":         "open",
+		"action_status":  "returned",
+		"reason":         "returned_to_opportunities",
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) dismissSEOContentActionAndOpportunity(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	if s.Pool == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	tx, err := s.Pool.Begin(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	q := db.New(tx)
+	action, err := q.DismissSEOContentActionAndOpportunity(r.Context(), db.DismissSEOContentActionAndOpportunityParams{
+		ActionID:  actionID,
+		ProjectID: projectID,
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found or no longer dismissible")
+		return
+	}
+	if err := s.recordSEOOpportunityReviewState(r.Context(), q, projectID, action.OpportunityID, pgtype.UUID{Bytes: action.ID, Valid: true}, "dismissed", pgtype.Timestamptz{}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", action.OpportunityID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, action.OpportunityID, action.ID, "opportunity dismissed"), map[string]any{
+		"opportunity_id": action.OpportunityID,
+		"action_id":      action.ID,
+		"status":         "dismissed",
+		"action_status":  "dismissed",
+		"reason":         "opportunity dismissed",
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, action)

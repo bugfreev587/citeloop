@@ -181,6 +181,7 @@ type ContentAction struct {
 	ApprovalSource          string             `json:"approval_source"`
 	RoutingSource           string             `json:"routing_source"`
 	WorkType                *string            `json:"work_type"`
+	StatusReason            *string            `json:"status_reason"`
 }
 
 type ContentInventory struct {
@@ -733,29 +734,49 @@ type SeoObjective struct {
 }
 
 type SeoOpportunity struct {
-	ID                uuid.UUID          `json:"id"`
-	ProjectID         uuid.UUID          `json:"project_id"`
-	Type              string             `json:"type"`
-	Status            string             `json:"status"`
-	PriorityScore     pgtype.Numeric     `json:"priority_score"`
-	Confidence        pgtype.Numeric     `json:"confidence"`
-	PageUrl           *string            `json:"page_url"`
-	NormalizedPageUrl string             `json:"normalized_page_url"`
-	ArticleID         pgtype.UUID        `json:"article_id"`
-	TopicID           pgtype.UUID        `json:"topic_id"`
-	Query             *string            `json:"query"`
-	Evidence          json.RawMessage    `json:"evidence"`
-	RecommendedAction *string            `json:"recommended_action"`
-	ExpectedImpact    *string            `json:"expected_impact"`
-	Effort            int32              `json:"effort"`
-	RiskLevel         string             `json:"risk_level"`
-	CreatedByRunID    pgtype.UUID        `json:"created_by_run_id"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	OpportunityKey    string             `json:"opportunity_key"`
-	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
-	SnoozeReason      *string            `json:"snooze_reason"`
-	UnsnoozedAt       pgtype.Timestamptz `json:"unsnoozed_at"`
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	Type                   string             `json:"type"`
+	Status                 string             `json:"status"`
+	PriorityScore          pgtype.Numeric     `json:"priority_score"`
+	Confidence             pgtype.Numeric     `json:"confidence"`
+	PageUrl                *string            `json:"page_url"`
+	NormalizedPageUrl      string             `json:"normalized_page_url"`
+	ArticleID              pgtype.UUID        `json:"article_id"`
+	TopicID                pgtype.UUID        `json:"topic_id"`
+	Query                  *string            `json:"query"`
+	Evidence               json.RawMessage    `json:"evidence"`
+	RecommendedAction      *string            `json:"recommended_action"`
+	ExpectedImpact         *string            `json:"expected_impact"`
+	Effort                 int32              `json:"effort"`
+	RiskLevel              string             `json:"risk_level"`
+	CreatedByRunID         pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey         string             `json:"opportunity_key"`
+	SnoozedUntil           pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason           *string            `json:"snooze_reason"`
+	UnsnoozedAt            pgtype.Timestamptz `json:"unsnoozed_at"`
+	OpportunityIdentityKey string             `json:"opportunity_identity_key"`
+	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+}
+
+type SeoOpportunityReviewState struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	OpportunityIdentityKey string             `json:"opportunity_identity_key"`
+	SourceOpportunityID    pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID        pgtype.UUID        `json:"content_action_id"`
+	ReviewStatus           string             `json:"review_status"`
+	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+	ReviewedBy             *string            `json:"reviewed_by"`
+	ReviewedAt             pgtype.Timestamptz `json:"reviewed_at"`
+	SnoozedUntil           pgtype.Timestamptz `json:"snoozed_until"`
+	MaterialChangeMetadata json.RawMessage    `json:"material_change_metadata"`
+	ReopenedAt             pgtype.Timestamptz `json:"reopened_at"`
+	ReopenedReason         *string            `json:"reopened_reason"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SeoPolicy struct {

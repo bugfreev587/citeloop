@@ -81,7 +81,9 @@ func TestMultiSurfaceQueriesExposeFoundationRecords(t *testing.T) {
 		"source_url",
 		"expected_citation_mechanism",
 		"opportunity_key",
-		"on conflict (project_id, opportunity_key)",
+		"opportunity_identity_key",
+		"evidence_fingerprint",
+		"on conflict (project_id, opportunity_identity_key)",
 	} {
 		if !strings.Contains(queries, want) {
 			t.Fatalf("multi-surface queries missing %q", want)

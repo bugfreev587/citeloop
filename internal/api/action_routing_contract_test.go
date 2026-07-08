@@ -35,6 +35,41 @@ func TestCreateSEOContentActionInfersMultiSurfaceAssetAndReviewOutput(t *testing
 	}
 }
 
+func TestSEOActionReturnDismissContracts(t *testing.T) {
+	serverRaw, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("read server.go: %v", err)
+	}
+	routes := string(serverRaw)
+	for _, want := range []string{
+		`r.Post("/actions/{actionID}/return-to-opportunity", s.returnSEOContentActionToOpportunity)`,
+		`r.Post("/actions/{actionID}/dismiss", s.dismissSEOContentActionAndOpportunity)`,
+	} {
+		if !strings.Contains(routes, want) {
+			t.Fatalf("server routes missing action lifecycle route %q", want)
+		}
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(handlerRaw)
+	for _, want := range []string{
+		"func (s *Server) returnSEOContentActionToOpportunity",
+		"func (s *Server) dismissSEOContentActionAndOpportunity",
+		"MarkContentActionReturnedToOpportunity",
+		"DismissSEOContentActionAndOpportunity",
+		"CreateOrUpdateSEOOpportunityReviewState",
+		"returned_to_opportunities",
+		"opportunity dismissed",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("SEO action lifecycle handler contract missing %q", want)
+		}
+	}
+}
+
 func TestDefaultDiffSnapshotForSiteFixIncludesAIRepairPayload(t *testing.T) {
 	pageURL := "https://unipost.dev/"
 	action := "Add structured data to the existing page"
