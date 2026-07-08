@@ -293,3 +293,57 @@ func TestPlanSEOContentActionCreatesTopicForManualDrafting(t *testing.T) {
 		}
 	}
 }
+
+func TestImprovePageActionsUsePageUpdateDraftsInsteadOfTopics(t *testing.T) {
+	improvePage := WorkTypeImprovePage
+	pageUpdate := "page_update"
+	action := db.ContentAction{
+		ActionType: "Strengthen the evidence block on this existing page",
+		AssetType:  &pageUpdate,
+		WorkType:   &improvePage,
+	}
+	if contentActionCreatesContent(action) {
+		t.Fatal("Improve Page actions must not enter the Topic/Article creation path")
+	}
+	if contentActionNeedsTopic(pageUpdate, action.ActionType) {
+		t.Fatal("page_update actions must create Page Update Drafts instead of Topics")
+	}
+
+	serverRaw, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("read server.go: %v", err)
+	}
+	serverSource := string(serverRaw)
+	for _, want := range []string{
+		`r.Post("/actions/{actionID}/page-update-drafts", s.createPageUpdateDraftForAction)`,
+		`r.Get("/page-update-drafts/{draftID}", s.getPageUpdateDraft)`,
+		`r.Post("/page-update-drafts/{draftID}/generate", s.generatePageUpdateDraft)`,
+		`r.Post("/page-update-drafts/{draftID}/approve", s.approvePageUpdateDraft)`,
+		`r.Post("/page-update-drafts/{draftID}/apply", s.applyPageUpdateDraft)`,
+		`r.Post("/page-update-drafts/{draftID}/verify", s.verifyPageUpdateDraft)`,
+	} {
+		if !strings.Contains(serverSource, want) {
+			t.Fatalf("Page Update Draft route missing %q", want)
+		}
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	handlerSource := string(handlerRaw)
+	for _, want := range []string{
+		"func (s *Server) createPageUpdateDraftForAction",
+		"func (s *Server) generatePageUpdateDraft",
+		"func (s *Server) approvePageUpdateDraft",
+		"func (s *Server) applyPageUpdateDraft",
+		"func (s *Server) verifyPageUpdateDraft",
+		"CreateOrReusePageUpdateDraft",
+		"UpdatePageUpdateDraftStatus",
+		"MarkContentActionVerification",
+	} {
+		if !strings.Contains(handlerSource, want) {
+			t.Fatalf("Page Update Draft handler contract missing %q", want)
+		}
+	}
+}

@@ -175,3 +175,36 @@ test("publish strategy recommendations follow brief-first PRD defaults", async (
     /existing owned page/,
   );
 });
+
+test("page update actions hide publishing controls and use update language", async () => {
+  const {
+    contentPlanActionPrimaryCTA,
+    contentPlanActionPublishControlsVisible,
+    contentPlanActionSurfaceLabel,
+    isPageUpdateAction,
+    pageUpdateDraftIDForAction,
+  } = await loadContentPlanLogicModule();
+
+  const pageUpdate = {
+    work_type: "improve_page",
+    asset_type: "page_update",
+    action_type: "Strengthen the evidence block on this existing page",
+  };
+  const newContent = {
+    work_type: "create_content",
+    asset_type: "blog_post",
+    action_type: "Create a supporting article",
+  };
+
+  assert.equal(isPageUpdateAction(pageUpdate), true);
+  assert.equal(contentPlanActionPublishControlsVisible(pageUpdate), false);
+  assert.equal(contentPlanActionPrimaryCTA(pageUpdate), "Draft Update");
+  assert.equal(contentPlanActionSurfaceLabel(pageUpdate), "Page updates");
+  assert.equal(pageUpdateDraftIDForAction({ output_snapshot: { page_update_draft_id: "draft-1" } }), "draft-1");
+  assert.equal(pageUpdateDraftIDForAction({ output_snapshot: { page_update_draft_id: " " } }), null);
+
+  assert.equal(isPageUpdateAction(newContent), false);
+  assert.equal(contentPlanActionPublishControlsVisible(newContent), true);
+  assert.equal(contentPlanActionPrimaryCTA(newContent), "Draft Content");
+  assert.equal(contentPlanActionSurfaceLabel(newContent), "Content briefs");
+});

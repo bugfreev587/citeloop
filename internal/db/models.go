@@ -432,6 +432,32 @@ type PagePerformanceDaily struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PageUpdateDraft struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	ContentActionID        uuid.UUID          `json:"content_action_id"`
+	TargetUrl              string             `json:"target_url"`
+	NormalizedTargetUrl    string             `json:"normalized_target_url"`
+	OpportunityKey         string             `json:"opportunity_key"`
+	TargetArticleID        pgtype.UUID        `json:"target_article_id"`
+	SourceFilePath         *string            `json:"source_file_path"`
+	BaseContentHash        *string            `json:"base_content_hash"`
+	ProposedContentMd      string             `json:"proposed_content_md"`
+	Patch                  json.RawMessage    `json:"patch"`
+	DiffSnapshot           json.RawMessage    `json:"diff_snapshot"`
+	QaFeedback             json.RawMessage    `json:"qa_feedback"`
+	ResolutionCriteria     json.RawMessage    `json:"resolution_criteria"`
+	PublisherResult        json.RawMessage    `json:"publisher_result"`
+	VerificationSnapshot   json.RawMessage    `json:"verification_snapshot"`
+	OriginalSourceSnapshot json.RawMessage    `json:"original_source_snapshot"`
+	Status                 string             `json:"status"`
+	ApprovedAt             pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt              pgtype.Timestamptz `json:"applied_at"`
+	VerifiedAt             pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProductProfile struct {
 	ID         uuid.UUID          `json:"id"`
 	ProjectID  uuid.UUID          `json:"project_id"`

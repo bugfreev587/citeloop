@@ -4,11 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
-import type { ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
+import type { PageUpdateDraft, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
+  contentPlanActionBusyCTA,
+  contentPlanActionPrimaryCTA,
+  contentPlanActionPublishControlsVisible,
   normalizePublishStrategy,
   hasReviewableDraft,
   isBacklogStatus,
+  isPageUpdateAction,
+  pageUpdateDraftIDForAction,
   planHealthForTopics,
   publishStrategyLabel,
   publishStrategyReasonForAction,
@@ -160,6 +165,71 @@ function contentPlanRiskReasons(action: VisibilityActionInLoop) {
   return Array.isArray(action.risk_reasons) ? action.risk_reasons.map((item) => String(item)).filter(Boolean) : [];
 }
 
+function pageUpdateDraftPrimaryCTA(draft: PageUpdateDraft | null) {
+  switch (draft?.status) {
+    case "ready_for_review":
+      return "Approve Update";
+    case "approved":
+      return "Apply Update";
+    case "applied":
+    case "verification_pending":
+    case "manual_apply_required":
+    case "needs_follow_up":
+    case "verification_failed":
+      return "Verify Update";
+    case "verified":
+      return "Verified";
+    default:
+      return "Draft Update";
+  }
+}
+
+function pageUpdateDraftBusyCTA(draft: PageUpdateDraft | null) {
+  switch (draft?.status) {
+    case "ready_for_review":
+      return "Approving";
+    case "approved":
+      return "Applying";
+    case "applied":
+    case "verification_pending":
+    case "manual_apply_required":
+    case "needs_follow_up":
+    case "verification_failed":
+      return "Verifying";
+    default:
+      return "Drafting update";
+  }
+}
+
+function pageUpdateDraftStatusTone(status: string | undefined): "neutral" | "red" | "amber" | "green" | "blue" {
+  switch (status) {
+    case "verified":
+      return "green";
+    case "ready_for_review":
+    case "approved":
+    case "applied":
+    case "verification_pending":
+      return "blue";
+    case "manual_apply_required":
+    case "needs_follow_up":
+      return "amber";
+    case "verification_failed":
+    case "rejected":
+      return "red";
+    default:
+      return "neutral";
+  }
+}
+
+function formatPageUpdateJSON(value: any) {
+  if (!value || (typeof value === "object" && Object.keys(value).length === 0)) return "Not available yet.";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function topicFromAcceptedAction(action: VisibilityActionInLoop, channel: ContentPlanPublishStrategy): Topic | null {
   if (!action.topic_id) return null;
   return {
@@ -203,6 +273,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [highlightContentPlanAction, setHighlightContentPlanAction] = useState<string | null>(null);
   const [selectedContentPlanActionID, setSelectedContentPlanActionID] = useState<string | null>(null);
+  const [pageUpdateDrafts, setPageUpdateDrafts] = useState<Record<string, PageUpdateDraft>>({});
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
@@ -263,6 +334,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     () => contentPlanActions.filter((action) => !hasReviewableDraft(action)),
     [contentPlanActions],
   );
+  const acceptedPageUpdateActions = useMemo(
+    () => acceptedPlanActions.filter((action) => isPageUpdateAction(action)),
+    [acceptedPlanActions],
+  );
+  const acceptedContentBriefActions = useMemo(
+    () => acceptedPlanActions.filter((action) => !isPageUpdateAction(action)),
+    [acceptedPlanActions],
+  );
   const selectedContentPlanAction = useMemo(
     () => acceptedPlanActions.find((action) => action.id === selectedContentPlanActionID) ?? null,
     [acceptedPlanActions, selectedContentPlanActionID],
@@ -290,6 +369,39 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     const timeout = window.setTimeout(() => setHighlightContentPlanAction(null), 2_200);
     return () => window.clearTimeout(timeout);
   }, [acceptedPlanActions, requestedActionID]);
+
+  useEffect(() => {
+    const actionsWithDrafts = acceptedPlanActions
+      .filter((action) => isPageUpdateAction(action))
+      .map((action) => ({ action, draftID: pageUpdateDraftIDForAction(action) }))
+      .filter((item): item is { action: VisibilityActionInLoop; draftID: string } => Boolean(item.draftID));
+    if (actionsWithDrafts.length === 0) return;
+    let cancelled = false;
+    async function loadPageUpdateDrafts() {
+      const entries = await Promise.all(
+        actionsWithDrafts.map(async ({ action, draftID }) => {
+          try {
+            const draft = await api.getPageUpdateDraft(projectId, draftID);
+            return [action.id, draft] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setPageUpdateDrafts((current) => {
+        const next = { ...current };
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1];
+        }
+        return next;
+      });
+    }
+    loadPageUpdateDrafts();
+    return () => {
+      cancelled = true;
+    };
+  }, [acceptedPlanActions, api, projectId]);
 
   useEffect(() => {
     const hasGenerating = Object.keys(generatingIds).length > 0 || topics.some((topic) => topic.status === "generating");
@@ -333,9 +445,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     [topics, reviewArticleByTopic, sentToReviewActions],
   );
   const planHealth = useMemo(() => planHealthForTopics(legacyBriefTopics), [legacyBriefTopics]);
-  const readyContentBriefs = acceptedPlanActions.filter((action) => !action.topic_id || action.topic_status !== "scheduled").length + planHealth.readyToDraft;
+  const readyContentBriefs = acceptedContentBriefActions.filter((action) => !action.topic_id || action.topic_status !== "scheduled").length + planHealth.readyToDraft;
   const planStatusItems = [
-    { label: "Content briefs", value: acceptedPlanActions.length + legacyBriefTopics.length },
+    { label: "Content briefs", value: acceptedContentBriefActions.length + legacyBriefTopics.length },
+    { label: "Page updates", value: acceptedPageUpdateActions.length },
     { label: "Ready to draft", value: readyContentBriefs },
     { label: "Scheduled briefs", value: planHealth.scheduledIntent },
     { label: "Needs priority", value: planHealth.needsPriority },
@@ -351,8 +464,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedActionTopic = selectedContentPlanAction?.topic_id
     ? topics.find((topic) => topic.id === selectedContentPlanAction.topic_id) ?? null
     : null;
+  const selectedActionIsPageUpdate = isPageUpdateAction(selectedContentPlanAction);
+  const selectedPageUpdateDraft = selectedContentPlanAction ? pageUpdateDrafts[selectedContentPlanAction.id] ?? null : null;
   const selectedActionPublishStrategy = selectedContentPlanAction ? publishStrategyForAction(selectedContentPlanAction) : "blog";
   const selectedActionRecommendedStrategy = selectedContentPlanAction ? recommendedPublishStrategy(selectedContentPlanAction) : "blog";
+  const selectedActionShowsPublishControls = contentPlanActionPublishControlsVisible(selectedContentPlanAction);
+  const selectedActionPrimaryCTA = selectedActionShowsPublishControls ? contentPlanActionPrimaryCTA(selectedContentPlanAction) : pageUpdateDraftPrimaryCTA(selectedPageUpdateDraft);
   const selectedActionPublishReason = selectedContentPlanAction
     ? publishStrategyReasonForAction(selectedContentPlanAction, selectedActionRecommendedStrategy)
     : "";
@@ -362,6 +479,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     : false;
   const selectedActionScheduleValue = selectedActionScheduleKey ? scheduleDrafts[selectedActionScheduleKey] ?? "" : "";
   const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
+  const selectedPageUpdateBusy = selectedContentPlanAction ? busy === `page-update-${selectedContentPlanAction.id}` : false;
 
   function topicForAction(action: VisibilityActionInLoop) {
     return action.topic_id ? topics.find((topic) => topic.id === action.topic_id) ?? null : null;
@@ -609,12 +727,120 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     setBusy(`draft-action-${action.id}`);
     setMessage(null);
     try {
+      if (isPageUpdateAction(action)) {
+        const draft = await api.createPageUpdateDraft(projectId, action.id);
+        const generated = await api.generatePageUpdateDraft(projectId, draft.id);
+        setPageUpdateDrafts((current) => ({ ...current, [action.id]: generated }));
+        await refresh();
+        setMessage({ title: "Page update drafted", detail: contentPlanActionTitle(action), tone: "green" });
+        return;
+      }
       const topic = await ensureTopicForAction(action);
       await generate(topic);
     } catch (e: any) {
-      setMessage({ title: "Draft Content failed", detail: e.message, tone: "red" });
+      setMessage({ title: `${contentPlanActionPrimaryCTA(action)} failed`, detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function refreshPageUpdateDraft(action: VisibilityActionInLoop) {
+    const draftID = pageUpdateDraftIDForAction(action);
+    if (!draftID) return null;
+    const draft = await api.getPageUpdateDraft(projectId, draftID);
+    setPageUpdateDrafts((current) => ({ ...current, [action.id]: draft }));
+    return draft;
+  }
+
+  async function approvePageUpdateAction(action: VisibilityActionInLoop) {
+    let draft = pageUpdateDrafts[action.id] ?? (await refreshPageUpdateDraft(action));
+    if (!draft) {
+      setMessage({ title: "Draft update first", detail: "Create a page update draft before approving it.", tone: "amber" });
+      return;
+    }
+    setBusy(`page-update-${action.id}`);
+    setMessage(null);
+    try {
+      draft = await api.approvePageUpdateDraft(projectId, draft.id);
+      setPageUpdateDrafts((current) => ({ ...current, [action.id]: draft }));
+      await refresh();
+      setMessage({ title: "Page update approved", detail: contentPlanActionTitle(action), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Approve Update failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyPageUpdateAction(action: VisibilityActionInLoop) {
+    let draft = pageUpdateDrafts[action.id] ?? (await refreshPageUpdateDraft(action));
+    if (!draft) {
+      setMessage({ title: "Draft update first", detail: "Create a page update draft before applying it.", tone: "amber" });
+      return;
+    }
+    setBusy(`page-update-${action.id}`);
+    setMessage(null);
+    try {
+      draft = await api.applyPageUpdateDraft(projectId, draft.id);
+      setPageUpdateDrafts((current) => ({ ...current, [action.id]: draft }));
+      await refresh();
+      setMessage({
+        title: draft.status === "manual_apply_required" ? "Manual patch ready" : "Page update applied",
+        detail: contentPlanActionDetail(action),
+        tone: draft.status === "manual_apply_required" ? "amber" : "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Apply Update failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function verifyPageUpdateAction(action: VisibilityActionInLoop) {
+    let draft = pageUpdateDrafts[action.id] ?? (await refreshPageUpdateDraft(action));
+    if (!draft) {
+      setMessage({ title: "Draft update first", detail: "Create a page update draft before verifying it.", tone: "amber" });
+      return;
+    }
+    setBusy(`page-update-${action.id}`);
+    setMessage(null);
+    try {
+      draft = await api.verifyPageUpdateDraft(projectId, draft.id, {
+        status: "verified",
+        verification_snapshot: { source: "content_plan_manual_verify", target_url: draft.target_url },
+      });
+      setPageUpdateDrafts((current) => ({ ...current, [action.id]: draft }));
+      await refresh();
+      setMessage({ title: "Page update verified", detail: contentPlanActionDetail(action), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Verify Update failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function advancePageUpdateAction(action: VisibilityActionInLoop) {
+    const draft = pageUpdateDrafts[action.id] ?? null;
+    switch (draft?.status) {
+      case "ready_for_review":
+        await approvePageUpdateAction(action);
+        break;
+      case "approved":
+        await applyPageUpdateAction(action);
+        break;
+      case "applied":
+      case "verification_pending":
+      case "manual_apply_required":
+      case "needs_follow_up":
+      case "verification_failed":
+        await verifyPageUpdateAction(action);
+        break;
+      case "verified":
+        setMessage({ title: "Already verified", detail: contentPlanActionDetail(action), tone: "green" });
+        break;
+      default:
+        await draftAcceptedAction(action);
+        break;
     }
   }
 
@@ -811,8 +1037,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
               const actionHasReviewContent = hasReviewableDraft(action);
-              const publishStrategy = publishStrategyForAction(action);
-              const recommendedStrategy = recommendedPublishStrategy(action);
+              const actionIsPageUpdate = isPageUpdateAction(action);
+              const publishStrategy = actionIsPageUpdate ? "blog" : publishStrategyForAction(action);
+              const recommendedStrategy = actionIsPageUpdate ? "blog" : recommendedPublishStrategy(action);
               return (
                 <div
                   key={action.id}
@@ -832,10 +1059,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Accepted</Badge>
                         <Badge tone="blue">{contentPlanActionTypeLabel(action)}</Badge>
-                        <Badge tone={publishStrategy === recommendedStrategy ? "green" : "neutral"}>
-                          Publish to: {publishStrategyLabel(publishStrategy)}
-                          {publishStrategy === recommendedStrategy ? " · Recommended" : ""}
-                        </Badge>
+                        {actionIsPageUpdate ? (
+                          <Badge tone="green">Target URL locked</Badge>
+                        ) : (
+                          <Badge tone={publishStrategy === recommendedStrategy ? "green" : "neutral"}>
+                            Publish to: {publishStrategyLabel(publishStrategy)}
+                            {publishStrategy === recommendedStrategy ? " · Recommended" : ""}
+                          </Badge>
+                        )}
                         <Badge tone="neutral">{autoEnabled ? "Queued for drafting" : "Auto paused"}</Badge>
                       </div>
                       <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
@@ -855,9 +1086,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                           variant="outline"
                           size="sm"
                           onClick={() => setSelectedContentPlanActionID(action.id)}
-                          aria-label={`Review accepted content brief: ${contentPlanActionTitle(action)}`}
+                          aria-label={`Review accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
                         >
-                          Review brief
+                          {actionIsPageUpdate ? "Review update" : "Review brief"}
                           <ArrowRight size={15} />
                         </Button>
                       )}
@@ -1138,9 +1369,13 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <>
             <Badge tone="green">Accepted</Badge>
             <Badge tone="blue">{contentPlanActionTypeLabel(selectedContentPlanAction)}</Badge>
-            <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
-              Publish to: {publishStrategyLabel(selectedActionPublishStrategy)}
-            </Badge>
+            {selectedActionShowsPublishControls ? (
+              <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
+                Publish to: {publishStrategyLabel(selectedActionPublishStrategy)}
+              </Badge>
+            ) : (
+              <Badge tone="green">Target URL locked</Badge>
+            )}
             <Badge tone="neutral">{autoEnabled ? "Auto drafting" : "Manual review"}</Badge>
           </>
         }
@@ -1156,7 +1391,24 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 Dismiss
               </ButtonProgress>
             </Button>
-            {selectedActionHasReviewContent ? (
+            {selectedActionIsPageUpdate ? (
+              <Button
+                aria-busy={selectedActionDraftBusy || selectedPageUpdateBusy}
+                disabled={Boolean(busy) || selectedPageUpdateDraft?.status === "verified"}
+                variant="primary"
+                size="sm"
+                onClick={() => advancePageUpdateAction(selectedContentPlanAction)}
+                title="Review and advance the existing-page update without creating a new post."
+              >
+                <ButtonProgress
+                  busy={selectedActionDraftBusy || selectedPageUpdateBusy}
+                  busyLabel={pageUpdateDraftBusyCTA(selectedPageUpdateDraft)}
+                  idleIcon={<Wand2 size={14} />}
+                >
+                  {selectedActionPrimaryCTA}
+                </ButtonProgress>
+              </Button>
+            ) : selectedActionHasReviewContent ? (
               <a
                 href={reviewHrefForAction(projectId, selectedContentPlanAction)}
                 className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
@@ -1171,10 +1423,16 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 variant="primary"
                 size="sm"
                 onClick={() => draftAcceptedAction(selectedContentPlanAction)}
-                title={autoEnabled ? "Auto is on, so AI Editor will draft this content automatically." : "Send this brief to AI Editor and QA Review."}
+                title={
+                  autoEnabled
+                    ? "Auto is on, so AI Editor will draft this work automatically."
+                    : selectedActionShowsPublishControls
+                      ? "Send this brief to AI Editor and QA Review."
+                      : "Draft a source-backed patch for this existing page."
+                }
               >
-                <ButtonProgress busy={selectedActionDraftBusy} busyLabel="Drafting" idleIcon={<Wand2 size={14} />}>
-                  Draft Content
+                <ButtonProgress busy={selectedActionDraftBusy} busyLabel={contentPlanActionBusyCTA(selectedContentPlanAction)} idleIcon={<Wand2 size={14} />}>
+                  {contentPlanActionPrimaryCTA(selectedContentPlanAction)}
                 </ButtonProgress>
               </Button>
             )}
@@ -1182,84 +1440,166 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         }
       >
         <div className="space-y-5">
-          <section className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Publish to</div>
-                <p className="mt-1 text-sm leading-5 text-slate-600">
-                  Recommended: {publishStrategyLabel(selectedActionRecommendedStrategy)}
-                </p>
-              </div>
-              <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
-                {selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "Recommended" : "Overridden"}
-              </Badge>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Choose publish strategy">
-              {PUBLISH_STRATEGIES.map((strategy) => {
-                const selected = selectedActionPublishStrategy === strategy;
-                const recommended = selectedActionRecommendedStrategy === strategy;
-                return (
-                  <button
-                    key={strategy}
-                    type="button"
-                    disabled={Boolean(busy)}
-                    aria-pressed={selected}
-                    onClick={() =>
-                      setPublishStrategyDrafts((current) => ({
-                        ...current,
-                        [selectedContentPlanAction.id]: strategy,
-                      }))
-                    }
-                    className={cx(
-                      "min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
-                      selected
-                        ? "border-[#d93820] bg-[#fff5f2] text-[#b8321d] shadow-sm"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
-                    )}
-                  >
-                    <span className="block">{publishStrategyLabel(strategy)}</span>
-                    {recommended && <span className="mt-0.5 block text-xs font-semibold text-emerald-700">Recommended</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-3 text-sm leading-6 text-slate-600">{selectedActionPublishReason}</p>
-            {selectedActionPublishStrategy === "syndication" && (
-              <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
-                V1 generates or references a source article first, then publishes distribution drafts after the source URL exists.
-              </p>
-            )}
-          </section>
+          {selectedActionShowsPublishControls ? (
+            <>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Publish to</div>
+                    <p className="mt-1 text-sm leading-5 text-slate-600">
+                      Recommended: {publishStrategyLabel(selectedActionRecommendedStrategy)}
+                    </p>
+                  </div>
+                  <Badge tone={selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "green" : "neutral"}>
+                    {selectedActionPublishStrategy === selectedActionRecommendedStrategy ? "Recommended" : "Overridden"}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3" role="group" aria-label="Choose publish strategy">
+                  {PUBLISH_STRATEGIES.map((strategy) => {
+                    const selected = selectedActionPublishStrategy === strategy;
+                    const recommended = selectedActionRecommendedStrategy === strategy;
+                    return (
+                      <button
+                        key={strategy}
+                        type="button"
+                        disabled={Boolean(busy)}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          setPublishStrategyDrafts((current) => ({
+                            ...current,
+                            [selectedContentPlanAction.id]: strategy,
+                          }))
+                        }
+                        className={cx(
+                          "min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
+                          selected
+                            ? "border-[#d93820] bg-[#fff5f2] text-[#b8321d] shadow-sm"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                        )}
+                      >
+                        <span className="block">{publishStrategyLabel(strategy)}</span>
+                        {recommended && <span className="mt-0.5 block text-xs font-semibold text-emerald-700">Recommended</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">{selectedActionPublishReason}</p>
+                {selectedActionPublishStrategy === "syndication" && (
+                  <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                    V1 generates or references a source article first, then publishes distribution drafts after the source URL exists.
+                  </p>
+                )}
+              </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule</div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <Field label="Draft at">
-                <TextInput
-                  className="min-w-0"
-                  type="datetime-local"
-                  value={selectedActionScheduleValue}
-                  disabled={selectedActionTopic?.status === "archived"}
-                  onChange={(event) =>
-                    setScheduleDrafts((current) => ({ ...current, [selectedActionScheduleKey]: event.target.value }))
-                  }
-                />
-              </Field>
-              <Button
-                disabled={
-                  selectedActionTopic?.status === "archived" ||
-                  selectedActionScheduleBusy ||
-                  Boolean(busy && !selectedActionScheduleBusy)
-                }
-                size="sm"
-                onClick={() => scheduleAcceptedAction(selectedContentPlanAction)}
-              >
-                <ButtonProgress busy={selectedActionScheduleBusy} busyLabel="Scheduling" idleIcon={<CalendarDays size={14} />}>
-                  Schedule
-                </ButtonProgress>
-              </Button>
-            </div>
-          </section>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <Field label="Draft at">
+                    <TextInput
+                      className="min-w-0"
+                      type="datetime-local"
+                      value={selectedActionScheduleValue}
+                      disabled={selectedActionTopic?.status === "archived"}
+                      onChange={(event) =>
+                        setScheduleDrafts((current) => ({ ...current, [selectedActionScheduleKey]: event.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Button
+                    disabled={
+                      selectedActionTopic?.status === "archived" ||
+                      selectedActionScheduleBusy ||
+                      Boolean(busy && !selectedActionScheduleBusy)
+                    }
+                    size="sm"
+                    onClick={() => scheduleAcceptedAction(selectedContentPlanAction)}
+                  >
+                    <ButtonProgress busy={selectedActionScheduleBusy} busyLabel="Scheduling" idleIcon={<CalendarDays size={14} />}>
+                      Schedule
+                    </ButtonProgress>
+                  </Button>
+                </div>
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Update target</div>
+                    <p className="mt-1 break-words text-sm leading-5 text-slate-600">{contentPlanActionDetail(selectedContentPlanAction)}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone="green">Target URL locked</Badge>
+                    {selectedPageUpdateDraft && (
+                      <Badge tone={pageUpdateDraftStatusTone(selectedPageUpdateDraft.status)}>{selectedPageUpdateDraft.status}</Badge>
+                    )}
+                  </div>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  This work updates the existing page in place. CiteLoop drafts a reviewable patch and keeps the original URL as the verification target.
+                </p>
+              </section>
+
+              {selectedPageUpdateDraft ? (
+                <>
+                  <section className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Review Diff</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-950">
+                          {selectedPageUpdateDraft.diff_snapshot?.change_summary || contentPlanActionTitle(selectedContentPlanAction)}
+                        </div>
+                      </div>
+                      <Badge tone={pageUpdateDraftStatusTone(selectedPageUpdateDraft.status)}>{pageUpdateDraftPrimaryCTA(selectedPageUpdateDraft)}</Badge>
+                    </div>
+                    <div className="mt-4 grid gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Proposed update</div>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs leading-5 text-white">
+                          {selectedPageUpdateDraft.proposed_content_md || "Draft this update to review the proposed patch."}
+                        </pre>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Structured diff</div>
+                        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                          {formatPageUpdateJSON(selectedPageUpdateDraft.diff_snapshot)}
+                        </pre>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">QA and resolution criteria</div>
+                    <div className="mt-3 grid gap-3">
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                        {formatPageUpdateJSON(selectedPageUpdateDraft.qa_feedback)}
+                      </pre>
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                        {formatPageUpdateJSON(selectedPageUpdateDraft.resolution_criteria)}
+                      </pre>
+                    </div>
+                  </section>
+
+                  {(selectedPageUpdateDraft.status === "manual_apply_required" || selectedPageUpdateDraft.status === "verification_failed" || selectedPageUpdateDraft.status === "needs_follow_up") && (
+                    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">Manual apply / verification</div>
+                      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-white/80 p-3 text-xs leading-5 text-amber-900">
+                        {formatPageUpdateJSON(selectedPageUpdateDraft.publisher_result || selectedPageUpdateDraft.verification_snapshot)}
+                      </pre>
+                    </section>
+                  )}
+                </>
+              ) : (
+                <section className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Review Diff</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Draft Update will create a patch, QA feedback, and resolution criteria for this exact target URL.
+                  </p>
+                </section>
+              )}
+            </>
+          )}
 
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>

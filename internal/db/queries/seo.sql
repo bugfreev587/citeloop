@@ -711,6 +711,104 @@ update content_actions set
 where id = $1 and project_id = $2
 returning *;
 
+-- name: CreateOrReusePageUpdateDraft :one
+insert into page_update_drafts
+  (project_id, content_action_id, target_url, normalized_target_url, opportunity_key,
+   target_article_id, source_file_path, base_content_hash, resolution_criteria, original_source_snapshot)
+values (
+  sqlc.arg(project_id),
+  sqlc.arg(content_action_id),
+  sqlc.arg(target_url),
+  sqlc.arg(normalized_target_url),
+  sqlc.arg(opportunity_key),
+  sqlc.narg(target_article_id),
+  sqlc.narg(source_file_path),
+  sqlc.narg(base_content_hash),
+  sqlc.arg(resolution_criteria)::jsonb,
+  sqlc.arg(original_source_snapshot)::jsonb
+)
+on conflict (project_id, content_action_id) do update set
+  target_url = excluded.target_url,
+  normalized_target_url = excluded.normalized_target_url,
+  opportunity_key = excluded.opportunity_key,
+  target_article_id = excluded.target_article_id,
+  source_file_path = coalesce(excluded.source_file_path, page_update_drafts.source_file_path),
+  base_content_hash = coalesce(excluded.base_content_hash, page_update_drafts.base_content_hash),
+  resolution_criteria = excluded.resolution_criteria,
+  original_source_snapshot = excluded.original_source_snapshot,
+  updated_at = now()
+returning *;
+
+-- name: GetPageUpdateDraftForProject :one
+select * from page_update_drafts
+where id = $1 and project_id = $2;
+
+-- name: GetPageUpdateDraftForContentAction :one
+select * from page_update_drafts
+where project_id = $1 and content_action_id = $2;
+
+-- name: UpdatePageUpdateDraftContent :one
+update page_update_drafts set
+  proposed_content_md = sqlc.arg(proposed_content_md),
+  patch = sqlc.arg(patch)::jsonb,
+  diff_snapshot = sqlc.arg(diff_snapshot)::jsonb,
+  qa_feedback = sqlc.arg(qa_feedback)::jsonb,
+  status = 'ready_for_review',
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdatePageUpdateDraftStatus :one
+update page_update_drafts set
+  status = sqlc.arg(status),
+  approved_at = case when sqlc.arg(status) = 'approved' then now() else approved_at end,
+  applied_at = case when sqlc.arg(status) in ('applied','verification_pending','manual_apply_required') then now() else applied_at end,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: ClaimPageUpdateDraftForApply :one
+with candidate as (
+  select page_update_drafts.id from page_update_drafts
+  where page_update_drafts.id = sqlc.arg(id)
+    and page_update_drafts.project_id = sqlc.arg(project_id)
+    and page_update_drafts.status = 'approved'
+  for update skip locked
+)
+update page_update_drafts set
+  status = 'applying',
+  updated_at = now()
+from candidate
+where page_update_drafts.id = candidate.id
+returning page_update_drafts.*;
+
+-- name: MarkPageUpdateDraftApplyResult :one
+update page_update_drafts set
+  status = sqlc.arg(status),
+  publisher_result = sqlc.arg(publisher_result)::jsonb,
+  applied_at = now(),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: MarkPageUpdateDraftVerification :one
+update page_update_drafts set
+  status = sqlc.arg(status),
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  verified_at = case when sqlc.arg(status) = 'verified' then now() else verified_at end,
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: ListStalePageUpdateDrafts :many
+select * from page_update_drafts
+where project_id = sqlc.arg(project_id)
+  and status in ('drafting','applying','verification_pending')
+  and updated_at < now() - interval '30 minutes'
+order by updated_at asc
+limit sqlc.arg(limit_rows)
+for update skip locked;
+
 -- name: MarkContentActionMeasuringForDraftArticle :one
 update content_actions set
   status = 'measuring',

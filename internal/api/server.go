@@ -152,6 +152,12 @@ func (s *Server) Router() http.Handler {
 				r.Get("/actions", s.listSEOContentActions)
 				r.Get("/actions/{actionID}", s.getSEOContentAction)
 				r.Post("/actions/{actionID}/plan", s.planSEOContentAction)
+				r.Post("/actions/{actionID}/page-update-drafts", s.createPageUpdateDraftForAction)
+				r.Get("/page-update-drafts/{draftID}", s.getPageUpdateDraft)
+				r.Post("/page-update-drafts/{draftID}/generate", s.generatePageUpdateDraft)
+				r.Post("/page-update-drafts/{draftID}/approve", s.approvePageUpdateDraft)
+				r.Post("/page-update-drafts/{draftID}/apply", s.applyPageUpdateDraft)
+				r.Post("/page-update-drafts/{draftID}/verify", s.verifyPageUpdateDraft)
 				r.Post("/actions/{actionID}/generate-draft", func(w http.ResponseWriter, r *http.Request) {
 					s.updateSEOContentActionStatus(w, r, "ready_for_review")
 				})

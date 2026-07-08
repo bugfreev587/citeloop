@@ -1969,6 +1969,27 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   assert.doesNotMatch(topics, /Waiting in Content Plan/);
 });
 
+test("content plan handles page updates without publishing strategy controls", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+
+  assert.match(topics, /isPageUpdateAction/);
+  assert.match(topics, /contentPlanActionPublishControlsVisible/);
+  assert.match(topics, /contentPlanActionPrimaryCTA/);
+  assert.match(topics, /api\.createPageUpdateDraft\(projectId, action\.id\)/);
+  assert.match(topics, /api\.generatePageUpdateDraft\(projectId, draft\.id\)/);
+  assert.match(topics, /api\.getPageUpdateDraft\(projectId, draftID\)/);
+  assert.match(topics, /api\.approvePageUpdateDraft\(projectId, draft\.id\)/);
+  assert.match(topics, /api\.applyPageUpdateDraft\(projectId, draft\.id\)/);
+  assert.match(topics, /api\.verifyPageUpdateDraft\(projectId, draft\.id/);
+  assert.match(topics, /Draft Update/);
+  assert.match(topics, /Review Diff/);
+  assert.match(topics, /Approve Update/);
+  assert.match(topics, /Apply Update/);
+  assert.match(topics, /Verify Update/);
+  assert.match(topics, /Update target/);
+  assert.match(topics, /Target URL locked/);
+});
+
 test("content plan schedules accepted content briefs before internal topics exist", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
 

@@ -879,6 +879,293 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, topic)
 }
 
+func (s *Server) createPageUpdateDraftForAction(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: actionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "action not found")
+		return
+	}
+	if !contentActionIsPageUpdate(action) {
+		writeErr(w, http.StatusBadRequest, "content action is not an existing page update")
+		return
+	}
+	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "opportunity not found")
+		return
+	}
+	targetURL := firstNonEmpty(
+		stringPtrValueAPI(action.TargetUrl),
+		stringPtrValueAPI(opp.PageUrl),
+		stringPtrValueAPI(action.NormalizedTargetUrl),
+		opp.NormalizedPageUrl,
+	)
+	normalizedTargetURL := firstNonEmpty(
+		stringPtrValueAPI(action.NormalizedTargetUrl),
+		opp.NormalizedPageUrl,
+		targetURL,
+	)
+	if targetURL == "" || normalizedTargetURL == "" {
+		writeErr(w, http.StatusBadRequest, "page update target URL is missing")
+		return
+	}
+	targetArticleID := action.TargetArticleID
+	if !targetArticleID.Valid {
+		targetArticleID = opp.ArticleID
+	}
+	draft, err := s.Q.CreateOrReusePageUpdateDraft(r.Context(), db.CreateOrReusePageUpdateDraftParams{
+		ProjectID:              projectID,
+		ContentActionID:        action.ID,
+		TargetUrl:              targetURL,
+		NormalizedTargetUrl:    normalizedTargetURL,
+		OpportunityKey:         opp.OpportunityKey,
+		TargetArticleID:        targetArticleID,
+		BaseContentHash:        action.TargetContentHashBefore,
+		ResolutionCriteria:     pageUpdateResolutionCriteria(action, opp, targetURL),
+		OriginalSourceSnapshot: pageUpdateOriginalSourceSnapshot(action, opp, targetURL, normalizedTargetURL),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, draft)
+}
+
+func (s *Server) getPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
+	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
+	if !ok {
+		return
+	}
+	draft, err := s.Q.GetPageUpdateDraftForProject(r.Context(), db.GetPageUpdateDraftForProjectParams{ID: draftID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "page update draft not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) generatePageUpdateDraft(w http.ResponseWriter, r *http.Request) {
+	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
+	if !ok {
+		return
+	}
+	var in struct {
+		ProposedContentMD string          `json:"proposed_content_md"`
+		Patch             json.RawMessage `json:"patch"`
+		DiffSnapshot      json.RawMessage `json:"diff_snapshot"`
+		QAFeedback        json.RawMessage `json:"qa_feedback"`
+	}
+	if err := decodeOptionalJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, action, err := s.pageUpdateDraftWithAction(r.Context(), projectID, draftID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "page update draft not found")
+		return
+	}
+	proposed := strings.TrimSpace(in.ProposedContentMD)
+	if proposed == "" {
+		proposed = defaultPageUpdateProposedContent(action, draft)
+	}
+	patch := rawOrDefault(in.Patch, "")
+	if len(patch) == 0 || !json.Valid(patch) {
+		patch = defaultPageUpdatePatch(action, draft, proposed)
+	}
+	diff := rawOrDefault(in.DiffSnapshot, "")
+	if len(diff) == 0 || !json.Valid(diff) {
+		diff = defaultPageUpdateDiff(action, draft, proposed)
+	}
+	qa := rawOrDefault(in.QAFeedback, "")
+	if len(qa) == 0 || !json.Valid(qa) {
+		qa = defaultPageUpdateQA(action, draft)
+	}
+	draft, err = s.Q.UpdatePageUpdateDraftContent(r.Context(), db.UpdatePageUpdateDraftContentParams{
+		ID:                draft.ID,
+		ProjectID:         projectID,
+		ProposedContentMd: proposed,
+		Patch:             patch,
+		DiffSnapshot:      diff,
+		QaFeedback:        qa,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.UpdateContentActionExecutionMetadata(r.Context(), db.UpdateContentActionExecutionMetadataParams{
+		ID:                   action.ID,
+		ProjectID:            projectID,
+		AssetType:            action.AssetType,
+		TargetSurfaceID:      action.TargetSurfaceID,
+		RiskReasons:          rawOrDefault(action.RiskReasons, `[]`),
+		EvidenceSnapshot:     rawOrDefault(action.EvidenceSnapshot, `{}`),
+		InputSnapshot:        rawOrDefault(action.InputSnapshot, `{}`),
+		OutputSnapshot:       mustJSONLocal(map[string]any{"page_update_draft_id": draft.ID, "status": draft.Status, "target_url": draft.TargetUrl}),
+		DiffSnapshot:         diff,
+		ReviewRequired:       true,
+		ApprovedBy:           action.ApprovedBy,
+		ApprovedAt:           action.ApprovedAt,
+		VerifiedAt:           action.VerifiedAt,
+		VerificationSnapshot: rawOrDefault(action.VerificationSnapshot, `{}`),
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "ready_for_review"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) approvePageUpdateDraft(w http.ResponseWriter, r *http.Request) {
+	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
+	if !ok {
+		return
+	}
+	draft, action, err := s.pageUpdateDraftWithAction(r.Context(), projectID, draftID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "page update draft not found")
+		return
+	}
+	if draft.Status != "ready_for_review" && draft.Status != "approved" {
+		writeErr(w, http.StatusBadRequest, "page update draft is not ready for approval")
+		return
+	}
+	draft, err = s.Q.UpdatePageUpdateDraftStatus(r.Context(), db.UpdatePageUpdateDraftStatusParams{ID: draft.ID, ProjectID: projectID, Status: "approved"})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "approved"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) applyPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
+	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
+	if !ok {
+		return
+	}
+	claimed, err := s.Q.ClaimPageUpdateDraftForApply(r.Context(), db.ClaimPageUpdateDraftForApplyParams{ID: draftID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "page update draft is not approved or is already being applied")
+		return
+	}
+	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: claimed.ContentActionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "content action not found")
+		return
+	}
+	result := mustJSONLocal(map[string]any{
+		"mode":       "manual_patch",
+		"status":     "manual_apply_required",
+		"target_url": claimed.TargetUrl,
+		"reason":     "No source-backed update publisher is connected for this V1 page update.",
+	})
+	draft, err := s.Q.MarkPageUpdateDraftApplyResult(r.Context(), db.MarkPageUpdateDraftApplyResultParams{
+		ID:              claimed.ID,
+		ProjectID:       projectID,
+		Status:          "manual_apply_required",
+		PublisherResult: result,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{ID: action.ID, ProjectID: projectID, Status: "manual_apply_required"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) verifyPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
+	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
+	if !ok {
+		return
+	}
+	var in struct {
+		Status               string          `json:"status"`
+		VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+	}
+	if err := decodeOptionalJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, action, err := s.pageUpdateDraftWithAction(r.Context(), projectID, draftID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "page update draft not found")
+		return
+	}
+	requested := strings.ToLower(strings.TrimSpace(in.Status))
+	if requested == "" {
+		requested = "verified"
+	}
+	draftStatus := "verified"
+	parentStatus := "measuring"
+	verifiedAt := pgutil.TS(time.Now().UTC())
+	switch requested {
+	case "verified", "ok", "passed":
+		draftStatus = "verified"
+		parentStatus = "measuring"
+	case "needs_follow_up", "follow_up":
+		draftStatus = "needs_follow_up"
+		parentStatus = "needs_follow_up"
+		verifiedAt = pgtype.Timestamptz{}
+	case "failed", "verification_failed":
+		draftStatus = "verification_failed"
+		parentStatus = "verification_failed"
+		verifiedAt = pgtype.Timestamptz{}
+	default:
+		writeErr(w, http.StatusBadRequest, "bad verification status")
+		return
+	}
+	snapshot := in.VerificationSnapshot
+	if len(snapshot) == 0 || !json.Valid(snapshot) {
+		snapshot = mustJSONLocal(map[string]any{"source": "manual_page_update_verify", "status": draftStatus, "target_url": draft.TargetUrl})
+	}
+	draft, err = s.Q.MarkPageUpdateDraftVerification(r.Context(), db.MarkPageUpdateDraftVerificationParams{
+		ID:                   draft.ID,
+		ProjectID:            projectID,
+		Status:               draftStatus,
+		VerificationSnapshot: snapshot,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.Q.MarkContentActionVerification(r.Context(), db.MarkContentActionVerificationParams{
+		ID:                   action.ID,
+		ProjectID:            projectID,
+		Status:               parentStatus,
+		VerifiedAt:           verifiedAt,
+		VerificationSnapshot: snapshot,
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, draft)
+}
+
+func (s *Server) pageUpdateDraftWithAction(ctx context.Context, projectID uuid.UUID, draftID uuid.UUID) (db.PageUpdateDraft, db.ContentAction, error) {
+	draft, err := s.Q.GetPageUpdateDraftForProject(ctx, db.GetPageUpdateDraftForProjectParams{ID: draftID, ProjectID: projectID})
+	if err != nil {
+		return db.PageUpdateDraft{}, db.ContentAction{}, err
+	}
+	action, err := s.Q.GetContentAction(ctx, db.GetContentActionParams{ID: draft.ContentActionID, ProjectID: projectID})
+	if err != nil {
+		return db.PageUpdateDraft{}, db.ContentAction{}, err
+	}
+	return draft, action, nil
+}
+
 func (s *Server) existingTopicForContentAction(ctx context.Context, projectID uuid.UUID, actionID uuid.UUID) (db.Topic, bool, error) {
 	topics, err := s.Q.ListTopics(ctx, projectID)
 	if err != nil {
@@ -2214,7 +2501,17 @@ func stringPtrValueAPI(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
+func contentActionIsPageUpdate(action db.ContentAction) bool {
+	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeImprovePage {
+		return true
+	}
+	return strings.TrimSpace(contentActionAssetType(action)) == "page_update"
+}
+
 func contentActionCreatesContent(action db.ContentAction) bool {
+	if contentActionIsPageUpdate(action) {
+		return false
+	}
 	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeFixSiteIssue {
 		return false
 	}
@@ -2224,6 +2521,8 @@ func contentActionCreatesContent(action db.ContentAction) bool {
 func contentActionNeedsTopic(assetType string, actionType string) bool {
 	text := strings.ToLower(strings.TrimSpace(assetType + " " + actionType))
 	switch {
+	case strings.Contains(text, "page_update"):
+		return false
 	case strings.Contains(text, "internal_link_patch") || strings.Contains(text, "internal link"):
 		return false
 	case strings.Contains(text, "schema_patch") || strings.Contains(text, "schema patch"):
@@ -2242,6 +2541,99 @@ func contentActionAssetType(action db.ContentAction) string {
 		return ""
 	}
 	return strings.TrimSpace(*action.AssetType)
+}
+
+func pageUpdateResolutionCriteria(action db.ContentAction, opp db.SeoOpportunity, targetURL string) json.RawMessage {
+	checks := []string{
+		"Target URL remains unchanged.",
+		"Updated page includes source-backed support for the accepted opportunity.",
+		"Post-update verification rechecks the original opportunity type.",
+	}
+	if opp.Type == "thin_evidence_page" {
+		checks = []string{
+			"Fresh crawl extracts at least 3 source-backed evidence snippets.",
+			"Evidence block includes claim, source, supporting detail, and caveat.",
+			"Target URL remains unchanged.",
+		}
+	}
+	return mustJSONLocal(map[string]any{
+		"target_url":          targetURL,
+		"opportunity_type":    opp.Type,
+		"opportunity_key":     opp.OpportunityKey,
+		"action_type":         action.ActionType,
+		"expected_impact":     stringPtrValueAPI(opp.ExpectedImpact),
+		"checks":              checks,
+		"target_url_locked":   true,
+		"creates_new_article": false,
+	})
+}
+
+func pageUpdateOriginalSourceSnapshot(action db.ContentAction, opp db.SeoOpportunity, targetURL string, normalizedTargetURL string) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"source":                     "content_action",
+		"content_action_id":          action.ID,
+		"opportunity_id":             opp.ID,
+		"opportunity_key":            opp.OpportunityKey,
+		"target_url":                 targetURL,
+		"normalized_target_url":      normalizedTargetURL,
+		"target_content_hash_before": stringPtrValueAPI(action.TargetContentHashBefore),
+		"evidence":                   rawOrDefault(opp.Evidence, `{}`),
+	})
+}
+
+func defaultPageUpdateProposedContent(action db.ContentAction, draft db.PageUpdateDraft) string {
+	title := firstNonEmpty(action.ActionType, "Update existing page")
+	return fmt.Sprintf("## Page update: %s\n\nTarget URL: %s\n\nAdd or revise the existing page section so it directly resolves the accepted opportunity. Keep the slug, canonical URL, and page intent unchanged.\n\n### Evidence update\n\n- Add source-backed claims that can be extracted from the page.\n- Pair each claim with a source, supporting detail, and caveat when relevant.\n- Keep this as an edit to the existing page, not a new article.\n", title, draft.TargetUrl)
+}
+
+func defaultPageUpdatePatch(action db.ContentAction, draft db.PageUpdateDraft, proposed string) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"type":       "manual_patch",
+		"target_url": draft.TargetUrl,
+		"operations": []map[string]any{
+			{
+				"op":      "insert_or_update_section",
+				"section": "evidence",
+				"summary": firstNonEmpty(action.ActionType, "Update existing page evidence"),
+				"content": proposed,
+			},
+		},
+		"guards": []string{
+			"Do not change the target URL or slug.",
+			"Do not create a new canonical article.",
+			"Recheck the original opportunity after applying.",
+		},
+	})
+}
+
+func defaultPageUpdateDiff(action db.ContentAction, draft db.PageUpdateDraft, proposed string) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"output_type":           "page_update_diff",
+		"target_url":            draft.TargetUrl,
+		"normalized_target_url": draft.NormalizedTargetUrl,
+		"change_summary":        firstNonEmpty(action.ActionType, "Update existing page"),
+		"sections_added":        []string{"Evidence update"},
+		"sections_edited":       []string{},
+		"metadata_changes":      []string{},
+		"target_url_locked":     true,
+		"creates_new_article":   false,
+		"before":                "Existing target page content.",
+		"after":                 proposed,
+	})
+}
+
+func defaultPageUpdateQA(action db.ContentAction, draft db.PageUpdateDraft) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"status":                                 "passed",
+		"claim_safety":                           "requires_human_review",
+		"page_update_scope":                      "passed",
+		"target_url_locked":                      true,
+		"resolution_criteria_likely_satisfied":   true,
+		"no_new_article_or_distribution_created": true,
+		"manual_review_required_before_applying": true,
+		"target_url":                             draft.TargetUrl,
+		"content_action_id":                      action.ID,
+	})
 }
 
 func topicFromContentAction(projectID uuid.UUID, action db.ContentAction, opp db.SeoOpportunity, requestedPublishStrategy string) db.CreateTopicParams {
