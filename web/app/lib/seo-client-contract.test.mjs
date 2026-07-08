@@ -170,6 +170,7 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
     "opportunity",
     "proposed_change",
     "<title> equals",
+    "JSON.stringify(proposed.title.trim())",
     "meta[name=\\\"description\\\"] equals",
     "canonical URL remains",
     "page remains indexable",

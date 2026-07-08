@@ -1186,7 +1186,7 @@ function metadataRewriteAcceptanceTests(action: SEOContentAction | ResultsAction
   const observed = metadataRewriteObservedSnapshot(action);
   const tests: string[] = [];
   if (typeof proposed.title === "string" && proposed.title.trim()) {
-    tests.push(`Fetch ${targetURL} and confirm the initial HTML <title> equals "${proposed.title.trim()}".`);
+    tests.push("Fetch " + targetURL + " and confirm the initial HTML <title> equals " + JSON.stringify(proposed.title.trim()) + ".");
   }
   if (typeof proposed.meta_description === "string" && proposed.meta_description.trim()) {
     tests.push("Fetch " + targetURL + " and confirm meta[name=\"description\"] equals " + JSON.stringify(proposed.meta_description.trim()) + ".");

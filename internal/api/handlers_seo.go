@@ -1498,10 +1498,45 @@ func directActionRepairEvidence(opp db.SeoOpportunity, assetType string, actionT
 			if observedMetadata := directActionObservedMetadata(parsed); len(observedMetadata) > 0 {
 				evidence["observed_metadata"] = observedMetadata
 			}
-			evidence["source_evidence"] = parsed
+			sourceEvidence := parsed
+			if assetType == "metadata_rewrite" {
+				sourceEvidence = sanitizeMetadataRewriteSourceEvidence(parsed)
+			}
+			evidence["source_evidence"] = sourceEvidence
 		}
 	}
 	return evidence
+}
+
+func sanitizeMetadataRewriteSourceEvidence(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, entry := range typed {
+			if isMetadataRewriteScopeKey(key) {
+				continue
+			}
+			out[key] = sanitizeMetadataRewriteSourceEvidence(entry)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, entry := range typed {
+			out = append(out, sanitizeMetadataRewriteSourceEvidence(entry))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func isMetadataRewriteScopeKey(key string) bool {
+	switch normalizeMetadataKey(key) {
+	case "recommendedaction", "recommendedactions", "suggestedaction", "suggestedactions", "actionrecommendation", "actionrecommendations":
+		return true
+	default:
+		return false
+	}
 }
 
 func metadataRewriteObservedSnapshot(opp db.SeoOpportunity) map[string]any {

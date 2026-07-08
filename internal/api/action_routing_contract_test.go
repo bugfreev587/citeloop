@@ -168,7 +168,8 @@ func TestMetadataRewriteAIRepairPayloadIncludesActionableContract(t *testing.T) 
 				"intent": "branded + product category",
 				"problem_detail": "Meta description is long and feature-list-like; rewrite for clearer search snippet and product positioning.",
 				"confidence": 0.72,
-				"priority": "low_to_medium"
+				"priority": "low_to_medium",
+				"recommended_action": "Expand the existing page or create a supporting section for the query intent"
 			},
 			"proposed_change": {
 				"title": "UniPost | Social Media Posting API for Developers",

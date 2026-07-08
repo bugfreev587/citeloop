@@ -1,8 +1,10 @@
 package seo
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,7 @@ type searchQueryRollup struct {
 	Position          float64
 	WindowStart       time.Time
 	WindowEnd         time.Time
+	ObservedMetadata  map[string]any
 }
 
 type pageDecayRollup struct {
@@ -49,18 +52,22 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 	candidates := []searchMetricOpportunityCandidate{}
 	for _, row := range queryRows {
 		if row.Impressions >= 100 && row.Position <= 8 && row.CTR <= 0.02 {
+			priority := clampScore(70 + row.Impressions/120)
+			confidence := 78.0
+			evidence := searchQueryEvidence(row, "low_ctr")
+			enrichLowCTRMetadataEvidence(evidence, row, priority, confidence)
 			candidates = append(candidates, searchMetricOpportunityCandidate{
 				Type:              "gsc_low_ctr_query",
 				Query:             row.Query,
 				PageURL:           row.PageURL,
 				NormalizedPageURL: row.NormalizedPageURL,
-				PriorityScore:     clampScore(70 + row.Impressions/120),
-				Confidence:        78,
+				PriorityScore:     priority,
+				Confidence:        confidence,
 				RecommendedAction: "Rewrite the title, meta description, and opening promise for the under-clicked query",
 				ExpectedImpact:    "Improves capture from impressions CiteLoop can already see in Search Console.",
 				Effort:            2,
 				RiskLevel:         "low",
-				Evidence:          searchQueryEvidence(row, "low_ctr"),
+				Evidence:          evidence,
 			})
 		}
 		if row.Impressions >= 250 && row.Position > 3 && row.Position <= 15 && row.CTR > 0.025 {
@@ -144,6 +151,204 @@ func searchMetricOpportunityCandidates(queryRows []searchQueryRollup, decayRows 
 		return candidates[i].PriorityScore > candidates[j].PriorityScore
 	})
 	return candidates
+}
+
+func enrichLowCTRMetadataEvidence(evidence map[string]any, row searchQueryRollup, priority, confidence float64) {
+	if observed := metadataObservedForSearchRow(row); len(observed) > 0 {
+		evidence["observed"] = observed
+	}
+	evidence["opportunity"] = map[string]any{
+		"query":          strings.TrimSpace(row.Query),
+		"intent":         queryIntentForMetadataRewrite(row.Query, row.ObservedMetadata),
+		"problem_detail": "Search Console shows high visibility but weak click-through; rewrite the title and meta description for clearer snippet relevance before changing page scope.",
+		"confidence":     round2(confidence / 100),
+		"priority":       priorityLabel(priority),
+	}
+	if proposed := proposedMetadataForSearchRow(row); len(proposed) > 0 {
+		evidence["proposed_change"] = proposed
+	}
+}
+
+func metadataObservedForSearchRow(row searchQueryRollup) map[string]any {
+	out := map[string]any{}
+	for _, field := range []string{"status", "title", "meta_description", "canonical", "robots", "observed_at"} {
+		if value := stringishMetadataValue(row.ObservedMetadata[field]); value != "" {
+			out[field] = value
+		}
+	}
+	if value, ok := row.ObservedMetadata["status"].(int); ok {
+		out["status"] = value
+	}
+	if value, ok := row.ObservedMetadata["status"].(int32); ok {
+		out["status"] = value
+	}
+	if value, ok := row.ObservedMetadata["status"].(float64); ok {
+		out["status"] = value
+	}
+	return out
+}
+
+func proposedMetadataForSearchRow(row searchQueryRollup) map[string]any {
+	query := strings.TrimSpace(row.Query)
+	if query == "" {
+		return nil
+	}
+	currentTitle := stringishMetadataValue(row.ObservedMetadata["title"])
+	currentDescription := stringishMetadataValue(row.ObservedMetadata["meta_description"])
+	title := proposedMetadataTitle(query, currentTitle, row.PageURL)
+	description := proposedMetadataDescription(query, currentDescription)
+	return map[string]any{
+		"title":                    title,
+		"meta_description":         description,
+		"seo_impact":               "search snippet relevance / CTR",
+		"geo_impact":               "entity clarity / product category clarity",
+		"content_support_required": false,
+		"proposal_source":          "heuristic_from_gsc_low_ctr_and_current_metadata",
+		"preserve":                 []string{"canonical", "indexability", "production URL"},
+	}
+}
+
+func proposedMetadataTitle(query, currentTitle, pageURL string) string {
+	queryTitle := titleCaseWords(query)
+	brand := brandFromTitle(currentTitle)
+	if brand == "" {
+		brand = brandFromURL(pageURL)
+	}
+	if brand != "" && strings.EqualFold(strings.TrimSpace(query), brand) {
+		if descriptor := descriptorFromTitle(currentTitle); descriptor != "" {
+			return clipWithEllipsis(brand+" | "+descriptor, 60)
+		}
+		return clipWithEllipsis(brand+" | "+queryTitle+" overview", 60)
+	}
+	if brand != "" && !strings.EqualFold(brand, queryTitle) {
+		return clipWithEllipsis(queryTitle+" | "+brand, 60)
+	}
+	if strings.TrimSpace(currentTitle) != "" {
+		return clipWithEllipsis(strings.TrimSpace(currentTitle), 60)
+	}
+	return clipWithEllipsis(queryTitle, 60)
+}
+
+func proposedMetadataDescription(query, currentDescription string) string {
+	query = strings.TrimSpace(query)
+	currentDescription = strings.TrimSpace(currentDescription)
+	if currentDescription != "" {
+		if strings.Contains(strings.ToLower(currentDescription), strings.ToLower(query)) {
+			return clipWithEllipsis(currentDescription, 155)
+		}
+		return clipWithEllipsis("Explore "+query+": "+lowercaseFirst(currentDescription), 155)
+	}
+	return clipWithEllipsis("Explore "+query+" with clear product details, use cases, and next steps on this page.", 155)
+}
+
+func queryIntentForMetadataRewrite(query string, observed map[string]any) string {
+	brand := brandFromTitle(stringishMetadataValue(observed["title"]))
+	if brand != "" && strings.Contains(strings.ToLower(query), strings.ToLower(brand)) {
+		return "branded + product category"
+	}
+	return "search snippet relevance / low CTR"
+}
+
+func priorityLabel(score float64) string {
+	switch {
+	case score >= 75:
+		return "high"
+	case score >= 50:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func brandFromTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	for _, separator := range []string{"|", " - ", ":"} {
+		if parts := strings.Split(title, separator); len(parts) > 1 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	return ""
+}
+
+func descriptorFromTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	for _, separator := range []string{"|", " - ", ":"} {
+		parts := strings.Split(title, separator)
+		if len(parts) > 1 {
+			return strings.TrimSpace(strings.Join(parts[1:], separator))
+		}
+	}
+	return ""
+}
+
+func brandFromURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(strings.TrimPrefix(trimmed, "https://"), "http://")
+	host := strings.Split(trimmed, "/")[0]
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" {
+		return ""
+	}
+	return strings.Split(host, ".")[0]
+}
+
+func titleCaseWords(value string) string {
+	words := strings.Fields(strings.TrimSpace(value))
+	for i, word := range words {
+		if word == strings.ToUpper(word) {
+			continue
+		}
+		lower := strings.ToLower(word)
+		switch lower {
+		case "ai", "api", "seo", "geo", "gsc", "ctr", "llm":
+			words[i] = strings.ToUpper(lower)
+			continue
+		}
+		words[i] = strings.ToUpper(lower[:1]) + lower[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func lowercaseFirst(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToLower(value[:1]) + value[1:]
+}
+
+func clipWithEllipsis(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return strings.TrimSpace(value[:limit-3]) + "..."
+}
+
+func stringishMetadataValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
 }
 
 func searchQueryEvidence(row searchQueryRollup, reason string) map[string]any {
