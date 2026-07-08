@@ -152,6 +152,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/actions", s.listSEOContentActions)
 				r.Get("/actions/{actionID}", s.getSEOContentAction)
 				r.Post("/actions/{actionID}/plan", s.planSEOContentAction)
+				r.Post("/actions/{actionID}/return-to-opportunity", s.returnSEOContentActionToOpportunity)
 				r.Post("/actions/{actionID}/page-update-drafts", s.createPageUpdateDraftForAction)
 				r.Get("/page-update-drafts/{draftID}", s.getPageUpdateDraft)
 				r.Post("/page-update-drafts/{draftID}/generate", s.generatePageUpdateDraft)
@@ -168,9 +169,7 @@ func (s *Server) Router() http.Handler {
 					s.updateSEOContentActionStatus(w, r, "measuring")
 				})
 				r.Post("/actions/{actionID}/verify", s.verifySEOContentAction)
-				r.Post("/actions/{actionID}/dismiss", func(w http.ResponseWriter, r *http.Request) {
-					s.updateSEOContentActionStatus(w, r, "dismissed")
-				})
+				r.Post("/actions/{actionID}/dismiss", s.dismissSEOContentActionAndOpportunity)
 				r.Get("/briefs/latest", s.getSEOBrief)
 				s.registerDoctorRoutes(r, "/doctor")
 				r.Get("/settings", s.getSEOSettings)

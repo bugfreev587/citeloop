@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Wand2, X } from "lucide-react";
+import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Undo2, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
 import type { PageUpdateDraft, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
@@ -44,6 +44,11 @@ type TopicDraft = {
   format: string;
   priority: string;
 };
+type ContentPlanConfirmationKind = "return" | "dismiss" | "create";
+type ContentPlanConfirmation = {
+  kind: ContentPlanConfirmationKind;
+  action: VisibilityActionInLoop;
+} | null;
 
 const PUBLISH_STRATEGIES: ContentPlanPublishStrategy[] = ["blog", "syndication", "both"];
 
@@ -203,6 +208,32 @@ function reviewHrefForAction(projectId: string, action: VisibilityActionInLoop) 
   return `/projects/${projectId}/review?article=${action.draft_article_id}`;
 }
 
+function contentPlanConfirmationCopy(confirmation: Exclude<ContentPlanConfirmation, null>) {
+  const { kind, action } = confirmation;
+  const actionLabel = isPageUpdateAction(action) ? "page update" : "content brief";
+  switch (kind) {
+    case "return":
+      return {
+        title: "Move this back to Opportunities?",
+        body: "The Content Plan card will be removed, and this opportunity will return to the Opportunity Queue so you can choose a different next step.",
+        busyLabel: "Moving back",
+      };
+    case "dismiss":
+      return {
+        title: "Dismiss this opportunity?",
+        body: "CiteLoop will stop showing this opportunity unless the underlying signal materially changes.",
+        busyLabel: "Dismissing",
+      };
+    case "create":
+    default:
+      return {
+        title: `Create this ${actionLabel}?`,
+        body: `CiteLoop will turn this accepted opportunity into a draftable ${actionLabel} using the selected settings.`,
+        busyLabel: "Creating",
+      };
+  }
+}
+
 export function TopicsClient({ projectId }: { projectId: string }) {
   const api = useApi();
   const searchParams = useSearchParams();
@@ -222,6 +253,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [highlightContentPlanAction, setHighlightContentPlanAction] = useState<string | null>(null);
   const [selectedContentPlanActionID, setSelectedContentPlanActionID] = useState<string | null>(null);
+  const [pendingContentPlanConfirmation, setPendingContentPlanConfirmation] = useState<ContentPlanConfirmation>(null);
   const [pageUpdateDrafts, setPageUpdateDrafts] = useState<Record<string, PageUpdateDraft>>({});
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [inReview, setInReview] = useState(0);
@@ -307,6 +339,17 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setSelectedContentPlanActionID(null);
     }
   }, [selectedContentPlanAction, selectedContentPlanActionID]);
+
+  useEffect(() => {
+    if (!pendingContentPlanConfirmation) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        setPendingContentPlanConfirmation(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [busy, pendingContentPlanConfirmation]);
 
   useEffect(() => {
     if (!requestedActionID || acceptedPlanActions.length === 0) return;
@@ -408,6 +451,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const topicGridClass = "grid gap-3 lg:grid-cols-2";
   const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
   const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
+  const selectedActionReturnBusy = selectedContentPlanAction ? busy === `return-action-${selectedContentPlanAction.id}` : false;
   const selectedActionHasReviewContent = hasReviewableDraft(selectedContentPlanAction);
   const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
   const selectedActionTopic = selectedContentPlanAction?.topic_id
@@ -430,6 +474,15 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedActionScheduleValue = selectedActionScheduleKey ? scheduleDrafts[selectedActionScheduleKey] ?? "" : "";
   const reviewingContentPlanAction = Boolean(busy) || autoEnabled;
   const selectedPageUpdateBusy = selectedContentPlanAction ? busy === `page-update-${selectedContentPlanAction.id}` : false;
+  const confirmationAction = pendingContentPlanConfirmation?.action ?? null;
+  const confirmationCopy = pendingContentPlanConfirmation ? contentPlanConfirmationCopy(pendingContentPlanConfirmation) : null;
+  const confirmationBusy = pendingContentPlanConfirmation
+    ? pendingContentPlanConfirmation.kind === "return"
+      ? busy === `return-action-${pendingContentPlanConfirmation.action.id}`
+      : pendingContentPlanConfirmation.kind === "dismiss"
+        ? busy === `dismiss-action-${pendingContentPlanConfirmation.action.id}`
+        : busy === `draft-action-${pendingContentPlanConfirmation.action.id}` || busy === `page-update-${pendingContentPlanConfirmation.action.id}`
+    : false;
 
   function topicForAction(action: VisibilityActionInLoop) {
     return action.topic_id ? topics.find((topic) => topic.id === action.topic_id) ?? null : null;
@@ -641,6 +694,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     return applyTopicPublishStrategy(topic, publishStrategy);
   }
 
+  function removeAcceptedActionFromSummary(actionID: string) {
+    setVisibilitySummary((current) =>
+      current
+        ? { ...current, actions_in_loop: current.actions_in_loop.filter((item) => item.id !== actionID) }
+        : current,
+    );
+  }
+
   async function scheduleAcceptedAction(action: VisibilityActionInLoop) {
     const key = action.topic_id ?? action.id;
     const nextScheduledAt = fromDateTimeLocal(scheduleDrafts[key] ?? "");
@@ -801,19 +862,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   }
 
   async function dismissAcceptedAction(action: VisibilityActionInLoop) {
-    if (!action.opportunity_id) {
-      setMessage({ title: "Dismiss unavailable", detail: "This content action is missing its opportunity link.", tone: "red" });
-      return;
-    }
     setBusy(`dismiss-action-${action.id}`);
     setMessage(null);
     try {
-      await api.dismissSEOOpportunity(projectId, action.opportunity_id);
-      setVisibilitySummary((current) =>
-        current
-          ? { ...current, actions_in_loop: current.actions_in_loop.filter((item) => item.id !== action.id) }
-          : current,
-      );
+      await api.dismissSEOContentAction(projectId, action.id);
+      removeAcceptedActionFromSummary(action.id);
       setSelectedContentPlanActionID(null);
       setMessage({ title: "Opportunity dismissed", detail: contentPlanActionTitle(action), tone: "green" });
     } catch (e: any) {
@@ -821,6 +874,36 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function returnAcceptedActionToOpportunity(action: VisibilityActionInLoop) {
+    setBusy(`return-action-${action.id}`);
+    setMessage(null);
+    try {
+      await api.returnSEOContentActionToOpportunity(projectId, action.id);
+      removeAcceptedActionFromSummary(action.id);
+      setSelectedContentPlanActionID(null);
+      setMessage({ title: "Moved back to Opportunities", detail: contentPlanActionTitle(action), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Move back failed", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function confirmPendingContentPlanAction() {
+    if (!pendingContentPlanConfirmation) return;
+    const { kind, action } = pendingContentPlanConfirmation;
+    if (kind === "return") {
+      await returnAcceptedActionToOpportunity(action);
+    } else if (kind === "dismiss") {
+      await dismissAcceptedAction(action);
+    } else if (isPageUpdateAction(action)) {
+      await advancePageUpdateAction(action);
+    } else {
+      await draftAcceptedAction(action);
+    }
+    setPendingContentPlanConfirmation(null);
   }
 
   const autoSwitch = (
@@ -996,6 +1079,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               const actionIsPageUpdate = isPageUpdateAction(action);
               const publishStrategy = actionIsPageUpdate ? "blog" : publishStrategyForAction(action);
               const recommendedStrategy = actionIsPageUpdate ? "blog" : recommendedPublishStrategy(action);
+              const actionReturnBusy = busy === `return-action-${action.id}`;
+              const actionDismissBusy = busy === `dismiss-action-${action.id}`;
+              const actionDraftBusy = busy === `draft-action-${action.id}`;
+              const actionPageUpdateBusy = busy === `page-update-${action.id}`;
               return (
                 <div
                   key={action.id}
@@ -1029,6 +1116,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
+                        disabled={Boolean(busy)}
+                        aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
+                      >
+                        <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
+                          Move back to Opportunities
+                        </ButtonProgress>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
+                        disabled={Boolean(busy)}
+                        aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
+                      >
+                        <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                          Dismiss
+                        </ButtonProgress>
+                      </Button>
                       {actionHasReviewContent ? (
                         <a
                           href={reviewHrefForAction(projectId, action)}
@@ -1039,15 +1148,31 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                         </a>
                       ) : (
                         <Button
-                          variant="outline"
+                          aria-busy={actionDraftBusy || actionPageUpdateBusy}
+                          disabled={Boolean(busy)}
+                          variant="primary"
                           size="sm"
-                          onClick={() => setSelectedContentPlanActionID(action.id)}
-                          aria-label={`Review accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
+                          onClick={() => setPendingContentPlanConfirmation({ kind: "create", action })}
                         >
-                          {actionIsPageUpdate ? "Review update" : "Review brief"}
-                          <ArrowRight size={15} />
+                          <ButtonProgress
+                            busy={actionDraftBusy || actionPageUpdateBusy}
+                            busyLabel={contentPlanActionBusyCTA(action)}
+                            idleIcon={<Wand2 size={14} />}
+                          >
+                            {contentPlanActionPrimaryCTA(action)}
+                          </ButtonProgress>
                         </Button>
                       )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSelectedContentPlanActionID(action.id)}
+                        aria-label={`Review accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
+                        disabled={Boolean(busy)}
+                      >
+                        {actionIsPageUpdate ? "Review update" : "Review brief"}
+                        <ArrowRight size={15} />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -1254,32 +1379,62 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               Recently sent ({sentToReviewActions.length + sentToReviewTopics.length})
             </summary>
             <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
-              {sentToReviewActions.map((action) => (
-                <a
-                  key={action.id}
-                  data-content-plan-sent-card
-                  href={reviewHrefForAction(projectId, action)}
-                  aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
-                  className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                >
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone="green">Sent to Review</Badge>
-                        <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
+              {sentToReviewActions.map((action) => {
+                const actionReturnBusy = busy === `return-action-${action.id}`;
+                const actionDismissBusy = busy === `dismiss-action-${action.id}`;
+                return (
+                  <div
+                    key={action.id}
+                    data-content-plan-sent-card
+                    className="rounded-md border border-slate-100 bg-slate-50 p-3 text-left"
+                  >
+                    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="green">Sent to Review</Badge>
+                          <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
+                        </div>
+                        <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{contentPlanActionTitle(action)}</h3>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {action.opportunity_query || action.opportunity_expected_impact || "Draft is waiting for review."}
+                        </p>
                       </div>
-                      <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{contentPlanActionTitle(action)}</h3>
-                      <p className="mt-1 truncate text-xs text-slate-500">
-                        {action.opportunity_query || action.opportunity_expected_impact || "Draft is waiting for review."}
-                      </p>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
+                          disabled={Boolean(busy)}
+                          aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
+                        >
+                          <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
+                            Move back to Opportunities
+                          </ButtonProgress>
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
+                          disabled={Boolean(busy)}
+                          aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
+                        >
+                          <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                            Dismiss
+                          </ButtonProgress>
+                        </Button>
+                        <a
+                          href={reviewHrefForAction(projectId, action)}
+                          className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                          aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                        >
+                          View in Review
+                          <ArrowRight size={14} className="text-slate-400" />
+                        </a>
+                      </div>
                     </div>
-                    <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700">
-                      View in Review
-                      <ArrowRight size={16} className="text-slate-400" />
-                    </span>
                   </div>
-                </a>
-              ))}
+                );
+              })}
               {sentToReviewTopics.map((topic) => (
                 <a
                   key={topic.id}
@@ -1339,8 +1494,18 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <>
             <Button
               size="sm"
+              variant="outline"
+              onClick={() => setPendingContentPlanConfirmation({ kind: "return", action: selectedContentPlanAction })}
+              disabled={Boolean(busy)}
+            >
+              <ButtonProgress busy={selectedActionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
+                Move back to Opportunities
+              </ButtonProgress>
+            </Button>
+            <Button
+              size="sm"
               variant="ghost"
-              onClick={() => dismissAcceptedAction(selectedContentPlanAction)}
+              onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action: selectedContentPlanAction })}
               disabled={Boolean(busy)}
             >
               <ButtonProgress busy={selectedActionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
@@ -1353,7 +1518,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 disabled={Boolean(busy) || selectedPageUpdateDraft?.status === "verified"}
                 variant="primary"
                 size="sm"
-                onClick={() => advancePageUpdateAction(selectedContentPlanAction)}
+                onClick={() => setPendingContentPlanConfirmation({ kind: "create", action: selectedContentPlanAction })}
                 title="Review and advance the existing-page update without creating a new post."
               >
                 <ButtonProgress
@@ -1378,7 +1543,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 disabled={reviewingContentPlanAction}
                 variant="primary"
                 size="sm"
-                onClick={() => draftAcceptedAction(selectedContentPlanAction)}
+                onClick={() => setPendingContentPlanConfirmation({ kind: "create", action: selectedContentPlanAction })}
                 title={
                   autoEnabled
                     ? "Auto is on, so AI Editor will draft this work automatically."
@@ -1656,6 +1821,55 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           </section>
         </div>
       </RightDrawer>
+    )}
+    {pendingContentPlanConfirmation && confirmationCopy && confirmationAction && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/35 px-4 py-6">
+        <button
+          type="button"
+          aria-label="Cancel"
+          className="absolute inset-0"
+          disabled={confirmationBusy}
+          onClick={() => setPendingContentPlanConfirmation(null)}
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="content-plan-confirmation-title"
+          className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+        >
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Confirm workflow change</div>
+          <h3 id="content-plan-confirmation-title" className="mt-2 text-lg font-bold leading-7 text-slate-950">
+            {confirmationCopy.title}
+          </h3>
+          <p className="mt-3 text-sm leading-6 text-slate-600">{confirmationCopy.body}</p>
+          <div className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+            {contentPlanActionTitle(confirmationAction)}
+          </div>
+          <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={confirmationBusy}
+              onClick={() => setPendingContentPlanConfirmation(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={pendingContentPlanConfirmation.kind === "dismiss" ? "danger" : "primary"}
+              aria-busy={confirmationBusy}
+              disabled={Boolean(busy)}
+              onClick={confirmPendingContentPlanAction}
+            >
+              <ButtonProgress busy={confirmationBusy} busyLabel={confirmationCopy.busyLabel} idleIcon={<Check size={14} />}>
+                Confirm
+              </ButtonProgress>
+            </Button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );

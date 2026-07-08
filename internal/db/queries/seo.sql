@@ -468,38 +468,124 @@ order by tc.checked_at desc
 limit sqlc.arg(limit_rows);
 
 -- name: UpsertSEOOpportunity :one
-insert into seo_opportunities
-  (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
-   article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
-   risk_level, created_by_run_id, opportunity_key)
-values (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-  encode(digest(
-    $1::uuid::text || '|' || $2 || '|' || coalesce($7, '') || '|' || coalesce($10, '') || '|' ||
-    coalesce(($11::jsonb)->>'intent_type', '') || '|' ||
-    coalesce(($11::jsonb)->>'engine', '') || '|' ||
-    coalesce(($11::jsonb)->>'evidence_window', '') || '|' ||
-    coalesce(($11::jsonb)->>'reason', ''),
-    'sha256'
-  ), 'hex')
+with opportunity_input as (
+  select
+    sqlc.arg(project_id)::uuid as project_id,
+    sqlc.arg(type)::text as type,
+    sqlc.arg(status)::text as status,
+    sqlc.arg(priority_score)::numeric as priority_score,
+    sqlc.arg(confidence)::numeric as confidence,
+    sqlc.narg(page_url)::text as page_url,
+    sqlc.arg(normalized_page_url)::text as normalized_page_url,
+    sqlc.narg(article_id)::uuid as article_id,
+    sqlc.narg(topic_id)::uuid as topic_id,
+    sqlc.narg(query)::text as query,
+    sqlc.arg(evidence)::jsonb as evidence,
+    sqlc.narg(recommended_action)::text as recommended_action,
+    sqlc.narg(expected_impact)::text as expected_impact,
+    sqlc.arg(effort)::int as effort,
+    sqlc.arg(risk_level)::text as risk_level,
+    sqlc.narg(created_by_run_id)::uuid as created_by_run_id,
+    encode(digest(
+      sqlc.arg(project_id)::uuid::text || '|' ||
+      sqlc.arg(type)::text || '|' ||
+      coalesce(sqlc.arg(normalized_page_url)::text, '') || '|' ||
+      coalesce(sqlc.narg(query)::text, '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'intent_type', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'engine', ''),
+      'sha256'
+    ), 'hex') as opportunity_identity_key,
+    encode(digest(
+      coalesce((sqlc.arg(evidence)::jsonb)->>'evidence_window', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'reason', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'severity', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'issue_type', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'status', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'title_status', '') || '|' ||
+      coalesce((sqlc.arg(evidence)::jsonb)->>'meta_description_status', '') || '|' ||
+      coalesce(sqlc.arg(priority_score)::numeric::text, '') || '|' ||
+      coalesce(sqlc.arg(confidence)::numeric::text, '') || '|' ||
+      coalesce(sqlc.arg(risk_level)::text, ''),
+      'sha256'
+    ), 'hex') as evidence_fingerprint
+),
+upserted as (
+  insert into seo_opportunities
+    (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
+     article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
+     risk_level, created_by_run_id, opportunity_key, opportunity_identity_key, evidence_fingerprint)
+  select
+    project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
+    article_id, topic_id, query, evidence, recommended_action, expected_impact, effort,
+    risk_level, created_by_run_id, opportunity_identity_key, opportunity_identity_key, evidence_fingerprint
+  from opportunity_input
+  on conflict (project_id, opportunity_identity_key) where status in ('open','accepted','converted','dismissed','snoozed','watching') do update set
+    status = case
+      when seo_opportunities.status in ('accepted','converted') then seo_opportunities.status
+      when seo_opportunities.status in ('dismissed','snoozed','watching')
+        and seo_opportunities.evidence_fingerprint = excluded.evidence_fingerprint then seo_opportunities.status
+      else excluded.status
+    end,
+    priority_score = excluded.priority_score,
+    confidence = excluded.confidence,
+    page_url = excluded.page_url,
+    normalized_page_url = excluded.normalized_page_url,
+    article_id = excluded.article_id,
+    topic_id = excluded.topic_id,
+    query = excluded.query,
+    evidence = case
+      when seo_opportunities.status in ('dismissed','snoozed','watching')
+        and seo_opportunities.evidence_fingerprint <> excluded.evidence_fingerprint
+      then excluded.evidence || jsonb_build_object(
+        'previously_reviewed_status', seo_opportunities.status,
+        'previous_evidence_fingerprint', seo_opportunities.evidence_fingerprint,
+        'reopened_reason', 'Evidence fingerprint changed since the opportunity was reviewed'
+      )
+      else excluded.evidence
+    end,
+    recommended_action = excluded.recommended_action,
+    expected_impact = excluded.expected_impact,
+    effort = excluded.effort,
+    risk_level = excluded.risk_level,
+    created_by_run_id = excluded.created_by_run_id,
+    opportunity_key = excluded.opportunity_key,
+    evidence_fingerprint = excluded.evidence_fingerprint,
+    snoozed_until = case
+      when seo_opportunities.status in ('dismissed','snoozed','watching')
+        and seo_opportunities.evidence_fingerprint <> excluded.evidence_fingerprint then null
+      else seo_opportunities.snoozed_until
+    end,
+    snooze_reason = case
+      when seo_opportunities.status in ('dismissed','snoozed','watching')
+        and seo_opportunities.evidence_fingerprint <> excluded.evidence_fingerprint then null
+      else seo_opportunities.snooze_reason
+    end,
+    unsnoozed_at = case
+      when seo_opportunities.status = 'snoozed'
+        and seo_opportunities.evidence_fingerprint <> excluded.evidence_fingerprint then now()
+      else seo_opportunities.unsnoozed_at
+    end,
+    updated_at = now()
+  returning *
+),
+reopened_review_state as (
+  update seo_opportunity_review_states rs set
+    reopened_at = now(),
+    reopened_reason = 'Evidence fingerprint changed since the opportunity was reviewed',
+    material_change_metadata = jsonb_build_object(
+      'previous_fingerprint', rs.evidence_fingerprint,
+      'current_fingerprint', upserted.evidence_fingerprint
+    ),
+    updated_at = now()
+  from upserted
+  where rs.project_id = upserted.project_id
+    and rs.opportunity_identity_key = upserted.opportunity_identity_key
+    and rs.review_status in ('dismissed','snoozed','watching')
+    and rs.evidence_fingerprint <> upserted.evidence_fingerprint
+    and upserted.status = 'open'
+  returning rs.id
 )
-on conflict (project_id, opportunity_key) where status in ('open','accepted','converted') do update set
-  status = case
-    when seo_opportunities.status in ('accepted','converted') then seo_opportunities.status
-    else excluded.status
-  end,
-  priority_score = excluded.priority_score,
-  confidence = excluded.confidence,
-  page_url = excluded.page_url,
-  article_id = excluded.article_id,
-  topic_id = excluded.topic_id,
-  evidence = excluded.evidence,
-  recommended_action = excluded.recommended_action,
-  expected_impact = excluded.expected_impact,
-  effort = excluded.effort,
-  risk_level = excluded.risk_level,
-  updated_at = now()
-returning *;
+select * from upserted;
 
 -- name: ListSEOOpportunities :many
 select * from seo_opportunities
@@ -534,6 +620,7 @@ insert into content_actions
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 on conflict (project_id, opportunity_id, action_type) do update set
   status = excluded.status,
+  status_reason = null,
   target_article_id = excluded.target_article_id,
   target_url = excluded.target_url,
   normalized_target_url = excluded.normalized_target_url,
@@ -690,8 +777,115 @@ where id = $1 and project_id = $2;
 -- name: UpdateContentActionStatus :one
 update content_actions set
   status = $3,
+  status_reason = null,
   updated_at = now()
 where id = $1 and project_id = $2
+returning *;
+
+-- name: MarkContentActionReturnedToOpportunity :one
+with candidate as (
+  select content_actions.id, content_actions.project_id, content_actions.opportunity_id
+  from content_actions
+  where content_actions.id = sqlc.arg(action_id)
+    and content_actions.project_id = sqlc.arg(project_id)
+    and published_at is null
+    and status in (
+      'drafting','ready_for_review','approved','failed','verification_failed',
+      'recovery_required','verification_pending','manual_apply_required','needs_follow_up'
+    )
+  for update
+),
+updated_action as (
+  update content_actions ca set
+    status = 'returned',
+    status_reason = 'returned_to_opportunities',
+    updated_at = now()
+  from candidate
+  where ca.id = candidate.id
+    and ca.project_id = candidate.project_id
+  returning ca.*
+),
+updated_opportunity as (
+  update seo_opportunities so set
+    status = 'open',
+    snoozed_until = null,
+    snooze_reason = null,
+    updated_at = now()
+  from candidate
+  where so.id = candidate.opportunity_id
+    and so.project_id = candidate.project_id
+  returning so.id
+)
+select * from updated_action;
+
+-- name: DismissSEOContentActionAndOpportunity :one
+with candidate as (
+  select content_actions.id, content_actions.project_id, content_actions.opportunity_id
+  from content_actions
+  where content_actions.id = sqlc.arg(action_id)
+    and content_actions.project_id = sqlc.arg(project_id)
+    and published_at is null
+    and status in (
+      'drafting','ready_for_review','approved','failed','verification_failed',
+      'recovery_required','verification_pending','manual_apply_required','needs_follow_up'
+    )
+  for update
+),
+updated_action as (
+  update content_actions ca set
+    status = 'dismissed',
+    status_reason = 'opportunity_dismissed',
+    updated_at = now()
+  from candidate
+  where ca.id = candidate.id
+    and ca.project_id = candidate.project_id
+  returning ca.*
+),
+updated_opportunity as (
+  update seo_opportunities so set
+    status = 'dismissed',
+    updated_at = now()
+  from candidate
+  where so.id = candidate.opportunity_id
+    and so.project_id = candidate.project_id
+  returning so.*
+)
+select * from updated_action;
+
+-- name: CreateOrUpdateSEOOpportunityReviewState :one
+with source_opportunity as (
+  select *
+  from seo_opportunities
+  where seo_opportunities.id = sqlc.arg(source_opportunity_id)
+    and seo_opportunities.project_id = sqlc.arg(project_id)
+)
+insert into seo_opportunity_review_states
+  (project_id, opportunity_identity_key, source_opportunity_id, content_action_id,
+   review_status, evidence_fingerprint, reviewed_by, snoozed_until, reviewed_at)
+select
+  source_opportunity.project_id,
+  source_opportunity.opportunity_identity_key,
+  source_opportunity.id,
+  sqlc.narg(content_action_id)::uuid,
+  sqlc.arg(review_status)::text,
+  source_opportunity.evidence_fingerprint,
+  sqlc.narg(reviewed_by)::text,
+  coalesce(sqlc.narg(snoozed_until)::timestamptz, source_opportunity.snoozed_until),
+  now()
+from source_opportunity
+where source_opportunity.opportunity_identity_key <> ''
+on conflict (project_id, opportunity_identity_key) do update set
+  source_opportunity_id = excluded.source_opportunity_id,
+  content_action_id = coalesce(excluded.content_action_id, seo_opportunity_review_states.content_action_id),
+  review_status = excluded.review_status,
+  evidence_fingerprint = excluded.evidence_fingerprint,
+  reviewed_by = excluded.reviewed_by,
+  snoozed_until = excluded.snoozed_until,
+  reviewed_at = excluded.reviewed_at,
+  reopened_at = null,
+  reopened_reason = null,
+  material_change_metadata = '{}'::jsonb,
+  updated_at = now()
 returning *;
 
 -- name: MarkContentActionVerification :one
@@ -707,8 +901,10 @@ returning *;
 update content_actions set
   status = 'ready_for_review',
   draft_article_id = $3,
+  status_reason = null,
   updated_at = now()
 where id = $1 and project_id = $2
+  and status not in ('returned','dismissed','published','measuring','completed')
 returning *;
 
 -- name: CreateOrReusePageUpdateDraft :one

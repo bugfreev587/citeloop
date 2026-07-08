@@ -2460,6 +2460,9 @@ export function createApi(auth?: AuthOptions) {
   dismissSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
     return req<SEOOpportunity>(`/projects/${id}/seo/opportunities/${opportunityID}/dismiss`, { method: "POST" }, auth);
   },
+  returnSEOContentActionToOpportunity: async (id: string, actionID: string): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(`/projects/${id}/seo/actions/${actionID}/return-to-opportunity`, { method: "POST" }, auth);
+  },
   createSEOContentAction: async (
     id: string,
     opportunityID: string,

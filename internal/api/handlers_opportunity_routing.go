@@ -9,6 +9,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/workflow"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // User-visible work types and routing/approval provenance for execution items
@@ -143,6 +144,10 @@ func (s *Server) snoozeSEOOpportunity(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "opportunity not found or not snoozable")
 		return
 	}
+	if err := s.recordSEOOpportunityReviewState(r.Context(), s.Q, projectID, oppID, pgtype.UUID{}, "snoozed", opp.SnoozedUntil); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, opp)
 }
 
@@ -192,6 +197,10 @@ func (s *Server) watchSEOOpportunity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.Q.UpdateSEOOpportunityStatus(r.Context(), db.UpdateSEOOpportunityStatusParams{ID: oppID, ProjectID: projectID, Status: "watching"}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.recordSEOOpportunityReviewState(r.Context(), s.Q, projectID, oppID, pgtype.UUID{}, "watching", pgtype.Timestamptz{}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

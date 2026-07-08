@@ -41,6 +41,7 @@ type Querier interface {
 	CreateNotificationDelivery(ctx context.Context, arg CreateNotificationDeliveryParams) (NotificationDelivery, error)
 	CreateOrReusePageUpdateDraft(ctx context.Context, arg CreateOrReusePageUpdateDraftParams) (PageUpdateDraft, error)
 	CreateOrReuseSiteChangeApplication(ctx context.Context, arg CreateOrReuseSiteChangeApplicationParams) (SiteChangeApplication, error)
+	CreateOrUpdateSEOOpportunityReviewState(ctx context.Context, arg CreateOrUpdateSEOOpportunityReviewStateParams) (SeoOpportunityReviewState, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSEOActionPlan(ctx context.Context, arg CreateSEOActionPlanParams) (SeoActionPlan, error)
 	CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRunParams) (SeoDoctorRun, error)
@@ -57,6 +58,7 @@ type Querier interface {
 	// recovery loop can regenerate a fresh canonical/variant without colliding with
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
+	DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error)
 	DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoctorFindingParams) (SeoDoctorFinding, error)
 	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
@@ -190,6 +192,7 @@ type Querier interface {
 	ListVisibilityActionRows(ctx context.Context, arg ListVisibilityActionRowsParams) ([]ListVisibilityActionRowsRow, error)
 	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
 	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
+	MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error)
 	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
@@ -299,7 +302,7 @@ type Querier interface {
 	UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODoctorFindingParams) (SeoDoctorFinding, error)
 	UpsertSEOIntegration(ctx context.Context, arg UpsertSEOIntegrationParams) (SeoIntegration, error)
 	UpsertSEOOAuthToken(ctx context.Context, arg UpsertSEOOAuthTokenParams) (SeoOauthToken, error)
-	UpsertSEOOpportunity(ctx context.Context, arg UpsertSEOOpportunityParams) (SeoOpportunity, error)
+	UpsertSEOOpportunity(ctx context.Context, arg UpsertSEOOpportunityParams) (UpsertSEOOpportunityRow, error)
 	UpsertSEOPolicy(ctx context.Context, arg UpsertSEOPolicyParams) (SeoPolicy, error)
 	UpsertSEOProperty(ctx context.Context, arg UpsertSEOPropertyParams) (SeoProperty, error)
 	UpsertSearchAppearanceDaily(ctx context.Context, arg UpsertSearchAppearanceDailyParams) (SearchAppearanceDaily, error)

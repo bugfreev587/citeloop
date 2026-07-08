@@ -2020,7 +2020,17 @@ test("content plan reviews accepted opportunities in the shared right drawer bef
   assert.match(topics, /Why write this/);
   assert.match(topics, /Evidence source/);
   assert.match(topics, /dismissAcceptedAction/);
-  assert.match(topics, /api\.dismissSEOOpportunity\(projectId, action\.opportunity_id\)/);
+  assert.match(topics, /Move back to Opportunities/);
+  assert.match(topics, /Move this back to Opportunities\?/);
+  assert.match(topics, /Dismiss this opportunity\?/);
+  assert.match(topics, /const actionLabel = isPageUpdateAction\(action\) \? "page update" : "content brief"/);
+  assert.match(topics, /Create this \$\{actionLabel\}\?/);
+  assert.match(topics, /Confirm/);
+  assert.match(topics, /Cancel/);
+  assert.match(topics, /returnAcceptedActionToOpportunity/);
+  assert.match(topics, /api\.returnSEOContentActionToOpportunity\(projectId, action\.id\)/);
+  assert.match(topics, /api\.dismissSEOContentAction\(projectId, action\.id\)/);
+  assert.doesNotMatch(topics, /api\.dismissSEOOpportunity\(projectId, action\.opportunity_id\)/);
 });
 
 test("content plan only links to Review after a draft article exists", () => {
