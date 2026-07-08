@@ -1195,6 +1195,35 @@ test("content workflow route clicks retry target alignment while content settles
   assert.match(workflow, /window\.dispatchEvent\(new CustomEvent\(CONTENT_WORKFLOW_PATH_CHANGE_EVENT/);
 });
 
+test("content workflow keeps route clicks locked through late scroll restoration", () => {
+  const workflow = read("projects/[id]/content-workflow-client.tsx");
+
+  assert.doesNotMatch(
+    workflow,
+    /if \(!isStepAligned\(pendingStep\) && elapsed < TARGET_SETTLE_TIMEOUT_MS\)/,
+    "route lock must not release just because the target was aligned for one frame",
+  );
+  assert.match(
+    workflow,
+    /if \(elapsed < TARGET_SETTLE_TIMEOUT_MS\) \{[\s\S]*syncPathToStep\(pendingStep\);[\s\S]*return;[\s\S]*\}/,
+    "scroll observer should keep the clicked route active for the whole settle window",
+  );
+
+  const settleStart = workflow.indexOf("const settleTarget = () => {");
+  const settleEnd = workflow.indexOf("frame = window.requestAnimationFrame(settleTarget);", settleStart);
+  const settleBlock = workflow.slice(settleStart, settleEnd);
+  assert.doesNotMatch(
+    settleBlock,
+    /isStepAligned\(initialStep\) \|\|/,
+    "settleTarget must not stop retrying on the first aligned frame",
+  );
+  assert.match(
+    settleBlock,
+    /window\.performance\.now\(\) - pendingStartedAtRef\.current >= TARGET_SETTLE_TIMEOUT_MS/,
+    "settleTarget should retry until the route-lock window expires",
+  );
+});
+
 test("content workflow scroll keeps project shell navigation active state in sync", () => {
   const shell = read("components/project-shell.tsx");
   const workflow = read("projects/[id]/content-workflow-client.tsx");

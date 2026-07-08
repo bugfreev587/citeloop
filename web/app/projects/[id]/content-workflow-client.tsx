@@ -112,7 +112,8 @@ export function ContentWorkflowClient({
     if (pendingTargetRef.current) {
       const pendingStep = pendingTargetRef.current;
       const elapsed = window.performance.now() - pendingStartedAtRef.current;
-      if (!isStepAligned(pendingStep) && elapsed < TARGET_SETTLE_TIMEOUT_MS) {
+      if (elapsed < TARGET_SETTLE_TIMEOUT_MS) {
+        if (!isStepAligned(pendingStep)) scrollToStep(pendingStep, "auto");
         syncPathToStep(pendingStep);
         return;
       }
@@ -131,7 +132,7 @@ export function ContentWorkflowClient({
 
     if (activeStepRef.current === nextStep) return;
     syncPathToStep(nextStep);
-  }, [isStepAligned, syncPathToStep]);
+  }, [isStepAligned, scrollToStep, syncPathToStep]);
 
   useEffect(() => {
     pendingTargetRef.current = initialStep;
@@ -141,7 +142,7 @@ export function ContentWorkflowClient({
     let frame = 0;
     const settleTarget = () => {
       scrollToStep(initialStep, "auto");
-      if (isStepAligned(initialStep) || window.performance.now() - pendingStartedAtRef.current >= TARGET_SETTLE_TIMEOUT_MS) {
+      if (window.performance.now() - pendingStartedAtRef.current >= TARGET_SETTLE_TIMEOUT_MS) {
         pendingTargetRef.current = null;
         updateActiveStep();
         return;
@@ -151,7 +152,7 @@ export function ContentWorkflowClient({
 
     frame = window.requestAnimationFrame(settleTarget);
     return () => window.cancelAnimationFrame(frame);
-  }, [initialStep, isStepAligned, scrollToStep, syncPathToStep, updateActiveStep]);
+  }, [initialStep, scrollToStep, syncPathToStep, updateActiveStep]);
 
   useEffect(() => {
     const scheduleUpdate = () => {
