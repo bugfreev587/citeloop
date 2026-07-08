@@ -193,6 +193,7 @@ type Querier interface {
 	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
 	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
 	MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error)
+	MarkContentActionSiteFixPRResult(ctx context.Context, arg MarkContentActionSiteFixPRResultParams) (ContentAction, error)
 	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)

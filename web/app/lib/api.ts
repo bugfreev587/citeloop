@@ -2592,6 +2592,13 @@ export function createApi(auth?: AuthOptions) {
       auth,
     );
   },
+  createSiteFixGitHubPR: async (id: string, actionID: string): Promise<SEOContentAction> => {
+    return req<SEOContentAction>(
+      `/projects/${id}/seo/actions/${actionID}/site-fix-pr`,
+      { method: "POST" },
+      auth,
+    );
+  },
   dismissSEOContentAction: async (id: string, actionID: string): Promise<SEOContentAction> => {
     return req<SEOContentAction>(
       `/projects/${id}/seo/actions/${actionID}/dismiss`,

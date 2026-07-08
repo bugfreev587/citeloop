@@ -84,6 +84,31 @@ func TestGitHubPRClientCreatesBranchWritesExistingFileAndOpensPR(t *testing.T) {
 	}
 }
 
+func TestGitHubPRClientReadsFileContentAndSHA(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/repos/owner/unipost/contents/content/citeloop/blog/evidence.mdx" {
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+		}
+		if req.URL.Query().Get("ref") != "main" {
+			t.Fatalf("content lookup ref = %s", req.URL.RawQuery)
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte("---\ntitle: \"Old\"\n---\n\nBody"))
+		return jsonResponse(http.StatusOK, `{"sha":"base-file-sha","content":"`+encoded+`"}`), nil
+	})}
+
+	content, sha, err := client.ReadFile(context.Background(), "content/citeloop/blog/evidence.mdx", "main")
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if sha != "base-file-sha" {
+		t.Fatalf("sha = %q", sha)
+	}
+	if !strings.Contains(content, `title: "Old"`) || !strings.Contains(content, "Body") {
+		t.Fatalf("content not decoded: %q", content)
+	}
+}
+
 func TestGitHubPRClientRejectsBaseFileSHAMismatch(t *testing.T) {
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

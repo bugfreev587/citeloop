@@ -95,6 +95,51 @@ func (c *GitHubPRClient) CreatePageUpdatePR(ctx context.Context, in GitHubPRInpu
 	}, nil
 }
 
+func (c *GitHubPRClient) ReadFile(ctx context.Context, sourcePath, ref string) (string, string, error) {
+	sourcePath, err := safeRelativePath(sourcePath, "source path")
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(ref) == "" {
+		ref = c.BaseBranch
+	}
+	api := "https://api.github.com/repos/" + c.Repo + "/contents/" + sourcePath + "?ref=" + ref
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
+	if err != nil {
+		return "", "", err
+	}
+	c.auth(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("github content lookup %d: %s", resp.StatusCode, string(raw))
+	}
+	var out struct {
+		SHA      string `json:"sha"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(out.SHA) == "" {
+		return "", "", fmt.Errorf("github content lookup returned empty sha")
+	}
+	if strings.TrimSpace(out.Encoding) != "" && strings.TrimSpace(out.Encoding) != "base64" {
+		return "", "", fmt.Errorf("github content encoding %q is not supported", out.Encoding)
+	}
+	encoded := strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(out.Content)
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", "", err
+	}
+	return string(decoded), out.SHA, nil
+}
+
 func (c *GitHubPRClient) fileSHA(ctx context.Context, sourcePath, ref string) (string, error) {
 	api := "https://api.github.com/repos/" + c.Repo + "/contents/" + sourcePath + "?ref=" + ref
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)

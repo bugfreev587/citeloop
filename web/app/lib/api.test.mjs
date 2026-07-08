@@ -573,6 +573,45 @@ test("page update draft APIs call existing-page update endpoints", async () => {
   }
 });
 
+test("site fix GitHub PR API calls the action apply endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "action-1",
+        project_id: "project-1",
+        opportunity_id: "opp-1",
+        action_type: "Rewrite metadata",
+        status: "verification_pending",
+        output_snapshot: {
+          publisher_result: {
+            mode: "github_pr",
+            status: "github_pr_open",
+            github_pr_url: "https://github.com/acme/site/pull/42",
+          },
+        },
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const updated = await createApi().createSiteFixGitHubPR("project-1", "action-1");
+
+    assert.equal(updated.output_snapshot.publisher_result.github_pr_url, "https://github.com/acme/site/pull/42");
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.init.method]),
+      [["https://api.example.test/api/projects/project-1/seo/actions/action-1/site-fix-pr", "POST"]],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

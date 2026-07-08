@@ -447,3 +447,83 @@ func TestPageUpdateApplyCreatesSourceBackedGitHubPRApplication(t *testing.T) {
 		}
 	}
 }
+
+func TestSiteFixGitHubPRRouteAndHandlerContract(t *testing.T) {
+	serverRaw, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatalf("read server.go: %v", err)
+	}
+	if !strings.Contains(string(serverRaw), `r.Post("/actions/{actionID}/site-fix-pr", s.createSiteFixGitHubPR)`) {
+		t.Fatal("Site Fixes must expose a GitHub PR apply endpoint")
+	}
+
+	handlerRaw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(handlerRaw)
+	for _, want := range []string{
+		"func (s *Server) createSiteFixGitHubPR",
+		"content action is not a site fix",
+		`"site_fix"`,
+		"CreateOrReuseSiteChangeApplication",
+		"CreatePageUpdatePR",
+		"siteFixWorkingBranch",
+		"siteFixPRBody",
+		"siteFixGitHubPRResult",
+		"verification_pending",
+		"github_pr_open",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("site fix GitHub PR handler contract missing %q", want)
+		}
+	}
+}
+
+func TestContentActionIsSiteFixAcceptsDirectExistingPagePatches(t *testing.T) {
+	if !contentActionIsSiteFix(db.ContentAction{AssetType: strPtrFrom("metadata_rewrite"), WorkType: strPtrFrom(WorkTypeImprovePage)}) {
+		t.Fatal("metadata rewrites routed as Improve Page should still be applyable as Site Fix PRs")
+	}
+	if contentActionIsSiteFix(db.ContentAction{AssetType: strPtrFrom("page_update"), WorkType: strPtrFrom(WorkTypeImprovePage)}) {
+		t.Fatal("page update drafts must stay on the Page Update flow")
+	}
+	if contentActionIsSiteFix(db.ContentAction{AssetType: strPtrFrom("blog_post"), WorkType: strPtrFrom(WorkTypeCreateContent)}) {
+		t.Fatal("new content actions are not Site Fix PRs")
+	}
+}
+
+func TestSiteFixMetadataRewriteUpdatesMDXFrontmatter(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		DiffSnapshot: json.RawMessage(`{
+			"ai_repair": {
+				"proposed_change": {
+					"title": "UniPost | Social Media Posting API for Developers",
+					"meta_description": "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms."
+				}
+			}
+		}`),
+	}
+	source := "---\nsource: citeloop\ntitle: \"Old title\"\nseo_title: \"Old SEO title\"\ndescription: \"Old description\"\nexcerpt: \"Old excerpt\"\ncanonical: \"https://unipost.dev/\"\n---\n\n# Body\n"
+
+	updated, err := siteFixMetadataRewriteContent(source, action)
+	if err != nil {
+		t.Fatalf("siteFixMetadataRewriteContent returned error: %v", err)
+	}
+	for _, want := range []string{
+		`title: "UniPost | Social Media Posting API for Developers"`,
+		`seo_title: "UniPost | Social Media Posting API for Developers"`,
+		`description: "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms."`,
+		`excerpt: "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms."`,
+		`canonical: "https://unipost.dev/"`,
+		"# Body",
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("updated frontmatter missing %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "Old title") || strings.Contains(updated, "Old description") {
+		t.Fatalf("old metadata values should be replaced:\n%s", updated)
+	}
+}

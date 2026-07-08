@@ -22,6 +22,7 @@ import {
   SEOOpportunity,
   SEOOverview,
   OpportunityFindingStatus,
+  PublisherConnection,
   SEOProperty,
   SEOPolicy,
   SEOWatchlistItem,
@@ -612,6 +613,12 @@ function isDirectAction(action: SEOContentAction | ResultsAction) {
   const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
   const assetType = String(action.asset_type ?? "").toLowerCase();
   return outputType === "direct_patch" || outputType === "technical_task" || directActionAssetTypes.has(assetType);
+}
+
+function siteFixGitHubPRURL(action: SEOContentAction | ResultsAction) {
+  const publisherResult = action.output_snapshot?.publisher_result;
+  const url = publisherResult?.github_pr_url;
+  return typeof url === "string" && url.trim() ? url.trim() : "";
 }
 
 function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
@@ -1743,6 +1750,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [crawlerSnapshots, setCrawlerSnapshots] = useState<AICrawlerAccessSnapshot[]>([]);
   const [geoOverview, setGeoOverview] = useState<GEOOverview | null>(null);
   const [assetBriefs, setAssetBriefs] = useState<GEOAssetBrief[]>([]);
+  const [publisherConnections, setPublisherConnections] = useState<PublisherConnection[]>([]);
   const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
   const [seoIntegrations, setSEOIntegrations] = useState<SEOIntegration[]>([]);
   const [siteURL, setSiteURL] = useState("");
@@ -1814,6 +1822,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         crawlerAuditResult,
         geoResult,
         briefRowsResult,
+        publisherRowsResult,
       ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
@@ -1835,6 +1844,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.getLatestGEOCrawlerAudit(projectId),
         api.getGEOOverview(projectId),
         api.listGEOAssetBriefs(projectId, { limit: 50 }),
+        api.listPublisherConnections(projectId),
       ]);
       if (refreshSequence !== refreshSequenceRef.current) return;
 
@@ -1858,6 +1868,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const crawlerAudit = settledValue(crawlerAuditResult);
       const geoData = settledValue(geoResult);
       const briefRows = settledValue(briefRowsResult);
+      const publisherRows = settledValue(publisherRowsResult);
 
       if (overviewData) setOverview(overviewData);
       if (summaryData) setVisibilitySummary(summaryData);
@@ -1876,6 +1887,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (crawlerAudit) setCrawlerSnapshots(crawlerAudit.snapshots);
       if (geoData) setGeoOverview(geoData);
       if (briefRows) setAssetBriefs(briefRows);
+      if (publisherRows) setPublisherConnections(publisherRows);
       if (settings || overviewData) {
         const nextProperty = settings?.property ?? overviewData?.property ?? null;
         setSEOProperty(nextProperty);
@@ -1960,6 +1972,18 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const gscStatus = useMemo(() => {
     return gscConnection?.status ?? overview?.integrations.find((integration) => integration.provider === "google_search_console")?.status ?? "missing";
   }, [gscConnection?.status, overview]);
+
+  const hasConnectedGitHubPublisher = useMemo(
+    () =>
+      publisherConnections.some(
+        (connection) =>
+          connection.kind === "github_nextjs" &&
+          connection.enabled !== false &&
+          connection.status === "connected" &&
+          connection.credential_configured !== false,
+      ),
+    [publisherConnections],
+  );
 
   const promptCountBySet = useMemo(() => {
     const counts = new Map<string, number>();
@@ -2679,6 +2703,26 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setMessage({ title: "Fix JSON copied", detail: "Paste it into Codex or Claude Code to apply the site fix.", tone: "green" });
     } catch {
       setMessage({ title: "Could not copy fix JSON", detail: "Select the JSON in the drawer and copy it manually.", tone: "red" });
+    }
+  }
+
+  async function createSiteFixGitHubPR(action: SEOContentAction) {
+    setBusy(`site-fix-pr-${action.id}`);
+    setMessage(null);
+    try {
+      const updated = await api.createSiteFixGitHubPR(projectId, action.id);
+      setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      const prURL = siteFixGitHubPRURL(updated);
+      setMessage({
+        title: "GitHub PR created",
+        detail: prURL || "Open it from this Site Fix after GitHub returns the PR URL.",
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Could not create GitHub PR", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -4420,6 +4464,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const stage = deriveVisibilityLifecycleStage(action);
       const markAppliedBusy = busy === `verify-${action.id}-verified`;
       const dismissSiteFixBusy = busy === `dismiss-${action.id}`;
+      const createPRBusy = busy === `site-fix-pr-${action.id}`;
+      const prURL = siteFixGitHubPRURL(action);
       const aiRepairJSON = siteFixAIJSON(action);
 
       return (
@@ -4504,18 +4550,46 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         AI coding fix JSON
                       </div>
                       <p className="mt-2 text-sm font-semibold leading-5 text-cyan-950">
-                        Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks.
+                        {hasConnectedGitHubPublisher
+                          ? "Create a source-backed GitHub PR for this existing page when CiteLoop can map the fix to the published Markdown source."
+                          : "Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks."}
                       </p>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="ai"
-                      className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                      onClick={() => void copySiteFixAIJSON(action)}
-                    >
-                      <Clipboard className="shrink-0" size={14} />
-                      Copy fix JSON
-                    </Button>
+                    {hasConnectedGitHubPublisher ? (
+                      prURL ? (
+                        <Button
+                          size="sm"
+                          variant="ai"
+                          className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                          onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
+                        >
+                          <FileText className="shrink-0" size={14} />
+                          Open PR
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ai"
+                          className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                          onClick={() => void createSiteFixGitHubPR(action)}
+                          disabled={!!busy}
+                        >
+                          <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
+                            Create GitHub PR
+                          </ButtonProgress>
+                        </Button>
+                      )
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ai"
+                        className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                        onClick={() => void copySiteFixAIJSON(action)}
+                      >
+                        <Clipboard className="shrink-0" size={14} />
+                        Copy fix JSON
+                      </Button>
+                    )}
                   </div>
                   <pre className="max-h-80 overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{aiRepairJSON}</pre>
                 </section>
@@ -4573,15 +4647,41 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               aria-label="Drawer actions"
               className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
             >
-              <Button
-                size="sm"
-                variant="ai"
-                className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                onClick={() => void copySiteFixAIJSON(action)}
-              >
-                <Clipboard className="shrink-0" size={14} />
-                Copy fix JSON
-              </Button>
+              {hasConnectedGitHubPublisher ? (
+                prURL ? (
+                  <Button
+                    size="sm"
+                    variant="ai"
+                    className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                    onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
+                  >
+                    <FileText className="shrink-0" size={14} />
+                    Open PR
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ai"
+                    className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                    onClick={() => void createSiteFixGitHubPR(action)}
+                    disabled={!!busy}
+                  >
+                    <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
+                      Create GitHub PR
+                    </ButtonProgress>
+                  </Button>
+                )
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ai"
+                  className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                  onClick={() => void copySiteFixAIJSON(action)}
+                >
+                  <Clipboard className="shrink-0" size={14} />
+                  Copy fix JSON
+                </Button>
+              )}
               <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
                 <ButtonProgress busy={markAppliedBusy} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
                   Mark applied

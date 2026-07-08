@@ -1271,6 +1271,184 @@ func (s *Server) markPageUpdateDraftManualApply(ctx context.Context, projectID u
 	return draft, nil
 }
 
+func (s *Server) createSiteFixGitHubPR(w http.ResponseWriter, r *http.Request) {
+	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
+	if !ok {
+		return
+	}
+	action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{ID: actionID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "content action not found")
+		return
+	}
+	if !contentActionIsSiteFix(action) {
+		writeErr(w, http.StatusBadRequest, "content action is not a site fix")
+		return
+	}
+	updated, err := s.createSiteFixGitHubPRForAction(r.Context(), projectID, action)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID uuid.UUID, action db.ContentAction) (db.ContentAction, error) {
+	if !action.TargetArticleID.Valid {
+		return db.ContentAction{}, fmt.Errorf("site fix needs an exact CiteLoop-published Markdown source mapping")
+	}
+	if siteFixAssetTypeForAction(action) != "metadata_rewrite" {
+		return db.ContentAction{}, fmt.Errorf("GitHub PR apply currently supports metadata rewrite site fixes with exact Markdown source mapping")
+	}
+	article, err := s.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: uuid.UUID(action.TargetArticleID.Bytes), ProjectID: projectID})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	mapping, ok := pageUpdateExactSourceMapping(article)
+	if !ok {
+		return db.ContentAction{}, fmt.Errorf("target article is not an exact CiteLoop-published Markdown source")
+	}
+	conn, err := s.Q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
+		ProjectID: projectID,
+		Kind:      publisher.ConnectionKindGitHubNextJS,
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	targetURL := contentActionTargetURL(action)
+	if targetURL == "" {
+		return db.ContentAction{}, fmt.Errorf("site fix target URL is missing")
+	}
+	if target, ok := publisher.GitHubNextJSTargetForSiteURL(targetURL); ok {
+		cfg.Branch = target.Branch
+		cfg.BaseURL = target.BaseURL
+	}
+	token, err := s.publisherConnectionToken(ctx, projectID, conn)
+	if err != nil || strings.TrimSpace(token) == "" {
+		if err == nil {
+			err = fmt.Errorf("github publisher token is empty")
+		}
+		return db.ContentAction{}, err
+	}
+	client := publisher.NewGitHubPRClient(token, cfg.Repo, cfg.Branch, s.Log)
+	baseContent, baseFileSHA, err := client.ReadFile(ctx, mapping.SourceFilePath, cfg.Branch)
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	proposedContent, err := siteFixMetadataRewriteContent(baseContent, action)
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+
+	workingBranch := siteFixWorkingBranch(action)
+	repo := cfg.Repo
+	baseBranch := cfg.Branch
+	sourceFilePath := mapping.SourceFilePath
+	sourceFilePaths := mustJSONLocal([]string{sourceFilePath})
+	baseCommitSHA := strPtrFrom(mapping.BaseCommitSHA)
+	proposedHash := pageUpdateContentHash(proposedContent)
+	app, err := s.Q.CreateOrReuseSiteChangeApplication(ctx, db.CreateOrReuseSiteChangeApplicationParams{
+		ProjectID:               projectID,
+		SourceOpportunityID:     pgtype.UUID{Bytes: action.OpportunityID, Valid: true},
+		ContentActionID:         action.ID,
+		PageUpdateDraftID:       pgtype.UUID{},
+		ApplicationKind:         "site_fix",
+		TargetUrl:               targetURL,
+		NormalizedTargetUrl:     contentActionNormalizedTargetURL(action),
+		OpportunityKey:          siteFixOpportunityKey(action),
+		PublisherConnectionID:   pgtype.UUID{Bytes: conn.ID, Valid: true},
+		RepoFullName:            &repo,
+		BaseBranch:              &baseBranch,
+		WorkingBranch:           &workingBranch,
+		BaseCommitSha:           baseCommitSHA,
+		HeadCommitSha:           nil,
+		SourceFilePath:          &sourceFilePath,
+		SourceFilePaths:         sourceFilePaths,
+		SourceMappingConfidence: mapping.Confidence,
+		SourceMappingReason:     mapping.Reason,
+		BaseFileSha:             &baseFileSHA,
+		BaseContentHash:         action.TargetContentHashBefore,
+		ProposedContentHash:     &proposedHash,
+		PatchSnapshot:           rawOrDefault(action.OutputSnapshot, `{}`),
+		DiffSnapshot:            rawOrDefault(action.DiffSnapshot, `{}`),
+		ResolutionCriteria:      siteFixResolutionCriteria(action),
+		Status:                  "ready_for_pr",
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	if app.Status == "github_pr_open" && strings.TrimSpace(stringPtrValueAPI(app.GithubPrUrl)) != "" {
+		return s.markSiteFixGitHubPRResult(ctx, projectID, action, app)
+	}
+	pr, err := client.CreatePageUpdatePR(ctx, publisher.GitHubPRInput{
+		SourcePath:        mapping.SourceFilePath,
+		WorkingBranch:     workingBranch,
+		BaseFileSHA:       baseFileSHA,
+		ProposedContentMD: proposedContent,
+		CommitMessage:     siteFixPRCommitMessage(action),
+		Title:             siteFixPRTitle(action),
+		Body:              siteFixPRBody(action, mapping),
+	})
+	if err != nil {
+		_, _ = s.Q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+			ID:                   app.ID,
+			ProjectID:            projectID,
+			Status:               "manual_apply_required",
+			GithubPrState:        nil,
+			DeploymentSnapshot:   json.RawMessage(`{}`),
+			VerificationSnapshot: json.RawMessage(`{}`),
+			FailureReason:        strPtrFrom(err.Error()),
+		})
+		return db.ContentAction{}, err
+	}
+	prNumber := int32(pr.Number)
+	app, err = s.Q.MarkSiteChangeApplicationGitHubPR(ctx, db.MarkSiteChangeApplicationGitHubPRParams{
+		ID:             app.ID,
+		ProjectID:      projectID,
+		WorkingBranch:  &pr.WorkingBranch,
+		HeadCommitSha:  &pr.HeadCommitSHA,
+		BaseFileSha:    &pr.BaseFileSHA,
+		GithubPrNumber: &prNumber,
+		GithubPrUrl:    &pr.URL,
+		GithubPrState:  &pr.State,
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	return s.markSiteFixGitHubPRResult(ctx, projectID, action, app)
+}
+
+func (s *Server) markSiteFixGitHubPRResult(ctx context.Context, projectID uuid.UUID, action db.ContentAction, app db.SiteChangeApplication) (db.ContentAction, error) {
+	result := siteFixGitHubPRResult(action, app)
+	return s.Q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
+		ID:              action.ID,
+		ProjectID:       projectID,
+		PublisherResult: result,
+	})
+}
+
+func siteFixGitHubPRResult(action db.ContentAction, app db.SiteChangeApplication) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "github_pr_open",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            app.GithubPrState,
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"working_branch":             app.WorkingBranch,
+		"head_commit_sha":            app.HeadCommitSha,
+		"base_file_sha":              app.BaseFileSha,
+		"source_file_path":           app.SourceFilePath,
+		"target_url":                 contentActionTargetURL(action),
+	})
+}
+
 func (s *Server) verifyPageUpdateDraft(w http.ResponseWriter, r *http.Request) {
 	projectID, draftID, ok := s.seoIDs(w, r, "draftID")
 	if !ok {
@@ -2922,6 +3100,305 @@ func contentActionAssetType(action db.ContentAction) string {
 		return ""
 	}
 	return strings.TrimSpace(*action.AssetType)
+}
+
+func contentActionIsSiteFix(action db.ContentAction) bool {
+	if action.WorkType != nil && strings.TrimSpace(*action.WorkType) == WorkTypeFixSiteIssue {
+		return true
+	}
+	switch contentActionAssetType(action) {
+	case "metadata_rewrite", "internal_link_patch", "schema_patch", "sitemap_update", "technical_fix":
+		return true
+	default:
+		return false
+	}
+}
+
+func siteFixAssetTypeForAction(action db.ContentAction) string {
+	return strings.TrimSpace(contentActionAssetType(action))
+}
+
+func contentActionTargetURL(action db.ContentAction) string {
+	return firstNonEmpty(
+		stringPtrValueAPI(action.TargetUrl),
+		stringPtrValueAPI(action.NormalizedTargetUrl),
+	)
+}
+
+func contentActionNormalizedTargetURL(action db.ContentAction) string {
+	return firstNonEmpty(
+		stringPtrValueAPI(action.NormalizedTargetUrl),
+		stringPtrValueAPI(action.TargetUrl),
+	)
+}
+
+func siteFixOpportunityKey(action db.ContentAction) string {
+	return "site_fix:" + action.ID.String()
+}
+
+func siteFixWorkingBranch(action db.ContentAction) string {
+	suffix := strings.ReplaceAll(action.ID.String(), "-", "")
+	if len(suffix) > 12 {
+		suffix = suffix[:12]
+	}
+	return "citeloop/site-fix-" + suffix
+}
+
+func siteFixPRTitle(action db.ContentAction) string {
+	title := compactPageUpdateText(action.ActionType)
+	if title == "" {
+		title = "Apply CiteLoop site fix"
+	}
+	if len(title) > 88 {
+		title = strings.TrimSpace(title[:88])
+	}
+	return "CiteLoop: " + title
+}
+
+func siteFixPRCommitMessage(action db.ContentAction) string {
+	title := compactPageUpdateText(action.ActionType)
+	if title == "" {
+		return "Apply CiteLoop site fix"
+	}
+	return title
+}
+
+func siteFixResolutionCriteria(action db.ContentAction) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"source":                    "site_fix",
+		"content_action_id":         action.ID,
+		"opportunity_id":            action.OpportunityID,
+		"asset_type":                siteFixAssetTypeForAction(action),
+		"target_url":                contentActionTargetURL(action),
+		"target_url_locked":         true,
+		"creates_new_article":       false,
+		"requires_post_merge_check": true,
+		"acceptance_tests":          siteFixAcceptanceTests(action),
+	})
+}
+
+func siteFixAcceptanceTests(action db.ContentAction) []string {
+	tests := []string{}
+	var parsed any
+	if rawHasMeaningfulJSON(action.DiffSnapshot) {
+		_ = json.Unmarshal(action.DiffSnapshot, &parsed)
+		tests = appendStringValues(tests, nestedStringSlice(parsed, "acceptance_tests")...)
+	}
+	if len(tests) > 0 {
+		return tests
+	}
+	targetURL := contentActionTargetURL(action)
+	switch siteFixAssetTypeForAction(action) {
+	case "metadata_rewrite":
+		return []string{
+			"Fetch " + targetURL + " and confirm the page emits the proposed title and meta description.",
+			"Confirm canonical URL and indexability remain unchanged.",
+			"Run the original SEO/GEO check again and confirm the finding no longer appears for the target URL.",
+		}
+	default:
+		return []string{
+			"Apply the site fix to the existing target page.",
+			"Run the original SEO/GEO check again and confirm the finding no longer appears for the target URL.",
+		}
+	}
+}
+
+func siteFixPRBody(action db.ContentAction, mapping pageUpdateSourceMapping) string {
+	criteria := compactJSONSummary(siteFixResolutionCriteria(action))
+	if criteria == "" {
+		criteria = "No structured criteria were recorded."
+	}
+	return fmt.Sprintf(`## CiteLoop Site Fix
+
+Target URL: %s
+Source file: %s
+Source mapping: %s
+
+## Requested Change
+
+%s
+
+## Resolution Criteria
+
+%s
+
+After this PR merges and deploys, CiteLoop should re-run the original finding before marking the site fix applied.
+`,
+		contentActionTargetURL(action),
+		mapping.SourceFilePath,
+		mapping.Reason,
+		compactPageUpdateText(action.ActionType),
+		criteria,
+	)
+}
+
+func siteFixMetadataRewriteContent(source string, action db.ContentAction) (string, error) {
+	title, description := siteFixProposedMetadata(action)
+	if title == "" && description == "" {
+		return "", fmt.Errorf("metadata rewrite site fix has no proposed title or meta description")
+	}
+	frontmatter, body, newline, ok := splitMDFrontmatter(source)
+	if !ok {
+		return "", fmt.Errorf("metadata rewrite site fix requires Markdown frontmatter")
+	}
+	updates := map[string]string{}
+	if title != "" {
+		updates["title"] = title
+		updates["seo_title"] = title
+	}
+	if description != "" {
+		updates["description"] = description
+		updates["excerpt"] = description
+	}
+	nextFrontmatter := rewriteYAMLStringFields(frontmatter, updates, newline)
+	return "---" + newline + nextFrontmatter + "---" + body, nil
+}
+
+func splitMDFrontmatter(source string) (string, string, string, bool) {
+	newline := "\n"
+	if strings.HasPrefix(source, "---\r\n") {
+		newline = "\r\n"
+	} else if !strings.HasPrefix(source, "---\n") {
+		return "", "", "", false
+	}
+	start := len("---" + newline)
+	closing := strings.Index(source[start:], newline+"---")
+	if closing < 0 {
+		return "", "", "", false
+	}
+	frontmatterEnd := start + closing
+	bodyStart := frontmatterEnd + len(newline+"---")
+	return source[start:frontmatterEnd], source[bodyStart:], newline, true
+}
+
+func rewriteYAMLStringFields(frontmatter string, updates map[string]string, newline string) string {
+	lines := strings.Split(frontmatter, newline)
+	seen := map[string]bool{}
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for key, value := range updates {
+			if strings.HasPrefix(trimmed, key+":") {
+				prefix := line[:strings.Index(line, key+":")]
+				lines[i] = prefix + key + ": " + strconv.Quote(value)
+				seen[key] = true
+			}
+		}
+	}
+	for _, key := range []string{"title", "seo_title", "description", "excerpt"} {
+		if value, ok := updates[key]; ok && !seen[key] {
+			lines = append(lines, key+": "+strconv.Quote(value))
+		}
+	}
+	if len(lines) == 1 && lines[0] == "" {
+		lines = []string{}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, newline) + newline
+}
+
+func siteFixProposedMetadata(action db.ContentAction) (string, string) {
+	for _, raw := range []json.RawMessage{action.DiffSnapshot, action.OutputSnapshot, action.EvidenceSnapshot, action.InputSnapshot} {
+		title, description := proposedMetadataFromRaw(raw)
+		if title != "" || description != "" {
+			return title, description
+		}
+	}
+	return "", ""
+}
+
+func proposedMetadataFromRaw(raw json.RawMessage) (string, string) {
+	if !rawHasMeaningfulJSON(raw) {
+		return "", ""
+	}
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", ""
+	}
+	for _, path := range [][]string{
+		{"ai_repair", "proposed_change"},
+		{"proposed_change"},
+		{"proposed_metadata"},
+		{"metadata_rewrite"},
+		{"recommended_metadata"},
+	} {
+		if title, description := metadataValuesAtPath(parsed, path...); title != "" || description != "" {
+			return title, description
+		}
+	}
+	if changes := nestedAny(parsed, "proposed_changes"); changes != nil {
+		if list, ok := changes.([]any); ok {
+			for _, item := range list {
+				if title, description := metadataValuesAtPath(item); title != "" || description != "" {
+					return title, description
+				}
+				if title, description := metadataValuesAtPath(item, "proposed_change"); title != "" || description != "" {
+					return title, description
+				}
+			}
+		}
+	}
+	return metadataValuesAtPath(parsed)
+}
+
+func metadataValuesAtPath(parsed any, path ...string) (string, string) {
+	node := nestedAny(parsed, path...)
+	if node == nil {
+		return "", ""
+	}
+	title := firstNestedString(node, "title", "proposed_title", "recommended_title", "new_title")
+	description := firstNestedString(node, "meta_description", "metaDescription", "description", "proposed_meta_description", "recommended_meta_description", "new_meta_description")
+	return title, description
+}
+
+func nestedAny(value any, path ...string) any {
+	current := value
+	for _, key := range path {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = obj[key]
+	}
+	return current
+}
+
+func firstNestedString(value any, keys ...string) string {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range keys {
+		if text, ok := obj[key].(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
+}
+
+func nestedStringSlice(value any, path ...string) []string {
+	node := nestedAny(value, path...)
+	items, ok := node.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			out = append(out, strings.TrimSpace(text))
+		}
+	}
+	return out
+}
+
+func appendStringValues(values []string, next ...string) []string {
+	for _, value := range next {
+		if strings.TrimSpace(value) != "" {
+			values = append(values, strings.TrimSpace(value))
+		}
+	}
+	return values
 }
 
 func pageUpdateResolutionCriteria(action db.ContentAction, opp db.SeoOpportunity, targetURL string) json.RawMessage {
