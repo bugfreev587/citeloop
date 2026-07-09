@@ -2151,6 +2151,22 @@ test("content plan topic cards separate top chips, body copy, and footer actions
   assert.ok(actionsIndex > scheduleIndex, "actions should sit after the schedule control in the footer row");
 });
 
+test("accepted content brief cards use the shared responsive square-card grid", () => {
+  const topics = read("projects/[id]/topics/topics-client.tsx");
+  const sectionStart = topics.indexOf("data-content-plan-handoff-section");
+  const sectionEnd = topics.indexOf("Legacy content briefs", sectionStart);
+  const section = topics.slice(sectionStart, sectionEnd);
+
+  assert.ok(section.length > 0, "content plan handoff section must exist");
+  assert.match(section, /data-content-plan-action-grid/);
+  assert.match(section, /md:grid-cols-2/);
+  assert.match(section, /xl:grid-cols-3/);
+  assert.match(section, /min-h-\[220px\]/);
+  assert.match(section, /flex h-full/);
+  assert.match(section, /Open details/);
+  assert.doesNotMatch(section, /lg:flex-row/, "accepted content cards should not keep the old full-row internal layout");
+});
+
 test("review cards keep QA and score details inside the drawer", () => {
   const review = read("projects/[id]/review/review-client.tsx");
   const cardBlock = review.slice(review.indexOf("function ReviewDecisionCard"), review.indexOf("function StateBadge"));

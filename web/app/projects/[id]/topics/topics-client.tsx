@@ -258,7 +258,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [inReview, setInReview] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
   const [reviewArticleByTopic, setReviewArticleByTopic] = useState<Record<string, string>>({});
-  const contentPlanActionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const contentPlanActionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const autoToggleBusy = busy === "auto-toggle";
   const autoEnabled = Boolean(config?.auto_advance_enabled);
   const requestedActionID = searchParams.get("action");
@@ -1051,36 +1051,30 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             detail="Accept content opportunities from the Opportunity Queue or create a new content brief."
           />
         ) : (
-          <div className="grid gap-2">
+          <div data-content-plan-action-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
               const actionIsPageUpdate = isPageUpdateAction(action);
+              const actionReviewLabel = actionIsPageUpdate ? "Review update" : "Review brief";
               const publishStrategy = actionIsPageUpdate ? "blog" : publishStrategyForAction(action);
               const recommendedStrategy = actionIsPageUpdate ? "blog" : recommendedPublishStrategy(action);
               return (
-                <div
+                <button
                   key={action.id}
+                  type="button"
                   id={`content-plan-action-${action.id}`}
                   ref={(node) => {
                     contentPlanActionRefs.current[action.id] = node;
                   }}
-                  role="button"
-                  tabIndex={0}
                   data-content-plan-action-card
                   onClick={() => setSelectedContentPlanActionID(action.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelectedContentPlanActionID(action.id);
-                    }
-                  }}
                   aria-label={`Open accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
                   className={cx(
-                    "cursor-pointer rounded-xl border bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                    "group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
                     highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
                   )}
                 >
-                  <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Accepted</Badge>
@@ -1094,16 +1088,17 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                           </Badge>
                         )}
                         <Badge tone="neutral">{autoEnabled ? "Queued for drafting" : "Auto paused"}</Badge>
+                        <Badge tone="neutral">{actionReviewLabel}</Badge>
                       </div>
-                      <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
-                      <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
+                      <h3 className="mt-3 line-clamp-2 break-words text-lg font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
+                      <p className="mt-2 line-clamp-2 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-500 lg:justify-end">
-                      {actionIsPageUpdate ? "Review update" : "Review brief"}
-                      <ArrowRight size={16} className="text-slate-400" />
+                    <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                      <span>Open details</span>
+                      <ArrowRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1306,7 +1301,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
               Recently sent ({sentToReviewActions.length + sentToReviewTopics.length})
             </summary>
-            <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
+            <div data-content-plan-sent-grid className="grid max-h-[32rem] gap-3 overflow-y-auto border-t border-slate-100 p-3 md:grid-cols-2 xl:grid-cols-3">
               {sentToReviewActions.map((action) => {
                 const actionReturnBusy = busy === `return-action-${action.id}`;
                 const actionDismissBusy = busy === `dismiss-action-${action.id}`;
@@ -1314,20 +1309,29 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   <div
                     key={action.id}
                     data-content-plan-sent-card
-                    className="rounded-md border border-slate-100 bg-slate-50 p-3 text-left"
+                    className="flex h-full min-h-[220px] flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm"
                   >
-                    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge tone="green">Sent to Review</Badge>
                           <Badge tone="blue">{publishStrategyLabel(publishStrategyForAction(action))}</Badge>
                         </div>
-                        <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{contentPlanActionTitle(action)}</h3>
-                        <p className="mt-1 truncate text-xs text-slate-500">
+                        <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
+                        <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
                           {action.opportunity_query || action.opportunity_expected_impact || "Draft is waiting for review."}
                         </p>
                       </div>
-                      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                      <div className="mt-auto grid gap-2 border-t border-slate-100 pt-3">
+                        <a
+                          href={reviewHrefForAction(projectId, action)}
+                          className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                          aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
+                        >
+                          <span>View in Review</span>
+                          <ArrowRight size={14} className="text-slate-400" />
+                        </a>
+                        <div className="flex flex-wrap items-center gap-2">
                         <Button
                           size="sm"
                           variant="outline"
@@ -1350,14 +1354,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                             Dismiss
                           </ButtonProgress>
                         </Button>
-                        <a
-                          href={reviewHrefForAction(projectId, action)}
-                          className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                          aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
-                        >
-                          View in Review
-                          <ArrowRight size={14} className="text-slate-400" />
-                        </a>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1369,23 +1366,23 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   data-content-plan-sent-card
                   href={`/projects/${projectId}/review?article=${reviewArticleByTopic[topic.id]}`}
                   aria-label={`Open "${topic.title}" in Review`}
-                  className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                  className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                 >
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="green">Sent to Review</Badge>
                         <Badge tone="blue">{topic.channel}</Badge>
                       </div>
-                      <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{topic.title}</h3>
-                      <p className="mt-1 truncate text-xs text-slate-500">
+                      <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{topic.title}</h3>
+                      <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
                         {topic.target_keyword || topic.target_prompt || "Draft is waiting for review."}
                       </p>
                     </div>
-                    <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700">
-                      View in Review
-                      <ArrowRight size={16} className="text-slate-400" />
-                    </span>
+                    <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                      <span>View in Review</span>
+                      <ArrowRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                    </div>
                   </div>
                 </a>
               ))}
