@@ -19,7 +19,6 @@ import {
   pageUpdateDraftIDForAction,
   pageUpdateDraftPrimaryCTA,
   pageUpdateDraftStatusTone,
-  planHealthForTopics,
   publishStrategyLabel,
   publishStrategyReasonForAction,
   recommendedPublishStrategyForAction,
@@ -436,15 +435,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         }),
     [topics, reviewArticleByTopic, sentToReviewActions],
   );
-  const planHealth = useMemo(() => planHealthForTopics(legacyBriefTopics), [legacyBriefTopics]);
-  const readyContentBriefs = acceptedContentBriefActions.filter((action) => !action.topic_id || action.topic_status !== "scheduled").length + planHealth.readyToDraft;
-  const planStatusItems = [
-    { label: "Content briefs", value: acceptedContentBriefActions.length + legacyBriefTopics.length },
-    { label: "Page updates", value: acceptedPageUpdateActions.length },
-    { label: "Ready to draft", value: readyContentBriefs },
-    { label: "Scheduled briefs", value: planHealth.scheduledIntent },
-    { label: "Needs priority", value: planHealth.needsPriority },
-  ];
   const recommendedIds = useMemo(() => {
     return new Set(recommendedTopicIds(legacyBriefTopics));
   }, [legacyBriefTopics]);
@@ -968,17 +958,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             </div>
           }
         />
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Brief status</div>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {planStatusItems.map((item) => (
-              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="font-mono text-lg font-bold text-slate-950">{item.value}</div>
-                <div className="text-xs font-semibold text-slate-500">{item.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
         {newBriefOpen && (
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="grid gap-3 lg:grid-cols-[minmax(120px,160px)_minmax(0,1fr)_minmax(96px,120px)]">
