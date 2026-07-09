@@ -181,3 +181,50 @@ func TestGitHubPRClientReusesExistingDraftBranch(t *testing.T) {
 		t.Fatalf("PUT sha must use existing branch file SHA, got %#v", putBody["sha"])
 	}
 }
+
+func TestGitHubPRClientGetPullRequestReportsMerge(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/repos/owner/unipost/pulls/42" {
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
+		return jsonResponse(http.StatusOK, `{"number":42,"state":"closed","merged":true,"merged_at":"2026-07-09T10:00:00Z","html_url":"https://github.com/owner/unipost/pull/42"}`), nil
+	})}
+
+	pr, err := client.GetPullRequest(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequest returned error: %v", err)
+	}
+	if !pr.Merged || pr.State != "closed" || pr.Number != 42 {
+		t.Fatalf("unexpected PR state: %#v", pr)
+	}
+	if pr.MergedAt == nil || pr.MergedAt.IsZero() {
+		t.Fatalf("expected merged_at to be parsed, got %#v", pr.MergedAt)
+	}
+}
+
+func TestGitHubPRClientGetPullRequestOpenNotMerged(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"number":7,"state":"open","merged":false,"merged_at":null,"html_url":"https://github.com/owner/unipost/pull/7"}`), nil
+	})}
+
+	pr, err := client.GetPullRequest(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("GetPullRequest returned error: %v", err)
+	}
+	if pr.Merged || pr.State != "open" {
+		t.Fatalf("open PR should not report merged: %#v", pr)
+	}
+	if pr.MergedAt != nil {
+		t.Fatalf("open PR should have nil merged_at, got %#v", pr.MergedAt)
+	}
+}
+
+func TestGitHubPRClientGetPullRequestRequiresNumber(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	if _, err := client.GetPullRequest(context.Background(), 0); err == nil {
+		t.Fatal("expected error for zero PR number")
+	}
+}

@@ -100,6 +100,14 @@ test("Action cards expose why, contribution, output type, and execution result",
   }
 });
 
+test("Merged and closed site fix PRs surface in the after-execution status", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_merged"/);
+  assert.match(seo, /PR merged — verifying in production/);
+  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
+  assert.match(seo, /PR closed without merging/);
+});
+
 test("Analysis surfaces approved site fixes as user-visible output", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   for (const snippet of [

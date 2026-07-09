@@ -53,6 +53,9 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	_, _ = c.AddFunc("@weekly", func() { s.TickSEODoctor(ctx) })
 	// Publish pass every 5 minutes so approved canonicals go out near their slot.
 	_, _ = c.AddFunc("*/5 * * * *", func() { s.TickPublish(ctx) })
+	// Site-fix PR reconcile every 5 minutes: detect merged/closed source-backed
+	// PRs so the apply ledger advances without an operator telling us it landed.
+	_, _ = c.AddFunc("*/5 * * * *", func() { s.TickSiteFixReconcile(ctx) })
 	// Review overdue pass every 30 minutes so single-operator queues are visible.
 	_, _ = c.AddFunc("@every 30m", func() { s.TickReviewOverdue(ctx) })
 	// Review recovery pass every 2 minutes: re-run QA, repair, regenerate, and

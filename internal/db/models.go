@@ -51,6 +51,7 @@ type AdminLlmCredential struct {
 	Model       string             `json:"model"`
 	WriterModel string             `json:"writer_model"`
 	QaModel     string             `json:"qa_model"`
+	ModelRoutes json.RawMessage    `json:"model_routes"`
 }
 
 type AiCrawlerAccessSnapshot struct {

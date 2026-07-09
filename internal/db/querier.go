@@ -160,6 +160,7 @@ type Querier interface {
 	ListNotificationChannels(ctx context.Context, projectID uuid.UUID) ([]NotificationChannel, error)
 	ListNotificationDeliveries(ctx context.Context, arg ListNotificationDeliveriesParams) ([]NotificationDelivery, error)
 	ListNotificationSubscriptions(ctx context.Context, projectID uuid.UUID) ([]NotificationSubscription, error)
+	ListOpenSiteChangePRApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListOverdueReviewArticles(ctx context.Context, arg ListOverdueReviewArticlesParams) ([]Article, error)
 	ListPageDecayOpportunityRollups(ctx context.Context, arg ListPageDecayOpportunityRollupsParams) ([]ListPageDecayOpportunityRollupsRow, error)
 	ListPendingNotificationDeliveries(ctx context.Context, limit int32) ([]ListPendingNotificationDeliveriesRow, error)

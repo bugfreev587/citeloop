@@ -2209,6 +2209,73 @@ func (q *Queries) ListLatestTechnicalChecks(ctx context.Context, arg ListLatestT
 	return items, nil
 }
 
+const listOpenSiteChangePRApplications = `-- name: ListOpenSiteChangePRApplications :many
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at from site_change_applications
+where project_id = $1
+  and status = 'github_pr_open'
+  and github_pr_number is not null
+order by updated_at asc
+`
+
+func (q *Queries) ListOpenSiteChangePRApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listOpenSiteChangePRApplications, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPageDecayOpportunityRollups = `-- name: ListPageDecayOpportunityRollups :many
 select
   max(page_url)::text as page_url,

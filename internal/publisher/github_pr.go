@@ -267,6 +267,39 @@ func (c *GitHubPRClient) openPullRequest(ctx context.Context, branch, title, bod
 	return out.Number, out.HTMLURL, out.State, nil
 }
 
+// GitHubPRState is a read-only snapshot of a pull request's merge status, used
+// to reconcile the site-change apply ledger after an operator merges the PR.
+type GitHubPRState struct {
+	Number   int
+	State    string // "open" | "closed"
+	Merged   bool
+	MergedAt *time.Time
+	HTMLURL  string
+}
+
+// GetPullRequest reads a pull request's current state so the scheduler can
+// detect a merge (or a close-without-merge) without a webhook.
+func (c *GitHubPRClient) GetPullRequest(ctx context.Context, number int) (GitHubPRState, error) {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.Repo) == "" {
+		return GitHubPRState{}, fmt.Errorf("github token and repo are required to read a pull request")
+	}
+	if number <= 0 {
+		return GitHubPRState{}, fmt.Errorf("github pull request number is required")
+	}
+	var out struct {
+		Number   int        `json:"number"`
+		State    string     `json:"state"`
+		Merged   bool       `json:"merged"`
+		MergedAt *time.Time `json:"merged_at"`
+		HTMLURL  string     `json:"html_url"`
+	}
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d", c.Repo, number)
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, &out, http.StatusOK); err != nil {
+		return GitHubPRState{}, err
+	}
+	return GitHubPRState{Number: out.Number, State: out.State, Merged: out.Merged, MergedAt: out.MergedAt, HTMLURL: out.HTMLURL}, nil
+}
+
 func (c *GitHubPRClient) doJSON(ctx context.Context, method, endpoint string, payload any, out any, allowed ...int) error {
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
