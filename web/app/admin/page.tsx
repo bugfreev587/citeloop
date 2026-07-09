@@ -68,11 +68,24 @@ function normalizeRuntimeRoutes(status: LLMCredentialsStatus | null): RuntimeRou
       fallback_enabled: typeof saved?.fallback_enabled === "boolean" ? saved.fallback_enabled : base.fallback_enabled,
     };
   }
-  return defaults;
+  return routesWithProvider(defaults, providerFromRoutes(defaults));
 }
 
 function selectedRuntimeModel(route: LLMModelRoute) {
   return route.primary_provider === "anthropic" ? route.anthropic_model_alias : route.openai_model_alias;
+}
+
+// A TokenGate key serves a single provider, so the whole runtime shares one
+// provider selection; saved routes are read through the planning role.
+function providerFromRoutes(routes: RuntimeRoutes): LLMModelProvider {
+  return routes.planning?.primary_provider === "anthropic" ? "anthropic" : "openai";
+}
+
+function routesWithProvider(routes: RuntimeRoutes, provider: LLMModelProvider): RuntimeRoutes {
+  return runtimeRoleConfigs.reduce((acc, config) => {
+    acc[config.role] = { ...routes[config.role], primary_provider: provider };
+    return acc;
+  }, {} as RuntimeRoutes);
 }
 
 const adminTabs: Array<{ id: AdminTabId; title: string }> = [
@@ -172,7 +185,13 @@ function ConnectionResult({ result }: { result: TestResult }) {
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {roleResults.map((item) => (
-            <div key={String(item.role ?? item.label ?? item.model_alias)} className="rounded-md border border-white/60 bg-white/70 p-2 text-xs leading-5">
+            <div
+              key={String(item.role ?? item.label ?? item.model_alias)}
+              className={cx(
+                "rounded-md border p-2 text-xs leading-5",
+                item.ok ? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900",
+              )}
+            >
               <div className="flex items-center justify-between gap-2 font-bold">
                 <span>{item.label || item.role}</span>
                 {item.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
@@ -530,17 +549,38 @@ function AdminPageInner() {
               )}
             </div>
 
-            <Field
-              label="TokenGate API key"
-              helper={runtimeNeedsKey ? "Required before CiteLoop can use live runtime generation." : "Leave blank to keep the existing key."}
-            >
-              <TextInput type="password" autoComplete="off" value={apiKey} placeholder="tg-..." onChange={(event) => setAPIKey(event.target.value)} />
-            </Field>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field
+                label="TokenGate API key"
+                helper={runtimeNeedsKey ? "Required before CiteLoop can use live runtime generation." : "Leave blank to keep the existing key."}
+              >
+                <TextInput type="password" autoComplete="off" value={apiKey} placeholder="tg-..." onChange={(event) => setAPIKey(event.target.value)} />
+              </Field>
 
-            <Field label="Base URL" helper="Use the TokenGate API backend URL with /v1, not the dashboard URL.">
-              <div className="relative">
-                <Globe2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <TextInput value={baseURL} className="w-full pl-9" placeholder={defaultBaseURL} onChange={(event) => setBaseURL(event.target.value)} />
+              <Field label="Base URL" helper="Use the TokenGate API backend URL with /v1, not the dashboard URL.">
+                <div className="relative">
+                  <Globe2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <TextInput value={baseURL} className="w-full pl-9" placeholder={defaultBaseURL} onChange={(event) => setBaseURL(event.target.value)} />
+                </div>
+              </Field>
+            </div>
+
+            <Field label="Model provider" helper="A TokenGate key serves one provider, so every runtime role uses this selection.">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                {(["openai", "anthropic"] as LLMModelProvider[]).map((provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    onClick={() => setRuntimeRoutes((current) => routesWithProvider(current, provider))}
+                    className={cx(
+                      "rounded-md px-3 py-1.5 text-sm font-bold transition-colors",
+                      providerFromRoutes(runtimeRoutes) === provider ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+                    )}
+                    aria-pressed={providerFromRoutes(runtimeRoutes) === provider}
+                  >
+                    {provider === "openai" ? "OpenAI" : "Anthropic"}
+                  </button>
+                ))}
               </div>
             </Field>
 
@@ -553,22 +593,6 @@ function AdminPageInner() {
                       <div>
                         <div className="text-sm font-bold text-slate-950">{config.label}</div>
                         <p className="mt-1 text-xs leading-5 text-slate-500">{config.helper}</p>
-                        <div className="mt-2 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                          {(["openai", "anthropic"] as LLMModelProvider[]).map((provider) => (
-                            <button
-                              key={provider}
-                              type="button"
-                              onClick={() => updateRuntimeRoute(config.role, { primary_provider: provider })}
-                              className={cx(
-                                "rounded-md px-2.5 py-1 text-xs font-bold transition-colors",
-                                route.primary_provider === provider ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
-                              )}
-                              aria-pressed={route.primary_provider === provider}
-                            >
-                              {provider === "openai" ? "OpenAI" : "Anthropic"}
-                            </button>
-                          ))}
-                        </div>
                       </div>
                       <Field label="OpenAI model" helper="Choose a TokenGate OpenAI-compatible model.">
                         <SelectInput
