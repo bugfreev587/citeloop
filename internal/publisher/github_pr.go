@@ -78,10 +78,18 @@ func (c *GitHubPRClient) CreatePageUpdatePR(ctx context.Context, in GitHubPRInpu
 	if err != nil {
 		return GitHubPRResult{}, err
 	}
-	if err := c.createBranch(ctx, workingBranch, baseCommitSHA); err != nil {
+	branchCreated, err := c.createBranch(ctx, workingBranch, baseCommitSHA)
+	if err != nil {
 		return GitHubPRResult{}, err
 	}
-	headCommitSHA, err := c.commitFile(ctx, sourcePath, []byte(in.ProposedContentMD), currentSHA, workingBranch, in.CommitMessage)
+	commitFileSHA := currentSHA
+	if !branchCreated {
+		commitFileSHA, err = c.fileSHA(ctx, sourcePath, workingBranch)
+		if err != nil {
+			return GitHubPRResult{}, err
+		}
+	}
+	headCommitSHA, err := c.commitFile(ctx, sourcePath, []byte(in.ProposedContentMD), commitFileSHA, workingBranch, in.CommitMessage)
 	if err != nil {
 		return GitHubPRResult{}, err
 	}
@@ -198,28 +206,28 @@ func (c *GitHubPRClient) baseCommitSHA(ctx context.Context) (string, error) {
 	return out.Object.SHA, nil
 }
 
-func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) error {
+func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) (bool, error) {
 	payload := map[string]any{"ref": "refs/heads/" + branch, "sha": sha}
 	body, _ := json.Marshal(payload)
 	endpoint := "https://api.github.com/repos/" + c.Repo + "/git/refs"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return false, err
 	}
 	c.auth(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusCreated {
-		return nil
+		return true, nil
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(string(raw)), "reference already exists") {
-		return nil
+		return false, nil
 	}
-	return fmt.Errorf("github %s %s %d: %s", http.MethodPost, endpoint, resp.StatusCode, string(raw))
+	return false, fmt.Errorf("github %s %s %d: %s", http.MethodPost, endpoint, resp.StatusCode, string(raw))
 }
 
 func (c *GitHubPRClient) commitFile(ctx context.Context, sourcePath string, content []byte, fileSHA, branch, message string) (string, error) {

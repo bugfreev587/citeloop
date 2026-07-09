@@ -135,15 +135,23 @@ func TestGitHubPRClientRejectsBaseFileSHAMismatch(t *testing.T) {
 func TestGitHubPRClientReusesExistingDraftBranch(t *testing.T) {
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	committed := false
+	var putBody map[string]any
 	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/contents/content/citeloop/blog/evidence.mdx":
+			if req.URL.Query().Get("ref") == "citeloop/unipost/page-update-abc123" {
+				return jsonResponse(http.StatusOK, `{"sha":"branch-file-sha"}`), nil
+			}
 			return jsonResponse(http.StatusOK, `{"sha":"base-file-sha"}`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
 			return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit-sha"}}`), nil
 		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/refs":
 			return jsonResponse(http.StatusUnprocessableEntity, `{"message":"Reference already exists"}`), nil
 		case req.Method == http.MethodPut && req.URL.Path == "/repos/owner/unipost/contents/content/citeloop/blog/evidence.mdx":
+			raw, _ := io.ReadAll(req.Body)
+			if err := json.Unmarshal(raw, &putBody); err != nil {
+				t.Fatalf("unmarshal PUT body: %v", err)
+			}
 			committed = true
 			return jsonResponse(http.StatusOK, `{"commit":{"sha":"head-commit-sha"}}`), nil
 		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/pulls":
@@ -168,5 +176,8 @@ func TestGitHubPRClientReusesExistingDraftBranch(t *testing.T) {
 	}
 	if !committed {
 		t.Fatal("expected client to continue and commit to existing draft branch")
+	}
+	if putBody["sha"] != "branch-file-sha" {
+		t.Fatalf("PUT sha must use existing branch file SHA, got %#v", putBody["sha"])
 	}
 }
