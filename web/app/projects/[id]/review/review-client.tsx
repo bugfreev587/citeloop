@@ -269,6 +269,20 @@ export function ReviewClient({ projectId }: { projectId: string }) {
         <RefreshCw size={14} />
         Refresh
       </Button>
+      <Button
+        data-review-recent-drawer-trigger
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          setSelectedArticleId(null);
+          setRecentReviewedDrawerOpen(true);
+        }}
+        aria-label={`Open Recently Reviewed (${sentToPublish.length})`}
+      >
+        <History size={14} />
+        Recently Reviewed
+        <Badge tone={sentToPublish.length ? "green" : "neutral"}>{sentToPublish.length}</Badge>
+      </Button>
     </div>
   );
 
@@ -299,25 +313,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
               <SectionHeader
                 title="Needs Your Decision"
                 eyebrow="Open a card to inspect details and act"
-                action={
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Badge tone="neutral">{queueArticles.length}</Badge>
-                    <Button
-                      data-review-recent-drawer-trigger
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setSelectedArticleId(null);
-                        setRecentReviewedDrawerOpen(true);
-                      }}
-                      aria-label={`Open Recently Reviewed (${sentToPublish.length})`}
-                    >
-                      <History size={14} />
-                      Recently Reviewed
-                      <Badge tone={sentToPublish.length ? "green" : "neutral"}>{sentToPublish.length}</Badge>
-                    </Button>
-                  </div>
-                }
+                action={<Badge tone="neutral">{queueArticles.length}</Badge>}
               />
               {queueArticles.length === 0 ? (
                 <EmptyState title="No review cards" detail="Drafts that need a decision or approval will appear here." />
