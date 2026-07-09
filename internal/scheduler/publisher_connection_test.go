@@ -39,6 +39,18 @@ func TestBlogPublisherForProjectRequiresEnabledConnectionWhenStoreIsAvailable(t 
 	}
 }
 
+func TestGithubTokenForProjectSkipsWhenNoConnection(t *testing.T) {
+	s := &Scheduler{Log: slog.Default()}
+
+	token, err := s.githubTokenForProject(context.Background(), &publisherConnectionStoreFake{noConnection: true}, db.Project{ID: uuid.New()})
+	if err != nil {
+		t.Fatalf("no connection should skip silently, got err %v", err)
+	}
+	if token != "" {
+		t.Fatalf("no connection should yield empty token, got %q", token)
+	}
+}
+
 func TestPublisherCredentialTokenRejectsEnvFallback(t *testing.T) {
 	conn := db.PublisherConnection{
 		ID:            uuid.New(),

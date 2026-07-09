@@ -1126,6 +1126,13 @@ returning *;
 select * from site_change_applications
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
+-- name: ListOpenSiteChangePRApplications :many
+select * from site_change_applications
+where project_id = sqlc.arg(project_id)
+  and status = 'github_pr_open'
+  and github_pr_number is not null
+order by updated_at asc;
+
 -- name: GetActiveSiteChangeApplicationByOpportunityKey :one
 select * from site_change_applications
 where project_id = sqlc.arg(project_id)

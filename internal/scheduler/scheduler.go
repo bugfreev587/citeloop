@@ -1370,6 +1370,170 @@ func (s *Scheduler) TickPublish(ctx context.Context) {
 	s.unlockVariants(ctx)
 }
 
+// TickSiteFixReconcile polls open source-backed PRs and advances the apply
+// ledger when GitHub reports a merge (or a close without merge), so an operator
+// no longer has to tell CiteLoop that the PR landed. This is the merge-detection
+// half of the site-fix auto-verification loop; production verification runs
+// separately once the change is merged.
+func (s *Scheduler) TickSiteFixReconcile(ctx context.Context) {
+	q := db.New(s.Pool)
+	projects, err := q.ListProjects(ctx)
+	if err != nil {
+		s.Log.Error("list projects", "err", err)
+		return
+	}
+	for _, p := range projects {
+		if err := s.reconcileSiteChangePRsForProject(ctx, q, p); err != nil {
+			s.Log.Error("site fix PR reconcile failed", "project", p.ID, "err", err)
+		}
+	}
+}
+
+func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	apps, err := q.ListOpenSiteChangePRApplications(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if len(apps) == 0 {
+		return nil
+	}
+	token, err := s.githubTokenForProject(ctx, q, p)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(token) == "" {
+		// No usable GitHub auth (connection removed or App unconfigured); leave the
+		// open PRs for a later tick instead of failing the whole project.
+		return nil
+	}
+	for _, app := range apps {
+		if app.GithubPrNumber == nil {
+			continue
+		}
+		repo := strings.TrimSpace(stringPtrValue(app.RepoFullName))
+		if repo == "" {
+			s.Log.Warn("site fix application missing repo; cannot poll PR", "project", p.ID, "application", app.ID)
+			continue
+		}
+		base := strings.TrimSpace(stringPtrValue(app.BaseBranch))
+		pr, err := publisher.NewGitHubPRClient(token, repo, base, s.Log).GetPullRequest(ctx, int(*app.GithubPrNumber))
+		if err != nil {
+			s.Log.Warn("read site fix PR state", "project", p.ID, "application", app.ID, "err", err)
+			continue
+		}
+		switch {
+		case pr.Merged:
+			if err := s.markSiteChangePRMerged(ctx, q, p, app, pr); err != nil {
+				s.Log.Error("mark site fix PR merged", "project", p.ID, "application", app.ID, "err", err)
+			}
+		case strings.EqualFold(pr.State, "closed"):
+			if err := s.markSiteChangePRClosed(ctx, q, p, app); err != nil {
+				s.Log.Error("mark site fix PR closed", "project", p.ID, "application", app.ID, "err", err)
+			}
+		}
+	}
+	return nil
+}
+
+// githubTokenForProject resolves a usable GitHub token for the project's enabled
+// publisher connection, preferring a GitHub App installation token and falling
+// back to a stored PAT. It returns an empty token (no error) when the project
+// has no enabled connection, so callers can skip silently.
+func (s *Scheduler) githubTokenForProject(ctx context.Context, q publisherConnectionQuerier, p db.Project) (string, error) {
+	conn, err := q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
+		ProjectID: p.ID,
+		Kind:      publisher.ConnectionKindGitHubNextJS,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	token, err := s.githubInstallationToken(ctx, conn)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(token) == "" {
+		token, err = s.publisherCredentialToken(ctx, q, conn)
+		if err != nil {
+			return "", err
+		}
+	}
+	return token, nil
+}
+
+func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, pr publisher.GitHubPRState) error {
+	merged := "merged"
+	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+		ID:                   app.ID,
+		ProjectID:            p.ID,
+		Status:               "github_pr_merged",
+		GithubPrState:        &merged,
+		DeploymentSnapshot:   json.RawMessage(`{}`),
+		VerificationSnapshot: json.RawMessage(`{}`),
+	}); err != nil {
+		return err
+	}
+	result := json.RawMessage(mustJSON(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "github_pr_merged",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            "merged",
+		"merged_at":                  pr.MergedAt,
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"target_url":                 app.TargetUrl,
+	}))
+	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
+		ID:              app.ContentActionID,
+		ProjectID:       p.ID,
+		PublisherResult: result,
+	}); err != nil {
+		return err
+	}
+	s.Log.Info("site fix PR merged", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
+	return nil
+}
+
+func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
+	closedState := "closed"
+	reason := "pull request was closed without merging"
+	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+		ID:                   app.ID,
+		ProjectID:            p.ID,
+		Status:               "github_pr_closed",
+		GithubPrState:        &closedState,
+		DeploymentSnapshot:   json.RawMessage(`{}`),
+		VerificationSnapshot: json.RawMessage(`{}`),
+		FailureReason:        &reason,
+	}); err != nil {
+		return err
+	}
+	result := json.RawMessage(mustJSON(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "github_pr_closed",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            "closed",
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"target_url":                 app.TargetUrl,
+	}))
+	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
+		ID:              app.ContentActionID,
+		ProjectID:       p.ID,
+		PublisherResult: result,
+	}); err != nil {
+		return err
+	}
+	s.Log.Info("site fix PR closed without merge", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
+	return nil
+}
+
 func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {
 	due, err := s.prepareDueCanonicals(ctx, p)
 	if err != nil {
