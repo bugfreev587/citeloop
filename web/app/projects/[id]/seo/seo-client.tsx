@@ -2976,7 +2976,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             )}
 
             {(sentOpportunityLinks.length > 0 || watchingOpportunityLinks.length > 0) && (
-              <details className="rounded-lg border border-slate-200 bg-white" open={activeOpportunities.length === 0}>
+              <details className="rounded-lg border border-slate-200 bg-white">
                 <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
                   Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})
                 </summary>
