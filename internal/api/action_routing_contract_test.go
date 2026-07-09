@@ -611,6 +611,33 @@ func TestSiteFixMetadataRewriteUpdatesNextMetadataObjectStrings(t *testing.T) {
 	}
 }
 
+func TestSiteFixMetadataRewriteRejectsOpportunityTitleWithoutExplicitMetadata(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description for query relevance",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		OutputSnapshot: json.RawMessage(`{
+			"title": "Rewrite homepage title and meta description for query relevance",
+			"asset_type": "metadata_rewrite",
+			"deliverable": "Title and meta description patch for an existing page.",
+			"proposed_change": {
+				"preserve": ["canonical", "indexability", "production URL"]
+			}
+		}`),
+	}
+	source := `const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
+const HOMEPAGE_DESCRIPTION =
+  "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
+`
+
+	_, err := siteFixMetadataRewriteContent(source, action)
+	if err == nil {
+		t.Fatal("siteFixMetadataRewriteContent should reject metadata rewrites without explicit proposed copy")
+	}
+	if !strings.Contains(err.Error(), "no proposed title or meta description") {
+		t.Fatalf("expected missing proposed copy error, got %v", err)
+	}
+}
+
 func TestSiteFixMetadataRewriteSourceCandidatesIncludeHomepageNextMetadata(t *testing.T) {
 	action := db.ContentAction{
 		ActionType: "Rewrite homepage title and meta description",
