@@ -1386,6 +1386,9 @@ func (s *Scheduler) TickSiteFixReconcile(ctx context.Context) {
 		if err := s.reconcileSiteChangePRsForProject(ctx, q, p); err != nil {
 			s.Log.Error("site fix PR reconcile failed", "project", p.ID, "err", err)
 		}
+		if err := s.reconcileSiteChangeVerificationForProject(ctx, q, p); err != nil {
+			s.Log.Error("site fix verification reconcile failed", "project", p.ID, "err", err)
+		}
 	}
 }
 
@@ -1421,7 +1424,7 @@ func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.
 
 		// Give up after the horizon: flag for the operator and stop polling/nagging.
 		if elapsed >= siteFixPRGiveUp {
-			if err := s.markSiteChangePRNeedsFollowUp(ctx, q, p, app); err != nil {
+			if err := s.markSiteChangePRNeedsFollowUp(ctx, q, p, app, "pull request not merged within 14 days"); err != nil {
 				s.Log.Error("mark site fix PR needs follow-up", "project", p.ID, "application", app.ID, "err", err)
 			}
 			continue
@@ -1538,8 +1541,7 @@ func siteFixPRCreatedAt(app db.SiteChangeApplication) time.Time {
 	return app.UpdatedAt.Time
 }
 
-func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
-	reason := "pull request not merged within 14 days"
+func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, reason string) error {
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
 		ID:                   app.ID,
 		ProjectID:            p.ID,
@@ -1652,6 +1654,15 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 		PublisherResult: result,
 	}); err != nil {
 		return err
+	}
+	// Reuse next_poll_at for the post-merge verification cadence: wait out a short
+	// deploy grace before the first production check.
+	if err := q.SetSiteChangePRNextPollAt(ctx, db.SetSiteChangePRNextPollAtParams{
+		ID:         app.ID,
+		ProjectID:  p.ID,
+		NextPollAt: pgutil.TS(s.currentTime().Add(siteFixDeployGrace)),
+	}); err != nil {
+		s.Log.Error("schedule post-merge verification", "project", p.ID, "application", app.ID, "err", err)
 	}
 	s.Log.Info("site fix PR merged", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
 	return nil
