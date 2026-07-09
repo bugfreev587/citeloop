@@ -442,6 +442,48 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
   }
 });
 
+test("testLLMCredentials posts the currently selected runtime routes", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, provider: "tokengate", model: "claude-sonnet-4-6", latency_ms: 12, results: [] }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    await createApi().testLLMCredentials({
+      routes: {
+        planning: {
+          primary_provider: "anthropic",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+      },
+    });
+
+    assert.equal(calls[0].url, "https://api.example.test/api/admin/llm-credentials/test");
+    assert.equal(calls[0].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      routes: {
+        planning: {
+          primary_provider: "anthropic",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GEO credential APIs use admin TokenGate provider endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

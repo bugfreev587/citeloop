@@ -2214,7 +2214,7 @@ test("blocking mutations expose button-level progress and keep opportunity revie
 
   assert.match(adminPage, /<AdminClient projectId=\{id\} \/>/);
   assert.ok(!adminPage.includes("redirect(`/admin?from="));
-  assert.match(admin, /api\.testLLMCredentials/);
+  assert.match(admin, /api\.testLLMCredentials\(\{ routes: runtimeRoutes \}\)/);
   assert.match(admin, /api\.deleteLLMCredentials/);
   assert.match(admin, /api\.listRuns\(projectId, \{ limit: 100 \}\)/);
   assert.match(admin, /activePlatformRuntimeIncidents/);

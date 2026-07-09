@@ -257,6 +257,42 @@ func TestRuntimeProbeTargetsCoverPlanningWriterQASiteFix(t *testing.T) {
 	}
 }
 
+func TestCredentialsWithRouteOverridesProbesUnsavedSelection(t *testing.T) {
+	saved := Credentials{APIKey: "tg-key"}
+	saved.Routes = defaultModelRoutes("", "", "")
+
+	overridden := CredentialsWithRouteOverrides(saved, ModelRoutes{
+		string(RolePlanning): {
+			PrimaryProvider:     ModelProviderAnthropic,
+			AnthropicModelAlias: "claude-sonnet-4-6",
+			FallbackEnabled:     true,
+		},
+	})
+
+	targets := RuntimeProbeTargets(overridden, config.Env{})
+	var planning RuntimeProbeTarget
+	for _, target := range targets {
+		if target.Role == RolePlanning {
+			planning = target
+		}
+	}
+	if planning.Provider != ModelProviderAnthropic {
+		t.Fatalf("planning provider = %q, want anthropic", planning.Provider)
+	}
+	if planning.ModelAlias != "claude-sonnet-4-6" {
+		t.Fatalf("planning model alias = %q", planning.ModelAlias)
+	}
+
+	// Saved credentials stay untouched and empty overrides are a no-op.
+	if saved.Routes[string(RolePlanning)].PrimaryProvider != ModelProviderOpenAI {
+		t.Fatalf("saved planning provider mutated: %#v", saved.Routes[string(RolePlanning)])
+	}
+	unchanged := CredentialsWithRouteOverrides(saved, nil)
+	if unchanged.Routes[string(RolePlanning)].PrimaryProvider != ModelProviderOpenAI {
+		t.Fatalf("no-op override changed provider: %#v", unchanged.Routes[string(RolePlanning)])
+	}
+}
+
 func TestModelForRequestFallsBackToDefaultThenEnv(t *testing.T) {
 	env := config.Env{TokenGateModel: "env-default"}
 
