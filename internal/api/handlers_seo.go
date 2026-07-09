@@ -16,6 +16,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -1313,6 +1314,12 @@ func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID u
 	if targetURL == "" {
 		return db.ContentAction{}, fmt.Errorf("site fix target URL is missing")
 	}
+	if title, description := siteFixProposedMetadata(action); title == "" && description == "" {
+		action, err = s.generateSiteFixAIProposal(ctx, projectID, action)
+		if err != nil {
+			return db.ContentAction{}, err
+		}
+	}
 	if target, ok := publisher.GitHubNextJSTargetForSiteURL(targetURL); ok {
 		cfg.Branch = target.Branch
 		cfg.BaseURL = target.BaseURL
@@ -1488,6 +1495,267 @@ func (s *Server) resolveSiteFixGitHubPRSource(ctx context.Context, projectID uui
 		return siteFixResolvedSource{}, fmt.Errorf("site fix could not locate a supported metadata source file for %s: %w", contentActionTargetURL(action), lastErr)
 	}
 	return siteFixResolvedSource{}, fmt.Errorf("site fix could not locate a supported metadata source file for %s", contentActionTargetURL(action))
+}
+
+type siteFixAIContract struct {
+	Hash            string         `json:"hash"`
+	Issue           map[string]any `json:"issue"`
+	TargetURL       string         `json:"target_url"`
+	AssetType       string         `json:"asset_type"`
+	ActionType      string         `json:"action_type"`
+	Observed        map[string]any `json:"observed"`
+	Constraints     []string       `json:"constraints"`
+	AcceptanceTests []string       `json:"acceptance_tests"`
+}
+
+type siteFixAIProposal struct {
+	ProposedChange struct {
+		Title           string `json:"title"`
+		MetaDescription string `json:"meta_description"`
+	} `json:"proposed_change"`
+	EvidenceAlignment []string `json:"evidence_alignment,omitempty"`
+	RiskNotes         []string `json:"risk_notes,omitempty"`
+	Rationale         string   `json:"rationale,omitempty"`
+}
+
+func (s *Server) generateSiteFixAIProposal(ctx context.Context, projectID uuid.UUID, action db.ContentAction) (db.ContentAction, error) {
+	if s.LLM == nil {
+		return db.ContentAction{}, fmt.Errorf("site fix AI model is not configured")
+	}
+	contract := buildSiteFixAIContract(action)
+	promptRaw, err := json.MarshalIndent(contract, "", "  ")
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	resp, err := s.LLM.Complete(ctx, llm.CompletionReq{
+		System:    "You are CiteLoop Site Fix. Generate narrow crawler-facing metadata changes for an existing production page. Return only reviewed JSON.",
+		Prompt:    siteFixAIProposalPrompt(string(promptRaw)),
+		Purpose:   llm.PurposeSiteFix,
+		JSON:      true,
+		MaxTokens: 900,
+	})
+	if err != nil {
+		return db.ContentAction{}, fmt.Errorf("site fix AI proposal failed: %w", err)
+	}
+	proposal, err := parseSiteFixAIProposal(resp.Text)
+	if err != nil {
+		return db.ContentAction{}, fmt.Errorf("site fix AI proposal invalid: %w", err)
+	}
+	if err := validateSiteFixAIProposal(action, proposal); err != nil {
+		return db.ContentAction{}, err
+	}
+	output, diff := siteFixAIProposalSnapshots(action, contract, proposal, resp)
+	return s.Q.UpdateContentActionExecutionMetadata(ctx, db.UpdateContentActionExecutionMetadataParams{
+		AssetType:            action.AssetType,
+		TargetSurfaceID:      action.TargetSurfaceID,
+		RiskReasons:          rawOrDefault(action.RiskReasons, `[]`),
+		EvidenceSnapshot:     rawOrDefault(action.EvidenceSnapshot, `{}`),
+		InputSnapshot:        rawOrDefault(action.InputSnapshot, `{}`),
+		OutputSnapshot:       output,
+		DiffSnapshot:         diff,
+		ReviewRequired:       action.ReviewRequired,
+		ApprovedBy:           action.ApprovedBy,
+		ApprovedAt:           action.ApprovedAt,
+		VerifiedAt:           action.VerifiedAt,
+		VerificationSnapshot: rawOrDefault(action.VerificationSnapshot, `{}`),
+		ID:                   action.ID,
+		ProjectID:            projectID,
+	})
+}
+
+func buildSiteFixAIContract(action db.ContentAction) siteFixAIContract {
+	assetType := siteFixAssetTypeForAction(action)
+	targetURL := contentActionTargetURL(action)
+	title, description := siteFixProposedMetadata(action)
+	contract := siteFixAIContract{
+		Issue: compactActionPayload(map[string]any{
+			"category":      "site_fix",
+			"issue_type":    assetType,
+			"affected_urls": nonEmptyStrings(targetURL),
+			"problem":       action.ActionType,
+		}),
+		TargetURL:  targetURL,
+		AssetType:  assetType,
+		ActionType: strings.TrimSpace(action.ActionType),
+		Observed: map[string]any{
+			"target_url":                 targetURL,
+			"current_title":              firstActionSnapshotMetadataString(action, "title", "page_title", "current_title", "observed_title"),
+			"current_meta_description":   firstActionSnapshotMetadataString(action, "meta_description", "description", "current_meta_description", "observed_meta_description"),
+			"canonical":                  firstActionSnapshotMetadataString(action, "canonical", "canonical_url"),
+			"query":                      firstActionSnapshotMetadataString(action, "query", "target_query"),
+			"proposed_title":             title,
+			"proposed_meta_description":  description,
+			"has_explicit_proposed_copy": title != "" || description != "",
+		},
+		Constraints: []string{
+			"Return concrete title and meta_description values.",
+			"Do not create a new page or blog post.",
+			"Do not use the opportunity title as the page title unless it is a natural production SEO title.",
+			"Preserve canonical URL, indexability, production host, and existing route.",
+			"Use production brand and page context only; do not invent unsupported product capabilities.",
+		},
+		AcceptanceTests: siteFixAcceptanceTests(action),
+	}
+	contract.Hash = siteFixAIContractHash(contract)
+	return contract
+}
+
+func siteFixAIContractHash(contract siteFixAIContract) string {
+	contract.Hash = ""
+	raw, _ := json.Marshal(contract)
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func firstActionSnapshotMetadataString(action db.ContentAction, keys ...string) string {
+	for _, raw := range []json.RawMessage{action.OutputSnapshot, action.DiffSnapshot, action.EvidenceSnapshot, action.InputSnapshot} {
+		if !rawHasMeaningfulJSON(raw) {
+			continue
+		}
+		var parsed any
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			continue
+		}
+		if value := firstEvidenceString(parsed, keys); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func siteFixAIProposalPrompt(contractJSON string) string {
+	return `Use this CiteLoop site-fix contract to propose crawler-facing metadata for the existing target page.
+
+Return exactly one JSON object:
+{
+  "proposed_change": {
+    "title": "production page title",
+    "meta_description": "production meta description"
+  },
+  "evidence_alignment": ["why this resolves the finding"],
+  "risk_notes": ["anything a human should review"]
+}
+
+Rules:
+- Do not create or suggest a new article, page, route, or visible content section.
+- Keep the target URL and canonical intent unchanged.
+- Use concise production copy that fits normal search snippets.
+- If current proposed copy is missing, infer the smallest safe title/meta description from the contract.
+- Never return placeholders, localhost, staging URLs, or process instructions as copy.
+
+Contract:
+` + contractJSON
+}
+
+func parseSiteFixAIProposal(text string) (siteFixAIProposal, error) {
+	var proposal siteFixAIProposal
+	raw, err := firstJSONObject(text)
+	if err != nil {
+		return proposal, err
+	}
+	if err := json.Unmarshal([]byte(raw), &proposal); err != nil {
+		return proposal, err
+	}
+	proposal.ProposedChange.Title = strings.TrimSpace(proposal.ProposedChange.Title)
+	proposal.ProposedChange.MetaDescription = strings.TrimSpace(proposal.ProposedChange.MetaDescription)
+	return proposal, nil
+}
+
+func firstJSONObject(text string) (string, error) {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return "", fmt.Errorf("response did not contain a JSON object")
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : i+1], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("response JSON object was not balanced")
+}
+
+func validateSiteFixAIProposal(action db.ContentAction, proposal siteFixAIProposal) error {
+	title := strings.TrimSpace(proposal.ProposedChange.Title)
+	description := strings.TrimSpace(proposal.ProposedChange.MetaDescription)
+	if title == "" && description == "" {
+		return fmt.Errorf("site fix AI proposal has no title or meta description")
+	}
+	if strings.EqualFold(title, strings.TrimSpace(action.ActionType)) {
+		return fmt.Errorf("site fix AI proposal used the opportunity title as page metadata")
+	}
+	for _, value := range []string{title, description} {
+		normalized := strings.ToLower(value)
+		if strings.Contains(normalized, "localhost") || strings.Contains(normalized, "staging") || strings.Contains(normalized, "placeholder") {
+			return fmt.Errorf("site fix AI proposal contains non-production placeholder copy")
+		}
+	}
+	return nil
+}
+
+func siteFixAIProposalSnapshots(action db.ContentAction, contract siteFixAIContract, proposal siteFixAIProposal, resp llm.CompletionResp) (json.RawMessage, json.RawMessage) {
+	proposedChange := compactActionPayload(map[string]any{
+		"title":            proposal.ProposedChange.Title,
+		"meta_description": proposal.ProposedChange.MetaDescription,
+	})
+	publisherResult := map[string]any{
+		"status":               "ai_preview_ready",
+		"mode":                 "site_fix_ai_pr",
+		"ai_fix_contract_hash": contract.Hash,
+		"ai_fix_contract":      contract,
+		"ai_proposal":          proposal,
+		"model":                resp.Model,
+		"tokens":               resp.Tokens,
+		"cost_usd":             resp.CostUSD,
+	}
+	output := mergeRawJSONObject(action.OutputSnapshot, map[string]any{
+		"publisher_result": publisherResult,
+		"proposed_change":  proposedChange,
+	})
+	diff := mergeRawJSONObject(action.DiffSnapshot, map[string]any{
+		"ai_site_fix": map[string]any{
+			"contract_hash":   contract.Hash,
+			"proposed_change": proposedChange,
+		},
+		"proposed_metadata": proposedChange,
+	})
+	return output, diff
+}
+
+func mergeRawJSONObject(raw json.RawMessage, values map[string]any) json.RawMessage {
+	merged := map[string]any{}
+	if rawHasMeaningfulJSON(raw) {
+		_ = json.Unmarshal(raw, &merged)
+	}
+	for key, value := range values {
+		merged[key] = value
+	}
+	return mustJSONLocal(merged)
 }
 
 func uniquePageUpdateSourceMappings(mappings []pageUpdateSourceMapping) []pageUpdateSourceMapping {
@@ -3610,6 +3878,9 @@ func proposedMetadataFromRaw(raw json.RawMessage) (string, string) {
 		return "", ""
 	}
 	for _, path := range [][]string{
+		{"publisher_result", "ai_proposal", "proposed_change"},
+		{"ai_site_fix", "proposed_change"},
+		{"ai_proposal", "proposed_change"},
 		{"ai_repair", "proposed_change"},
 		{"proposed_change"},
 		{"proposed_metadata"},

@@ -200,6 +200,41 @@ func TestOpenAIChatCompleteRetriesUnsupportedClaudeModelWithOpenAIFallback(t *te
 	}
 }
 
+func TestOpenAIChatCompleteCanDisableProviderFallbackForSiteFix(t *testing.T) {
+	var gotModels []string
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		model := body["model"].(string)
+		gotModels = append(gotModels, model)
+		return &http.Response{
+			StatusCode: 400,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"The '` + model + `' model is not supported when using Codex with a ChatGPT account.","type":"invalid_request_error"}}`)),
+		}, nil
+	})
+
+	p := NewOpenAIChat("tg-test-key", "https://tokengate.example/v1", "claude-opus-4-8")
+	p.client = &http.Client{Transport: transport}
+	_, err := p.Complete(context.Background(), CompletionReq{
+		Prompt:                  "repair site fix",
+		Purpose:                 PurposeSiteFix,
+		Model:                   "claude-opus-4-8",
+		DisableProviderFallback: true,
+	})
+	if err == nil {
+		t.Fatal("expected unsupported Anthropic model error without OpenAI fallback")
+	}
+	if len(gotModels) != 1 || gotModels[0] != "claude-opus-4-8" {
+		t.Fatalf("models sent = %#v, want only the configured site fix model", gotModels)
+	}
+	if !strings.Contains(err.Error(), "fallback disabled") {
+		t.Fatalf("error should make disabled fallback explicit, got %v", err)
+	}
+}
+
 func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	p := NewOpenAIChat("", "https://example.test/v1", "claude-haiku-4-5-20251001")
 	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "hi"}); err == nil {

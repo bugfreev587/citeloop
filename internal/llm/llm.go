@@ -19,6 +19,7 @@ const (
 	PurposeDefault CompletionPurpose = ""
 	PurposeWriter  CompletionPurpose = "writer"
 	PurposeQA      CompletionPurpose = "qa"
+	PurposeSiteFix CompletionPurpose = "site_fix"
 )
 
 // CompletionReq is a provider-agnostic completion request.
@@ -32,6 +33,9 @@ type CompletionReq struct {
 	Temperature float64
 	// JSON asks the provider to bias toward a single JSON object response.
 	JSON bool
+	// DisableProviderFallback keeps a role-specific model error explicit instead
+	// of retrying through the legacy OpenAI fallback.
+	DisableProviderFallback bool
 }
 
 // CompletionResp carries the text plus accounting used by the cost breaker (§5.4).

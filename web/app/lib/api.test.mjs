@@ -282,6 +282,20 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
       model: "gpt-5.1",
       writer_model: "gpt-5.1",
       qa_model: "gpt-5.5",
+      routes: {
+        planning: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+        site_fix: {
+          primary_provider: "anthropic",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-opus-4-8",
+          fallback_enabled: false,
+        },
+      },
       updated_at: "2026-06-05T12:00:00Z",
     }),
   });
@@ -297,6 +311,9 @@ test("createApi normalizes TokenGate LLM credential status", async () => {
     assert.equal(status.model, "gpt-5.1");
     assert.equal(status.writer_model, "gpt-5.1");
     assert.equal(status.qa_model, "gpt-5.5");
+    assert.equal(status.routes.planning.openai_model_alias, "gpt-5.1");
+    assert.equal(status.routes.site_fix.primary_provider, "anthropic");
+    assert.equal(status.routes.site_fix.fallback_enabled, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -317,6 +334,32 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
         model: "gpt-5.1",
         writer_model: "gpt-5.1",
         qa_model: "gpt-5.5",
+        routes: {
+          planning: {
+            primary_provider: "openai",
+            openai_model_alias: "gpt-5.1",
+            anthropic_model_alias: "claude-sonnet-4-6",
+            fallback_enabled: true,
+          },
+          writer: {
+            primary_provider: "openai",
+            openai_model_alias: "gpt-5.1",
+            anthropic_model_alias: "claude-sonnet-4-6",
+            fallback_enabled: true,
+          },
+          qa: {
+            primary_provider: "openai",
+            openai_model_alias: "gpt-5.5",
+            anthropic_model_alias: "claude-opus-4-8",
+            fallback_enabled: true,
+          },
+          site_fix: {
+            primary_provider: "anthropic",
+            openai_model_alias: "gpt-5.1",
+            anthropic_model_alias: "claude-opus-4-8",
+            fallback_enabled: false,
+          },
+        },
       }),
     };
   };
@@ -330,6 +373,32 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
       model: "gpt-5.1",
       writer_model: "gpt-5.1",
       qa_model: "gpt-5.5",
+      routes: {
+        planning: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+        writer: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+        qa: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.5",
+          anthropic_model_alias: "claude-opus-4-8",
+          fallback_enabled: true,
+        },
+        site_fix: {
+          primary_provider: "anthropic",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-opus-4-8",
+          fallback_enabled: false,
+        },
+      },
     });
 
     assert.equal(calls[0].url, "https://api.example.test/api/admin/llm-credentials");
@@ -341,6 +410,32 @@ test("updateLLMCredentials sends TokenGate base URL and role models", async () =
       model: "gpt-5.1",
       writer_model: "gpt-5.1",
       qa_model: "gpt-5.5",
+      routes: {
+        planning: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+        writer: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-sonnet-4-6",
+          fallback_enabled: true,
+        },
+        qa: {
+          primary_provider: "openai",
+          openai_model_alias: "gpt-5.5",
+          anthropic_model_alias: "claude-opus-4-8",
+          fallback_enabled: true,
+        },
+        site_fix: {
+          primary_provider: "anthropic",
+          openai_model_alias: "gpt-5.1",
+          anthropic_model_alias: "claude-opus-4-8",
+          fallback_enabled: false,
+        },
+      },
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -23,6 +24,40 @@ const (
 	DefaultTokenGateBaseURL = "https://tokengate-production.up.railway.app/v1"
 )
 
+type ModelRole string
+
+const (
+	RolePlanning ModelRole = "planning"
+	RoleWriter   ModelRole = "writer"
+	RoleQA       ModelRole = "qa"
+	RoleSiteFix  ModelRole = "site_fix"
+)
+
+type ModelProvider string
+
+const (
+	ModelProviderOpenAI    ModelProvider = "openai"
+	ModelProviderAnthropic ModelProvider = "anthropic"
+)
+
+type ModelRoute struct {
+	PrimaryProvider     ModelProvider `json:"primary_provider"`
+	OpenAIModelAlias    string        `json:"openai_model_alias"`
+	AnthropicModelAlias string        `json:"anthropic_model_alias"`
+	FallbackEnabled     bool          `json:"fallback_enabled"`
+}
+
+type ModelRoutes map[string]ModelRoute
+
+type RuntimeProbeTarget struct {
+	Role            ModelRole `json:"role"`
+	Label           string    `json:"label"`
+	Purpose         llm.CompletionPurpose
+	Provider        ModelProvider `json:"primary_provider"`
+	ModelAlias      string        `json:"model_alias"`
+	FallbackEnabled bool          `json:"fallback_enabled"`
+}
+
 type Credentials struct {
 	Provider    Provider
 	APIKey      string
@@ -30,42 +65,56 @@ type Credentials struct {
 	Model       string
 	WriterModel string
 	QAModel     string
+	Routes      ModelRoutes
 	UpdatedAt   time.Time
 }
 
 type UpdateInput struct {
-	Provider    string `json:"provider"`
-	APIKey      string `json:"api_key"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
-	WriterModel string `json:"writer_model"`
-	QAModel     string `json:"qa_model"`
+	Provider    string      `json:"provider"`
+	APIKey      string      `json:"api_key"`
+	BaseURL     string      `json:"base_url"`
+	Model       string      `json:"model"`
+	WriterModel string      `json:"writer_model"`
+	QAModel     string      `json:"qa_model"`
+	Routes      ModelRoutes `json:"routes"`
 }
 
 type Status struct {
-	Provider    string     `json:"provider"`
-	Configured  bool       `json:"configured"`
-	KeyTail     string     `json:"key_tail,omitempty"`
-	BaseURL     string     `json:"base_url,omitempty"`
-	Model       string     `json:"model,omitempty"`
-	WriterModel string     `json:"writer_model,omitempty"`
-	QAModel     string     `json:"qa_model,omitempty"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	Provider    string      `json:"provider"`
+	Configured  bool        `json:"configured"`
+	KeyTail     string      `json:"key_tail,omitempty"`
+	BaseURL     string      `json:"base_url,omitempty"`
+	Model       string      `json:"model,omitempty"`
+	WriterModel string      `json:"writer_model,omitempty"`
+	QAModel     string      `json:"qa_model,omitempty"`
+	Routes      ModelRoutes `json:"routes,omitempty"`
+	UpdatedAt   *time.Time  `json:"updated_at,omitempty"`
 }
 
 func StatusFromCredentials(c *Credentials) Status {
 	if c == nil {
-		return Status{Provider: string(ProviderTokenGate), Configured: false, BaseURL: DefaultTokenGateBaseURL}
+		routes := defaultModelRoutes("", "", "")
+		return Status{
+			Provider:    string(ProviderTokenGate),
+			Configured:  false,
+			BaseURL:     DefaultTokenGateBaseURL,
+			Model:       selectedModelForRole(routes, RolePlanning, ""),
+			WriterModel: selectedModelForRole(routes, RoleWriter, ""),
+			QAModel:     selectedModelForRole(routes, RoleQA, ""),
+			Routes:      routes,
+		}
 	}
 	updatedAt := c.UpdatedAt
+	routes := normalizedRoutesForCredential(*c, config.Env{})
 	return Status{
 		Provider:    string(ProviderTokenGate),
 		Configured:  c.APIKey != "",
 		KeyTail:     keyTail(c.APIKey),
 		BaseURL:     resolveCredentialBaseURL(c.BaseURL),
-		Model:       strings.TrimSpace(c.Model),
-		WriterModel: strings.TrimSpace(c.WriterModel),
-		QAModel:     strings.TrimSpace(c.QAModel),
+		Model:       selectedModelForRole(routes, RolePlanning, c.Model),
+		WriterModel: selectedModelForRole(routes, RoleWriter, c.WriterModel),
+		QAModel:     selectedModelForRole(routes, RoleQA, c.QAModel),
+		Routes:      routes,
 		UpdatedAt:   &updatedAt,
 	}
 }
@@ -86,25 +135,32 @@ func ApplyUpdate(existing *Credentials, in UpdateInput) (Credentials, error) {
 		baseURL = strings.TrimSpace(existing.BaseURL)
 	}
 	next.BaseURL = resolveCredentialBaseURL(baseURL)
-	next.Model = nextModelValue(in.Model, existingModel(existing, func(c *Credentials) string { return c.Model }))
-	next.WriterModel = nextModelValue(in.WriterModel, existingModel(existing, func(c *Credentials) string { return c.WriterModel }))
-	next.QAModel = nextModelValue(in.QAModel, existingModel(existing, func(c *Credentials) string { return c.QAModel }))
+	legacyModel := nextModelValue(in.Model, existingModel(existing, func(c *Credentials) string { return c.Model }))
+	legacyWriterModel := nextModelValue(in.WriterModel, existingModel(existing, func(c *Credentials) string { return c.WriterModel }))
+	legacyQAModel := nextModelValue(in.QAModel, existingModel(existing, func(c *Credentials) string { return c.QAModel }))
+	next.Routes = normalizeModelRoutes(in.Routes, existingModelRoutes(existing), legacyModel, legacyWriterModel, legacyQAModel)
+	applyLegacyModelOverrides(next.Routes, in)
+	next.Model = selectedModelForRole(next.Routes, RolePlanning, legacyModel)
+	next.WriterModel = selectedModelForRole(next.Routes, RoleWriter, legacyWriterModel)
+	next.QAModel = selectedModelForRole(next.Routes, RoleQA, legacyQAModel)
 	return next, nil
 }
 
 func LoadCredentials(ctx context.Context, pool *pgxpool.Pool) (*Credentials, error) {
 	var c Credentials
+	var rawRoutes []byte
 	err := pool.QueryRow(ctx, `
-		select provider, api_key, base_url, model, writer_model, qa_model, updated_at
+		select provider, api_key, base_url, model, writer_model, qa_model, model_routes, updated_at
 		from admin_llm_credentials
 		where singleton = true
-	`).Scan(&c.Provider, &c.APIKey, &c.BaseURL, &c.Model, &c.WriterModel, &c.QAModel, &c.UpdatedAt)
+	`).Scan(&c.Provider, &c.APIKey, &c.BaseURL, &c.Model, &c.WriterModel, &c.QAModel, &rawRoutes, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	c.Routes = modelRoutesFromRaw(rawRoutes, c.Model, c.WriterModel, c.QAModel)
 	return &c, nil
 }
 
@@ -118,10 +174,16 @@ func SaveCredentials(ctx context.Context, pool *pgxpool.Pool, in UpdateInput) (*
 		return nil, err
 	}
 
+	routesRaw, err := json.Marshal(next.Routes)
+	if err != nil {
+		return nil, err
+	}
+
 	var saved Credentials
+	var savedRoutes []byte
 	err = pool.QueryRow(ctx, `
-		insert into admin_llm_credentials (singleton, provider, api_key, base_url, model, writer_model, qa_model)
-		values (true, $1, $2, $3, $4, $5, $6)
+		insert into admin_llm_credentials (singleton, provider, api_key, base_url, model, writer_model, qa_model, model_routes)
+		values (true, $1, $2, $3, $4, $5, $6, $7::jsonb)
 		on conflict (singleton) do update
 		set provider = excluded.provider,
 		    api_key = excluded.api_key,
@@ -129,13 +191,15 @@ func SaveCredentials(ctx context.Context, pool *pgxpool.Pool, in UpdateInput) (*
 		    model = excluded.model,
 		    writer_model = excluded.writer_model,
 		    qa_model = excluded.qa_model,
+		    model_routes = excluded.model_routes,
 		    updated_at = now()
-		returning provider, api_key, base_url, model, writer_model, qa_model, updated_at
-	`, next.Provider, next.APIKey, next.BaseURL, next.Model, next.WriterModel, next.QAModel).
-		Scan(&saved.Provider, &saved.APIKey, &saved.BaseURL, &saved.Model, &saved.WriterModel, &saved.QAModel, &saved.UpdatedAt)
+		returning provider, api_key, base_url, model, writer_model, qa_model, model_routes, updated_at
+	`, next.Provider, next.APIKey, next.BaseURL, next.Model, next.WriterModel, next.QAModel, routesRaw).
+		Scan(&saved.Provider, &saved.APIKey, &saved.BaseURL, &saved.Model, &saved.WriterModel, &saved.QAModel, &savedRoutes, &saved.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	saved.Routes = modelRoutesFromRaw(savedRoutes, saved.Model, saved.WriterModel, saved.QAModel)
 	return &saved, nil
 }
 
@@ -167,7 +231,9 @@ func (p *RuntimeProvider) Complete(ctx context.Context, req llm.CompletionReq) (
 	if cred == nil || cred.APIKey == "" {
 		return p.Fallback.Complete(ctx, req)
 	}
-	req.Model = modelForRequest(*cred, p.Env, req)
+	target := runtimeRouteForRequest(*cred, p.Env, req)
+	req.Model = target.ModelAlias
+	req.DisableProviderFallback = req.DisableProviderFallback || !target.FallbackEnabled
 	return ProviderFromCredentials(*cred, p.Env).Complete(ctx, req)
 }
 
@@ -203,14 +269,215 @@ func resolveCredentialBaseURL(value string) string {
 }
 
 func modelForRequest(c Credentials, env config.Env, req llm.CompletionReq) string {
-	switch req.Purpose {
-	case llm.PurposeWriter:
-		return firstNonBlank(c.WriterModel, c.Model, env.TokenGateModel)
-	case llm.PurposeQA:
-		return firstNonBlank(c.QAModel, c.Model, env.TokenGateModel)
-	default:
-		return firstNonBlank(c.Model, env.TokenGateModel)
+	return runtimeRouteForRequest(c, env, req).ModelAlias
+}
+
+func runtimeRouteForRequest(c Credentials, env config.Env, req llm.CompletionReq) RuntimeProbeTarget {
+	role := roleForPurpose(req.Purpose)
+	routes := normalizedRoutesForCredential(c, env)
+	route := routeForRole(routes, role)
+	model := selectedModel(route, envFallbackModel(env))
+	return RuntimeProbeTarget{
+		Role:            role,
+		Label:           labelForRole(role),
+		Purpose:         purposeForRole(role),
+		Provider:        route.PrimaryProvider,
+		ModelAlias:      model,
+		FallbackEnabled: route.FallbackEnabled,
 	}
+}
+
+func RuntimeProbeTargets(c Credentials, env config.Env) []RuntimeProbeTarget {
+	targets := make([]RuntimeProbeTarget, 0, len(runtimeRoleOrder()))
+	for _, role := range runtimeRoleOrder() {
+		targets = append(targets, runtimeRouteForRequest(c, env, llm.CompletionReq{Purpose: purposeForRole(role)}))
+	}
+	return targets
+}
+
+func roleForPurpose(purpose llm.CompletionPurpose) ModelRole {
+	switch purpose {
+	case llm.PurposeWriter:
+		return RoleWriter
+	case llm.PurposeQA:
+		return RoleQA
+	case llm.PurposeSiteFix:
+		return RoleSiteFix
+	default:
+		return RolePlanning
+	}
+}
+
+func purposeForRole(role ModelRole) llm.CompletionPurpose {
+	switch role {
+	case RoleWriter:
+		return llm.PurposeWriter
+	case RoleQA:
+		return llm.PurposeQA
+	case RoleSiteFix:
+		return llm.PurposeSiteFix
+	default:
+		return llm.PurposeDefault
+	}
+}
+
+func labelForRole(role ModelRole) string {
+	switch role {
+	case RoleWriter:
+		return "AI writer"
+	case RoleQA:
+		return "QA"
+	case RoleSiteFix:
+		return "Site Fix"
+	default:
+		return "Planning"
+	}
+}
+
+func runtimeRoleOrder() []ModelRole {
+	return []ModelRole{RolePlanning, RoleWriter, RoleQA, RoleSiteFix}
+}
+
+func normalizedRoutesForCredential(c Credentials, env config.Env) ModelRoutes {
+	return normalizeModelRoutes(c.Routes, nil, firstNonBlank(c.Model, env.TokenGateModel), c.WriterModel, c.QAModel)
+}
+
+func normalizeModelRoutes(input ModelRoutes, existing ModelRoutes, model, writerModel, qaModel string) ModelRoutes {
+	defaults := defaultModelRoutes(model, writerModel, qaModel)
+	out := ModelRoutes{}
+	for _, role := range runtimeRoleOrder() {
+		key := string(role)
+		route := defaults[key]
+		if existingRoute, ok := existing[key]; ok {
+			route = mergeModelRoute(route, existingRoute)
+		}
+		if inputRoute, ok := input[key]; ok {
+			route = mergeModelRoute(route, inputRoute)
+		}
+		out[key] = normalizeModelRoute(role, route)
+	}
+	return out
+}
+
+func defaultModelRoutes(model, writerModel, qaModel string) ModelRoutes {
+	return ModelRoutes{
+		string(RolePlanning): {
+			PrimaryProvider:     ModelProviderOpenAI,
+			OpenAIModelAlias:    firstNonBlank(model, llm.DefaultOpenAIModel),
+			AnthropicModelAlias: llm.DefaultTokenGateModel,
+			FallbackEnabled:     true,
+		},
+		string(RoleWriter): {
+			PrimaryProvider:     ModelProviderOpenAI,
+			OpenAIModelAlias:    firstNonBlank(writerModel, model, llm.DefaultOpenAIWriterModel),
+			AnthropicModelAlias: llm.DefaultTokenGateModel,
+			FallbackEnabled:     true,
+		},
+		string(RoleQA): {
+			PrimaryProvider:     ModelProviderOpenAI,
+			OpenAIModelAlias:    firstNonBlank(qaModel, model, llm.DefaultOpenAIQAModel),
+			AnthropicModelAlias: "claude-opus-4-8",
+			FallbackEnabled:     true,
+		},
+		string(RoleSiteFix): {
+			PrimaryProvider:     ModelProviderAnthropic,
+			OpenAIModelAlias:    firstNonBlank(model, llm.DefaultOpenAIModel),
+			AnthropicModelAlias: "claude-opus-4-8",
+			FallbackEnabled:     false,
+		},
+	}
+}
+
+func normalizeModelRoute(role ModelRole, route ModelRoute) ModelRoute {
+	defaultRoute := defaultModelRoutes("", "", "")[string(role)]
+	route.PrimaryProvider = normalizeModelProvider(route.PrimaryProvider, defaultRoute.PrimaryProvider)
+	route.OpenAIModelAlias = firstNonBlank(route.OpenAIModelAlias, defaultRoute.OpenAIModelAlias)
+	route.AnthropicModelAlias = firstNonBlank(route.AnthropicModelAlias, defaultRoute.AnthropicModelAlias)
+	return route
+}
+
+func normalizeModelProvider(provider ModelProvider, fallback ModelProvider) ModelProvider {
+	switch provider {
+	case ModelProviderOpenAI, ModelProviderAnthropic:
+		return provider
+	default:
+		return fallback
+	}
+}
+
+func mergeModelRoute(base, override ModelRoute) ModelRoute {
+	if override.PrimaryProvider != "" {
+		base.PrimaryProvider = override.PrimaryProvider
+	}
+	if strings.TrimSpace(override.OpenAIModelAlias) != "" {
+		base.OpenAIModelAlias = strings.TrimSpace(override.OpenAIModelAlias)
+	}
+	if strings.TrimSpace(override.AnthropicModelAlias) != "" {
+		base.AnthropicModelAlias = strings.TrimSpace(override.AnthropicModelAlias)
+	}
+	base.FallbackEnabled = override.FallbackEnabled
+	return base
+}
+
+func applyLegacyModelOverrides(routes ModelRoutes, in UpdateInput) {
+	applyLegacyModelOverride(routes, RolePlanning, in.Model)
+	applyLegacyModelOverride(routes, RoleWriter, in.WriterModel)
+	applyLegacyModelOverride(routes, RoleQA, in.QAModel)
+}
+
+func applyLegacyModelOverride(routes ModelRoutes, role ModelRole, value string) {
+	model := strings.TrimSpace(value)
+	if model == "" {
+		return
+	}
+	key := string(role)
+	route := routeForRole(routes, role)
+	if route.PrimaryProvider == ModelProviderAnthropic {
+		route.AnthropicModelAlias = model
+	} else {
+		route.OpenAIModelAlias = model
+	}
+	routes[key] = route
+}
+
+func routeForRole(routes ModelRoutes, role ModelRole) ModelRoute {
+	if route, ok := routes[string(role)]; ok {
+		return normalizeModelRoute(role, route)
+	}
+	return defaultModelRoutes("", "", "")[string(role)]
+}
+
+func selectedModelForRole(routes ModelRoutes, role ModelRole, fallback string) string {
+	return selectedModel(routeForRole(routes, role), fallback)
+}
+
+func selectedModel(route ModelRoute, fallback string) string {
+	if route.PrimaryProvider == ModelProviderAnthropic {
+		return firstNonBlank(route.AnthropicModelAlias, route.OpenAIModelAlias, fallback)
+	}
+	return firstNonBlank(route.OpenAIModelAlias, route.AnthropicModelAlias, fallback)
+}
+
+func envFallbackModel(env config.Env) string {
+	return firstNonBlank(env.TokenGateModel, llm.DefaultTokenGateModel)
+}
+
+func modelRoutesFromRaw(raw []byte, model, writerModel, qaModel string) ModelRoutes {
+	if len(raw) == 0 {
+		return defaultModelRoutes(model, writerModel, qaModel)
+	}
+	var routes ModelRoutes
+	if err := json.Unmarshal(raw, &routes); err != nil {
+		return defaultModelRoutes(model, writerModel, qaModel)
+	}
+	return normalizeModelRoutes(routes, nil, model, writerModel, qaModel)
+}
+
+func existingModelRoutes(existing *Credentials) ModelRoutes {
+	if existing == nil {
+		return nil
+	}
+	return existing.Routes
 }
 
 func existingModel(existing *Credentials, get func(*Credentials) string) string {

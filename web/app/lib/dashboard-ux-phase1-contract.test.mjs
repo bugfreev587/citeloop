@@ -2220,9 +2220,12 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /Test connection/);
   assert.match(admin, /Delete key/);
   assert.match(admin, /TokenGate API key/);
-  assert.match(admin, /Default model/);
-  assert.match(admin, /Writer model/);
-  assert.match(admin, /QA model/);
+  assert.match(admin, /role: "planning"/);
+  assert.match(admin, /label: "AI writer"/);
+  assert.match(admin, /label: "QA"/);
+  assert.match(admin, /role: "site_fix"/);
+  assert.match(admin, /OpenAI model/);
+  assert.match(admin, /Anthropic model/);
   assert.match(admin, /type AdminTabId = "runtime" \| "geo" \| "incidents"/);
   assert.match(admin, /GEO providers/);
   assert.match(admin, /Runtime incidents/);

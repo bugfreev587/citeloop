@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
-import { GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, ProviderTestResult } from "../lib/api";
+import { GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, LLMModelProvider, LLMModelRoute, LLMRuntimeRole, ProviderTestResult } from "../lib/api";
 import { useApi } from "../lib/use-api";
 import { useToast } from "../components/toast-provider";
 import { Badge, Button, ButtonProgress, cx, Field, Notice, SectionHeader, TextInput } from "../components/ui";
@@ -15,8 +15,64 @@ type AdminTabId = "runtime" | "geo";
 type RuntimeBusy = "save" | "test" | "delete" | null;
 type GEOBusy = `save-${GEOProviderScope}` | `test-${GEOProviderScope}` | `delete-${GEOProviderScope}` | null;
 type GEODraft = { apiKey: string; baseURL: string; model: string; enabled: boolean };
+type RuntimeRoutes = Record<LLMRuntimeRole, LLMModelRoute>;
 
 const defaultBaseURL = "https://tokengate-production.up.railway.app/v1";
+
+const runtimeRoleConfigs: Array<{
+  role: LLMRuntimeRole;
+  label: string;
+  helper: string;
+  openAIPlaceholder: string;
+  anthropicPlaceholder: string;
+}> = [
+  { role: "planning", label: "Planning", helper: "Context extraction, strategy, and opportunity finding.", openAIPlaceholder: "gpt-5.1", anthropicPlaceholder: "claude-sonnet-4-6" },
+  { role: "writer", label: "AI writer", helper: "Content writer and article repair.", openAIPlaceholder: "gpt-5.1", anthropicPlaceholder: "claude-sonnet-4-6" },
+  { role: "qa", label: "QA", helper: "Evidence checks and QA review.", openAIPlaceholder: "gpt-5.5", anthropicPlaceholder: "claude-opus-4-8" },
+  { role: "site_fix", label: "Site Fix", helper: "AI fix JSON to source-controlled GitHub PRs.", openAIPlaceholder: "gpt-5.1", anthropicPlaceholder: "claude-opus-4-8" },
+];
+
+function defaultRuntimeRoute(role: LLMRuntimeRole): LLMModelRoute {
+  const config = runtimeRoleConfigs.find((item) => item.role === role) ?? runtimeRoleConfigs[0];
+  return {
+    primary_provider: role === "site_fix" ? "anthropic" : "openai",
+    openai_model_alias: config.openAIPlaceholder,
+    anthropic_model_alias: config.anthropicPlaceholder,
+    fallback_enabled: role !== "site_fix",
+  };
+}
+
+function defaultRuntimeRoutes(): RuntimeRoutes {
+  return runtimeRoleConfigs.reduce((acc, config) => {
+    acc[config.role] = defaultRuntimeRoute(config.role);
+    return acc;
+  }, {} as RuntimeRoutes);
+}
+
+function normalizeRuntimeRoutes(status: LLMCredentialsStatus | null): RuntimeRoutes {
+  const defaults = defaultRuntimeRoutes();
+  const legacy: Partial<Record<LLMRuntimeRole, string | undefined>> = {
+    planning: status?.model,
+    writer: status?.writer_model,
+    qa: status?.qa_model,
+  };
+  for (const config of runtimeRoleConfigs) {
+    const saved = status?.routes?.[config.role];
+    const base = defaults[config.role];
+    const primary = saved?.primary_provider === "anthropic" || saved?.primary_provider === "openai" ? saved.primary_provider : base.primary_provider;
+    defaults[config.role] = {
+      primary_provider: primary,
+      openai_model_alias: saved?.openai_model_alias || legacy[config.role] || base.openai_model_alias,
+      anthropic_model_alias: saved?.anthropic_model_alias || base.anthropic_model_alias,
+      fallback_enabled: typeof saved?.fallback_enabled === "boolean" ? saved.fallback_enabled : base.fallback_enabled,
+    };
+  }
+  return defaults;
+}
+
+function selectedRuntimeModel(route: LLMModelRoute) {
+  return route.primary_provider === "anthropic" ? route.anthropic_model_alias : route.openai_model_alias;
+}
 
 const adminTabs: Array<{ id: AdminTabId; title: string }> = [
   { id: "runtime", title: "Platform runtime" },
@@ -100,6 +156,37 @@ function indexGeoStatuses(statuses: GEOCredentialsStatus[]) {
 
 function ConnectionResult({ result }: { result: TestResult }) {
   if (!result) return null;
+  const roleResults = Array.isArray(result.results) ? result.results : [];
+  if (roleResults.length > 0) {
+    return (
+      <div
+        className={cx(
+          "rounded-lg border p-3 text-sm",
+          result.ok ? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900",
+        )}
+      >
+        <div className="inline-flex items-center gap-2 font-bold">
+          {result.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+          {result.ok ? "All runtime routes OK" : "One or more runtime routes failed"}
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {roleResults.map((item) => (
+            <div key={String(item.role ?? item.label ?? item.model_alias)} className="rounded-md border border-white/60 bg-white/70 p-2 text-xs leading-5">
+              <div className="flex items-center justify-between gap-2 font-bold">
+                <span>{item.label || item.role}</span>
+                {item.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+              </div>
+              <div className="mt-1 text-slate-700">
+                {item.primary_provider} · {item.model || item.model_alias || "model n/a"}
+                {typeof item.latency_ms === "number" ? ` · ${item.latency_ms} ms` : ""}
+              </div>
+              {!item.ok && <div className="mt-1 break-words text-red-800">{item.error || "Unknown error"}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className={cx(
@@ -141,9 +228,7 @@ function AdminPageInner() {
   const [status, setStatus] = useState<LLMCredentialsStatus | null>(null);
   const [apiKey, setAPIKey] = useState("");
   const [baseURL, setBaseURL] = useState(defaultBaseURL);
-  const [model, setModel] = useState("");
-  const [writerModel, setWriterModel] = useState("");
-  const [qaModel, setQAModel] = useState("");
+  const [runtimeRoutes, setRuntimeRoutes] = useState<RuntimeRoutes>(defaultRuntimeRoutes);
   const [geoStatuses, setGeoStatuses] = useState<Record<GEOProviderScope, GEOCredentialsStatus>>(emptyGeoStatuses);
   const [geoDrafts, setGeoDrafts] = useState<Record<GEOProviderScope, GEODraft>>(emptyGeoDrafts);
   const [busy, setBusy] = useState<RuntimeBusy>(null);
@@ -198,9 +283,7 @@ function AdminPageInner() {
       const [next, nextGeo] = await Promise.all([api.getLLMCredentials(), api.listGEOCredentials()]);
       setStatus(next);
       setBaseURL(next.base_url || defaultBaseURL);
-      setModel(next.model ?? "");
-      setWriterModel(next.writer_model ?? "");
-      setQAModel(next.qa_model ?? "");
+      setRuntimeRoutes(normalizeRuntimeRoutes(next));
       applyGeoStatuses(nextGeo);
     } catch (e: any) {
       if (String(e.message).includes("403")) {
@@ -221,19 +304,21 @@ function AdminPageInner() {
     setMessage(null);
     setTestResult(null);
     try {
+      const planningModel = selectedRuntimeModel(runtimeRoutes.planning);
+      const writerModel = selectedRuntimeModel(runtimeRoutes.writer);
+      const qaModel = selectedRuntimeModel(runtimeRoutes.qa);
       const next = await api.updateLLMCredentials({
         provider: "tokengate",
         api_key: apiKey,
         base_url: baseURL,
-        model,
+        model: planningModel,
         writer_model: writerModel,
         qa_model: qaModel,
+        routes: runtimeRoutes,
       });
       setStatus(next);
       setBaseURL(next.base_url || defaultBaseURL);
-      setModel(next.model ?? "");
-      setWriterModel(next.writer_model ?? "");
-      setQAModel(next.qa_model ?? "");
+      setRuntimeRoutes(normalizeRuntimeRoutes(next));
       setAPIKey("");
       setMessage({ title: "Runtime saved", detail: "The TokenGate key stays server-side; only the tail is shown.", tone: "green" });
     } catch (e: any) {
@@ -265,9 +350,7 @@ function AdminPageInner() {
       const next = await api.deleteLLMCredentials();
       setStatus(next);
       setBaseURL(next.base_url || defaultBaseURL);
-      setModel(next.model ?? "");
-      setWriterModel(next.writer_model ?? "");
-      setQAModel(next.qa_model ?? "");
+      setRuntimeRoutes(normalizeRuntimeRoutes(next));
       setAPIKey("");
       setMessage({ title: "Runtime key removed", detail: "CiteLoop now uses server-environment TokenGate settings until a key is saved.", tone: "amber" });
     } catch (e: any) {
@@ -275,6 +358,16 @@ function AdminPageInner() {
     } finally {
       setBusy(null);
     }
+  }
+
+  function updateRuntimeRoute(role: LLMRuntimeRole, next: Partial<LLMModelRoute>) {
+    setRuntimeRoutes((current) => ({
+      ...current,
+      [role]: {
+        ...current[role],
+        ...next,
+      },
+    }));
   }
 
   function updateGeoDraft(scope: GEOProviderScope, next: Partial<GEODraft>) {
@@ -450,16 +543,59 @@ function AdminPageInner() {
               </div>
             </Field>
 
-            <div className="grid gap-3 md:grid-cols-3">
-              <Field label="Default model" helper="Used by context extraction and planning. Falls back to TOKENGATE_MODEL when blank.">
-                <TextInput value={model} placeholder="gpt-5.1" onChange={(event) => setModel(event.target.value)} />
-              </Field>
-              <Field label="Writer model" helper="Used by the content writer and AI repair. Falls back to the default model.">
-                <TextInput value={writerModel} placeholder={model || "gpt-5.1"} onChange={(event) => setWriterModel(event.target.value)} />
-              </Field>
-              <Field label="QA model" helper="Used for evidence checks and QA review. Falls back to the default model.">
-                <TextInput value={qaModel} placeholder={model || "gpt-5.5"} onChange={(event) => setQAModel(event.target.value)} />
-              </Field>
+            <div className="grid gap-3">
+              {runtimeRoleConfigs.map((config) => {
+                const route = runtimeRoutes[config.role];
+                return (
+                  <section key={config.role} className="rounded-lg border border-slate-200 p-3">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(140px,0.8fr)_minmax(220px,1fr)_minmax(220px,1fr)_auto] lg:items-end">
+                      <div>
+                        <div className="text-sm font-bold text-slate-950">{config.label}</div>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">{config.helper}</p>
+                        <div className="mt-2 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                          {(["openai", "anthropic"] as LLMModelProvider[]).map((provider) => (
+                            <button
+                              key={provider}
+                              type="button"
+                              onClick={() => updateRuntimeRoute(config.role, { primary_provider: provider })}
+                              className={cx(
+                                "rounded-md px-2.5 py-1 text-xs font-bold transition-colors",
+                                route.primary_provider === provider ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900",
+                              )}
+                              aria-pressed={route.primary_provider === provider}
+                            >
+                              {provider === "openai" ? "OpenAI" : "Anthropic"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <Field label="OpenAI model" helper="TokenGate OpenAI-compatible model or alias.">
+                        <TextInput
+                          value={route.openai_model_alias}
+                          placeholder={config.openAIPlaceholder}
+                          onChange={(event) => updateRuntimeRoute(config.role, { openai_model_alias: event.target.value })}
+                        />
+                      </Field>
+                      <Field label="Anthropic model" helper="TokenGate Anthropic-compatible model or alias.">
+                        <TextInput
+                          value={route.anthropic_model_alias}
+                          placeholder={config.anthropicPlaceholder}
+                          onChange={(event) => updateRuntimeRoute(config.role, { anthropic_model_alias: event.target.value })}
+                        />
+                      </Field>
+                      <label className="inline-flex min-w-[140px] items-center gap-2 pb-2 text-sm font-semibold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={route.fallback_enabled}
+                          onChange={(event) => updateRuntimeRoute(config.role, { fallback_enabled: event.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-[#d93820] focus:ring-[#d93820]"
+                        />
+                        Fallback
+                      </label>
+                    </div>
+                  </section>
+                );
+              })}
             </div>
 
             <div className="flex flex-wrap gap-2">
