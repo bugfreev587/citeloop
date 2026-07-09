@@ -106,6 +106,13 @@ test("Merged and closed site fix PRs surface in the after-execution status", () 
   assert.match(seo, /PR merged — verifying in production/);
   assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
   assert.match(seo, /PR closed without merging/);
+  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "needs_follow_up"/);
+  assert.match(seo, /PR not merged in 14 days/);
+});
+
+test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  assert.match(settings, /"sitefix\.pr\.awaiting_merge": "Site fix PR awaiting merge"/);
 });
 
 test("Analysis surfaces approved site fixes as user-visible output", () => {

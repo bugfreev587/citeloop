@@ -273,6 +273,7 @@ const eventLabels: Record<string, string> = {
   "publish.failed": "Publish failed",
   "budget.stopped": "Budget stopped",
   "review.overdue": "Review overdue",
+  "sitefix.pr.awaiting_merge": "Site fix PR awaiting merge",
   "webhook.delivery.dead": "Webhook delivery dead",
   "seo.sync.failed": "SEO sync failed",
   "seo.auth.expired": "SEO auth expired",

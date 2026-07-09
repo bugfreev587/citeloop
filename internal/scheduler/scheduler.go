@@ -1406,6 +1406,7 @@ func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.
 		// open PRs for a later tick instead of failing the whole project.
 		return nil
 	}
+	now := s.currentTime()
 	for _, app := range apps {
 		if app.GithubPrNumber == nil {
 			continue
@@ -1415,24 +1416,182 @@ func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.
 			s.Log.Warn("site fix application missing repo; cannot poll PR", "project", p.ID, "application", app.ID)
 			continue
 		}
-		base := strings.TrimSpace(stringPtrValue(app.BaseBranch))
-		pr, err := publisher.NewGitHubPRClient(token, repo, base, s.Log).GetPullRequest(ctx, int(*app.GithubPrNumber))
-		if err != nil {
-			s.Log.Warn("read site fix PR state", "project", p.ID, "application", app.ID, "err", err)
+		created := siteFixPRCreatedAt(app)
+		elapsed := now.Sub(created)
+
+		// Give up after the horizon: flag for the operator and stop polling/nagging.
+		if elapsed >= siteFixPRGiveUp {
+			if err := s.markSiteChangePRNeedsFollowUp(ctx, q, p, app); err != nil {
+				s.Log.Error("mark site fix PR needs follow-up", "project", p.ID, "application", app.ID, "err", err)
+			}
 			continue
 		}
-		switch {
-		case pr.Merged:
-			if err := s.markSiteChangePRMerged(ctx, q, p, app, pr); err != nil {
-				s.Log.Error("mark site fix PR merged", "project", p.ID, "application", app.ID, "err", err)
+
+		// Merge check is gated by the Fibonacci-backoff schedule so an unmerged PR
+		// is polled densely right after creation and sparsely later.
+		if siteFixTimeDue(app.NextPollAt, now) {
+			base := strings.TrimSpace(stringPtrValue(app.BaseBranch))
+			pr, err := publisher.NewGitHubPRClient(token, repo, base, s.Log).GetPullRequest(ctx, int(*app.GithubPrNumber))
+			if err != nil {
+				s.Log.Warn("read site fix PR state", "project", p.ID, "application", app.ID, "err", err)
+			} else if pr.Merged {
+				if err := s.markSiteChangePRMerged(ctx, q, p, app, pr); err != nil {
+					s.Log.Error("mark site fix PR merged", "project", p.ID, "application", app.ID, "err", err)
+				}
+				continue
+			} else if strings.EqualFold(pr.State, "closed") {
+				if err := s.markSiteChangePRClosed(ctx, q, p, app); err != nil {
+					s.Log.Error("mark site fix PR closed", "project", p.ID, "application", app.ID, "err", err)
+				}
+				continue
 			}
-		case strings.EqualFold(pr.State, "closed"):
-			if err := s.markSiteChangePRClosed(ctx, q, p, app); err != nil {
-				s.Log.Error("mark site fix PR closed", "project", p.ID, "application", app.ID, "err", err)
+			// Still open (or a transient read error): schedule the next poll so we
+			// back off instead of hammering GitHub every tick.
+			if next, ok := nextSiteFixPollAt(created, now); ok {
+				if err := q.SetSiteChangePRNextPollAt(ctx, db.SetSiteChangePRNextPollAtParams{
+					ID:         app.ID,
+					ProjectID:  p.ID,
+					NextPollAt: pgutil.TS(next),
+				}); err != nil {
+					s.Log.Error("schedule next site fix PR poll", "project", p.ID, "application", app.ID, "err", err)
+				}
+			}
+		}
+
+		// Nag the operator on its own cadence (every 12h, then daily after 3 days).
+		if siteFixTimeDue(app.NextNotifyAt, now) {
+			s.dispatchSiteFixPRAwaitingMerge(ctx, q, p, app, elapsed)
+			if next, ok := nextSiteFixNotifyAt(created, now); ok {
+				if err := q.SetSiteChangePRNextNotifyAt(ctx, db.SetSiteChangePRNextNotifyAtParams{
+					ID:           app.ID,
+					ProjectID:    p.ID,
+					NextNotifyAt: pgutil.TS(next),
+				}); err != nil {
+					s.Log.Error("schedule next site fix PR nag", "project", p.ID, "application", app.ID, "err", err)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// siteFixPRPollCheckpoints are cumulative delays from PR creation at which the
+// merge poll runs — a Fibonacci-like backoff (5,10,15,25,40,65,… minutes) that
+// stays dense right after creation, when a merge is most likely, and thins out
+// over the first ~3 days. After the last checkpoint the poll falls back to daily.
+var siteFixPRPollCheckpoints = []time.Duration{
+	5 * time.Minute, 10 * time.Minute, 15 * time.Minute, 25 * time.Minute, 40 * time.Minute,
+	65 * time.Minute, 105 * time.Minute, 170 * time.Minute, 275 * time.Minute, 445 * time.Minute,
+	720 * time.Minute, 1165 * time.Minute, 1885 * time.Minute, 3050 * time.Minute,
+}
+
+const (
+	// siteFixPRGiveUp is when an unmerged PR is flagged needs_follow_up and both
+	// polling and nagging stop.
+	siteFixPRGiveUp = 14 * 24 * time.Hour
+	// siteFixPRFibonacciWindow bounds the dense-nag phase; after it the nag drops
+	// from every 12h to daily.
+	siteFixPRFibonacciWindow = 3 * 24 * time.Hour
+	siteFixPRDailyInterval   = 24 * time.Hour
+	siteFixPRNagInterval     = 12 * time.Hour
+)
+
+// nextSiteFixPollAt returns the next merge-poll time for a PR created at
+// prCreatedAt, or ok=false once the give-up horizon has passed.
+func nextSiteFixPollAt(prCreatedAt, now time.Time) (time.Time, bool) {
+	elapsed := now.Sub(prCreatedAt)
+	if elapsed >= siteFixPRGiveUp {
+		return time.Time{}, false
+	}
+	for _, cp := range siteFixPRPollCheckpoints {
+		if cp > elapsed {
+			return prCreatedAt.Add(cp), true
+		}
+	}
+	return now.Add(siteFixPRDailyInterval), true
+}
+
+// nextSiteFixNotifyAt returns the next nag time: every 12h for the first 3 days,
+// daily after, and ok=false once the give-up horizon has passed.
+func nextSiteFixNotifyAt(prCreatedAt, now time.Time) (time.Time, bool) {
+	elapsed := now.Sub(prCreatedAt)
+	if elapsed >= siteFixPRGiveUp {
+		return time.Time{}, false
+	}
+	if elapsed < siteFixPRFibonacciWindow {
+		return now.Add(siteFixPRNagInterval), true
+	}
+	return now.Add(siteFixPRDailyInterval), true
+}
+
+func siteFixTimeDue(at pgtype.Timestamptz, now time.Time) bool {
+	return !at.Valid || !now.Before(at.Time)
+}
+
+func siteFixPRCreatedAt(app db.SiteChangeApplication) time.Time {
+	if app.PrCreatedAt.Valid {
+		return app.PrCreatedAt.Time
+	}
+	if app.CreatedAt.Valid {
+		return app.CreatedAt.Time
+	}
+	return app.UpdatedAt.Time
+}
+
+func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
+	reason := "pull request not merged within 14 days"
+	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+		ID:                   app.ID,
+		ProjectID:            p.ID,
+		Status:               "needs_follow_up",
+		DeploymentSnapshot:   json.RawMessage(`{}`),
+		VerificationSnapshot: json.RawMessage(`{}`),
+		FailureReason:        &reason,
+	}); err != nil {
+		return err
+	}
+	result := json.RawMessage(mustJSON(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "needs_follow_up",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            stringPtrValue(app.GithubPrState),
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"target_url":                 app.TargetUrl,
+		"follow_up_reason":           reason,
+	}))
+	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
+		ID:              app.ContentActionID,
+		ProjectID:       p.ID,
+		PublisherResult: result,
+	}); err != nil {
+		return err
+	}
+	s.Log.Info("site fix PR flagged needs follow-up (unmerged 14d)", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
+	return nil
+}
+
+func (s *Scheduler) dispatchSiteFixPRAwaitingMerge(ctx context.Context, store notification.DispatchStore, p db.Project, app db.SiteChangeApplication, elapsed time.Duration) {
+	prNumber := 0
+	if app.GithubPrNumber != nil {
+		prNumber = int(*app.GithubPrNumber)
+	}
+	ageHours := int(elapsed / time.Hour)
+	if ageHours < 0 {
+		ageHours = 0
+	}
+	event := notification.NewSiteFixPRAwaitingMergeEvent(
+		p.ID,
+		app.ID,
+		stringPtrValue(app.GithubPrUrl),
+		prNumber,
+		ageHours,
+		s.currentTime(),
+		"/projects/"+p.ID.String()+"/seo",
+	)
+	s.dispatchNotification(ctx, store, event)
 }
 
 // githubTokenForProject resolves a usable GitHub token for the project's enabled

@@ -254,6 +254,8 @@ type Querier interface {
 	SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Article, error)
 	SetPublisherConnectionCredentialRef(ctx context.Context, arg SetPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	SetPublisherConnectionEnabled(ctx context.Context, arg SetPublisherConnectionEnabledParams) (PublisherConnection, error)
+	SetSiteChangePRNextNotifyAt(ctx context.Context, arg SetSiteChangePRNextNotifyAtParams) error
+	SetSiteChangePRNextPollAt(ctx context.Context, arg SetSiteChangePRNextPollAtParams) error
 	SetTopicScheduledAt(ctx context.Context, arg SetTopicScheduledAtParams) (Topic, error)
 	SetTopicScheduledAtForProject(ctx context.Context, arg SetTopicScheduledAtForProjectParams) (Topic, error)
 	SnoozeSEOOpportunity(ctx context.Context, arg SnoozeSEOOpportunityParams) (SeoOpportunity, error)

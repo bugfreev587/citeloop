@@ -28,6 +28,35 @@ func TestBudgetStoppedEventHasStableIDAndPayload(t *testing.T) {
 	}
 }
 
+func TestSiteFixPRAwaitingMergeEventBucketsByTwelveHours(t *testing.T) {
+	projectID := uuid.New()
+	appID := uuid.New()
+	morning := time.Date(2026, 6, 5, 9, 30, 0, 0, time.UTC)
+	sameWindow := time.Date(2026, 6, 5, 11, 0, 0, 0, time.UTC)
+	nextWindow := time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC)
+
+	a := NewSiteFixPRAwaitingMergeEvent(projectID, appID, "https://github.com/o/r/pull/9", 9, 26, morning, "https://app.test/projects/1/seo")
+	b := NewSiteFixPRAwaitingMergeEvent(projectID, appID, "https://github.com/o/r/pull/9", 9, 27, sameWindow, "https://app.test/projects/1/seo")
+	c := NewSiteFixPRAwaitingMergeEvent(projectID, appID, "https://github.com/o/r/pull/9", 9, 28, nextWindow, "https://app.test/projects/1/seo")
+
+	if a.Type != "sitefix.pr.awaiting_merge" {
+		t.Fatalf("type = %q", a.Type)
+	}
+	if a.ID != b.ID {
+		t.Fatalf("same 12h window should share an ID: %q vs %q", a.ID, b.ID)
+	}
+	if a.ID == c.ID {
+		t.Fatalf("different 12h window should differ: %q", a.ID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload["message"].(string), "#9") || payload["dashboard_url"] != "https://app.test/projects/1/seo" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
 func TestPublishFailedEventUsesTransitionAndDailyIDs(t *testing.T) {
 	projectID := uuid.New()
 	articleID := uuid.New()
