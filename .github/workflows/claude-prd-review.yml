@@ -37,9 +37,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Detect PRD review workflow self-change
+        id: workflow_self_change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh pr diff "${PR_NUMBER}" --name-only | grep -Fxq ".github/workflows/claude-prd-review.yml"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Claude PRD review
+        if: steps.workflow_self_change.outputs.changed != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.TOKENGATE_CLAUDE_CODE_API_KEY }}
@@ -47,8 +65,16 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+            REVIEW RUN ID: ${{ github.run_id }}
 
             Review only the PRD/product requirements documents changed in this pull request.
+
+            This is a source-grounded PRD review, not a wording-only review.
+            Before posting comments:
+            - Read the changed PRD files.
+            - Inspect the relevant source files, migrations, API handlers, UI code, tests, and workflows that the PRD depends on.
+            - Use repository evidence for every finding. A concern that cannot be tied to a source file, schema, event constant, API contract, or workflow behavior should be framed as an open question, not a finding.
+            - Do not treat supported UI/API options as emitted backend behavior unless you find a producer.
 
             Focus on:
             - Contradictory requirements or unclear product decisions
@@ -61,10 +87,44 @@ jobs:
             Leave concise, actionable GitHub PR comments.
             Prefer inline comments for issues tied to specific changed lines.
             Use top-level comments only for summary findings or cross-section concerns.
+            Every actionable finding must include the PRD line or section and the code evidence that made it actionable.
+
+            Always leave one top-level evidence summary comment containing:
+            - The marker `<!-- claude-prd-review-evidence:${{ github.run_id }} -->`
+            - The changed PRD files reviewed
+            - The source files or commands inspected
+            - A brief list of accepted findings, or `No source-grounded findings`
 
             Do not modify files, create commits, push branches, or open pull requests.
             Only post GitHub comments. A follow-up fixer workflow may address actionable comments.
 
             The repository is already checked out in the current working directory.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --max-turns 18
+            --allowedTools "Read,Grep,Glob,LS,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Bash(rg:*),Bash(sed:*),Bash(nl:*)"
+
+      - name: Verify PRD review evidence comment
+        if: steps.workflow_self_change.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "::error::Missing PR number for PRD review evidence verification"
+            exit 1
+          fi
+
+          evidence_comment_ids="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- claude-prd-review-evidence:${{ github.run_id }} -->")) | .id')"
+
+          if [ -z "${evidence_comment_ids}" ]; then
+            echo "::error::Claude PRD review did not leave the required source-grounded evidence summary comment."
+            exit 1
+          fi
+
+      - name: Report skipped PRD workflow self-review
+        if: steps.workflow_self_change.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          gh pr comment "${PR_NUMBER}" --body "Claude PRD review skipped because this PR changes \`.github/workflows/claude-prd-review.yml\`. Claude Code Action requires the workflow file to match the default branch before it will run. After this workflow change is merged, the next PRD PR will use the source-grounded review and evidence-comment gate."
