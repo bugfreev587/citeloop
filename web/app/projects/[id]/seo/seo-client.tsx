@@ -51,6 +51,7 @@ type LoopAction = SEOContentAction &
       | "opportunity_normalized_page_url"
       | "opportunity_query"
       | "opportunity_recommended_action"
+      | "opportunity_status"
       | "topic_title"
     >
   >;
@@ -502,6 +503,23 @@ function loopActionCurrentHref(projectId: string, action: LoopAction) {
 
 function loopActionCurrentLabel(action: LoopAction) {
   return loopActionCurrentSurface(action);
+}
+
+const inactiveLoopActionStatuses = new Set(["archived", "dismissed"]);
+const inactiveLoopOpportunityStatuses = new Set(["archived", "dismissed"]);
+
+function normalizedLifecycleStatus(status?: string | null) {
+  return String(status ?? "").trim().toLowerCase();
+}
+
+function hasDismissedSourceOpportunity(action: LoopAction) {
+  return inactiveLoopOpportunityStatuses.has(normalizedLifecycleStatus(action.opportunity_status));
+}
+
+function isVisibleLoopAction(action: LoopAction) {
+  if (inactiveLoopActionStatuses.has(normalizedLifecycleStatus(action.status))) return false;
+  if (hasDismissedSourceOpportunity(action) && !hasResultsExecutionEvidence(action)) return false;
+  return true;
 }
 
 const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
@@ -2217,7 +2235,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
   const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
-  const loopLifecycleCounts = visibilityLifecycleCounts(loopActions);
+  const visibleLoopActions = loopActions.filter(isVisibleLoopAction);
+  const loopLifecycleCounts = visibilityLifecycleCounts(visibleLoopActions);
   loopLifecycleCounts.detected = activeOpportunities.length || summaryLifecycleCounts?.detected || 0;
   const loopActiveCount =
     loopLifecycleCounts.added_to_plan +
@@ -2238,7 +2257,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { key: "blocked", label: loopLifecycleSummaryLabel("blocked"), value: loopLifecycleCounts.blocked },
   ];
   const selectedLoopActions = selectedLoopStage
-    ? loopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage).slice(0, 6)
+    ? visibleLoopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage).slice(0, 6)
     : [];
   const selectedLoopSummaryItem = loopSummaryItems.find((item) => item.key === selectedLoopStage) ?? null;
   const loopStageDetailTitle = selectedLoopSummaryItem
@@ -2250,7 +2269,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const directReviewActionsAll = loopActions
+  const directReviewActionsAll = visibleLoopActions
     .filter((action) => isDirectAction(action))
     .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status));
   const directReviewActions = showAllSiteFixes ? directReviewActionsAll : directReviewActionsAll.slice(0, 6);
@@ -2281,7 +2300,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
   const snoozedOpportunities = opportunities.filter((opportunity) => opportunity.status === "snoozed");
   const watchingOpportunityLinks = opportunities.filter((opportunity) => opportunity.status === "watching");
-  const sentOpportunityLinks = loopActions
+  const sentOpportunityLinks = visibleLoopActions
     .filter(isRecentlySentAction)
     .slice()
     .sort((a, b) => {
@@ -2982,8 +3001,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </summary>
                 <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
                   {sentOpportunityLinks.map((action) => {
-                    const destination = destinationForAction(action);
-                    const href = actionHandoffHref(projectId, action);
+                    const label = loopActionCurrentLabel(action as LoopAction);
+                    const href = loopActionCurrentHref(projectId, action as LoopAction);
                     const content = (
                       <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
@@ -2997,19 +3016,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           </p>
                         </div>
                         <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
-                          {actionHandoffLabel(action)}
+                          View in {label}
                           <ChevronRight size={16} className="text-slate-400" />
                         </span>
                       </div>
                     );
 
-                    if (destination === "Site Fixes") {
+                    if (label === "Site Fixes") {
                       return (
                         <button
                           key={action.id}
                           type="button"
                           data-opportunity-handoff-card
-                          aria-label={`Open "${loopActionTitle(action as any)}" in Site Fixes`}
+                          aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
                           onClick={() => focusSiteFixCard(action.id)}
                           className="w-full rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                         >
@@ -3022,8 +3041,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <Link
                         key={action.id}
                         data-opportunity-handoff-card
-                        aria-label={`Open "${loopActionTitle(action as any)}" in Content Plan`}
-                        href={href ?? `/projects/${projectId}/topics`}
+                        aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
+                        href={href}
                         className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                       >
                         {content}
