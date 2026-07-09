@@ -621,11 +621,22 @@ function siteFixGitHubPRURL(action: SEOContentAction | ResultsAction) {
   return typeof url === "string" && url.trim() ? url.trim() : "";
 }
 
+function siteFixPublisherResultStatus(action: SEOContentAction | ResultsAction) {
+  const status = action.output_snapshot?.publisher_result?.status;
+  return typeof status === "string" ? status.trim() : "";
+}
+
+function siteFixAlreadyMatchesSource(action: SEOContentAction | ResultsAction) {
+  return siteFixPublisherResultStatus(action) === "already_applied";
+}
+
 function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
   if (action.status === "completed") return "Measurement complete";
   if (action.status === "measuring") return "Measuring impact";
+  if (siteFixAlreadyMatchesSource(action)) return "Source already matches; verify production";
   if (action.verified_at) return "Applied or published and verified";
   if (action.status === "approved") return "Approved for execution";
+  if (action.status === "verification_pending") return "Waiting for production verification";
   if (action.status === "ready_for_review") return "Waiting for review";
   if (action.published_at) return "Published and waiting for verification";
   return action.status || "Queued";
@@ -2713,11 +2724,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
       const prURL = siteFixGitHubPRURL(updated);
-      setMessage({
-        title: "GitHub PR created",
-        detail: prURL || "Open it from this Site Fix after GitHub returns the PR URL.",
-        tone: "green",
-      });
+      if (siteFixAlreadyMatchesSource(updated)) {
+        setMessage({
+          title: "Source already matches",
+          detail: "No PR was needed. Verify production, then mark the Site Fix applied.",
+          tone: "green",
+        });
+      } else {
+        setMessage({
+          title: "GitHub PR created",
+          detail: prURL || "Open it from this Site Fix after GitHub returns the PR URL.",
+          tone: "green",
+        });
+      }
     } catch (e: any) {
       setMessage({ title: "Could not create GitHub PR", detail: e.message, tone: "red" });
     } finally {
@@ -4465,6 +4484,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const dismissSiteFixBusy = busy === `dismiss-${action.id}`;
       const createPRBusy = busy === `site-fix-pr-${action.id}`;
       const prURL = siteFixGitHubPRURL(action);
+      const sourceAlreadyMatches = siteFixAlreadyMatchesSource(action);
       const aiRepairJSON = siteFixAIJSON(action);
 
       return (
@@ -4549,9 +4569,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         AI coding fix JSON
                       </div>
                       <p className="mt-2 text-sm font-semibold leading-5 text-cyan-950">
-                        {hasConnectedGitHubPublisher
-                          ? "Create a source-backed GitHub PR for this existing page when CiteLoop can map the fix to the published Markdown source."
-                          : "Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks."}
+                        {sourceAlreadyMatches
+                          ? "The mapped source already contains this fix. Verify production before marking it applied."
+                          : hasConnectedGitHubPublisher
+                            ? "Create a source-backed GitHub PR for this existing page when CiteLoop can map the fix to the published source file."
+                            : "Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks."}
                       </p>
                     </div>
                     {hasConnectedGitHubPublisher ? (
@@ -4564,6 +4586,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         >
                           <FileText className="shrink-0" size={14} />
                           Open PR
+                        </Button>
+                      ) : sourceAlreadyMatches ? (
+                        <Button
+                          size="sm"
+                          variant="ai"
+                          className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                          disabled
+                        >
+                          <CheckCircle2 className="shrink-0" size={14} />
+                          Source matches
                         </Button>
                       ) : (
                         <Button
@@ -4656,6 +4688,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   >
                     <FileText className="shrink-0" size={14} />
                     Open PR
+                  </Button>
+                ) : sourceAlreadyMatches ? (
+                  <Button
+                    size="sm"
+                    variant="ai"
+                    className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
+                    disabled
+                  >
+                    <CheckCircle2 className="shrink-0" size={14} />
+                    Source matches
                   </Button>
                 ) : (
                   <Button
