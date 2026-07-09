@@ -26,6 +26,17 @@ test("Analysis handoff cards expose accessible names with title and destination"
   assert.match(source, /aria-label=\{`Open "\$\{loopActionTitle\(action as any\)\}" in Site Fixes`\}/);
 });
 
+test("Analysis Recently sent starts collapsed by default", async () => {
+  const source = await read("projects/[id]/seo/seo-client.tsx");
+  const marker = "Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})";
+  const markerIndex = source.indexOf(marker);
+  const detailsStart = source.lastIndexOf("<details", markerIndex);
+  const section = source.slice(detailsStart, source.indexOf("</details>", markerIndex));
+  assert.ok(section.length > 0, "analysis recently sent section must exist");
+
+  assert.doesNotMatch(section, /<details[^>]*\sopen(?:=|\s|>)/, "Analysis Recently sent should not default open");
+});
+
 test("Content Plan keeps Sent to Review handoff link cards for drafted content briefs", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
 
@@ -51,6 +62,15 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
   assert.match(source, /aria-label=\{`Open "\$\{contentPlanActionTitle\(action\)\}" in Review`\}/);
   assert.match(source, /aria-label=\{`Open "\$\{topic\.title\}" in Review`\}/);
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
+});
+
+test("Content Plan Recently sent starts collapsed by default", async () => {
+  const source = await read("projects/[id]/topics/topics-client.tsx");
+  const sectionStart = source.indexOf("data-content-plan-recently-sent");
+  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+  assert.ok(section.length > 0, "recently sent section must exist");
+
+  assert.doesNotMatch(section, /<details[^>]*\sopen(?:=|\s|>)/, "Recently sent should not default open");
 });
 
 test("Sent to Review cards only expose review links and pre-publish reconsideration actions", async () => {

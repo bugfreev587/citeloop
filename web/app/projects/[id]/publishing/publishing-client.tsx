@@ -697,7 +697,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [selectedSEOArticle, setSelectedSEOArticle] = useState<Article | null>(null);
   const [focusedOperationalGroup, setFocusedOperationalGroup] = useState<OperationalGroup["key"] | null>(null);
   const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
-  const [publishedCollapsed, setPublishedCollapsed] = useState(false);
+  const [publishedCollapsed, setPublishedCollapsed] = useState(true);
   const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
   const seenPublishedIdsRef = useRef<Set<string> | null>(null);
 

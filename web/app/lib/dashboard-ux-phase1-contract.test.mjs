@@ -983,6 +983,7 @@ test("publishing Published section owns live URLs and publish completion state",
   assert.match(publishing, /data-publish-published-article-card/);
   assert.match(publishing, /Open live article/);
   assert.match(publishing, /Published URL missing/);
+  assert.match(publishing, /const \[publishedCollapsed, setPublishedCollapsed\] = useState\(true\);/);
   assert.match(publishing, /setPublishedCollapsed\(false\)/);
   assert.match(publishing, /setHighlightedPublishedArticleId/);
   assert.match(publishing, /publishedCanonicals: published/);
