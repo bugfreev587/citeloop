@@ -2244,6 +2244,77 @@ test("blocking mutations expose button-level progress and keep opportunity revie
   assert.match(admin, /api\.testGEOCredentials/);
 });
 
+test("admin runtime model routing uses TokenGate model dropdowns", () => {
+  const modelCatalog = read("lib/tokengate-models.ts");
+  const admin = read("projects/[id]/admin/admin-client.tsx");
+  const platformAdmin = read("admin/page.tsx");
+
+  for (const model of [
+    "gpt-5.2",
+    "gpt-5.2-2025-12-11",
+    "gpt-5.2-chat-latest",
+    "gpt-5.2-pro",
+    "gpt-5.2-pro-2025-12-11",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-2026-03-05",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "codex-auto-review",
+    "gpt-4o-audio-preview",
+    "gpt-4o-realtime-preview",
+    "gpt-image-1",
+    "gpt-image-1.5",
+    "gpt-image-2",
+  ]) {
+    assert.match(modelCatalog, new RegExp(`"${model}"`));
+  }
+
+  for (const model of [
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-sonnet-20240620",
+    "claude-3-5-haiku-20241022",
+    "claude-3-7-sonnet-20250219",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+    "claude-opus-4-1-20250805",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+  ]) {
+    assert.match(modelCatalog, new RegExp(`"${model}"`));
+  }
+
+  assert.doesNotMatch(modelCatalog, /"gpt-5\.1"/);
+
+  for (const source of [admin, platformAdmin]) {
+    assert.match(source, /tokengateOpenAIModelOptions/);
+    assert.match(source, /tokengateAnthropicModelOptions/);
+    assert.match(source, /tokengateModelOptionsWithCurrent/);
+    assert.match(source, /SelectInput/);
+
+    const openAIStart = source.indexOf('<Field label="OpenAI model"');
+    const anthropicStart = source.indexOf('<Field label="Anthropic model"', openAIStart);
+    const fallbackStart = source.indexOf('<label className="inline-flex', anthropicStart);
+    const openAIField = source.slice(openAIStart, anthropicStart);
+    const anthropicField = source.slice(anthropicStart, fallbackStart);
+
+    assert.match(openAIField, /<SelectInput[\s\S]*openai_model_alias/);
+    assert.match(openAIField, /tokengateOpenAIModelOptions/);
+    assert.doesNotMatch(openAIField, /<TextInput/);
+    assert.match(anthropicField, /<SelectInput[\s\S]*anthropic_model_alias/);
+    assert.match(anthropicField, /tokengateAnthropicModelOptions/);
+    assert.doesNotMatch(anthropicField, /<TextInput/);
+  }
+});
+
 test("GEO provider observation defaults to OpenAI instead of required Perplexity", () => {
   const results = read("projects/[id]/seo/seo-client.tsx");
   const observeBlock = results.slice(results.indexOf("async function observeGEOProvider"), results.indexOf("async function monitorGEOExternalSurfaces"));
