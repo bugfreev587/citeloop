@@ -3614,16 +3614,13 @@ func proposedMetadataFromRaw(raw json.RawMessage) (string, string) {
 	if changes := nestedAny(parsed, "proposed_changes"); changes != nil {
 		if list, ok := changes.([]any); ok {
 			for _, item := range list {
-				if title, description := metadataValuesAtPath(item); title != "" || description != "" {
-					return title, description
-				}
 				if title, description := metadataValuesAtPath(item, "proposed_change"); title != "" || description != "" {
 					return title, description
 				}
 			}
 		}
 	}
-	return metadataValuesAtPath(parsed)
+	return "", ""
 }
 
 func metadataValuesAtPath(parsed any, path ...string) (string, string) {
