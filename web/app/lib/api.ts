@@ -169,6 +169,15 @@ export type DistributeItem = {
 
 export type LLMProvider = "tokengate";
 export type GEOProviderScope = "perplexity" | "openai" | "anthropic" | "gemini";
+export type LLMRuntimeRole = "planning" | "writer" | "qa" | "site_fix";
+export type LLMModelProvider = "openai" | "anthropic";
+
+export type LLMModelRoute = {
+  primary_provider: LLMModelProvider;
+  openai_model_alias: string;
+  anthropic_model_alias: string;
+  fallback_enabled: boolean;
+};
 
 export type CrawlSummary = {
   landing_url?: string;
@@ -188,6 +197,7 @@ export type LLMCredentialsStatus = {
   model?: string;
   writer_model?: string;
   qa_model?: string;
+  routes?: Partial<Record<LLMRuntimeRole, LLMModelRoute>>;
   updated_at?: string;
 };
 
@@ -213,11 +223,17 @@ export type GEOCredentialsUpdate = {
 export type ProviderTestResult = {
   ok: boolean;
   provider?: string;
+  role?: LLMRuntimeRole | string;
+  label?: string;
+  primary_provider?: LLMModelProvider | string;
+  model_alias?: string;
+  fallback_enabled?: boolean;
   model?: string;
   latency_ms?: number;
   sample?: string;
   cost_usd?: number;
   error?: string;
+  results?: ProviderTestResult[];
 };
 
 export type InsightResult = {
@@ -1241,6 +1257,7 @@ function arrayFrom<T = any>(value: any): T[] {
 }
 
 function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
+  const routes = raw?.routes && typeof raw.routes === "object" ? raw.routes : undefined;
   return {
     provider: "tokengate",
     configured: Boolean(raw.configured),
@@ -1249,6 +1266,7 @@ function normalizeLLMCredentialsStatus(raw: any): LLMCredentialsStatus {
     model: raw.model ?? undefined,
     writer_model: raw.writer_model ?? undefined,
     qa_model: raw.qa_model ?? undefined,
+    routes,
     updated_at: raw.updated_at ?? undefined,
   };
 }
@@ -1944,12 +1962,12 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", undefined, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
-  updateLLMCredentials: async (body: { provider?: LLMProvider; api_key?: string; base_url?: string; model?: string; writer_model?: string; qa_model?: string }) => {
+  updateLLMCredentials: async (body: { provider?: LLMProvider; api_key?: string; base_url?: string; model?: string; writer_model?: string; qa_model?: string; routes?: Partial<Record<LLMRuntimeRole, LLMModelRoute>> }) => {
     const raw = await req<any>("/admin/llm-credentials", { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
   testLLMCredentials: async () => {
-    return req<{ ok: boolean; provider?: string; model?: string; latency_ms?: number; sample?: string; error?: string }>(
+    return req<ProviderTestResult>(
       "/admin/llm-credentials/test",
       { method: "POST" },
       auth,

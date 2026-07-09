@@ -85,6 +85,9 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 	}
 	var httpErr *openAIChatHTTPError
 	if errors.As(err, &httpErr) && shouldRetryUnsupportedClaudeModel(httpErr.status, model, httpErr.raw) {
+		if req.DisableProviderFallback {
+			return resp, fmt.Errorf("%w; provider fallback disabled for %s", err, firstNonBlankLocal(string(req.Purpose), "default"))
+		}
 		fallback := fallbackOpenAIModel(req.Purpose)
 		if fallback != "" && fallback != model {
 			return c.completeWithModel(ctx, req, fallback)
@@ -184,6 +187,15 @@ func shouldRetryUnsupportedClaudeModel(status int, model string, raw []byte) boo
 	msg := strings.ToLower(string(raw))
 	return strings.Contains(msg, "not supported") &&
 		(strings.Contains(msg, "chatgpt account") || strings.Contains(msg, "openai") || strings.Contains(msg, "codex"))
+}
+
+func firstNonBlankLocal(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func estimateOpenAIChatCost(model string, in, out int) float64 {

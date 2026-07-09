@@ -467,6 +467,9 @@ func TestSiteFixGitHubPRRouteAndHandlerContract(t *testing.T) {
 	source := string(handlerRaw)
 	for _, want := range []string{
 		"func (s *Server) createSiteFixGitHubPR",
+		"generateSiteFixAIProposal",
+		"buildSiteFixAIContract",
+		"PurposeSiteFix",
 		"content action is not a site fix",
 		`"site_fix"`,
 		"CreateOrReuseSiteChangeApplication",
@@ -479,6 +482,76 @@ func TestSiteFixGitHubPRRouteAndHandlerContract(t *testing.T) {
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("site fix GitHub PR handler contract missing %q", want)
+		}
+	}
+}
+
+func TestSiteFixMetadataRewriteUsesAIProposalPublisherResult(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description for query relevance",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		OutputSnapshot: json.RawMessage(`{
+			"publisher_result": {
+				"status": "ai_preview_ready",
+				"ai_fix_contract_hash": "sha256-test",
+				"ai_proposal": {
+					"proposed_change": {
+						"title": "UniPost | Social Publishing API for Product Teams",
+						"meta_description": "Plan social publishing API work with evidence-backed workflows, review gates, and source-controlled GitHub changes."
+					},
+					"evidence_alignment": ["Keeps the existing production URL", "Rewrites crawler-facing metadata only"]
+				}
+			}
+		}`),
+	}
+	source := `export const metadata = {
+  title: "Old title",
+  description: "Old description",
+};
+`
+
+	updated, err := siteFixMetadataRewriteContent(source, action)
+	if err != nil {
+		t.Fatalf("siteFixMetadataRewriteContent returned error: %v", err)
+	}
+	for _, want := range []string{
+		`title: "UniPost | Social Publishing API for Product Teams"`,
+		`description: "Plan social publishing API work with evidence-backed workflows, review gates, and source-controlled GitHub changes."`,
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("AI proposal metadata missing %q:\n%s", want, updated)
+		}
+	}
+}
+
+func TestBuildSiteFixAIContractCapturesNoProposedMetadataCase(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description for query relevance",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		TargetUrl:  strPtrFrom("https://unipost.dev/"),
+		OutputSnapshot: json.RawMessage(`{
+			"title": "Rewrite homepage title and meta description for query relevance",
+			"asset_type": "metadata_rewrite",
+			"deliverable": "Title and meta description patch for an existing page.",
+			"proposed_change": {
+				"preserve": ["canonical", "indexability", "production URL"]
+			}
+		}`),
+	}
+	contract := buildSiteFixAIContract(action)
+
+	if contract.Hash == "" {
+		t.Fatal("contract hash should be stable and persisted with the AI proposal")
+	}
+	if contract.TargetURL != "https://unipost.dev/" {
+		t.Fatalf("target url = %q", contract.TargetURL)
+	}
+	if contract.Observed["proposed_title"] != "" || contract.Observed["proposed_meta_description"] != "" {
+		t.Fatalf("generic opportunity copy must not be treated as proposed metadata: %#v", contract.Observed)
+	}
+	for _, want := range []string{"Return concrete title and meta_description values.", "Do not create a new page or blog post."} {
+		if !containsString(contract.Constraints, want) {
+			t.Fatalf("contract constraints missing %q: %#v", want, contract.Constraints)
 		}
 	}
 }

@@ -66,27 +66,57 @@ func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	start := time.Now()
-	resp, err := admin.ProviderFromCredentials(*cred, s.Env).Complete(ctx, llm.CompletionReq{
-		System:    "You are a connectivity probe.",
-		Prompt:    "Reply with the single word: pong",
-		MaxTokens: 16,
-	})
-	latencyMs := time.Since(start).Milliseconds()
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         false,
-			"provider":   string(cred.Provider),
-			"latency_ms": latencyMs,
-			"error":      err.Error(),
+	results := []map[string]any{}
+	allOK := true
+	firstModel := ""
+	firstSample := ""
+	var totalLatency int64
+	provider := admin.ProviderFromCredentials(*cred, s.Env)
+	for _, target := range admin.RuntimeProbeTargets(*cred, s.Env) {
+		start := time.Now()
+		resp, err := provider.Complete(ctx, llm.CompletionReq{
+			System:                  "You are a connectivity probe.",
+			Prompt:                  "Reply with the single word: pong",
+			Purpose:                 target.Purpose,
+			Model:                   target.ModelAlias,
+			MaxTokens:               16,
+			DisableProviderFallback: true,
 		})
-		return
+		latencyMs := time.Since(start).Milliseconds()
+		totalLatency += latencyMs
+		item := map[string]any{
+			"role":             string(target.Role),
+			"label":            target.Label,
+			"provider":         string(cred.Provider),
+			"primary_provider": string(target.Provider),
+			"model_alias":      target.ModelAlias,
+			"fallback_enabled": target.FallbackEnabled,
+			"latency_ms":       latencyMs,
+		}
+		if err != nil {
+			allOK = false
+			item["ok"] = false
+			item["error"] = err.Error()
+		} else {
+			item["ok"] = true
+			item["model"] = resp.Model
+			item["sample"] = truncate(strings.TrimSpace(resp.Text), 80)
+			item["cost_usd"] = resp.CostUSD
+			if firstModel == "" {
+				firstModel = resp.Model
+			}
+			if firstSample == "" {
+				firstSample = truncate(strings.TrimSpace(resp.Text), 80)
+			}
+		}
+		results = append(results, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
+		"ok":         allOK,
 		"provider":   string(cred.Provider),
-		"model":      resp.Model,
-		"latency_ms": latencyMs,
-		"sample":     truncate(strings.TrimSpace(resp.Text), 80),
+		"model":      firstModel,
+		"latency_ms": totalLatency,
+		"sample":     firstSample,
+		"results":    results,
 	})
 }

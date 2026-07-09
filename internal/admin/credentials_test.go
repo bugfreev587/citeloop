@@ -166,6 +166,97 @@ func TestModelForRequestRoutesWriterAndQA(t *testing.T) {
 	}
 }
 
+func TestApplyUpdateStoresFourRoleModelRoutes(t *testing.T) {
+	next, err := ApplyUpdate(nil, UpdateInput{
+		Provider: "tokengate",
+		APIKey:   "tg-new-key",
+		BaseURL:  "https://tokengate.example/v1",
+		Routes: ModelRoutes{
+			string(RolePlanning): {
+				PrimaryProvider:     ModelProviderOpenAI,
+				OpenAIModelAlias:    "gpt-5.1",
+				AnthropicModelAlias: "claude-sonnet-4-6",
+				FallbackEnabled:     true,
+			},
+			string(RoleWriter): {
+				PrimaryProvider:     ModelProviderOpenAI,
+				OpenAIModelAlias:    "gpt-5.1",
+				AnthropicModelAlias: "claude-sonnet-4-6",
+				FallbackEnabled:     true,
+			},
+			string(RoleQA): {
+				PrimaryProvider:     ModelProviderOpenAI,
+				OpenAIModelAlias:    "gpt-5.5",
+				AnthropicModelAlias: "claude-opus-4-8",
+				FallbackEnabled:     true,
+			},
+			string(RoleSiteFix): {
+				PrimaryProvider:     ModelProviderAnthropic,
+				OpenAIModelAlias:    "gpt-5.1",
+				AnthropicModelAlias: "claude-opus-4-8",
+				FallbackEnabled:     false,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(next.Routes) != 4 {
+		t.Fatalf("routes = %#v", next.Routes)
+	}
+	if next.Model != "gpt-5.1" || next.WriterModel != "gpt-5.1" || next.QAModel != "gpt-5.5" {
+		t.Fatalf("legacy selected models = default:%q writer:%q qa:%q", next.Model, next.WriterModel, next.QAModel)
+	}
+	siteFix := next.Routes[string(RoleSiteFix)]
+	if siteFix.PrimaryProvider != ModelProviderAnthropic || siteFix.AnthropicModelAlias != "claude-opus-4-8" || siteFix.FallbackEnabled {
+		t.Fatalf("site fix route = %#v", siteFix)
+	}
+}
+
+func TestRuntimeRouteForRequestRoutesSiteFixAndFallbackPolicy(t *testing.T) {
+	cred := Credentials{
+		Model:       "gpt-5.1",
+		WriterModel: "gpt-5.1",
+		QAModel:     "gpt-5.5",
+		Routes: ModelRoutes{
+			string(RoleSiteFix): {
+				PrimaryProvider:     ModelProviderAnthropic,
+				OpenAIModelAlias:    "gpt-5.1",
+				AnthropicModelAlias: "claude-opus-4-8",
+				FallbackEnabled:     false,
+			},
+		},
+	}
+	target := runtimeRouteForRequest(cred, config.Env{TokenGateModel: "env-default"}, llm.CompletionReq{Purpose: llm.PurposeSiteFix})
+
+	if target.Role != RoleSiteFix {
+		t.Fatalf("role = %q", target.Role)
+	}
+	if target.ModelAlias != "claude-opus-4-8" {
+		t.Fatalf("model alias = %q", target.ModelAlias)
+	}
+	if target.FallbackEnabled {
+		t.Fatal("site fix fallback should stay disabled when configured off")
+	}
+}
+
+func TestRuntimeProbeTargetsCoverPlanningWriterQASiteFix(t *testing.T) {
+	targets := RuntimeProbeTargets(Credentials{}, config.Env{TokenGateModel: "env-default"})
+	roles := map[ModelRole]bool{}
+	for _, target := range targets {
+		roles[target.Role] = true
+		if target.ModelAlias == "" {
+			t.Fatalf("target %s missing model alias: %#v", target.Role, target)
+		}
+	}
+	for _, role := range []ModelRole{RolePlanning, RoleWriter, RoleQA, RoleSiteFix} {
+		if !roles[role] {
+			t.Fatalf("probe targets missing role %s: %#v", role, targets)
+		}
+	}
+}
+
 func TestModelForRequestFallsBackToDefaultThenEnv(t *testing.T) {
 	env := config.Env{TokenGateModel: "env-default"}
 
