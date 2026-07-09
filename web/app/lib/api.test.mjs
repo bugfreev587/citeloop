@@ -484,6 +484,33 @@ test("testLLMCredentials posts the currently selected runtime routes", async () 
   }
 });
 
+test("testLLMCredentials outlives the default API timeout while probes run", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_url, init) =>
+    new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        reject(init.signal.reason ?? new Error("aborted"));
+      });
+      setTimeout(() => {
+        resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, provider: "tokengate", model: "claude-opus-4-8", latency_ms: 5000, results: [] }),
+        });
+      }, 50);
+    });
+
+  try {
+    const { createApi } = await loadApiModule();
+    // timeoutMs 1 would abort any other request before the 50ms response;
+    // the connection test must enforce a live-probe minimum instead.
+    const result = await createApi({ token: "session-token", timeoutMs: 1 }).testLLMCredentials({ routes: {} });
+    assert.equal(result.ok, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GEO credential APIs use admin TokenGate provider endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

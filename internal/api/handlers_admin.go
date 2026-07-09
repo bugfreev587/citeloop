@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/admin"
@@ -78,56 +79,68 @@ func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	results := []map[string]any{}
+	provider := admin.ProviderFromCredentials(testCred, s.Env)
+	targets := admin.RuntimeProbeTargets(testCred, s.Env)
+	// Probe every role concurrently so total wall time is the slowest single
+	// completion instead of the sum of all four.
+	results := make([]map[string]any, len(targets))
+	wallStart := time.Now()
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		wg.Add(1)
+		go func(i int, target admin.RuntimeProbeTarget) {
+			defer wg.Done()
+			start := time.Now()
+			resp, err := provider.Complete(ctx, llm.CompletionReq{
+				System:                  "You are a connectivity probe.",
+				Prompt:                  "Reply with the single word: pong",
+				Purpose:                 target.Purpose,
+				Model:                   target.ModelAlias,
+				MaxTokens:               16,
+				DisableProviderFallback: true,
+			})
+			item := map[string]any{
+				"role":             string(target.Role),
+				"label":            target.Label,
+				"provider":         string(cred.Provider),
+				"primary_provider": string(target.Provider),
+				"model_alias":      target.ModelAlias,
+				"fallback_enabled": target.FallbackEnabled,
+				"latency_ms":       time.Since(start).Milliseconds(),
+			}
+			if err != nil {
+				item["ok"] = false
+				item["error"] = err.Error()
+			} else {
+				item["ok"] = true
+				item["model"] = resp.Model
+				item["sample"] = truncate(strings.TrimSpace(resp.Text), 80)
+				item["cost_usd"] = resp.CostUSD
+			}
+			results[i] = item
+		}(i, target)
+	}
+	wg.Wait()
 	allOK := true
 	firstModel := ""
 	firstSample := ""
-	var totalLatency int64
-	provider := admin.ProviderFromCredentials(testCred, s.Env)
-	for _, target := range admin.RuntimeProbeTargets(testCred, s.Env) {
-		start := time.Now()
-		resp, err := provider.Complete(ctx, llm.CompletionReq{
-			System:                  "You are a connectivity probe.",
-			Prompt:                  "Reply with the single word: pong",
-			Purpose:                 target.Purpose,
-			Model:                   target.ModelAlias,
-			MaxTokens:               16,
-			DisableProviderFallback: true,
-		})
-		latencyMs := time.Since(start).Milliseconds()
-		totalLatency += latencyMs
-		item := map[string]any{
-			"role":             string(target.Role),
-			"label":            target.Label,
-			"provider":         string(cred.Provider),
-			"primary_provider": string(target.Provider),
-			"model_alias":      target.ModelAlias,
-			"fallback_enabled": target.FallbackEnabled,
-			"latency_ms":       latencyMs,
-		}
-		if err != nil {
+	for _, item := range results {
+		if ok, _ := item["ok"].(bool); !ok {
 			allOK = false
-			item["ok"] = false
-			item["error"] = err.Error()
-		} else {
-			item["ok"] = true
-			item["model"] = resp.Model
-			item["sample"] = truncate(strings.TrimSpace(resp.Text), 80)
-			item["cost_usd"] = resp.CostUSD
-			if firstModel == "" {
-				firstModel = resp.Model
-			}
-			if firstSample == "" {
-				firstSample = truncate(strings.TrimSpace(resp.Text), 80)
-			}
+			continue
 		}
-		results = append(results, item)
+		if firstModel == "" {
+			firstModel, _ = item["model"].(string)
+		}
+		if firstSample == "" {
+			firstSample, _ = item["sample"].(string)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         allOK,
 		"provider":   string(cred.Provider),
 		"model":      firstModel,
-		"latency_ms": totalLatency,
+		"latency_ms": time.Since(wallStart).Milliseconds(),
 		"sample":     firstSample,
 		"results":    results,
 	})
