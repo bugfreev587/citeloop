@@ -363,6 +363,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
                   key={article.id}
                   data-review-handoff-card
                   href={`/projects/${projectId}/publish?article=${article.id}`}
+                  onClick={() => setRecentReviewedDrawerOpen(false)}
                   className="group flex h-full min-h-[180px] flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                 >
                   <div className="flex h-full min-w-0 flex-col justify-between gap-4">
