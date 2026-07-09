@@ -1170,6 +1170,12 @@ update site_change_applications set
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
+-- name: ListMergedSiteChangeApplicationsForVerification :many
+select * from site_change_applications
+where project_id = sqlc.arg(project_id)
+  and status = 'github_pr_merged'
+order by merged_at asc nulls first;
+
 -- name: SetSiteChangePRNextPollAt :exec
 update site_change_applications set
   next_poll_at = sqlc.arg(next_poll_at),

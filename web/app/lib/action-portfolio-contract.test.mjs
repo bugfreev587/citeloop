@@ -107,7 +107,7 @@ test("Merged and closed site fix PRs surface in the after-execution status", () 
   assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
   assert.match(seo, /PR closed without merging/);
   assert.match(seo, /siteFixPublisherResultStatus\(action\) === "needs_follow_up"/);
-  assert.match(seo, /PR not merged in 14 days/);
+  assert.match(seo, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
 });
 
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {

@@ -157,6 +157,7 @@ type Querier interface {
 	ListInventory(ctx context.Context, projectID uuid.UUID) ([]ContentInventory, error)
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]AiCrawlerAccessSnapshot, error)
 	ListLatestTechnicalChecks(ctx context.Context, arg ListLatestTechnicalChecksParams) ([]TechnicalCheck, error)
+	ListMergedSiteChangeApplicationsForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListNotificationChannels(ctx context.Context, projectID uuid.UUID) ([]NotificationChannel, error)
 	ListNotificationDeliveries(ctx context.Context, arg ListNotificationDeliveriesParams) ([]NotificationDelivery, error)
 	ListNotificationSubscriptions(ctx context.Context, projectID uuid.UUID) ([]NotificationSubscription, error)
