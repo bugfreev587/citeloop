@@ -1978,9 +1978,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       publisherConnections.some(
         (connection) =>
           connection.kind === "github_nextjs" &&
-          connection.enabled !== false &&
-          connection.status === "connected" &&
-          connection.credential_configured !== false,
+          connection.enabled &&
+          connection.status === "connected",
       ),
     [publisherConnections],
   );

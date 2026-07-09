@@ -222,6 +222,19 @@ test("Analysis Site Fixes switch from JSON copy to GitHub PR when connected", as
   assert.match(drawerSource, /site-fix-open-pr-button/);
 });
 
+test("Analysis Site Fixes treat connected enabled GitHub App publishers as PR-capable", async () => {
+  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const connectionStart = source.indexOf("const hasConnectedGitHubPublisher = useMemo");
+  const connectionEnd = source.indexOf("const promptCountBySet = useMemo", connectionStart);
+  const connectionSource = source.slice(connectionStart, connectionEnd);
+
+  assert.notEqual(connectionStart, -1, "seo-client.tsx missing GitHub publisher readiness check");
+  assert.match(connectionSource, /connection\.kind === "github_nextjs"/);
+  assert.match(connectionSource, /connection\.enabled/);
+  assert.match(connectionSource, /connection\.status === "connected"/);
+  assert.doesNotMatch(connectionSource, /credential_configured/);
+});
+
 test("Analysis Loop in motion makes Site Fixes visible inside the lifecycle", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
