@@ -240,6 +240,7 @@ function ReadyNowStrip({
             return (
               <div
                 key={item.id}
+                id={`publish-ready-${item.articleId}`}
                 data-publish-ready-article-card={item.articleId}
                 tabIndex={-1}
                 className={cx(
@@ -909,6 +910,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   // so the handoff mirrors Opportunities -> Content Plan instead of opening a drawer.
   useEffect(() => {
     if (!linkedArticleId || loading || readyNow.items.length === 0) return;
+    setDrawer(null);
     const focusTimer = window.setTimeout(() => {
       const target = document.querySelector<HTMLElement>(`[data-publish-ready-article-card="${linkedArticleId}"]`);
       if (!target) return;

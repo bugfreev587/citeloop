@@ -15,6 +15,7 @@ test("Review keeps approved drafts as Sent to Publish link cards", async () => {
     "Recently Reviewed",
     "View in Publish",
     "publish?article=${article.id}",
+    "onClick={() => setRecentReviewedDrawerOpen(false)}",
     "data-review-handoff-card",
   ]) {
     assert.equal(source.includes(expected), true, `review-client.tsx missing ${expected}`);
@@ -53,6 +54,7 @@ test("Publish links published work to Results and focuses ?article= on the main 
   assert.notEqual(handoffEffectEnd, -1, "publishing-client.tsx missing Review handoff focus effect boundary");
   const handoffEffect = source.slice(handoffEffectStart, handoffEffectEnd);
   assert.equal(handoffEffect.includes('setDrawer("view_all")'), false, "Review handoff must not open the View all drawer");
+  assert.equal(handoffEffect.includes("setDrawer(null)"), true, "Review handoff should close any open Publish drawer before focusing the target card");
   assert.equal(handoffEffect.includes("scrollIntoView"), true, "Review handoff should scroll the main Publish card into view");
 });
 
