@@ -1,0 +1,160 @@
+name: Claude Review Fixer
+
+on:
+  workflow_run:
+    workflows: ["Claude PR Review", "Claude PRD Review"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to fix
+        required: true
+        type: string
+      max_fix_loops:
+        description: Maximum automated fixer passes before stopping
+        required: false
+        default: "2"
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-review-fix-${{ github.event.workflow_run.head_branch || github.event.inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  fix:
+    name: Fix review comments
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_BASE_URL: https://gateway.mytokengate.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Prepare PR context
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          MAX_FIX_LOOPS: ${{ github.event.inputs.max_fix_loops || '2' }}
+        run: node .github/scripts/prepare-claude-review-fix.js
+
+      - name: Report skipped max loop
+        if: steps.prepare.outputs.reason_code == 'max_loops'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
+          MAX_LOOPS: ${{ steps.prepare.outputs.max_loops }}
+        run: |
+          cat > /tmp/claude-review-fixer-skip.md <<EOF
+          <!-- claude-review-fix-loop-skip -->
+          Claude review fixer stopped after ${MAX_LOOPS} automated passes.
+
+          Please review the remaining Claude comments manually before merging.
+          EOF
+          gh pr comment "${PR_NUMBER}" --body-file /tmp/claude-review-fixer-skip.md
+
+      - uses: actions/checkout@v4
+        if: steps.prepare.outputs.should_fix == 'true'
+        with:
+          ref: ${{ steps.prepare.outputs.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.REVIEW_FIXER_GITHUB_TOKEN || github.token }}
+
+      - name: Run Claude fixer
+        if: steps.prepare.outputs.should_fix == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.TOKENGATE_CLAUDE_CODE_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.prepare.outputs.pr_number }}
+            FIXER PASS: ${{ steps.prepare.outputs.next_loop }} of ${{ steps.prepare.outputs.max_loops }}
+
+            You are the automated fixer for Claude review comments on this pull request.
+
+            Your task:
+            1. Inspect the PR diff and all GitHub PR comments/review comments.
+            2. Ignore comments containing the marker `claude-review-fix-loop`.
+            3. Identify concise, actionable findings from Claude PR Review or Claude PRD Review.
+            4. Make the smallest safe file changes that address those actionable findings.
+            5. Preserve the PR author's intent and avoid unrelated refactors.
+            6. If a comment is ambiguous, risky, already fixed, or not actionable, leave files unchanged for that comment.
+            7. If no actionable comments remain, leave the working tree unchanged.
+
+            For PRD documents, fix requirement contradictions, missing acceptance criteria, unclear scope, sequencing gaps, and ambiguous implementation language.
+            For code changes, fix correctness, regression, security, edge-case, and meaningful test-coverage issues.
+
+            Do not merge the PR, close the PR, create another PR, or push commits.
+            The workflow will commit and push any working-tree changes after your run.
+          claude_args: |
+            --max-turns 12
+            --allowedTools "Read,Edit,MultiEdit,Write,Grep,Glob,LS,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(git status:*),Bash(git diff:*),Bash(go test:*),Bash(go vet:*),Bash(npm test:*),Bash(npm run typecheck:*)"
+
+      - name: Detect fixer changes
+        if: steps.prepare.outputs.should_fix == 'true'
+        id: changes
+        run: |
+          git status --short
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push fixer changes
+        if: steps.prepare.outputs.should_fix == 'true' && steps.changes.outputs.changed == 'true'
+        env:
+          HEAD_REF: ${{ steps.prepare.outputs.head_ref }}
+          NEXT_LOOP: ${{ steps.prepare.outputs.next_loop }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Apply Claude review fixes (pass ${NEXT_LOOP})"
+          git push origin "HEAD:${HEAD_REF}"
+
+      - name: Report fixer result
+        if: steps.prepare.outputs.should_fix == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
+          NEXT_LOOP: ${{ steps.prepare.outputs.next_loop }}
+          MAX_LOOPS: ${{ steps.prepare.outputs.max_loops }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+        run: |
+          if [ "${CHANGED}" = "true" ]; then
+            RESULT="pushed fixes"
+          else
+            RESULT="found no working-tree changes to apply"
+          fi
+
+          cat > /tmp/claude-review-fixer-result.md <<EOF
+          <!-- claude-review-fix-loop -->
+          Claude review fixer pass ${NEXT_LOOP}/${MAX_LOOPS}: ${RESULT}.
+          EOF
+          gh pr comment "${PR_NUMBER}" --body-file /tmp/claude-review-fixer-result.md
+
+      - name: Dispatch follow-up reviews
+        if: steps.prepare.outputs.should_fix == 'true' && steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
+          HEAD_REF: ${{ steps.prepare.outputs.head_ref }}
+          PRD_CHANGED: ${{ steps.prepare.outputs.prd_changed }}
+        run: |
+          gh workflow run claude-review.yml --ref "${HEAD_REF}" -f pr_number="${PR_NUMBER}"
+
+          if [ "${PRD_CHANGED}" = "true" ]; then
+            gh workflow run claude-prd-review.yml --ref "${HEAD_REF}" -f pr_number="${PR_NUMBER}"
+          fi
