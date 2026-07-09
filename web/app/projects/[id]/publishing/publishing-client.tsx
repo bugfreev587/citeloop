@@ -17,8 +17,9 @@ import {
   Search,
   Send,
   Settings2,
+  Undo2,
 } from "lucide-react";
-import { Article, DistributeItem, ProjectConfig, PublisherConnection, defaultProjectConfig, friendlyApiError } from "../../../lib/api";
+import { Article, DistributeItem, ProjectConfig, PublisherConnection, VisibilityActionInLoop, defaultProjectConfig, friendlyApiError } from "../../../lib/api";
 import {
   ManualSyndicationPlatform,
   OperationalGroup,
@@ -178,6 +179,20 @@ function DestinationTile({
   );
 }
 
+// Statuses a content action can hold before publication, mirroring the backend
+// MarkContentActionReturnedToOpportunity guard.
+const RETURNABLE_ACTION_STATUSES = new Set([
+  "drafting",
+  "ready_for_review",
+  "approved",
+  "failed",
+  "verification_failed",
+  "recovery_required",
+  "verification_pending",
+  "manual_apply_required",
+  "needs_follow_up",
+]);
+
 function ReadyNowStrip({
   className,
   projectId,
@@ -185,9 +200,11 @@ function ReadyNowStrip({
   busy,
   linkedArticleId,
   highlightedPublishArticleId,
+  returnableActionByArticleId,
   onPublish,
   onRetry,
   onSeoDetails,
+  onMoveBack,
   onDestination,
 }: {
   className?: string;
@@ -196,9 +213,11 @@ function ReadyNowStrip({
   busy: string | null;
   linkedArticleId?: string | null;
   highlightedPublishArticleId?: string | null;
+  returnableActionByArticleId: Record<string, VisibilityActionInLoop>;
   onPublish: (article: Article) => void;
   onRetry: (article: Article) => void;
   onSeoDetails: (article: Article) => void;
+  onMoveBack: (article: Article) => void;
   onDestination: () => void;
 }) {
   const visibleItems = (() => {
@@ -260,6 +279,19 @@ function ReadyNowStrip({
                     <Search size={14} />
                     SEO Details
                   </Button>
+                  {returnableActionByArticleId[item.articleId] && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={Boolean(busy)}
+                      onClick={() => onMoveBack(item.article)}
+                      aria-label={`Move "${item.title}" back to Opportunities`}
+                    >
+                      <ButtonProgress busy={busy === `return-${item.articleId}`} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
+                        Move back to Opportunities
+                      </ButtonProgress>
+                    </Button>
+                  )}
                   <Button size="sm" onClick={onDestination}>
                     <Plug size={14} />
                     {item.destinationActionLabel}
@@ -683,6 +715,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [failed, setFailed] = useState<Article[]>([]);
   const [inflight, setInflight] = useState<Article[]>([]);
   const [ready, setReady] = useState<DistributeItem[]>([]);
+  const [returnableActions, setReturnableActions] = useState<VisibilityActionInLoop[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [connections, setConnections] = useState<PublisherConnection[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -703,19 +736,21 @@ export function PublishingClient({ projectId }: { projectId: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [pub, app, fail, verifying, dist, project] = await Promise.all([
+      const [pub, app, fail, verifying, dist, project, summary] = await Promise.all([
         api.listArticles(projectId, "published"),
         api.listArticles(projectId, "approved"),
         api.listArticles(projectId, "publish_failed"),
         api.listArticles(projectId, "pending_url_verification"),
         api.listDistribute(projectId),
         api.getProject(projectId).catch(() => null),
+        api.getVisibilitySummary(projectId).catch(() => null),
       ]);
       setPublished(pub);
       setApproved(app);
       setFailed(fail);
       setInflight(verifying);
       setReady(dist);
+      setReturnableActions(summary?.actions_in_loop ?? []);
       if (project) setConfig(project.config);
       return { pub, app, fail, dist };
     } catch (e: any) {
@@ -829,6 +864,18 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       }),
     [now, approvedCanonicals, failed, inflight, activePublisherConnection, githubPublishState, publishMode],
   );
+  // Map each ready draft article to the pre-publication content action it came
+  // from, so a "Move back to Opportunities" control can reopen the opportunity
+  // and withdraw the draft in one step.
+  const returnableActionByArticleId = useMemo(() => {
+    const map: Record<string, VisibilityActionInLoop> = {};
+    for (const action of returnableActions) {
+      if (!action.draft_article_id) continue;
+      if (!RETURNABLE_ACTION_STATUSES.has(action.status)) continue;
+      map[action.draft_article_id] = action;
+    }
+    return map;
+  }, [returnableActions]);
   const publishingOperational = useMemo(
     () =>
       buildPublishingOperationalGroups({
@@ -924,6 +971,25 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Publishing started", detail: articleTitle(article), tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Could not publish now", detail: e.message, tone: "red" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function moveBackToOpportunity(article: Article) {
+    const action = returnableActionByArticleId[article.id];
+    if (!action) {
+      setMessage({ title: "Cannot move back", detail: "This post is no longer linked to an open opportunity.", tone: "amber" });
+      return;
+    }
+    setBusy(`return-${article.id}`);
+    setMessage(null);
+    try {
+      await api.returnSEOContentActionToOpportunity(projectId, action.id);
+      await refresh();
+      setMessage({ title: "Moved back to Opportunities", detail: articleTitle(article), tone: "green" });
+    } catch (e: any) {
+      setMessage({ title: "Could not move back", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -1102,9 +1168,11 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             busy={busy}
             linkedArticleId={linkedArticleId}
             highlightedPublishArticleId={highlightedPublishArticleId}
+            returnableActionByArticleId={returnableActionByArticleId}
             onPublish={publishNow}
             onRetry={retryPublish}
             onSeoDetails={openSEODetails}
+            onMoveBack={moveBackToOpportunity}
             onDestination={() => setDrawer("github")}
           />
           <PublishedSection

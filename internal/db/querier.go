@@ -192,6 +192,8 @@ type Querier interface {
 	ListVisibilityActionRows(ctx context.Context, arg ListVisibilityActionRowsParams) ([]ListVisibilityActionRowsRow, error)
 	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
 	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
+	// Withdraw the in-progress draft so a returned opportunity does not leave an
+	// approved article stranded in the Publish "Ready to post" queue.
 	MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error)
 	MarkContentActionSiteFixPRResult(ctx context.Context, arg MarkContentActionSiteFixPRResultParams) (ContentAction, error)
 	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)

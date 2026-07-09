@@ -1054,14 +1054,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           <div className="grid gap-2">
             {acceptedPlanActions.map((action) => {
               const highlighted = highlightContentPlanAction === action.id;
-              const actionHasReviewContent = hasReviewableDraft(action);
               const actionIsPageUpdate = isPageUpdateAction(action);
               const publishStrategy = actionIsPageUpdate ? "blog" : publishStrategyForAction(action);
               const recommendedStrategy = actionIsPageUpdate ? "blog" : recommendedPublishStrategy(action);
-              const actionReturnBusy = busy === `return-action-${action.id}`;
-              const actionDismissBusy = busy === `dismiss-action-${action.id}`;
-              const actionDraftBusy = busy === `draft-action-${action.id}`;
-              const actionPageUpdateBusy = busy === `page-update-${action.id}`;
               return (
                 <div
                   key={action.id}
@@ -1069,10 +1064,19 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   ref={(node) => {
                     contentPlanActionRefs.current[action.id] = node;
                   }}
-                  tabIndex={-1}
+                  role="button"
+                  tabIndex={0}
                   data-content-plan-action-card
+                  onClick={() => setSelectedContentPlanActionID(action.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedContentPlanActionID(action.id);
+                    }
+                  }}
+                  aria-label={`Open accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
                   className={cx(
-                    "rounded-xl border bg-white p-4 shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
+                    "cursor-pointer rounded-xl border bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]",
                     highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : "border-slate-200",
                   )}
                 >
@@ -1094,64 +1098,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       <h3 className="mt-2 break-words text-base font-bold leading-6 text-slate-950">{contentPlanActionTitle(action)}</h3>
                       <p className="mt-1 break-words text-sm leading-5 text-slate-500">{contentPlanActionDetail(action)}</p>
                     </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
-                        disabled={Boolean(busy)}
-                        aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
-                      >
-                        <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
-                          Move back to Opportunities
-                        </ButtonProgress>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
-                        disabled={Boolean(busy)}
-                        aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
-                      >
-                        <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
-                          Dismiss
-                        </ButtonProgress>
-                      </Button>
-                      {actionHasReviewContent ? (
-                        <a
-                          href={reviewHrefForAction(projectId, action)}
-                          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                        >
-                          View in Review
-                          <ArrowRight size={15} />
-                        </a>
-                      ) : (
-                        <Button
-                          aria-busy={actionDraftBusy || actionPageUpdateBusy}
-                          disabled={Boolean(busy)}
-                          variant="primary"
-                          size="sm"
-                          onClick={() => setPendingContentPlanConfirmation({ kind: "create", action })}
-                        >
-                          <ButtonProgress
-                            busy={actionDraftBusy || actionPageUpdateBusy}
-                            busyLabel={contentPlanActionBusyCTA(action)}
-                            idleIcon={<Wand2 size={14} />}
-                          >
-                            {contentPlanActionPrimaryCTA(action)}
-                          </ButtonProgress>
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSelectedContentPlanActionID(action.id)}
-                        aria-label={`Review accepted ${actionIsPageUpdate ? "page update" : "content brief"}: ${contentPlanActionTitle(action)}`}
-                        disabled={Boolean(busy)}
-                      >
-                        {actionIsPageUpdate ? "Review update" : "Review brief"}
-                        <ArrowRight size={15} />
-                      </Button>
+                    <div className="flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-500 lg:justify-end">
+                      {actionIsPageUpdate ? "Review update" : "Review brief"}
+                      <ArrowRight size={16} className="text-slate-400" />
                     </div>
                   </div>
                 </div>

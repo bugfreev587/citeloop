@@ -784,7 +784,8 @@ returning *;
 
 -- name: MarkContentActionReturnedToOpportunity :one
 with candidate as (
-  select content_actions.id, content_actions.project_id, content_actions.opportunity_id
+  select content_actions.id, content_actions.project_id, content_actions.opportunity_id,
+    content_actions.draft_article_id
   from content_actions
   where content_actions.id = sqlc.arg(action_id)
     and content_actions.project_id = sqlc.arg(project_id)
@@ -815,6 +816,18 @@ updated_opportunity as (
   where so.id = candidate.opportunity_id
     and so.project_id = candidate.project_id
   returning so.id
+),
+-- Withdraw the in-progress draft so a returned opportunity does not leave an
+-- approved article stranded in the Publish "Ready to post" queue.
+withdrawn_article as (
+  update articles a set
+    status = 'rejected',
+    updated_at = now()
+  from candidate
+  where a.id = candidate.draft_article_id
+    and a.project_id = candidate.project_id
+    and a.status in ('generating','pending_review','approved')
+  returning a.id
 )
 select * from updated_action;
 
