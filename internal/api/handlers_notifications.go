@@ -317,6 +317,7 @@ func supportedNotificationEvents() []notificationEventDTO {
 		"publish.failed",
 		"budget.stopped",
 		"review.overdue",
+		"sitefix.pr.awaiting_merge",
 		"webhook.delivery.dead",
 		"seo.sync.failed",
 		"seo.auth.expired",

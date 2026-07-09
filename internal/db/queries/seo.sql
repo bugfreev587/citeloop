@@ -1164,9 +1164,23 @@ update site_change_applications set
   github_pr_url = sqlc.arg(github_pr_url),
   github_pr_state = sqlc.arg(github_pr_state),
   pr_created_at = coalesce(pr_created_at, now()),
+  next_poll_at = now() + interval '5 minutes',
+  next_notify_at = now() + interval '12 hours',
   updated_at = now()
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
+
+-- name: SetSiteChangePRNextPollAt :exec
+update site_change_applications set
+  next_poll_at = sqlc.arg(next_poll_at),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+
+-- name: SetSiteChangePRNextNotifyAt :exec
+update site_change_applications set
+  next_notify_at = sqlc.arg(next_notify_at),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: MarkSiteChangeApplicationStatus :one
 update site_change_applications set

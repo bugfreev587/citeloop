@@ -655,6 +655,7 @@ function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
   if (siteFixAlreadyMatchesSource(action)) return "Source already matches; verify production";
   if (action.verified_at) return "Applied or published and verified";
   if (action.status === "approved") return "Approved for execution";
+  if (siteFixPublisherResultStatus(action) === "needs_follow_up") return "PR not merged in 14 days — merge or dismiss";
   if (siteFixPublisherResultStatus(action) === "github_pr_closed") return "PR closed without merging — reopen or dismiss";
   if (siteFixPublisherResultStatus(action) === "github_pr_merged") return "PR merged — verifying in production";
   if (action.status === "verification_pending") return "Waiting for production verification";

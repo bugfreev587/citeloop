@@ -884,6 +884,8 @@ type SiteChangeApplication struct {
 	MergedAt                pgtype.Timestamptz `json:"merged_at"`
 	DeployedAt              pgtype.Timestamptz `json:"deployed_at"`
 	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
+	NextPollAt              pgtype.Timestamptz `json:"next_poll_at"`
+	NextNotifyAt            pgtype.Timestamptz `json:"next_notify_at"`
 }
 
 type TechnicalCheck struct {

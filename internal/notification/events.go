@@ -89,6 +89,28 @@ func NewReviewOverdueEvent(projectID, articleID uuid.UUID, title string, ageHour
 	}
 }
 
+// NewSiteFixPRAwaitingMergeEvent nags the operator that a source-backed site fix
+// PR is still unmerged. The ID buckets by 12h so a re-run inside the same nag
+// window is deduplicated at the delivery layer while distinct nags still fire.
+func NewSiteFixPRAwaitingMergeEvent(projectID, applicationID uuid.UUID, prURL string, prNumber, ageHours int, now time.Time, dashboardURL string) Event {
+	bucket := now.Truncate(12 * time.Hour).UTC().Format("2006-01-02T15")
+	payload := mustPayload(map[string]any{
+		"project_id":     projectID.String(),
+		"application_id": applicationID.String(),
+		"pr_url":         prURL,
+		"pr_number":      prNumber,
+		"age_hours":      ageHours,
+		"dashboard_url":  dashboardURL,
+		"message":        fmt.Sprintf("CiteLoop site fix PR #%d is still unmerged after %dh — merge it to apply the fix: %s", prNumber, ageHours, prURL),
+	})
+	return Event{
+		ProjectID: projectID,
+		Type:      "sitefix.pr.awaiting_merge",
+		ID:        fmt.Sprintf("sitefix.pr.awaiting_merge:%s:%s", applicationID, bucket),
+		Payload:   payload,
+	}
+}
+
 func NewWebhookDeliveryDeadEvent(projectID, deliveryID, channelID uuid.UUID, eventType, lastError, dashboardURL string) Event {
 	payload := mustPayload(map[string]any{
 		"project_id":    projectID.String(),
