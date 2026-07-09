@@ -25,6 +25,9 @@ export type AuthOptions = {
 
 const DEFAULT_API_TIMEOUT_MS = 8000;
 const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
+// Live LLM probes: the backend allows up to 30s for the completions, so the
+// browser must wait longer than the default API timeout.
+const LLM_CONNECTION_TEST_TIMEOUT_MS = 45_000;
 const READ_TIMEOUT_RETRIES = 1;
 
 function apiTimeoutMs(auth?: AuthOptions) {
@@ -1970,7 +1973,7 @@ export function createApi(auth?: AuthOptions) {
     return req<ProviderTestResult>(
       "/admin/llm-credentials/test",
       { method: "POST", body: JSON.stringify(body ?? {}) },
-      auth,
+      withMinimumTimeout(auth, LLM_CONNECTION_TEST_TIMEOUT_MS),
     );
   },
   deleteLLMCredentials: async () => {
@@ -1989,7 +1992,7 @@ export function createApi(auth?: AuthOptions) {
     return req<ProviderTestResult>(
       `/admin/geo-credentials/${encodeURIComponent(scope)}/test`,
       { method: "POST" },
-      auth,
+      withMinimumTimeout(auth, LLM_CONNECTION_TEST_TIMEOUT_MS),
     );
   },
   deleteGEOCredentials: async (scope: GEOProviderScope) => {
