@@ -1471,6 +1471,9 @@ func (s *Server) resolveSiteFixGitHubPRSource(ctx context.Context, projectID uui
 		}
 		proposedContent, err := siteFixMetadataRewriteContent(baseContent, action)
 		if err != nil {
+			if isSiteFixMissingProposedMetadataError(err) {
+				return siteFixResolvedSource{}, fmt.Errorf("%s: %w", mapping.SourceFilePath, err)
+			}
 			lastErr = fmt.Errorf("%s: %w", mapping.SourceFilePath, err)
 			continue
 		}
@@ -3445,7 +3448,7 @@ After this PR merges and deploys, CiteLoop should re-run the original finding be
 func siteFixMetadataRewriteContent(source string, action db.ContentAction) (string, error) {
 	title, description := siteFixProposedMetadata(action)
 	if title == "" && description == "" {
-		return "", fmt.Errorf("metadata rewrite site fix has no proposed title or meta description")
+		return "", fmt.Errorf(siteFixMissingProposedMetadataMessage)
 	}
 	frontmatter, body, newline, ok := splitMDFrontmatter(source)
 	if ok {
@@ -3469,6 +3472,12 @@ func siteFixMetadataRewriteContent(source string, action db.ContentAction) (stri
 		return updated, nil
 	}
 	return "", fmt.Errorf("metadata rewrite site fix requires Markdown frontmatter or supported Next.js metadata source")
+}
+
+const siteFixMissingProposedMetadataMessage = "metadata rewrite site fix has no proposed title or meta description"
+
+func isSiteFixMissingProposedMetadataError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), siteFixMissingProposedMetadataMessage)
 }
 
 func rewriteNextMetadataSource(source, title, description string) (string, bool, error) {

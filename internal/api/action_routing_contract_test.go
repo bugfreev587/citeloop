@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -638,6 +640,43 @@ const HOMEPAGE_DESCRIPTION =
 	}
 }
 
+func TestResolveSiteFixGitHubPRSourceKeepsMissingMetadataError(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description for query relevance",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		TargetUrl:  strPtrFrom("https://unipost.dev/"),
+		OutputSnapshot: json.RawMessage(`{
+			"title": "Rewrite homepage title and meta description for query relevance",
+			"asset_type": "metadata_rewrite",
+			"proposed_change": {
+				"preserve": ["canonical", "indexability", "production URL"]
+			}
+		}`),
+	}
+	reader := fakeSiteFixSourceReader{
+		files: map[string]string{
+			"dashboard/src/app/marketing/page.tsx": `const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
+const HOMEPAGE_DESCRIPTION = "UniPost gives developers one API.";
+`,
+		},
+	}
+
+	_, err := (&Server{}).resolveSiteFixGitHubPRSource(context.Background(), uuid.New(), action, publisher.GitHubNextJSConfig{
+		ContentDir: "content/citeloop/blog",
+		BaseURL:    "https://unipost.dev/blog",
+		Branch:     "main",
+	}, reader)
+	if err == nil {
+		t.Fatal("resolveSiteFixGitHubPRSource should reject missing proposed metadata copy")
+	}
+	if !strings.Contains(err.Error(), "no proposed title or meta description") {
+		t.Fatalf("expected missing proposed metadata error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "app/layout.tsx") {
+		t.Fatalf("missing proposed metadata error should not be masked by later fallback 404s: %v", err)
+	}
+}
+
 func TestSiteFixMetadataRewriteSourceCandidatesIncludeHomepageNextMetadata(t *testing.T) {
 	action := db.ContentAction{
 		ActionType: "Rewrite homepage title and meta description",
@@ -689,4 +728,15 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type fakeSiteFixSourceReader struct {
+	files map[string]string
+}
+
+func (f fakeSiteFixSourceReader) ReadFile(_ context.Context, sourcePath, _ string) (string, string, error) {
+	if content, ok := f.files[sourcePath]; ok {
+		return content, "sha-" + sourcePath, nil
+	}
+	return "", "", errors.New("github content lookup 404: not found")
 }
