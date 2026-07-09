@@ -287,6 +287,17 @@ func runtimeRouteForRequest(c Credentials, env config.Env, req llm.CompletionReq
 	}
 }
 
+// CredentialsWithRouteOverrides returns a copy of c with the given routes
+// merged over the saved ones, so a connection test can probe route selections
+// the admin has edited in the UI but not persisted yet.
+func CredentialsWithRouteOverrides(c Credentials, routes ModelRoutes) Credentials {
+	if len(routes) == 0 {
+		return c
+	}
+	c.Routes = normalizeModelRoutes(routes, c.Routes, c.Model, c.WriterModel, c.QAModel)
+	return c
+}
+
 func RuntimeProbeTargets(c Credentials, env config.Env) []RuntimeProbeTarget {
 	targets := make([]RuntimeProbeTarget, 0, len(runtimeRoleOrder()))
 	for _, role := range runtimeRoleOrder() {

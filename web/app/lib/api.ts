@@ -1966,10 +1966,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>("/admin/llm-credentials", { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeLLMCredentialsStatus(raw);
   },
-  testLLMCredentials: async () => {
+  testLLMCredentials: async (body?: { routes?: Partial<Record<LLMRuntimeRole, LLMModelRoute>> }) => {
     return req<ProviderTestResult>(
       "/admin/llm-credentials/test",
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify(body ?? {}) },
       auth,
     );
   },

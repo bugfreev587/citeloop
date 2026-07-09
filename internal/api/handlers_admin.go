@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -52,7 +54,9 @@ func (s *Server) deleteLLMCredentials(w http.ResponseWriter, r *http.Request) {
 }
 
 // testLLMCredentials runs a tiny live completion against the saved provider so an
-// admin can confirm the key/base URL actually work before relying on them.
+// admin can confirm the key/base URL actually work before relying on them. The
+// optional request body carries the routes currently selected in the UI so the
+// probe exercises those selections even before they are saved.
 func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
 	cred, err := admin.LoadCredentials(r.Context(), s.Pool)
 	if err != nil {
@@ -63,6 +67,14 @@ func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "No provider credentials saved yet. Save a key first, then test."})
 		return
 	}
+	var in struct {
+		Routes admin.ModelRoutes `json:"routes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	testCred := admin.CredentialsWithRouteOverrides(*cred, in.Routes)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -71,8 +83,8 @@ func (s *Server) testLLMCredentials(w http.ResponseWriter, r *http.Request) {
 	firstModel := ""
 	firstSample := ""
 	var totalLatency int64
-	provider := admin.ProviderFromCredentials(*cred, s.Env)
-	for _, target := range admin.RuntimeProbeTargets(*cred, s.Env) {
+	provider := admin.ProviderFromCredentials(testCred, s.Env)
+	for _, target := range admin.RuntimeProbeTargets(testCred, s.Env) {
 		start := time.Now()
 		resp, err := provider.Complete(ctx, llm.CompletionReq{
 			System:                  "You are a connectivity probe.",

@@ -390,7 +390,7 @@ export function AdminClient({ projectId }: { projectId: string }) {
     setMessage(null);
     setTestResult(null);
     try {
-      setTestResult(await api.testLLMCredentials());
+      setTestResult(await api.testLLMCredentials({ routes: runtimeRoutes }));
     } catch (e: any) {
       setTestResult({ ok: false, error: e.message });
     } finally {
