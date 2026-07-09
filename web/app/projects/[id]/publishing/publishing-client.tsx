@@ -10,6 +10,7 @@ import {
   Copy,
   Eye,
   ExternalLink,
+  History,
   Loader2,
   Plug,
   RefreshCw,
@@ -39,7 +40,7 @@ import { ContentWorkflowStageHeaderAction } from "../content-workflow-stage-acti
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type PublishMode = "scheduled" | "manual";
-type DrawerKind = "schedule" | "view_all" | "github" | "manual" | "more" | "cms" | "seo_details" | null;
+type DrawerKind = "schedule" | "view_all" | "github" | "manual" | "more" | "cms" | "seo_details" | "recent" | null;
 type ManualPlatformID = ManualSyndicationPlatform["id"];
 
 const MODE_META: Record<PublishMode, { label: string; icon: React.ReactNode; detail: string }> = {
@@ -494,31 +495,37 @@ function ManualPlatformRows({
 function PublishedSection({
   section,
   projectId,
-  collapsed,
+  collapsed = false,
   highlightedArticleId,
   busy,
   onToggle,
   onCheckStatus,
+  title = "Published",
+  showToggle = true,
 }: {
   section: ReturnType<typeof buildPublishingOperationalGroups>["published"];
   projectId: string;
-  collapsed: boolean;
+  collapsed?: boolean;
   highlightedArticleId?: string | null;
   busy: string | null;
-  onToggle: () => void;
+  onToggle?: () => void;
   onCheckStatus: () => void;
+  title?: string;
+  showToggle?: boolean;
 }) {
   return (
     <section data-publish-published-section className="min-w-0 space-y-3">
       <SectionHeader
-        title="Published"
+        title={title}
         action={
           <div className="flex shrink-0 items-center gap-2">
             <Badge tone={section.count ? "green" : "neutral"}>{section.count}</Badge>
-            <Button size="sm" onClick={onToggle} aria-expanded={!collapsed}>
-              <ChevronDown size={14} className={cx("transition-transform", collapsed ? "-rotate-90" : "")} />
-              {collapsed ? "Show" : "Hide"}
-            </Button>
+            {showToggle && onToggle && (
+              <Button size="sm" onClick={onToggle} aria-expanded={!collapsed}>
+                <ChevronDown size={14} className={cx("transition-transform", collapsed ? "-rotate-90" : "")} />
+                {collapsed ? "Show" : "Hide"}
+              </Button>
+            )}
           </div>
         }
       />
@@ -730,7 +737,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
   const [selectedSEOArticle, setSelectedSEOArticle] = useState<Article | null>(null);
   const [focusedOperationalGroup, setFocusedOperationalGroup] = useState<OperationalGroup["key"] | null>(null);
   const [highlightedPublishArticleId, setHighlightedPublishArticleId] = useState<string | null>(null);
-  const [publishedCollapsed, setPublishedCollapsed] = useState(true);
   const [highlightedPublishedArticleId, setHighlightedPublishedArticleId] = useState<string | null>(null);
   const seenPublishedIdsRef = useRef<Set<string> | null>(null);
 
@@ -927,7 +933,7 @@ export function PublishingClient({ projectId }: { projectId: string }) {
     const newlyPublishedId = [...nextIds].find((id) => !previousIds.has(id));
     if (!newlyPublishedId) return;
 
-    setPublishedCollapsed(false);
+    setDrawer("recent");
     setHighlightedPublishedArticleId(newlyPublishedId);
     const focusTimer = window.setTimeout(() => {
       const target = document.querySelector<HTMLElement>(`[data-publish-published-article-card="${newlyPublishedId}"]`);
@@ -1141,6 +1147,17 @@ export function PublishingClient({ projectId }: { projectId: string }) {
         <RefreshCw size={14} />
         Refresh
       </Button>
+      <Button
+        data-publish-recent-drawer-trigger
+        size="sm"
+        variant="outline"
+        onClick={() => setDrawer("recent")}
+        aria-label={`Open Recently Published (${publishedSection.count})`}
+      >
+        <History size={14} />
+        Recently Published
+        <Badge tone={publishedSection.count ? "green" : "neutral"}>{publishedSection.count}</Badge>
+      </Button>
     </div>
   );
 
@@ -1174,15 +1191,6 @@ export function PublishingClient({ projectId }: { projectId: string }) {
             onSeoDetails={openSEODetails}
             onMoveBack={moveBackToOpportunity}
             onDestination={() => setDrawer("github")}
-          />
-          <PublishedSection
-            section={publishedSection}
-            projectId={projectId}
-            collapsed={publishedCollapsed}
-            highlightedArticleId={highlightedPublishedArticleId}
-            busy={busy}
-            onToggle={() => setPublishedCollapsed((value) => !value)}
-            onCheckStatus={reconcile}
           />
         </div>
 
@@ -1237,6 +1245,24 @@ export function PublishingClient({ projectId }: { projectId: string }) {
       </div>
 
       {loading && <EmptyState title="Loading publishing state" detail="Ready content and destination status is loading." />}
+
+      <Drawer
+        open={drawer === "recent"}
+        title="Recently Published"
+        subtitle="Published canonical work that has moved into Results measurement."
+        dataAttribute="publish-recent-drawer"
+        onClose={() => setDrawer(null)}
+      >
+        <PublishedSection
+          section={publishedSection}
+          projectId={projectId}
+          highlightedArticleId={highlightedPublishedArticleId}
+          busy={busy}
+          onCheckStatus={reconcile}
+          title="Published work"
+          showToggle={false}
+        />
+      </Drawer>
 
       <Drawer
         open={drawer === "github"}
