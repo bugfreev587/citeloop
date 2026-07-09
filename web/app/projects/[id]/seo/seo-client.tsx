@@ -2999,26 +2999,26 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
                   Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})
                 </summary>
-                <div className="grid max-h-96 gap-2 overflow-y-auto border-t border-slate-100 p-3">
+                <div data-opportunity-handoff-grid className="grid max-h-[32rem] gap-3 overflow-y-auto border-t border-slate-100 p-3 md:grid-cols-2 xl:grid-cols-3">
                   {sentOpportunityLinks.map((action) => {
                     const label = loopActionCurrentLabel(action as LoopAction);
                     const href = loopActionCurrentHref(projectId, action as LoopAction);
                     const content = (
-                      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone="green">{actionHandoffStatus(action)}</Badge>
                             <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
                           </div>
-                          <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{loopActionTitle(action as any)}</h3>
-                          <p className="mt-1 truncate text-xs text-slate-500">
+                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as any)}</h3>
+                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
                             {action.target_url ?? action.normalized_target_url ?? "Approved work is ready in the next queue."}
                           </p>
                         </div>
-                        <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
-                          View in {label}
-                          <ChevronRight size={16} className="text-slate-400" />
-                        </span>
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                          <span>View in {label}</span>
+                          <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                        </div>
                       </div>
                     );
 
@@ -3030,7 +3030,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           data-opportunity-handoff-card
                           aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
                           onClick={() => focusSiteFixCard(action.id)}
-                          className="w-full rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                          className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                         >
                           {content}
                         </button>
@@ -3043,7 +3043,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         data-opportunity-handoff-card
                         aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
                         href={href}
-                        className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                       >
                         {content}
                       </Link>
@@ -3052,29 +3052,29 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                   {watchingOpportunityLinks.map((opp) => {
                     const watchItem = watchlist.find((item) => item.source_opportunity_id === opp.id);
                     return (
-                      <Link
-                        key={opp.id}
-                        data-opportunity-handoff-card
-                        href={`/projects/${projectId}/results?watch=${opp.id}`}
-                        className="block rounded-md border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                      >
-                        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge tone="green">Watching in Results</Badge>
-                              <Badge tone="neutral">No changes planned</Badge>
-                            </div>
-                            <h3 className="mt-2 truncate text-sm font-bold text-slate-950">{opportunityTitle(opp)}</h3>
-                            <p className="mt-1 truncate text-xs text-slate-500">
-                              {watchItem?.due_at ? `Observation window ends ${formatDate(watchItem.due_at)}.` : "Observing signals before deciding on work."}
-                            </p>
-                          </div>
-                          <span className="inline-flex items-center gap-1 text-sm font-semibold text-slate-700">
-                            View in Results
-                            <ChevronRight size={16} className="text-slate-400" />
-                          </span>
-                        </div>
-                      </Link>
+	                      <Link
+	                        key={opp.id}
+	                        data-opportunity-handoff-card
+	                        href={`/projects/${projectId}/results?watch=${opp.id}`}
+	                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+	                      >
+	                        <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+	                          <div className="min-w-0">
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              <Badge tone="green">Watching in Results</Badge>
+	                              <Badge tone="neutral">No changes planned</Badge>
+	                            </div>
+	                            <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+	                            <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
+	                              {watchItem?.due_at ? `Observation window ends ${formatDate(watchItem.due_at)}.` : "Observing signals before deciding on work."}
+	                            </p>
+	                          </div>
+	                          <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+	                            <span>View in Results</span>
+	                            <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+	                          </div>
+	                        </div>
+	                      </Link>
                     );
                   })}
                 </div>
@@ -3500,7 +3500,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             {attributionActions.length === 0 ? (
               <EmptyState title="No published or applied actions are ready for attribution yet" detail="Published or URL-verified actions will appear here once they enter the loop." />
             ) : (
-              <div className="grid gap-3">
+              <div data-results-action-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {(resultsActions.length ? attributionActions.slice(0, 12) : resultActions.slice(0, 12).map((action) => action)).map((action) => {
                   const state = actionMeasurementState(action);
                   const queue = measurementQueueState(action);
@@ -3521,43 +3521,44 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         setSelectedResultActionID(action.id);
                       }}
                       className={cx(
-                        "group w-full rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                        "group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
                         highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedResultActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
                       )}
                     >
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={state.tone}>{state.label}</Badge>
                             <Badge tone={queue.tone}>{queue.label}</Badge>
                             <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
                           </div>
-                          <h3 className="mt-3 text-lg font-bold leading-6 text-slate-950">{publishedTitle}</h3>
-                          <p className="mt-2 truncate text-sm leading-6 text-slate-600">{publishedURL || sourceURL || action.id}</p>
+                          <h3 className="mt-3 line-clamp-2 text-lg font-bold leading-6 text-slate-950">{publishedTitle}</h3>
+                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-600">{publishedURL || sourceURL || action.id}</p>
                           {sourceURL && (
-                            <p className="mt-1 truncate text-xs font-medium leading-5 text-slate-400">Source: {sourceURL}</p>
+                            <p className="mt-1 line-clamp-1 break-all text-xs font-medium leading-5 text-slate-400">Source: {sourceURL}</p>
                           )}
                         </div>
-                        <div className="flex shrink-0 items-start justify-between gap-3 text-sm text-slate-500 md:min-w-[150px]">
+                        <div className="grid gap-3 text-sm">
                           <div>
-                            <div className="font-semibold text-slate-700">Published / applied</div>
-                            <div>{formatDate(action.published_at ?? action.verified_at ?? null)}</div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Published / applied</div>
+                            <div className="mt-1 font-medium text-slate-700">{formatDate(action.published_at ?? action.verified_at ?? null)}</div>
                           </div>
-                          <ChevronRight className="mt-1 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
+                            <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Outcome reason</div>
+                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{state.detail}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
+                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{queue.detail}</div>
+                          </div>
                         </div>
-                      </div>
-                      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3 text-sm md:grid-cols-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
-                          <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Outcome reason</div>
-                          <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{state.detail}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint state</div>
-                          <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{queue.detail}</div>
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                          <span>Open details</span>
+                          <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                         </div>
                       </div>
                     </button>

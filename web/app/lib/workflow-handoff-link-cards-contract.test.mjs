@@ -102,6 +102,34 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
 });
 
+test("Analysis Recently sent handoff cards use the shared responsive square-card grid", async () => {
+  const source = await read("projects/[id]/seo/seo-client.tsx");
+  const sectionStart = source.indexOf("Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})");
+  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+
+  assert.ok(section.length > 0, "analysis recently sent section must exist");
+  assert.match(section, /data-opportunity-handoff-grid/);
+  assert.match(section, /md:grid-cols-2/);
+  assert.match(section, /xl:grid-cols-3/);
+  assert.match(section, /min-h-\[220px\]/);
+  assert.match(section, /flex h-full/);
+  assert.doesNotMatch(section, /sm:flex-row/, "handoff cards should not keep the old full-row internal layout");
+});
+
+test("Content Plan Recently sent cards use the shared responsive square-card grid", async () => {
+  const source = await read("projects/[id]/topics/topics-client.tsx");
+  const sectionStart = source.indexOf("data-content-plan-recently-sent");
+  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+
+  assert.ok(section.length > 0, "content plan recently sent section must exist");
+  assert.match(section, /data-content-plan-sent-grid/);
+  assert.match(section, /md:grid-cols-2/);
+  assert.match(section, /xl:grid-cols-3/);
+  assert.match(section, /min-h-\[220px\]/);
+  assert.match(section, /flex h-full/);
+  assert.doesNotMatch(section, /sm:flex-row/, "sent-to-review cards should not keep the old full-row internal layout");
+});
+
 test("Content Plan Recently sent starts collapsed by default", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
   const sectionStart = source.indexOf("data-content-plan-recently-sent");

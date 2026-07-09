@@ -67,6 +67,23 @@ test("Results action attribution opens compact cards into a detail drawer", () =
   }
 });
 
+test("Results attribution cards use the shared responsive square-card grid", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const resultsStart = seo.indexOf('{mode === "results"');
+  const resultsBlock = seo.slice(resultsStart);
+  const gridStart = resultsBlock.indexOf("data-results-action-grid");
+  const gridEnd = resultsBlock.indexOf("</section>", gridStart);
+  const gridBlock = resultsBlock.slice(gridStart, gridEnd);
+
+  assert.notEqual(gridStart, -1, "results attribution should expose a responsive card grid");
+  assert.equal(gridBlock.includes("md:grid-cols-2"), true, "results attribution should show two cards on medium screens");
+  assert.equal(gridBlock.includes("xl:grid-cols-3"), true, "results attribution should show three cards on wide screens");
+  assert.equal(gridBlock.includes("min-h-[220px]"), true, "results attribution cards should keep a square-card footprint");
+  assert.equal(gridBlock.includes("flex h-full"), true, "results attribution cards should fill the grid cell vertically");
+  assert.equal(gridBlock.includes("Open details"), true, "results attribution cards should match Site Fix card footer language");
+  assert.equal(gridBlock.includes("md:flex-row"), false, "results attribution cards should not keep the old full-row internal layout");
+});
+
 test("Results attribution cards identify the published article behind the action", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
