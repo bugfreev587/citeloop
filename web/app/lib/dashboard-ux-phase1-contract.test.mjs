@@ -2039,8 +2039,10 @@ test("content plan only links to Review after a draft article exists", () => {
 
   assert.match(logic, /hasReviewableDraft/);
   assert.match(topics, /hasReviewableDraft\(selectedContentPlanAction\)/);
-  assert.match(topics, /const actionHasReviewContent = hasReviewableDraft\(action\)/);
-  assert.match(topics, /actionHasReviewContent \? \(/);
+  // The accepted card opens the drawer; the Review-link gating now lives in the
+  // drawer footer rather than on the card itself.
+  assert.match(topics, /const selectedActionHasReviewContent = hasReviewableDraft\(selectedContentPlanAction\)/);
+  assert.match(topics, /selectedActionHasReviewContent \? \(/);
   assert.match(topics, /View in Review/);
   assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
   assert.doesNotMatch(topics, /const selectedActionHasReviewContent = Boolean\(selectedContentPlanAction\?\.draft_article_id\)/);

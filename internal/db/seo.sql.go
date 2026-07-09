@@ -3421,7 +3421,8 @@ func (q *Queries) MarkContentActionMeasuringForDraftArticle(ctx context.Context,
 
 const markContentActionReturnedToOpportunity = `-- name: MarkContentActionReturnedToOpportunity :one
 with candidate as (
-  select content_actions.id, content_actions.project_id, content_actions.opportunity_id
+  select content_actions.id, content_actions.project_id, content_actions.opportunity_id,
+    content_actions.draft_article_id
   from content_actions
   where content_actions.id = $1
     and content_actions.project_id = $2
@@ -3452,6 +3453,16 @@ updated_opportunity as (
   where so.id = candidate.opportunity_id
     and so.project_id = candidate.project_id
   returning so.id
+),
+withdrawn_article as (
+  update articles a set
+    status = 'rejected',
+    updated_at = now()
+  from candidate
+  where a.id = candidate.draft_article_id
+    and a.project_id = candidate.project_id
+    and a.status in ('generating','pending_review','approved')
+  returning a.id
 )
 select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason from updated_action
 `
@@ -3497,6 +3508,8 @@ type MarkContentActionReturnedToOpportunityRow struct {
 	StatusReason            *string            `json:"status_reason"`
 }
 
+// Withdraw the in-progress draft so a returned opportunity does not leave an
+// approved article stranded in the Publish "Ready to post" queue.
 func (q *Queries) MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error) {
 	row := q.db.QueryRow(ctx, markContentActionReturnedToOpportunity, arg.ActionID, arg.ProjectID)
 	var i MarkContentActionReturnedToOpportunityRow
