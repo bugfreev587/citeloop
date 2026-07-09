@@ -19,11 +19,49 @@ test("Analysis Recently sent exit rule is event-driven, not time- or count-based
   assert.doesNotMatch(sentBlock, /slice\(0,\s*\d+\)/, "sent handoff cards must not be silently capped; overflow scrolls in-group");
 });
 
+test("Analysis loop and sent cards exclude actions hidden by their destination queues", async () => {
+  const source = await read("projects/[id]/seo/seo-client.tsx");
+  const loopBlock = source.slice(source.indexOf("const activeOpportunities"), source.indexOf("const selectedDirectAction"));
+  const helperBlock = source.slice(source.indexOf("const inactiveLoopActionStatuses"), source.indexOf("function isRecentlySentAction"));
+
+  assert.ok(loopBlock.length > 0, "loop action derivation block must exist");
+  assert.ok(helperBlock.length > 0, "visible loop helper must exist before sent handoff filtering");
+
+  for (const marker of [
+    "function isVisibleLoopAction",
+    "hasDismissedSourceOpportunity(action)",
+    "!hasResultsExecutionEvidence(action)",
+    "const visibleLoopActions = loopActions.filter(isVisibleLoopAction)",
+    "visibilityLifecycleCounts(visibleLoopActions)",
+    "visibleLoopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage)",
+    "const directReviewActionsAll = visibleLoopActions",
+    "const sentOpportunityLinks = visibleLoopActions",
+  ]) {
+    assert.equal(source.includes(marker), true, `seo-client.tsx missing ${marker}`);
+  }
+
+  assert.match(helperBlock, /dismissed/, "visible loop helper must recognize dismissed source states");
+  assert.match(helperBlock, /archived/, "visible loop helper must recognize archived source states");
+});
+
+test("Analysis Recently sent cards use current-surface routing instead of stale destination routing", async () => {
+  const source = await read("projects/[id]/seo/seo-client.tsx");
+  const sentSectionStart = source.indexOf("{sentOpportunityLinks.map((action) => {");
+  const sentSectionEnd = source.indexOf("{watchingOpportunityLinks.map", sentSectionStart);
+  const sentSection = source.slice(sentSectionStart, sentSectionEnd);
+
+  assert.ok(sentSection.length > 0, "recently sent card render block must exist");
+  assert.match(sentSection, /loopActionCurrentHref\(projectId, action as LoopAction\)/);
+  assert.match(sentSection, /loopActionCurrentLabel\(action as LoopAction\)/);
+  assert.doesNotMatch(sentSection, /actionHandoffHref\(projectId, action\)/);
+  assert.doesNotMatch(sentSection, /destinationForAction\(action\)/);
+});
+
 test("Analysis handoff cards expose accessible names with title and destination", async () => {
   const source = await read("projects/[id]/seo/seo-client.tsx");
 
-  assert.match(source, /aria-label=\{`Open "\$\{loopActionTitle\(action as any\)\}" in Content Plan`\}/);
-  assert.match(source, /aria-label=\{`Open "\$\{loopActionTitle\(action as any\)\}" in Site Fixes`\}/);
+  assert.match(source, /aria-label=\{`Open "\$\{loopActionTitle\(action as any\)\}" in \$\{label\}`\}/);
+  assert.match(source, /if \(label === "Site Fixes"\)/);
 });
 
 test("Analysis Recently sent starts collapsed by default", async () => {

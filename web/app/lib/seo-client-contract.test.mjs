@@ -427,7 +427,7 @@ test("Analysis Site Fix handoff cards use the loop action source for same-page t
     assert.equal(loopActionsSource.includes(expected), true, `loop action source should include ${expected}`);
   }
 
-  assert.match(directSource, /const directReviewActionsAll = loopActions\s+\.filter\(\(action\) => isDirectAction\(action\)\)/);
+  assert.match(directSource, /const directReviewActionsAll = visibleLoopActions\s+\.filter\(\(action\) => isDirectAction\(action\)\)/);
   assert.equal(directSource.includes("const directReviewActionsAll = actions"), false, "Site Fixes should not depend on the separately paged content action list");
   assert.equal(focusSource.includes("directReviewActionsAll.some((action) => action.id === actionID)"), true, "Loop Site Fix cards should expand the same source they render from");
 });
