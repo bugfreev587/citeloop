@@ -44,7 +44,7 @@ test("Analysis loop and sent cards exclude actions hidden by their destination q
   assert.match(helperBlock, /archived/, "visible loop helper must recognize archived source states");
 });
 
-test("Analysis Recently sent cards use current-surface routing instead of stale destination routing", async () => {
+test("Analysis Recently Decided cards use current-surface routing instead of stale destination routing", async () => {
   const source = await read("projects/[id]/seo/seo-client.tsx");
   const sentSectionStart = source.indexOf("{sentOpportunityLinks.map((action) => {");
   const sentSectionEnd = source.indexOf("{watchingOpportunityLinks.map", sentSectionStart);
@@ -64,15 +64,22 @@ test("Analysis handoff cards expose accessible names with title and destination"
   assert.match(source, /if \(label === "Site Fixes"\)/);
 });
 
-test("Analysis Recently sent starts collapsed by default", async () => {
+test("Analysis Recently Decided lives in a right drawer opened from the section header", async () => {
   const source = await read("projects/[id]/seo/seo-client.tsx");
-  const marker = "Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})";
-  const markerIndex = source.indexOf(marker);
-  const detailsStart = source.lastIndexOf("<details", markerIndex);
-  const section = source.slice(detailsStart, source.indexOf("</details>", markerIndex));
-  assert.ok(section.length > 0, "analysis recently sent section must exist");
 
-  assert.doesNotMatch(section, /<details[^>]*\sopen(?:=|\s|>)/, "Analysis Recently sent should not default open");
+  for (const expected of [
+    "data-opportunity-recent-drawer-trigger",
+    'dataAttribute="opportunity-recent-drawer"',
+    "Recently Decided",
+    "setAnalysisRecentDrawer(\"opportunities\")",
+  ]) {
+    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+  }
+
+  const queueStart = source.indexOf("data-analysis-growth-findings-section");
+  const siteFixesStart = source.indexOf("data-site-fixes-queue");
+  const queueSection = source.slice(queueStart, siteFixesStart);
+  assert.doesNotMatch(queueSection, /<details[\s\S]*Recently sent/, "Opportunity Queue should not render inline Recently sent details");
 });
 
 test("Content Plan keeps Sent to Review handoff link cards for drafted content briefs", async () => {
@@ -80,8 +87,10 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
 
   for (const marker of [
     "data-content-plan-recently-sent",
+    "data-content-plan-recent-drawer-trigger",
     "data-content-plan-sent-card",
-    "Recently sent ({sentToReviewActions.length + sentToReviewTopics.length})",
+    'dataAttribute="content-plan-recent-drawer"',
+    "Recently Drafted",
     "Sent to Review",
     "sentToReviewActions",
     "hasReviewableDraft(action)",
@@ -102,12 +111,12 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
 });
 
-test("Analysis Recently sent handoff cards use the shared responsive square-card grid", async () => {
+test("Analysis Recently Decided handoff cards use the shared responsive square-card grid", async () => {
   const source = await read("projects/[id]/seo/seo-client.tsx");
-  const sectionStart = source.indexOf("Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})");
-  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+  const sectionStart = source.indexOf('dataAttribute="opportunity-recent-drawer"');
+  const section = source.slice(sectionStart, source.indexOf("</RightDrawer>", sectionStart));
 
-  assert.ok(section.length > 0, "analysis recently sent section must exist");
+  assert.ok(section.length > 0, "analysis recently decided drawer must exist");
   assert.match(section, /data-opportunity-handoff-grid/);
   assert.match(section, /md:grid-cols-2/);
   assert.match(section, /xl:grid-cols-3/);
@@ -118,10 +127,10 @@ test("Analysis Recently sent handoff cards use the shared responsive square-card
 
 test("Content Plan Recently sent cards use the shared responsive square-card grid", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
-  const sectionStart = source.indexOf("data-content-plan-recently-sent");
-  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+  const sectionStart = source.indexOf('dataAttribute="content-plan-recent-drawer"');
+  const section = source.slice(sectionStart, source.indexOf("</RightDrawer>", sectionStart));
 
-  assert.ok(section.length > 0, "content plan recently sent section must exist");
+  assert.ok(section.length > 0, "content plan recently drafted drawer must exist");
   assert.match(section, /data-content-plan-sent-grid/);
   assert.match(section, /md:grid-cols-2/);
   assert.match(section, /xl:grid-cols-3/);
@@ -130,19 +139,28 @@ test("Content Plan Recently sent cards use the shared responsive square-card gri
   assert.doesNotMatch(section, /sm:flex-row/, "sent-to-review cards should not keep the old full-row internal layout");
 });
 
-test("Content Plan Recently sent starts collapsed by default", async () => {
+test("Content Plan Recently Drafted lives in a right drawer opened from the section header", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
-  const sectionStart = source.indexOf("data-content-plan-recently-sent");
-  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
-  assert.ok(section.length > 0, "recently sent section must exist");
 
-  assert.doesNotMatch(section, /<details[^>]*\sopen(?:=|\s|>)/, "Recently sent should not default open");
+  for (const expected of [
+    "data-content-plan-recent-drawer-trigger",
+    'dataAttribute="content-plan-recent-drawer"',
+    "Recently Drafted",
+    "setRecentDraftsDrawerOpen(true)",
+  ]) {
+    assert.equal(source.includes(expected), true, `topics-client.tsx missing ${expected}`);
+  }
+
+  const planStart = source.indexOf("data-content-plan-handoff-section");
+  const legacyStart = source.indexOf("Legacy content briefs", planStart);
+  const planSection = source.slice(planStart, legacyStart);
+  assert.doesNotMatch(planSection, /<details[\s\S]*Recently sent/, "Content Plan should not render inline Recently sent details");
 });
 
 test("Sent to Review cards only expose review links and pre-publish reconsideration actions", async () => {
   const source = await read("projects/[id]/topics/topics-client.tsx");
-  const sectionStart = source.indexOf("data-content-plan-recently-sent");
-  const section = source.slice(sectionStart, source.indexOf("</details>", sectionStart));
+  const sectionStart = source.indexOf('dataAttribute="content-plan-recent-drawer"');
+  const section = source.slice(sectionStart, source.indexOf("</RightDrawer>", sectionStart));
   assert.ok(section.length > 0, "recently sent section must exist");
 
   assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "return", action \}\)/);

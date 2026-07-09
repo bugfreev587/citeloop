@@ -10,7 +10,9 @@ test("Review keeps approved drafts as Sent to Publish link cards", async () => {
   const source = await readFile(new URL("../projects/[id]/review/review-client.tsx", import.meta.url), "utf8");
   for (const expected of [
     "data-review-sent-to-publish",
-    "Sent to Publish (",
+    "data-review-recent-drawer-trigger",
+    'dataAttribute="review-recent-drawer"',
+    "Recently Reviewed",
     "View in Publish",
     "publish?article=${article.id}",
     "data-review-handoff-card",
@@ -21,12 +23,20 @@ test("Review keeps approved drafts as Sent to Publish link cards", async () => {
   const handoffCardEnd = source.indexOf("</Link>", handoffCardStart);
   const handoffCard = source.slice(handoffCardStart, handoffCardEnd);
   assert.equal(handoffCard.includes("onApprove"), false, "sent-to-publish link cards must not re-expose approve");
+
+  const decisionStart = source.indexOf("data-review-decision-section");
+  const inlineSentStart = source.indexOf("data-review-sent-to-publish", decisionStart);
+  const drawerStart = source.indexOf('dataAttribute="review-recent-drawer"');
+  assert.ok(drawerStart < inlineSentStart || inlineSentStart === -1, "Review sent cards should live in the recent drawer, not below the queue");
 });
 
 test("Publish links published work to Results and focuses ?article= on the main Publish card", async () => {
   const source = await readFile(new URL("../projects/[id]/publishing/publishing-client.tsx", import.meta.url), "utf8");
   for (const expected of [
     "data-publish-published-section",
+    "data-publish-recent-drawer-trigger",
+    'dataAttribute="publish-recent-drawer"',
+    "Recently Published",
     "data-publish-results-link",
     "View Results",
     "results?article=${row.articleId}",

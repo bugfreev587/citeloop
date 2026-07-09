@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Archive, ArrowRight, CalendarDays, Check, Loader2, Pencil, Power, Undo2, Wand2, X } from "lucide-react";
+import { Archive, ArrowRight, CalendarDays, Check, History, Loader2, Pencil, Power, Undo2, Wand2, X } from "lucide-react";
 import { defaultProjectConfig } from "../../../lib/api";
 import type { PageUpdateDraft, ProjectConfig, Topic, VisibilityActionInLoop, VisibilitySummary } from "../../../lib/api";
 import {
@@ -240,6 +240,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [publishStrategyDrafts, setPublishStrategyDrafts] = useState<Record<string, ContentPlanPublishStrategy>>({});
   const [newBriefOpen, setNewBriefOpen] = useState(false);
+  const [recentDraftsDrawerOpen, setRecentDraftsDrawerOpen] = useState(false);
   const [newBriefDraft, setNewBriefDraft] = useState<TopicDraft>(() => defaultContentBriefDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
@@ -955,6 +956,22 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 <Pencil size={14} />
                 New Content Brief
               </Button>
+              <Button
+                data-content-plan-recent-drawer-trigger
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSelectedContentPlanActionID(null);
+                  setRecentDraftsDrawerOpen(true);
+                }}
+                aria-label={`Open Recently Drafted (${sentToReviewActions.length + sentToReviewTopics.length})`}
+              >
+                <History size={14} />
+                Recently Drafted
+                <Badge tone={sentToReviewActions.length + sentToReviewTopics.length ? "green" : "neutral"}>
+                  {sentToReviewActions.length + sentToReviewTopics.length}
+                </Badge>
+              </Button>
             </div>
           }
         />
@@ -1295,13 +1312,22 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           </section>
         )}
 
-      {(sentToReviewActions.length > 0 || sentToReviewTopics.length > 0) && (
+      </div>
+      <RightDrawer
+        open={recentDraftsDrawerOpen}
+        dataAttribute="content-plan-recent-drawer"
+        eyebrow="Content Plan"
+        title="Recently Drafted"
+        subtitle="Content briefs that moved from planning into Review."
+        closeLabel="Close recently drafted"
+        maxWidthClassName="max-w-5xl"
+        onClose={() => setRecentDraftsDrawerOpen(false)}
+      >
         <section data-content-plan-recently-sent>
-          <details className="rounded-lg border border-slate-200 bg-white">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
-              Recently sent ({sentToReviewActions.length + sentToReviewTopics.length})
-            </summary>
-            <div data-content-plan-sent-grid className="grid max-h-[32rem] gap-3 overflow-y-auto border-t border-slate-100 p-3 md:grid-cols-2 xl:grid-cols-3">
+          {sentToReviewActions.length === 0 && sentToReviewTopics.length === 0 ? (
+            <EmptyState title="No recently drafted briefs" detail="Drafted briefs will appear here after they move into Review." />
+          ) : (
+            <div data-content-plan-sent-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {sentToReviewActions.map((action) => {
                 const actionReturnBusy = busy === `return-action-${action.id}`;
                 const actionDismissBusy = busy === `dismiss-action-${action.id}`;
@@ -1332,28 +1358,28 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                           <ArrowRight size={14} className="text-slate-400" />
                         </a>
                         <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
-                          disabled={Boolean(busy)}
-                          aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
-                        >
-                          <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
-                            Move back to Opportunities
-                          </ButtonProgress>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
-                          disabled={Boolean(busy)}
-                          aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
-                        >
-                          <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
-                            Dismiss
-                          </ButtonProgress>
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setPendingContentPlanConfirmation({ kind: "return", action })}
+                            disabled={Boolean(busy)}
+                            aria-label={`Move "${contentPlanActionTitle(action)}" back to Opportunities`}
+                          >
+                            <ButtonProgress busy={actionReturnBusy} busyLabel="Moving back" idleIcon={<Undo2 size={14} />}>
+                              Move back to Opportunities
+                            </ButtonProgress>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setPendingContentPlanConfirmation({ kind: "dismiss", action })}
+                            disabled={Boolean(busy)}
+                            aria-label={`Dismiss "${contentPlanActionTitle(action)}"`}
+                          >
+                            <ButtonProgress busy={actionDismissBusy} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                              Dismiss
+                            </ButtonProgress>
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -1387,10 +1413,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 </a>
               ))}
             </div>
-          </details>
+          )}
         </section>
-      )}
-      </div>
+      </RightDrawer>
       {selectedContentPlanAction && (
       <RightDrawer
         open={Boolean(selectedContentPlanAction)}

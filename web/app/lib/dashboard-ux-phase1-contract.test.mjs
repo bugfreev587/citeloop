@@ -268,7 +268,8 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Add to Content Plan",
     "Create Page Update",
     "Create Site Fix",
-    "Recently sent",
+    "Recently Decided",
+    "Recently Fixed",
     "Open details",
     "Opportunity details",
     "Evidence",
@@ -869,9 +870,11 @@ test("publishing first viewport is content-first Manual publish instead of platf
   assert.match(publishing, /data-publish-c2-first-viewport/);
   assert.match(publishing, /data-publish-ready-to-post/);
   assert.match(publishing, /data-publish-published-section/);
+  assert.match(publishing, /data-publish-recent-drawer-trigger/);
+  assert.match(publishing, /dataAttribute="publish-recent-drawer"/);
   assert.match(publishing, /data-publish-c2-destinations/);
   assert.match(publishing, /title="Ready to post"/);
-  assert.match(publishing, /title="Published"/);
+  assert.match(publishing, /title="Recently Published"/);
   assert.match(publishing, /title="Publish destinations"/);
   assert.match(workflow, /Ready content first\. Choose where and when per post\./);
   assert.match(publishing, /onDestination=\{\(\) => setDrawer\("github"\)\}/);
@@ -883,9 +886,8 @@ test("publishing first viewport is content-first Manual publish instead of platf
     "Ready content should appear before destinations in the first viewport source order",
   );
   assert.ok(
-    publishing.indexOf("data-publish-ready-to-post") < publishing.indexOf("data-publish-published-section") &&
-      publishing.indexOf("data-publish-published-section") < publishing.indexOf("data-publish-c2-destinations"),
-    "Published should sit below Ready to post and before destinations in source order",
+    publishing.indexOf("data-publish-ready-to-post") < publishing.indexOf("data-publish-c2-destinations"),
+    "Published work should move to the recent drawer so first viewport stays ready-content first",
   );
 
   for (const oldLane of [
@@ -981,10 +983,12 @@ test("publishing Published section owns live URLs and publish completion state",
   assert.match(publishing, /function PublishedSection/);
   assert.match(publishing, /data-publish-published-section/);
   assert.match(publishing, /data-publish-published-article-card/);
+  assert.match(publishing, /data-publish-recent-drawer-trigger/);
+  assert.match(publishing, /dataAttribute="publish-recent-drawer"/);
+  assert.match(publishing, /Recently Published/);
   assert.match(publishing, /Open live article/);
   assert.match(publishing, /Published URL missing/);
-  assert.match(publishing, /const \[publishedCollapsed, setPublishedCollapsed\] = useState\(true\);/);
-  assert.match(publishing, /setPublishedCollapsed\(false\)/);
+  assert.match(publishing, /setDrawer\("recent"\)/);
   assert.match(publishing, /setHighlightedPublishedArticleId/);
   assert.match(publishing, /publishedCanonicals: published/);
   assert.doesNotMatch(publishing, /publishedCanonicals: \[\.\.\.inflight/);

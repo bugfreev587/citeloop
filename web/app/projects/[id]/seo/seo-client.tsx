@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -37,6 +37,7 @@ import { normalizeNumeric } from "../../../lib/normalize";
 import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
+import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
@@ -1800,6 +1801,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [pendingSiteFixFocusID, setPendingSiteFixFocusID] = useState<string | null>(null);
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
   const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
+  const [analysisRecentDrawer, setAnalysisRecentDrawer] = useState<"opportunities" | "site-fixes" | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
@@ -2307,6 +2309,19 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const left = a.created_at ? new Date(a.created_at).getTime() : 0;
       const right = b.created_at ? new Date(b.created_at).getTime() : 0;
       return right - left;
+    });
+  const opportunityRecentCount = sentOpportunityLinks.length + watchingOpportunityLinks.length;
+  const recentlyFixedSiteActions = visibleLoopActions
+    .filter((action) => isDirectAction(action))
+    .filter((action) => {
+      const stage = deriveVisibilityLifecycleStage(action);
+      return resultLoopStages.has(stage) || (stage === "blocked" && hasResultsExecutionEvidence(action));
+    })
+    .slice()
+    .sort((a, b) => {
+      const left = a.verified_at ?? a.published_at ?? a.created_at ?? "";
+      const right = b.verified_at ?? b.published_at ?? b.created_at ?? "";
+      return right.localeCompare(left);
     });
   const selectedDirectAction = useMemo(
     () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
@@ -2927,6 +2942,17 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 <div className="flex flex-wrap gap-2">
                   <Badge tone={activeOpportunities.length ? "red" : "neutral"}>{activeOpportunities.length ? "Needs decision" : "No review needed"}</Badge>
                   <Badge tone="neutral">{loopActiveCount} in loop</Badge>
+                  <Button
+                    data-opportunity-recent-drawer-trigger
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAnalysisRecentDrawer("opportunities")}
+                    aria-label={`Open Recently Decided (${opportunityRecentCount})`}
+                  >
+                    <History size={14} />
+                    Recently Decided
+                    <Badge tone={opportunityRecentCount ? "green" : "neutral"}>{opportunityRecentCount}</Badge>
+                  </Button>
                 </div>
               }
             />
@@ -2994,93 +3020,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               </div>
             )}
 
-            {(sentOpportunityLinks.length > 0 || watchingOpportunityLinks.length > 0) && (
-              <details className="rounded-lg border border-slate-200 bg-white">
-                <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
-                  Recently sent ({sentOpportunityLinks.length + watchingOpportunityLinks.length})
-                </summary>
-                <div data-opportunity-handoff-grid className="grid max-h-[32rem] gap-3 overflow-y-auto border-t border-slate-100 p-3 md:grid-cols-2 xl:grid-cols-3">
-                  {sentOpportunityLinks.map((action) => {
-                    const label = loopActionCurrentLabel(action as LoopAction);
-                    const href = loopActionCurrentHref(projectId, action as LoopAction);
-                    const content = (
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone="green">{actionHandoffStatus(action)}</Badge>
-                            <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
-                          </div>
-                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as any)}</h3>
-                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
-                            {action.target_url ?? action.normalized_target_url ?? "Approved work is ready in the next queue."}
-                          </p>
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                          <span>View in {label}</span>
-                          <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-                        </div>
-                      </div>
-                    );
-
-                    if (label === "Site Fixes") {
-                      return (
-                        <button
-                          key={action.id}
-                          type="button"
-                          data-opportunity-handoff-card
-                          aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
-                          onClick={() => focusSiteFixCard(action.id)}
-                          className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                        >
-                          {content}
-                        </button>
-                      );
-                    }
-
-                    return (
-                      <Link
-                        key={action.id}
-                        data-opportunity-handoff-card
-                        aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
-                        href={href}
-                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                      >
-                        {content}
-                      </Link>
-                    );
-                  })}
-                  {watchingOpportunityLinks.map((opp) => {
-                    const watchItem = watchlist.find((item) => item.source_opportunity_id === opp.id);
-                    return (
-	                      <Link
-	                        key={opp.id}
-	                        data-opportunity-handoff-card
-	                        href={`/projects/${projectId}/results?watch=${opp.id}`}
-	                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-	                      >
-	                        <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-	                          <div className="min-w-0">
-	                            <div className="flex flex-wrap items-center gap-2">
-	                              <Badge tone="green">Watching in Results</Badge>
-	                              <Badge tone="neutral">No changes planned</Badge>
-	                            </div>
-	                            <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
-	                            <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
-	                              {watchItem?.due_at ? `Observation window ends ${formatDate(watchItem.due_at)}.` : "Observing signals before deciding on work."}
-	                            </p>
-	                          </div>
-	                          <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-	                            <span>View in Results</span>
-	                            <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-	                          </div>
-	                        </div>
-	                      </Link>
-                    );
-                  })}
-                </div>
-              </details>
-            )}
-
             {snoozedOpportunities.length > 0 && (
               <details className="rounded-lg border border-slate-200 bg-white">
                 <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-50">
@@ -3116,7 +3055,22 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             <SectionHeader
               title="Site Fixes"
               eyebrow="Approved site work"
-              action={<Badge tone={directReviewActionsAll.length ? "amber" : "neutral"}>{directReviewActionsAll.length} to review</Badge>}
+              action={
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Badge tone={directReviewActionsAll.length ? "amber" : "neutral"}>{directReviewActionsAll.length} to review</Badge>
+                  <Button
+                    data-site-fixes-recent-drawer-trigger
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAnalysisRecentDrawer("site-fixes")}
+                    aria-label={`Open Recently Fixed (${recentlyFixedSiteActions.length})`}
+                  >
+                    <History size={14} />
+                    Recently Fixed
+                    <Badge tone={recentlyFixedSiteActions.length ? "green" : "neutral"}>{recentlyFixedSiteActions.length}</Badge>
+                  </Button>
+                </div>
+              }
             />
             {directReviewActions.length === 0 ? (
               <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
@@ -3320,6 +3274,159 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           )}
         </div>
 
+        </>
+      )}
+
+      {mode === "analysis" && (
+        <>
+          <RightDrawer
+            open={analysisRecentDrawer === "opportunities"}
+            title="Recently Decided"
+            eyebrow="Opportunity Queue"
+            subtitle="Opportunity decisions that already moved into the next workflow surface."
+            dataAttribute="opportunity-recent-drawer"
+            maxWidthClassName="max-w-5xl"
+            onClose={() => setAnalysisRecentDrawer(null)}
+          >
+            {opportunityRecentCount === 0 ? (
+              <EmptyState title="No recent decisions" detail="Approved, watched, or routed opportunities will appear here after they leave the active queue." />
+            ) : (
+              <div data-opportunity-handoff-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {sentOpportunityLinks.map((action) => {
+                  const label = loopActionCurrentLabel(action as LoopAction);
+                  const href = loopActionCurrentHref(projectId, action as LoopAction);
+                  const content = (
+                    <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="green">{actionHandoffStatus(action)}</Badge>
+                          <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
+                        </div>
+                        <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as any)}</h3>
+                        <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
+                          {action.target_url ?? action.normalized_target_url ?? "Approved work is ready in the next queue."}
+                        </p>
+                      </div>
+                      <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                        <span>View in {label}</span>
+                        <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                      </div>
+                    </div>
+                  );
+
+                  if (label === "Site Fixes") {
+                    return (
+                      <button
+                        key={action.id}
+                        type="button"
+                        data-opportunity-handoff-card
+                        aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
+                        onClick={() => {
+                          setAnalysisRecentDrawer(null);
+                          focusSiteFixCard(action.id);
+                        }}
+                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                      >
+                        {content}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <Link
+                      key={action.id}
+                      data-opportunity-handoff-card
+                      aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
+                      href={href}
+                      className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                    >
+                      {content}
+                    </Link>
+                  );
+                })}
+                {watchingOpportunityLinks.map((opp) => {
+                  const watchItem = watchlist.find((item) => item.source_opportunity_id === opp.id);
+                  return (
+                    <Link
+                      key={opp.id}
+                      data-opportunity-handoff-card
+                      href={`/projects/${projectId}/results?watch=${opp.id}`}
+                      className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                    >
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone="green">Watching in Results</Badge>
+                            <Badge tone="neutral">No changes planned</Badge>
+                          </div>
+                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{opportunityTitle(opp)}</h3>
+                          <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">
+                            {watchItem?.due_at ? `Observation window ends ${formatDate(watchItem.due_at)}.` : "Observing signals before deciding on work."}
+                          </p>
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                          <span>View in Results</span>
+                          <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </RightDrawer>
+
+          <RightDrawer
+            open={analysisRecentDrawer === "site-fixes"}
+            title="Recently Fixed"
+            eyebrow="Site Fixes"
+            subtitle="Site fixes that are applied, measuring, or already learned in Results."
+            dataAttribute="site-fixes-recent-drawer"
+            maxWidthClassName="max-w-5xl"
+            onClose={() => setAnalysisRecentDrawer(null)}
+          >
+            {recentlyFixedSiteActions.length === 0 ? (
+              <EmptyState title="No recent fixed items" detail="Verified or measuring site fixes will appear here after they leave the active Site Fixes queue." />
+            ) : (
+              <div data-site-fixes-recent-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {recentlyFixedSiteActions.map((action) => {
+                  const stage = deriveVisibilityLifecycleStage(action);
+                  const href = loopActionCurrentHref(projectId, action as LoopAction);
+                  return (
+                    <Link
+                      key={action.id}
+                      data-site-fixes-recent-card
+                      href={href}
+                      className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
+                    >
+                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
+                            <Badge tone="blue">Fix Site Issue</Badge>
+                          </div>
+                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as LoopAction)}</h3>
+                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
+                            {action.target_url ?? action.normalized_target_url ?? "Applied site work is visible in Results."}
+                          </p>
+                        </div>
+                        <div className="grid gap-2 border-t border-slate-100 pt-3 text-sm">
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
+                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 font-semibold text-slate-700">
+                            <span>View in Results</span>
+                            <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </RightDrawer>
         </>
       )}
 
