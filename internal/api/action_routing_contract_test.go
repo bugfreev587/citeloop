@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 )
 
@@ -526,4 +527,139 @@ func TestSiteFixMetadataRewriteUpdatesMDXFrontmatter(t *testing.T) {
 	if strings.Contains(updated, "Old title") || strings.Contains(updated, "Old description") {
 		t.Fatalf("old metadata values should be replaced:\n%s", updated)
 	}
+}
+
+func TestSiteFixMetadataRewriteUpdatesNextMetadataConstants(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		DiffSnapshot: json.RawMessage(`{
+			"ai_repair": {
+				"proposed_change": {
+					"title": "UniPost | Social Media Posting API for Developers",
+					"meta_description": "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms."
+				}
+			}
+		}`),
+	}
+	source := `import type { Metadata } from "next";
+
+const HOMEPAGE_TITLE = "Old homepage title";
+const HOMEPAGE_SUBTITLE = "Keep this subtitle";
+const HOMEPAGE_DESCRIPTION =
+  "Old homepage description.";
+
+export const metadata: Metadata = {
+  title: HOMEPAGE_TITLE,
+  description: HOMEPAGE_DESCRIPTION,
+  alternates: { canonical: "https://unipost.dev/" },
+};
+`
+
+	updated, err := siteFixMetadataRewriteContent(source, action)
+	if err != nil {
+		t.Fatalf("siteFixMetadataRewriteContent returned error: %v", err)
+	}
+	for _, want := range []string{
+		`const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";`,
+		`const HOMEPAGE_SUBTITLE = "Keep this subtitle";`,
+		`"UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";`,
+		`canonical: "https://unipost.dev/"`,
+	} {
+		if !strings.Contains(updated, want) {
+			t.Fatalf("updated Next metadata source missing %q:\n%s", want, updated)
+		}
+	}
+	if strings.Contains(updated, "Old homepage title") || strings.Contains(updated, "Old homepage description") {
+		t.Fatalf("old metadata constants should be replaced:\n%s", updated)
+	}
+}
+
+func TestSiteFixMetadataRewriteUpdatesNextMetadataObjectStrings(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite metadata",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		DiffSnapshot: json.RawMessage(`{
+			"proposed_metadata": {
+				"title": "New title",
+				"description": "New description"
+			}
+		}`),
+	}
+	source := `export const metadata = {
+  title: "Old title",
+  description: "Old description",
+  openGraph: {
+    title: "Old title",
+    description: "Old description",
+  },
+};
+`
+
+	updated, err := siteFixMetadataRewriteContent(source, action)
+	if err != nil {
+		t.Fatalf("siteFixMetadataRewriteContent returned error: %v", err)
+	}
+	if strings.Count(updated, `title: "New title"`) != 2 {
+		t.Fatalf("expected title strings to be rewritten in metadata and openGraph:\n%s", updated)
+	}
+	if strings.Count(updated, `description: "New description"`) != 2 {
+		t.Fatalf("expected description strings to be rewritten in metadata and openGraph:\n%s", updated)
+	}
+	if strings.Contains(updated, "Old title") || strings.Contains(updated, "Old description") {
+		t.Fatalf("old metadata object strings should be replaced:\n%s", updated)
+	}
+}
+
+func TestSiteFixMetadataRewriteSourceCandidatesIncludeHomepageNextMetadata(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite homepage title and meta description",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		TargetUrl:  strPtrFrom("https://unipost.dev/"),
+	}
+	candidates := siteFixMetadataRewriteSourceCandidates(action, publisher.GitHubNextJSConfig{
+		ContentDir: "content/citeloop/blog",
+		BaseURL:    "https://unipost.dev/blog",
+	})
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.SourceFilePath)
+	}
+	for _, want := range []string{
+		"dashboard/src/app/marketing/page.tsx",
+		"dashboard/src/app/page.tsx",
+		"dashboard/src/app/layout.tsx",
+	} {
+		if !containsString(paths, want) {
+			t.Fatalf("homepage metadata candidates missing %q: %#v", want, paths)
+		}
+	}
+}
+
+func TestSiteFixMetadataRewriteSourceCandidatesIncludeBlogMarkdownFallback(t *testing.T) {
+	action := db.ContentAction{
+		ActionType: "Rewrite blog title and meta description",
+		AssetType:  strPtrFrom("metadata_rewrite"),
+		TargetUrl:  strPtrFrom("https://unipost.dev/blog/evidence-led-social-publishing-api-planning-brief"),
+	}
+	candidates := siteFixMetadataRewriteSourceCandidates(action, publisher.GitHubNextJSConfig{
+		ContentDir: "content/citeloop/blog",
+		BaseURL:    "https://unipost.dev/blog",
+	})
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.SourceFilePath)
+	}
+	if !containsString(paths, "content/citeloop/blog/evidence-led-social-publishing-api-planning-brief.mdx") {
+		t.Fatalf("blog metadata candidates missing content-dir MDX fallback: %#v", paths)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

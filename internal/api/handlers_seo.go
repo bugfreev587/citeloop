@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1294,19 +1295,8 @@ func (s *Server) createSiteFixGitHubPR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID uuid.UUID, action db.ContentAction) (db.ContentAction, error) {
-	if !action.TargetArticleID.Valid {
-		return db.ContentAction{}, fmt.Errorf("site fix needs an exact CiteLoop-published Markdown source mapping")
-	}
 	if siteFixAssetTypeForAction(action) != "metadata_rewrite" {
-		return db.ContentAction{}, fmt.Errorf("GitHub PR apply currently supports metadata rewrite site fixes with exact Markdown source mapping")
-	}
-	article, err := s.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: uuid.UUID(action.TargetArticleID.Bytes), ProjectID: projectID})
-	if err != nil {
-		return db.ContentAction{}, err
-	}
-	mapping, ok := pageUpdateExactSourceMapping(article)
-	if !ok {
-		return db.ContentAction{}, fmt.Errorf("target article is not an exact CiteLoop-published Markdown source")
+		return db.ContentAction{}, fmt.Errorf("GitHub PR apply currently supports metadata rewrite site fixes")
 	}
 	conn, err := s.Q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{
 		ProjectID: projectID,
@@ -1335,14 +1325,14 @@ func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID u
 		return db.ContentAction{}, err
 	}
 	client := publisher.NewGitHubPRClient(token, cfg.Repo, cfg.Branch, s.Log)
-	baseContent, baseFileSHA, err := client.ReadFile(ctx, mapping.SourceFilePath, cfg.Branch)
+	resolved, err := s.resolveSiteFixGitHubPRSource(ctx, projectID, action, cfg, client)
 	if err != nil {
 		return db.ContentAction{}, err
 	}
-	proposedContent, err := siteFixMetadataRewriteContent(baseContent, action)
-	if err != nil {
-		return db.ContentAction{}, err
-	}
+	mapping := resolved.Mapping
+	baseContent := resolved.BaseContent
+	baseFileSHA := resolved.BaseFileSHA
+	proposedContent := resolved.ProposedContent
 
 	workingBranch := siteFixWorkingBranch(action)
 	repo := cfg.Repo
@@ -1384,6 +1374,28 @@ func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID u
 	if app.Status == "github_pr_open" && strings.TrimSpace(stringPtrValueAPI(app.GithubPrUrl)) != "" {
 		return s.markSiteFixGitHubPRResult(ctx, projectID, action, app)
 	}
+	if app.Status == "verification_pending" && strings.TrimSpace(stringPtrValueAPI(app.GithubPrUrl)) == "" {
+		return s.markSiteFixAlreadyAppliedResult(ctx, projectID, action, app)
+	}
+	if proposedContent == baseContent {
+		app, err = s.Q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
+			ID:                 app.ID,
+			ProjectID:          projectID,
+			Status:             "verification_pending",
+			GithubPrState:      nil,
+			DeploymentSnapshot: siteFixAlreadyAppliedDeploymentSnapshot(action, mapping),
+			VerificationSnapshot: mustJSONLocal(map[string]any{
+				"status":           "pending_production_verification",
+				"source_file_path": mapping.SourceFilePath,
+				"target_url":       contentActionTargetURL(action),
+			}),
+			FailureReason: nil,
+		})
+		if err != nil {
+			return db.ContentAction{}, err
+		}
+		return s.markSiteFixAlreadyAppliedResult(ctx, projectID, action, app)
+	}
 	pr, err := client.CreatePageUpdatePR(ctx, publisher.GitHubPRInput{
 		SourcePath:        mapping.SourceFilePath,
 		WorkingBranch:     workingBranch,
@@ -1422,8 +1434,85 @@ func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID u
 	return s.markSiteFixGitHubPRResult(ctx, projectID, action, app)
 }
 
+type siteFixSourceReader interface {
+	ReadFile(ctx context.Context, sourcePath, ref string) (string, string, error)
+}
+
+type siteFixResolvedSource struct {
+	Mapping         pageUpdateSourceMapping
+	BaseContent     string
+	BaseFileSHA     string
+	ProposedContent string
+}
+
+func (s *Server) resolveSiteFixGitHubPRSource(ctx context.Context, projectID uuid.UUID, action db.ContentAction, cfg publisher.GitHubNextJSConfig, reader siteFixSourceReader) (siteFixResolvedSource, error) {
+	mappings := []pageUpdateSourceMapping{}
+	if action.TargetArticleID.Valid {
+		article, err := s.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{ID: uuid.UUID(action.TargetArticleID.Bytes), ProjectID: projectID})
+		if err != nil {
+			return siteFixResolvedSource{}, err
+		}
+		if mapping, ok := pageUpdateExactSourceMapping(article); ok {
+			mappings = append(mappings, mapping)
+		}
+	}
+	mappings = append(mappings, siteFixMetadataRewriteSourceCandidates(action, cfg)...)
+	mappings = uniquePageUpdateSourceMappings(mappings)
+	if len(mappings) == 0 {
+		return siteFixResolvedSource{}, fmt.Errorf("site fix could not infer a source file for %s; copy the fix JSON for manual application", contentActionTargetURL(action))
+	}
+
+	var lastErr error
+	for _, mapping := range mappings {
+		baseContent, baseFileSHA, err := reader.ReadFile(ctx, mapping.SourceFilePath, cfg.Branch)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", mapping.SourceFilePath, err)
+			continue
+		}
+		proposedContent, err := siteFixMetadataRewriteContent(baseContent, action)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", mapping.SourceFilePath, err)
+			continue
+		}
+		return siteFixResolvedSource{
+			Mapping:         mapping,
+			BaseContent:     baseContent,
+			BaseFileSHA:     baseFileSHA,
+			ProposedContent: proposedContent,
+		}, nil
+	}
+	if lastErr != nil {
+		return siteFixResolvedSource{}, fmt.Errorf("site fix could not locate a supported metadata source file for %s: %w", contentActionTargetURL(action), lastErr)
+	}
+	return siteFixResolvedSource{}, fmt.Errorf("site fix could not locate a supported metadata source file for %s", contentActionTargetURL(action))
+}
+
+func uniquePageUpdateSourceMappings(mappings []pageUpdateSourceMapping) []pageUpdateSourceMapping {
+	seen := map[string]bool{}
+	out := []pageUpdateSourceMapping{}
+	for _, mapping := range mappings {
+		path := strings.TrimSpace(mapping.SourceFilePath)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		mapping.SourceFilePath = path
+		out = append(out, mapping)
+	}
+	return out
+}
+
 func (s *Server) markSiteFixGitHubPRResult(ctx context.Context, projectID uuid.UUID, action db.ContentAction, app db.SiteChangeApplication) (db.ContentAction, error) {
 	result := siteFixGitHubPRResult(action, app)
+	return s.Q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
+		ID:              action.ID,
+		ProjectID:       projectID,
+		PublisherResult: result,
+	})
+}
+
+func (s *Server) markSiteFixAlreadyAppliedResult(ctx context.Context, projectID uuid.UUID, action db.ContentAction, app db.SiteChangeApplication) (db.ContentAction, error) {
+	result := siteFixAlreadyAppliedResult(action, app)
 	return s.Q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
 		ID:              action.ID,
 		ProjectID:       projectID,
@@ -1446,6 +1535,31 @@ func siteFixGitHubPRResult(action db.ContentAction, app db.SiteChangeApplication
 		"base_file_sha":              app.BaseFileSha,
 		"source_file_path":           app.SourceFilePath,
 		"target_url":                 contentActionTargetURL(action),
+	})
+}
+
+func siteFixAlreadyAppliedResult(action db.ContentAction, app db.SiteChangeApplication) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "already_applied",
+		"site_change_application_id": app.ID,
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"working_branch":             app.WorkingBranch,
+		"base_file_sha":              app.BaseFileSha,
+		"source_file_path":           app.SourceFilePath,
+		"target_url":                 contentActionTargetURL(action),
+		"message":                    "The mapped source file already contains the proposed metadata. Verify production before marking the site fix applied.",
+	})
+}
+
+func siteFixAlreadyAppliedDeploymentSnapshot(action db.ContentAction, mapping pageUpdateSourceMapping) json.RawMessage {
+	return mustJSONLocal(map[string]any{
+		"mode":                  "github_pr",
+		"status":                "already_applied",
+		"source_file_path":      mapping.SourceFilePath,
+		"source_mapping_reason": mapping.Reason,
+		"target_url":            contentActionTargetURL(action),
 	})
 }
 
@@ -1561,6 +1675,102 @@ func pageUpdateExactSourceMapping(article db.Article) (pageUpdateSourceMapping, 
 		Confidence:     "exact",
 		Reason:         "Matched CiteLoop-published article publish path.",
 	}, true
+}
+
+func siteFixMetadataRewriteSourceCandidates(action db.ContentAction, cfg publisher.GitHubNextJSConfig) []pageUpdateSourceMapping {
+	if siteFixAssetTypeForAction(action) != "metadata_rewrite" {
+		return nil
+	}
+	targetURL := contentActionTargetURL(action)
+	if strings.TrimSpace(targetURL) == "" {
+		return nil
+	}
+	candidates := []pageUpdateSourceMapping{}
+	add := func(sourcePath, confidence, reason string) {
+		sourcePath = cleanSiteFixSourcePath(sourcePath)
+		if sourcePath == "" {
+			return
+		}
+		candidates = append(candidates, pageUpdateSourceMapping{
+			SourceFilePath: sourcePath,
+			Confidence:     confidence,
+			Reason:         reason,
+		})
+	}
+
+	if slug, ok := siteFixRelativeSlugForBaseURL(targetURL, cfg.BaseURL); ok && slug != "" {
+		contentDir := cleanSiteFixSourcePath(cfg.ContentDir)
+		if contentDir != "" {
+			add(contentDir+"/"+slug+".mdx", "derived", "Derived Markdown source path from publisher content directory and target URL.")
+			add(contentDir+"/"+slug+".md", "derived", "Derived Markdown source path from publisher content directory and target URL.")
+		}
+	}
+
+	_, routePath, ok := siteFixURLHostPath(targetURL)
+	if !ok {
+		return uniquePageUpdateSourceMappings(candidates)
+	}
+	for _, root := range []string{"dashboard/src/app", "src/app", "app"} {
+		if routePath == "" {
+			add(root+"/marketing/page.tsx", "heuristic", "Matched homepage to a common Next.js marketing metadata route.")
+			add(root+"/page.tsx", "heuristic", "Matched homepage to a Next.js App Router metadata source candidate.")
+			add(root+"/layout.tsx", "heuristic", "Matched homepage to a Next.js App Router metadata source candidate.")
+			continue
+		}
+		add(root+"/"+routePath+"/page.tsx", "heuristic", "Matched target URL path to a Next.js App Router metadata source candidate.")
+		add(root+"/"+routePath+"/layout.tsx", "heuristic", "Matched target URL path to a Next.js App Router metadata source candidate.")
+	}
+	return uniquePageUpdateSourceMappings(candidates)
+}
+
+func siteFixRelativeSlugForBaseURL(targetRaw, baseRaw string) (string, bool) {
+	targetHost, targetPath, ok := siteFixURLHostPath(targetRaw)
+	if !ok {
+		return "", false
+	}
+	baseHost, basePath, ok := siteFixURLHostPath(baseRaw)
+	if !ok || targetHost != baseHost {
+		return "", false
+	}
+	if basePath == "" {
+		return targetPath, true
+	}
+	if targetPath == basePath {
+		return "", true
+	}
+	prefix := basePath + "/"
+	if strings.HasPrefix(targetPath, prefix) {
+		return strings.TrimPrefix(targetPath, prefix), true
+	}
+	return "", false
+}
+
+func siteFixURLHostPath(raw string) (string, string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", false
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Hostname() == "" {
+		return "", "", false
+	}
+	return strings.ToLower(parsed.Hostname()), cleanSiteFixSourcePath(parsed.Path), true
+}
+
+func cleanSiteFixSourcePath(raw string) string {
+	parts := strings.Split(strings.Trim(strings.TrimSpace(raw), "/"), "/")
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		cleaned = append(cleaned, part)
+	}
+	return strings.Join(cleaned, "/")
 }
 
 func pageUpdateWorkingBranch(draft db.PageUpdateDraft) string {
@@ -3238,20 +3448,94 @@ func siteFixMetadataRewriteContent(source string, action db.ContentAction) (stri
 		return "", fmt.Errorf("metadata rewrite site fix has no proposed title or meta description")
 	}
 	frontmatter, body, newline, ok := splitMDFrontmatter(source)
-	if !ok {
-		return "", fmt.Errorf("metadata rewrite site fix requires Markdown frontmatter")
+	if ok {
+		updates := map[string]string{}
+		if title != "" {
+			updates["title"] = title
+			updates["seo_title"] = title
+		}
+		if description != "" {
+			updates["description"] = description
+			updates["excerpt"] = description
+		}
+		nextFrontmatter := rewriteYAMLStringFields(frontmatter, updates, newline)
+		return "---" + newline + nextFrontmatter + "---" + body, nil
 	}
-	updates := map[string]string{}
+	updated, matched, err := rewriteNextMetadataSource(source, title, description)
+	if err != nil {
+		return "", err
+	}
+	if matched {
+		return updated, nil
+	}
+	return "", fmt.Errorf("metadata rewrite site fix requires Markdown frontmatter or supported Next.js metadata source")
+}
+
+func rewriteNextMetadataSource(source, title, description string) (string, bool, error) {
+	updated := source
+	matchedTitle := false
+	matchedDescription := false
 	if title != "" {
-		updates["title"] = title
-		updates["seo_title"] = title
+		var matched bool
+		updated, matched = rewriteTypeScriptConstStringAssignment(updated, `(?:[A-Za-z0-9]+_)*TITLE(?:_[A-Za-z0-9]+)*`, title)
+		matchedTitle = matchedTitle || matched
+		if !matchedTitle {
+			updated, matched = rewriteTypeScriptObjectStringField(updated, "title", title)
+			matchedTitle = matchedTitle || matched
+		}
 	}
 	if description != "" {
-		updates["description"] = description
-		updates["excerpt"] = description
+		var matched bool
+		updated, matched = rewriteTypeScriptConstStringAssignment(updated, `(?:[A-Za-z0-9]+_)*(?:META_)?DESCRIPTION(?:_[A-Za-z0-9]+)*`, description)
+		matchedDescription = matchedDescription || matched
+		if !matchedDescription {
+			updated, matched = rewriteTypeScriptObjectStringField(updated, "description", description)
+			matchedDescription = matchedDescription || matched
+		}
 	}
-	nextFrontmatter := rewriteYAMLStringFields(frontmatter, updates, newline)
-	return "---" + newline + nextFrontmatter + "---" + body, nil
+	missing := []string{}
+	if title != "" && !matchedTitle {
+		missing = append(missing, "title")
+	}
+	if description != "" && !matchedDescription {
+		missing = append(missing, "description")
+	}
+	if len(missing) > 0 {
+		return "", false, fmt.Errorf("supported Next.js metadata source is missing rewritable %s", strings.Join(missing, " and "))
+	}
+	return updated, matchedTitle || matchedDescription, nil
+}
+
+func rewriteTypeScriptConstStringAssignment(source, identifierPattern, value string) (string, bool) {
+	re := regexp.MustCompile("(?ms)(const\\s+" + identifierPattern + "\\s*=\\s*)([\"'`])([^\"'`]*)([\"'`])(\\s*;)")
+	matched := false
+	updated := re.ReplaceAllStringFunc(source, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) != 6 {
+			return match
+		}
+		matched = true
+		return parts[1] + quoteTypeScriptString(value) + parts[5]
+	})
+	return updated, matched
+}
+
+func rewriteTypeScriptObjectStringField(source, field, value string) (string, bool) {
+	re := regexp.MustCompile("(?m)(\\b" + regexp.QuoteMeta(field) + "\\s*:\\s*)([\"'`])([^\"'`]*)([\"'`])")
+	matched := false
+	updated := re.ReplaceAllStringFunc(source, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) != 5 {
+			return match
+		}
+		matched = true
+		return parts[1] + quoteTypeScriptString(value)
+	})
+	return updated, matched
+}
+
+func quoteTypeScriptString(value string) string {
+	return strconv.Quote(value)
 }
 
 func splitMDFrontmatter(source string) (string, string, string, bool) {

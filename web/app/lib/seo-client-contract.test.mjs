@@ -212,14 +212,17 @@ test("Analysis Site Fixes switch from JSON copy to GitHub PR when connected", as
   assert.match(refreshSource, /if \(publisherRows\) setPublisherConnections\(publisherRows\)/);
   assert.match(source, /const hasConnectedGitHubPublisher = useMemo/);
   assert.match(source, /siteFixGitHubPRURL\(action\)/);
+  assert.match(source, /siteFixAlreadyMatchesSource\(action\)/);
   assert.match(source, /async function createSiteFixGitHubPR\(action: SEOContentAction\)/);
   assert.match(source, /api\.createSiteFixGitHubPR\(projectId, action\.id\)/);
   assert.match(drawerSource, /hasConnectedGitHubPublisher/);
   assert.match(drawerSource, /Create GitHub PR/);
   assert.match(drawerSource, /Open PR/);
+  assert.match(drawerSource, /Source matches/);
   assert.match(drawerSource, /Copy fix JSON/);
   assert.match(drawerSource, /site-fix-create-pr-button/);
   assert.match(drawerSource, /site-fix-open-pr-button/);
+  assert.match(drawerSource, /site-fix-source-matches-button/);
 });
 
 test("Analysis Site Fixes treat connected enabled GitHub App publishers as PR-capable", async () => {
