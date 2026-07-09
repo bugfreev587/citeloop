@@ -2056,7 +2056,7 @@ test("content plan backlog excludes drafted topics", () => {
   assert.match(topics, /isBacklogStatus\(topic\.status\)/);
 });
 
-test("content plan presents content briefs without primary planned-topic chrome", () => {
+test("content plan presents content briefs without primary planned-topic chrome or status metrics board", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const workflow = read("projects/[id]/content-workflow-client.tsx");
 
@@ -2064,10 +2064,6 @@ test("content plan presents content briefs without primary planned-topic chrome"
   for (const copy of [
     "Content briefs",
     "Accepted content work",
-    "Brief status",
-    "Ready to draft",
-    "Scheduled briefs",
-    "Needs priority",
     "Legacy content briefs",
     "Scheduled or manually created briefs",
     "Recommended next",
@@ -2097,9 +2093,12 @@ test("content plan presents content briefs without primary planned-topic chrome"
   assert.doesNotMatch(topics, /setView\("grid"\)/);
   assert.doesNotMatch(topics, /setView\("compact"\)/);
   assert.doesNotMatch(topics, /aria-pressed=\{view === "grid"\}/);
-  assert.match(topics, /planHealthForTopics\(legacyBriefTopics\)/);
   assert.match(topics, /acceptedPlanActions\.length \+ legacyBriefTopics\.length/);
-  assert.match(topics, /planStatusItems/);
+  assert.doesNotMatch(topics, /planHealthForTopics\(legacyBriefTopics\)/);
+  assert.doesNotMatch(topics, /planStatusItems/);
+  assert.doesNotMatch(topics, /Ready to draft/);
+  assert.doesNotMatch(topics, /Scheduled briefs/);
+  assert.doesNotMatch(topics, /planStatusItems\.map/);
   assert.doesNotMatch(topics, /data-content-plan-topic-toolbar/);
   assert.doesNotMatch(topics, /Generate from domain/);
   assert.doesNotMatch(topics, /api\.runStrategist/);
