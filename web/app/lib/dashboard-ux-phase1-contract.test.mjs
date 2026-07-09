@@ -1192,6 +1192,12 @@ test("content workflow stages put stage identity before step metadata", () => {
   assert.match(topics, /<ContentWorkflowStageHeaderAction>\s*\{autoSwitch\}\s*<\/ContentWorkflowStageHeaderAction>/);
   assert.match(review, /<ContentWorkflowStageHeaderAction>\s*\{reviewHeaderAction\}\s*<\/ContentWorkflowStageHeaderAction>/);
   assert.match(publishing, /<ContentWorkflowStageHeaderAction>\s*\{publishingHeaderAction\}\s*<\/ContentWorkflowStageHeaderAction>/);
+  const reviewHeaderActionStart = review.indexOf("const reviewHeaderAction =");
+  const reviewHeaderActionEnd = review.indexOf("return (", reviewHeaderActionStart);
+  const reviewHeaderAction = review.slice(reviewHeaderActionStart, reviewHeaderActionEnd);
+  assert.match(reviewHeaderAction, /data-review-recent-drawer-trigger/);
+  assert.match(reviewHeaderAction, /Recently Reviewed/);
+  assert.match(reviewHeaderAction, /setRecentReviewedDrawerOpen\(true\)/);
   assert.doesNotMatch(workflow, /rounded-full border border-white\/80 bg-white\/70/);
   assert.doesNotMatch(topics, /<SectionHeader title="Content Plan"/);
   assert.doesNotMatch(review, /<SectionHeader[\s\S]{0,120}title="Review"[\s\S]{0,120}level="page"/);
