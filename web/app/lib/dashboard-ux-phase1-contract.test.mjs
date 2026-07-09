@@ -2331,6 +2331,29 @@ test("admin runtime model routing uses TokenGate model dropdowns", () => {
   }
 });
 
+test("admin runtime uses one global model provider and per-card test result colors", () => {
+  const admin = read("projects/[id]/admin/admin-client.tsx");
+  const platformAdmin = read("admin/page.tsx");
+
+  for (const source of [admin, platformAdmin]) {
+    // One provider toggle for the whole runtime, under the API key / base URL row.
+    assert.match(source, /<Field label="Model provider"/);
+    assert.match(source, /routesWithProvider\(current, provider\)/);
+    assert.match(source, /providerFromRoutes\(runtimeRoutes\)/);
+    assert.doesNotMatch(source, /updateRuntimeRoute\(config\.role, \{ primary_provider/);
+
+    // API key and base URL share a row.
+    const keyRowStart = source.indexOf('<div className="grid gap-4 md:grid-cols-2">');
+    assert.ok(keyRowStart >= 0, "key/base-url two-column row present");
+    const keyRow = source.slice(keyRowStart, source.indexOf('label="Base URL"', keyRowStart));
+    assert.match(keyRow, /TokenGate API key/);
+
+    // Each role result card carries its own pass/fail tone.
+    assert.match(source, /item\.ok \? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900"/);
+    assert.doesNotMatch(source, /border-white\/60 bg-white\/70/);
+  }
+});
+
 test("GEO provider observation defaults to OpenAI instead of required Perplexity", () => {
   const results = read("projects/[id]/seo/seo-client.tsx");
   const observeBlock = results.slice(results.indexOf("async function observeGEOProvider"), results.indexOf("async function monitorGEOExternalSurfaces"));
