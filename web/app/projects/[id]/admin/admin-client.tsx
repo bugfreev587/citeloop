@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Globe2, KeyRound, Loader2, PlugZap, RefreshCw, Save, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { GenerationRun, GEOCredentialsStatus, GEOProviderScope, LLMCredentialsStatus, LLMModelProvider, LLMModelRoute, LLMRuntimeRole, ProviderTestResult } from "../../../lib/api";
 import { activePlatformRuntimeIncidents, activityRawError } from "../../../lib/activity-runs";
+import { tokengateAnthropicModelOptions, tokengateModelOptionsWithCurrent, tokengateOpenAIModelOptions } from "../../../lib/tokengate-models";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
-import { Badge, Button, ButtonProgress, cx, EmptyState, Field, formatDate, Notice, SectionHeader, TextInput } from "../../../components/ui";
+import { Badge, Button, ButtonProgress, cx, EmptyState, Field, formatDate, Notice, SectionHeader, SelectInput, TextInput } from "../../../components/ui";
 
 type Message = { title: string; detail?: string; tone: "neutral" | "red" | "green" | "amber" } | null;
 type TestResult = ProviderTestResult | null;
@@ -29,14 +30,14 @@ const runtimeRoleConfigs: Array<{
     role: "planning",
     label: "Planning",
     helper: "Context extraction, strategy, and opportunity finding.",
-    openAIPlaceholder: "gpt-5.1",
+    openAIPlaceholder: "gpt-5.4",
     anthropicPlaceholder: "claude-sonnet-4-6",
   },
   {
     role: "writer",
     label: "AI writer",
     helper: "Content writer and article repair.",
-    openAIPlaceholder: "gpt-5.1",
+    openAIPlaceholder: "gpt-5.4",
     anthropicPlaceholder: "claude-sonnet-4-6",
   },
   {
@@ -50,7 +51,7 @@ const runtimeRoleConfigs: Array<{
     role: "site_fix",
     label: "Site Fix",
     helper: "AI fix JSON to source-controlled GitHub PRs.",
-    openAIPlaceholder: "gpt-5.1",
+    openAIPlaceholder: "gpt-5.4",
     anthropicPlaceholder: "claude-opus-4-8",
   },
 ];
@@ -601,19 +602,31 @@ export function AdminClient({ projectId }: { projectId: string }) {
                           ))}
                         </div>
                       </div>
-                      <Field label="OpenAI model" helper="TokenGate OpenAI-compatible model or alias.">
-                        <TextInput
+                      <Field label="OpenAI model" helper="Choose a TokenGate OpenAI-compatible model.">
+                        <SelectInput
                           value={route.openai_model_alias}
-                          placeholder={config.openAIPlaceholder}
+                          className="w-full"
                           onChange={(event) => updateRuntimeRoute(config.role, { openai_model_alias: event.target.value })}
-                        />
+                        >
+                          {tokengateModelOptionsWithCurrent(tokengateOpenAIModelOptions, route.openai_model_alias).map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))}
+                        </SelectInput>
                       </Field>
-                      <Field label="Anthropic model" helper="TokenGate Anthropic-compatible model or alias.">
-                        <TextInput
+                      <Field label="Anthropic model" helper="Choose a TokenGate Anthropic-compatible model.">
+                        <SelectInput
                           value={route.anthropic_model_alias}
-                          placeholder={config.anthropicPlaceholder}
+                          className="w-full"
                           onChange={(event) => updateRuntimeRoute(config.role, { anthropic_model_alias: event.target.value })}
-                        />
+                        >
+                          {tokengateModelOptionsWithCurrent(tokengateAnthropicModelOptions, route.anthropic_model_alias).map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))}
+                        </SelectInput>
                       </Field>
                       <label className="inline-flex min-w-[140px] items-center gap-2 pb-2 text-sm font-semibold text-slate-700">
                         <input

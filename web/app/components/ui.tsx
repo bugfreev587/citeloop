@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 
 export function cx(...values: Array<string | false | null | undefined>) {
@@ -163,6 +163,18 @@ export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInput
       {...props}
       className={cx(
         "h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 transition-colors placeholder:text-slate-400 focus:border-slate-400",
+        className,
+      )}
+    />
+  );
+}
+
+export function SelectInput({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className={cx(
+        "h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 transition-colors focus:border-slate-400",
         className,
       )}
     />
