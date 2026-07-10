@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clipboard, Code2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
+import { RightDrawer } from "../../../components/right-drawer";
 import { useToast } from "../../../components/toast-provider";
 
 type SeverityFilter = "all" | "P0" | "P1" | "P2" | "Info";
@@ -375,7 +376,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeverityFilter>("all");
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
-  const [selectedRepairFinding, setSelectedRepairFinding] = useState<SEODoctorFinding | null>(null);
+  const [selectedFindingID, setSelectedFindingID] = useState<string | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -422,9 +425,17 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
   const lastRunAt = doctorRunTimestamp(run);
   const stageLabel = doctorRunStageLabel(run);
+  const selectedFinding = useMemo(
+    () => visibleFindings.find((finding) => finding.id === selectedFindingID) ?? null,
+    [visibleFindings, selectedFindingID],
+  );
   const selectedRepairJSON = useMemo(() => {
-    return selectedRepairFinding ? JSON.stringify(buildAIRepairPayload(selectedRepairFinding), null, 2) : "";
-  }, [selectedRepairFinding]);
+    return selectedFinding ? JSON.stringify(buildAIRepairPayload(selectedFinding), null, 2) : "";
+  }, [selectedFinding]);
+
+  useEffect(() => {
+    if (selectedFindingID && !selectedFinding) setSelectedFindingID(null);
+  }, [selectedFindingID, selectedFinding]);
 
   async function runDoctor() {
     setRunning(true);
@@ -456,6 +467,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     try {
       await api.dismissSEODoctorFinding(projectId, finding.id);
       notify({ tone: "green", title: "Finding dismissed" });
+      setSelectedFindingID(null);
       await refresh();
     } catch (err: any) {
       notify({ tone: "red", title: "Could not dismiss finding", detail: err?.apiMessage || err?.message });
@@ -465,7 +477,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={surfaceRef}>
       {error && <Notice title="Doctor could not load" detail={error} tone="amber" />}
 
       <section className="rounded-xl border border-slate-200 bg-white px-4 py-4">
@@ -560,9 +572,9 @@ export function DoctorClient({ projectId }: { projectId: string }) {
           }
         />
         {loading ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {[0, 1, 2, 3].map((item) => (
-              <div key={item} className="h-40 animate-pulse rounded-xl border border-slate-200 bg-white p-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-48 animate-pulse rounded-xl border border-slate-200 bg-white p-4">
                 <div className="h-4 w-24 rounded bg-slate-100" />
                 <div className="mt-4 h-5 w-2/3 rounded bg-slate-100" />
                 <div className="mt-3 h-4 w-full rounded bg-slate-100" />
@@ -572,105 +584,140 @@ export function DoctorClient({ projectId }: { projectId: string }) {
         ) : visibleFindings.length === 0 ? (
           <EmptyState title="No findings in this view" detail="Doctor has no active findings for the selected severity." />
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div data-doctor-findings-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {visibleFindings.map((finding) => (
-              <article key={finding.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex items-start justify-between gap-3">
+              <button
+                key={finding.id}
+                type="button"
+                data-doctor-finding-card
+                aria-label={`Open finding details: ${finding.fix_intent || finding.issue_type}`}
+                onClick={(event) => {
+                  returnFocusRef.current = event.currentTarget;
+                  setSelectedFindingID(finding.id);
+                }}
+                className={cx(
+                  "group flex h-full min-h-[200px] w-full flex-col rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px",
+                  selectedFindingID === finding.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200",
+                )}
+              >
+                <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
                       <Badge tone="neutral">{finding.category}</Badge>
-                      <span className="truncate text-xs font-bold text-slate-400">{finding.issue_type}</span>
+                      {finding.status === "active" ? (
+                        <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+                      ) : (
+                        <CheckCircle2 size={15} className="shrink-0 text-green-600" />
+                      )}
                     </div>
-                    <h2 className="mt-3 text-base font-bold leading-6 text-slate-950">{finding.fix_intent || finding.issue_type}</h2>
+                    <h2 className="mt-2 line-clamp-2 text-base font-bold leading-6 text-slate-950">{finding.fix_intent || finding.issue_type}</h2>
+                    <p className="mt-1 truncate text-xs font-bold text-slate-400">{finding.issue_type}</p>
                   </div>
-                  {finding.status === "active" ? <AlertTriangle size={17} className="shrink-0 text-amber-600" /> : <CheckCircle2 size={17} className="shrink-0 text-green-600" />}
-                </div>
-                <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-600">{finding.why_it_matters}</p>
-                <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">{firstURL(finding)}</div>
-                <div className="mt-3 rounded-lg border border-slate-100 px-3 py-2">
-                  <div className="text-xs font-bold uppercase text-slate-400">Suggested next step</div>
-                  <p className="mt-1 text-sm font-semibold leading-5 text-slate-700">{finding.developer_instructions}</p>
-                </div>
-                <div className="mt-3 grid gap-2 rounded-lg border border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
-                  {findingEvidence(finding).map(([label, value]) => (
-                    <div key={label} className="grid gap-1 sm:grid-cols-[92px_1fr]">
-                      <span className="text-slate-400">{label}</span>
-                      <span className="min-w-0 break-words text-slate-700">{String(value)}</span>
-                    </div>
-                  ))}
-                </div>
-                {finding.acceptance_tests.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-slate-100 px-3 py-2">
-                    <div className="text-xs font-bold uppercase text-slate-400">Verification</div>
-                    <ul className="mt-1 space-y-1 text-sm font-semibold leading-5 text-slate-700">
-                      {finding.acceptance_tests.slice(0, 3).map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
+                  <div>
+                    <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-600">{finding.why_it_matters}</p>
+                    <div className="mt-3 truncate rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">{firstURL(finding)}</div>
                   </div>
-                )}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => void dismissFinding(finding)} disabled={busyFindingID === finding.id || finding.status !== "active"}>
-                    <X size={14} />
-                    Dismiss
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    onClick={() => setSelectedRepairFinding(finding)}
-                    disabled={finding.status !== "active"}
-                    className="ml-auto"
-                  >
-                    <Code2 size={14} />
-                    Fix with AI
-                  </Button>
+                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
+                    <span>Open details</span>
+                    <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
+                  </div>
                 </div>
-              </article>
+              </button>
             ))}
           </div>
         )}
       </section>
 
-      {selectedRepairFinding && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            aria-label="Close repair JSON"
-            className="absolute inset-0 bg-slate-950/45"
-            onClick={() => setSelectedRepairFinding(null)}
-          />
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="seo-doctor-ai-repair-title"
-            className="relative z-10 flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <div className="text-xs font-bold uppercase text-cyan-700">AI coding repair JSON</div>
-                <h2 id="seo-doctor-ai-repair-title" className="mt-1 text-xl font-bold leading-7 text-slate-950">
-                  Fix with AI
-                </h2>
-                <p className="mt-1 max-w-[74ch] text-sm font-semibold leading-5 text-slate-500">
-                  Copy this JSON into an AI coding tool. It includes the affected page, diagnosis evidence, repair instructions, and verification checks for this specific finding.
-                </p>
+      <RightDrawer
+        open={Boolean(selectedFinding)}
+        onClose={() => setSelectedFindingID(null)}
+        dataAttribute="data-doctor-finding-drawer"
+        eyebrow="Finding details"
+        title={selectedFinding?.fix_intent || selectedFinding?.issue_type || "Finding"}
+        subtitle={selectedFinding ? firstURL(selectedFinding) : undefined}
+        maxWidthClassName="max-w-3xl"
+        surfaceRef={surfaceRef}
+        returnFocusRef={returnFocusRef}
+        badges={
+          selectedFinding ? (
+            <>
+              <Badge tone={severityTone(selectedFinding.severity)}>{selectedFinding.severity}</Badge>
+              <Badge tone="neutral">{selectedFinding.category}</Badge>
+              <Badge tone="neutral">{selectedFinding.issue_type}</Badge>
+              <Badge tone={selectedFinding.status === "active" ? "amber" : "green"}>{selectedFinding.status}</Badge>
+            </>
+          ) : undefined
+        }
+        footer={
+          selectedFinding ? (
+            <>
+              <Button size="sm" variant="ai" onClick={() => void copyAIRepairJSON(selectedFinding)}>
+                <Clipboard size={14} />
+                Copy fix JSON
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void dismissFinding(selectedFinding)}
+                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active"}
+              >
+                <ButtonProgress busy={busyFindingID === selectedFinding.id} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                  Dismiss
+                </ButtonProgress>
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {selectedFinding && (
+          <div className="space-y-5">
+            <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-bold uppercase text-slate-400">Why it matters</div>
+              <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{selectedFinding.why_it_matters}</p>
+            </section>
+
+            <section className="rounded-xl border border-slate-200 p-4">
+              <div className="text-xs font-bold uppercase text-slate-400">Suggested next step</div>
+              <p className="mt-1 text-sm font-semibold leading-5 text-slate-700">{selectedFinding.developer_instructions}</p>
+            </section>
+
+            <section className="rounded-xl border border-slate-200 p-4">
+              <div className="text-xs font-bold uppercase text-slate-400">Evidence</div>
+              <div className="mt-2 grid gap-2 text-xs font-semibold text-slate-500">
+                {findingEvidence(selectedFinding).map(([label, value]) => (
+                  <div key={label} className="grid gap-1 sm:grid-cols-[110px_1fr]">
+                    <span className="text-slate-400">{label}</span>
+                    <span className="min-w-0 break-words text-slate-700">{String(value)}</span>
+                  </div>
+                ))}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button size="sm" onClick={() => void copyAIRepairJSON(selectedRepairFinding)}>
-                  <Clipboard size={14} />
-                  Copy JSON
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedRepairFinding(null)}>
-                  <X size={14} />
-                  Close
-                </Button>
+            </section>
+
+            {selectedFinding.acceptance_tests.length > 0 && (
+              <section className="rounded-xl border border-slate-200 p-4">
+                <div className="text-xs font-bold uppercase text-slate-400">Verification</div>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm font-semibold leading-5 text-slate-700">
+                  {selectedFinding.acceptance_tests.slice(0, 5).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section data-doctor-ai-payload className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50">
+              <div className="flex items-center gap-2 border-b border-cyan-100 px-4 py-3 text-xs font-bold uppercase text-cyan-800">
+                <Code2 size={14} />
+                AI coding fix JSON
               </div>
-            </div>
-            <pre className="max-h-[64vh] overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{selectedRepairJSON}</pre>
-          </section>
-        </div>
-      )}
+              <p className="px-4 pt-3 text-sm font-semibold leading-5 text-cyan-950">
+                Copy this JSON into Codex or Claude Code. It names the affected page, diagnosis evidence, repair instructions, and verification checks for this finding.
+              </p>
+              <pre className="mt-3 max-h-80 overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{selectedRepairJSON}</pre>
+            </section>
+          </div>
+        )}
+      </RightDrawer>
     </div>
   );
 }

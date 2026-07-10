@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -36,7 +36,6 @@ import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
 import {
-  actionOutputPreviewText,
   actionOutputTypeLabel,
   actionPostExecutionText,
   actionSEOContributionText,
@@ -51,9 +50,6 @@ import {
   lifecycleStageLabel,
   lifecycleStageTone,
   measurementWindowLabel,
-  siteFixAIJSON,
-  siteFixAlreadyMatchesSource,
-  siteFixGitHubPRURL,
   toneForStatus,
 } from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
@@ -481,7 +477,7 @@ function loopActionCurrentHref(projectId: string, action: LoopAction) {
   const surface = loopActionCurrentSurface(action);
   if (surface === "Review") return `/projects/${projectId}/review?article=${action.draft_article_id}`;
   if (surface === "Results") return `/projects/${projectId}/results?action=${action.id}`;
-  if (surface === "Site Fixes") return `#site-fix-${action.id}`;
+  if (surface === "Site Fixes") return `/projects/${projectId}/site-fixes`;
   return actionHandoffHref(projectId, action) ?? `/projects/${projectId}/plan?action=${action.id}`;
 }
 
@@ -553,38 +549,6 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
-
-async function writeClipboardText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall through to the textarea fallback for browsers that block async clipboard writes.
-    }
-  }
-
-  const textarea = document.createElement("textarea");
-  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  textarea.setSelectionRange(0, text.length);
-
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  activeElement?.focus();
-
-  if (!copied) {
-    throw new Error("Clipboard write failed.");
-  }
-}
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
 type ActionMeasurementState = {
@@ -1005,10 +969,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss" | "snooze" | "watch">>({});
   const [routeOverrides, setRouteOverrides] = useState<Record<string, OpportunityWorkType>>({});
   const [watchlist, setWatchlist] = useState<SEOWatchlistItem[]>([]);
-  const [showAllSiteFixes, setShowAllSiteFixes] = useState(false);
-  const [pendingSiteFixFocusID, setPendingSiteFixFocusID] = useState<string | null>(null);
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
-  const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [analysisRecentDrawer, setAnalysisRecentDrawer] = useState<"opportunities" | "site-fixes" | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
@@ -1017,15 +978,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refreshSequenceRef = useRef(0);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
-  const directActionDrawerRef = useRef<HTMLElement | null>(null);
-  const directActionReturnFocusRef = useRef<HTMLElement | null>(null);
-  const siteFixCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
-  const [highlightedSiteFixID, setHighlightedSiteFixID] = useState<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -1430,19 +1387,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     };
   }, [selectedResultAction?.id]);
 
-  const highlightSiteFixTarget = useCallback((actionID: string) => {
-    const target = siteFixCardRefs.current[actionID];
-    if (!target) return false;
-    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-    target.focus({ preventScroll: true });
-    setHighlightedSiteFixID(actionID);
-    window.setTimeout(() => {
-      setHighlightedSiteFixID((current) => (current === actionID ? null : current));
-    }, prefersReducedMotion ? 2200 : 2600);
-    return true;
-  }, []);
-
   const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const visibleLoopActions = loopActions.filter(isVisibleLoopAction);
@@ -1479,35 +1423,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const directReviewActionsAll = visibleLoopActions
-    .filter((action) => isDirectAction(action))
-    .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status));
-  const directReviewActions = showAllSiteFixes ? directReviewActionsAll : directReviewActionsAll.slice(0, 6);
-
-  // Same-page linked focus (PRD §8.8): if the target card is hidden by the
-  // compact list, expand the list first; if it no longer exists, explain
-  // instead of failing silently.
-  function focusSiteFixCard(actionID: string) {
-    if (highlightSiteFixTarget(actionID)) return;
-    if (directReviewActionsAll.some((action) => action.id === actionID)) {
-      setShowAllSiteFixes(true);
-      setPendingSiteFixFocusID(actionID);
-      return;
-    }
-    setMessage({
-      title: "This item moved or was completed",
-      detail: "Check Site Fixes or Results for its latest state.",
-      tone: "neutral",
-    });
-  }
-
-  useEffect(() => {
-    if (!pendingSiteFixFocusID) return;
-    if (highlightSiteFixTarget(pendingSiteFixFocusID)) {
-      setPendingSiteFixFocusID(null);
-    }
-  }, [pendingSiteFixFocusID, directReviewActions.length, highlightSiteFixTarget]);
-
   const snoozedOpportunities = opportunities.filter((opportunity) => opportunity.status === "snoozed");
   const watchingOpportunityLinks = opportunities.filter((opportunity) => opportunity.status === "watching");
   const sentOpportunityLinks = visibleLoopActions
@@ -1519,83 +1434,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       return right - left;
     });
   const opportunityRecentCount = sentOpportunityLinks.length + watchingOpportunityLinks.length;
-  const recentlyFixedSiteActions = visibleLoopActions
-    .filter((action) => isDirectAction(action))
-    .filter((action) => {
-      const stage = deriveVisibilityLifecycleStage(action);
-      return resultLoopStages.has(stage) || (stage === "blocked" && hasResultsExecutionEvidence(action));
-    })
-    .slice()
-    .sort((a, b) => {
-      const left = a.verified_at ?? a.published_at ?? a.created_at ?? "";
-      const right = b.verified_at ?? b.published_at ?? b.created_at ?? "";
-      return right.localeCompare(left);
-    });
-  const selectedDirectAction = useMemo(
-    () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
-    [directReviewActions, selectedDirectActionID],
-  );
-
-  useEffect(() => {
-    if (!selectedDirectActionID || selectedDirectAction) return;
-    setSelectedDirectActionID(null);
-  }, [selectedDirectAction, selectedDirectActionID]);
-
-  useEffect(() => {
-    if (!selectedDirectAction?.id) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedDirectActionID(null);
-      if (event.key === "Tab") {
-        const drawer = directActionDrawerRef.current;
-        if (!drawer) return;
-        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
-          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
-        );
-        if (focusable.length === 0) {
-          event.preventDefault();
-          return;
-        }
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedDirectAction?.id]);
-
-  useEffect(() => {
-    if (!selectedDirectAction?.id) return;
-
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeButton = directActionDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
-    const firstFocusable = closeButton ?? directActionDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
-    firstFocusable?.focus();
-    if (analysisSurfaceRef.current) {
-      analysisSurfaceRef.current.setAttribute("aria-hidden", "true");
-      analysisSurfaceRef.current.inert = true;
-    }
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      if (analysisSurfaceRef.current) {
-        analysisSurfaceRef.current.removeAttribute("aria-hidden");
-        analysisSurfaceRef.current.inert = false;
-      }
-      if (directActionReturnFocusRef.current?.isConnected) {
-        directActionReturnFocusRef.current?.focus();
-      }
-    };
-  }, [selectedDirectAction?.id]);
-
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
   }
@@ -1949,59 +1787,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }
 
-  async function copySiteFixAIJSON(action: SEOContentAction | ResultsAction) {
-    try {
-      await writeClipboardText(siteFixAIJSON(action));
-      setMessage({ title: "Fix JSON copied", detail: "Paste it into Codex or Claude Code to apply the site fix.", tone: "green" });
-    } catch {
-      setMessage({ title: "Could not copy fix JSON", detail: "Select the JSON in the drawer and copy it manually.", tone: "red" });
-    }
-  }
-
-  async function createSiteFixGitHubPR(action: SEOContentAction) {
-    setBusy(`site-fix-pr-${action.id}`);
-    setMessage(null);
-    try {
-      const updated = await api.createSiteFixGitHubPR(projectId, action.id);
-      setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
-      const prURL = siteFixGitHubPRURL(updated);
-      if (siteFixAlreadyMatchesSource(updated)) {
-        setMessage({
-          title: "Source already matches",
-          detail: "No PR was needed. Verify production, then mark the Site Fix applied.",
-          tone: "green",
-        });
-      } else {
-        setMessage({
-          title: "GitHub PR created",
-          detail: prURL || "Open it from this Site Fix after GitHub returns the PR URL.",
-          tone: "green",
-        });
-      }
-    } catch (e: any) {
-      setMessage({ title: "Could not create GitHub PR", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function dismissSiteFixAction(action: SEOContentAction) {
-    setBusy(`dismiss-${action.id}`);
-    setMessage(null);
-    try {
-      const updated = await api.dismissSEOContentAction(projectId, action.id);
-      setActions((current) => current.filter((item) => item.id !== updated.id));
-      setResultsActions((current) => current.filter((item) => item.id !== updated.id));
-      setSelectedDirectActionID(null);
-      setMessage({ title: "Site fix dismissed", detail: action.action_type, tone: "neutral" });
-    } catch (e: any) {
-      setMessage({ title: "Could not dismiss site fix", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function dismiss(opp: SEOOpportunity) {
     setOpportunityPending(opp.id, "dismiss");
     setMessage(null);
@@ -2183,7 +1968,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       type="button"
                       onClick={(event) => {
                         analysisReturnFocusRef.current = event.currentTarget;
-                        setSelectedDirectActionID(null);
                         setSelectedOpportunityID(opp.id);
                       }}
                       aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
@@ -2259,98 +2043,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             )}
           </section>
 
-          <section data-site-fixes-queue className="space-y-3">
-            <SectionHeader
-              title="Site Fixes"
-              eyebrow="Approved site work"
-              action={
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Badge tone={directReviewActionsAll.length ? "amber" : "neutral"}>{directReviewActionsAll.length} to review</Badge>
-                  <Button
-                    data-site-fixes-recent-drawer-trigger
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setAnalysisRecentDrawer("site-fixes")}
-                    aria-label={`Open Recently Fixed (${recentlyFixedSiteActions.length})`}
-                  >
-                    <History size={14} />
-                    Recently Fixed
-                    <Badge tone={recentlyFixedSiteActions.length ? "green" : "neutral"}>{recentlyFixedSiteActions.length}</Badge>
-                  </Button>
-                </div>
-              }
-            />
-            {directReviewActions.length === 0 ? (
-              <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
-            ) : (
-              <div data-site-fixes-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {directReviewActions.map((action) => {
-                  const stage = deriveVisibilityLifecycleStage(action);
-                  const highlighted = highlightedSiteFixID === action.id;
-                  return (
-                    <button
-                      key={action.id}
-                      type="button"
-                      data-site-fix-card
-                      id={`site-fix-${action.id}`}
-                      ref={(node) => {
-                        siteFixCardRefs.current[action.id] = node;
-                      }}
-                      aria-label={`Open site fix details: ${action.action_type}`}
-                      onClick={(event) => {
-                        directActionReturnFocusRef.current = event.currentTarget;
-                        setSelectedOpportunityID(null);
-                        setSelectedDirectActionID(action.id);
-                      }}
-                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
-                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
-                      }`}
-                    >
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">Fix Site Issue</Badge>
-                            <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
-                            <Badge tone={action.review_required === false ? "neutral" : "amber"}>
-                              {action.review_required === false ? "Review optional" : "Review required"}
-                            </Badge>
-                          </div>
-                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">
-                            {action.action_type.includes("_") ? humanizeInternalType(action.action_type) : action.action_type}
-                          </h3>
-                          <p className="mt-1 truncate text-sm leading-5 text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
-                        </div>
-                        <div className="grid gap-3 text-sm">
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Reviewable output</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionOutputPreviewText(action)}</div>
-                          </div>
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                          <span>Open details</span>
-                          <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-                {!showAllSiteFixes && directReviewActionsAll.length > directReviewActions.length && (
-                  <button
-                    type="button"
-                    onClick={() => setShowAllSiteFixes(true)}
-                    className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:bg-slate-50"
-                  >
-                    Show all site fixes ({directReviewActionsAll.length})
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
 
           <section data-analysis-loop-strip aria-label="Loop in motion for Content Plan and Site Fixes work through Published / Applied stages" className="space-y-3">
             <SectionHeader
@@ -2429,19 +2121,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="text-xs font-semibold text-slate-600">Open current location: {label}</div>
                         </div>
                       );
-                      if (loopActionCurrentSurface(action) === "Site Fixes") {
-                        return (
-                          <button
-                            key={action.id}
-                            type="button"
-                            data-loop-action-card
-                            onClick={() => focusSiteFixCard(action.id)}
-                            className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                          >
-                            {content}
-                          </button>
-                        );
-                      }
                       return (
                         <Link
                           key={action.id}
@@ -2522,23 +2201,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </div>
                   );
 
-                  if (label === "Site Fixes") {
-                    return (
-                      <button
-                        key={action.id}
-                        type="button"
-                        data-opportunity-handoff-card
-                        aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
-                        onClick={() => {
-                          setAnalysisRecentDrawer(null);
-                          focusSiteFixCard(action.id);
-                        }}
-                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                      >
-                        {content}
-                      </button>
-                    );
-                  }
 
                   return (
                     <Link
@@ -2575,58 +2237,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
                           <span>View in Results</span>
                           <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </RightDrawer>
-
-          <RightDrawer
-            open={analysisRecentDrawer === "site-fixes"}
-            title="Recently Fixed"
-            eyebrow="Site Fixes"
-            subtitle="Site fixes that are applied, measuring, or already learned in Results."
-            dataAttribute="site-fixes-recent-drawer"
-            maxWidthClassName="max-w-5xl"
-            onClose={() => setAnalysisRecentDrawer(null)}
-          >
-            {recentlyFixedSiteActions.length === 0 ? (
-              <EmptyState title="No recent fixed items" detail="Verified or measuring site fixes will appear here after they leave the active Site Fixes queue." />
-            ) : (
-              <div data-site-fixes-recent-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {recentlyFixedSiteActions.map((action) => {
-                  const stage = deriveVisibilityLifecycleStage(action);
-                  const href = loopActionCurrentHref(projectId, action as LoopAction);
-                  return (
-                    <Link
-                      key={action.id}
-                      data-site-fixes-recent-card
-                      href={href}
-                      className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                    >
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">Fix Site Issue</Badge>
-                          </div>
-                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as LoopAction)}</h3>
-                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
-                            {action.target_url ?? action.normalized_target_url ?? "Applied site work is visible in Results."}
-                          </p>
-                        </div>
-                        <div className="grid gap-2 border-t border-slate-100 pt-3 text-sm">
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                          </div>
-                          <div className="flex items-center justify-between gap-3 font-semibold text-slate-700">
-                            <span>View in Results</span>
-                            <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-                          </div>
                         </div>
                       </div>
                     </Link>
@@ -3805,267 +3415,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
                 <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
                   Verification failed
-                </ButtonProgress>
-              </Button>
-            </div>
-          </aside>
-        </div>
-      );
-    })()}
-    {mode === "analysis" && selectedDirectAction && (() => {
-      const action = selectedDirectAction;
-      const stage = deriveVisibilityLifecycleStage(action);
-      const markAppliedBusy = busy === `verify-${action.id}-verified`;
-      const dismissSiteFixBusy = busy === `dismiss-${action.id}`;
-      const createPRBusy = busy === `site-fix-pr-${action.id}`;
-      const prURL = siteFixGitHubPRURL(action);
-      const sourceAlreadyMatches = siteFixAlreadyMatchesSource(action);
-      const aiRepairJSON = siteFixAIJSON(action);
-
-      return (
-        <div className="fixed inset-0 z-30">
-          <button
-            type="button"
-            aria-label="Close action details"
-            onClick={() => setSelectedDirectActionID(null)}
-            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
-          />
-          <aside
-            ref={directActionDrawerRef}
-            data-direct-action-drawer
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="direct-action-details-title"
-            className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Review site fix details</div>
-                <h3 id="direct-action-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
-                  {action.action_type}
-                </h3>
-                <p className="mt-2 break-words text-sm leading-5 text-slate-500">
-                  {action.target_url ?? action.normalized_target_url ?? action.id}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                  <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
-                  <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
-                  <Badge tone={action.review_required === false ? "neutral" : "amber"}>
-                    {action.review_required === false ? "Review optional" : "Review required"}
-                  </Badge>
-                </div>
-              </div>
-              <button
-                type="button"
-                data-drawer-close
-                aria-label="Close action details"
-                onClick={() => setSelectedDirectActionID(null)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
-              <div className="space-y-5">
-                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewable output</div>
-                  <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{actionOutputPreviewText(action)}</p>
-                </section>
-
-                <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.created_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Approved</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.approved_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Applied</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.verified_at ?? action.published_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Last updated</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.updated_at ?? null)}</div>
-                    </div>
-                  </div>
-                </section>
-
-                <section data-site-fix-ai-payload className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50">
-                  <div className="flex flex-col gap-3 border-b border-cyan-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-800">
-                        <Code2 size={14} />
-                        AI coding fix JSON
-                      </div>
-                      <p className="mt-2 text-sm font-semibold leading-5 text-cyan-950">
-                        {sourceAlreadyMatches
-                          ? "The mapped source already contains this fix. Verify production before marking it applied."
-                          : hasConnectedGitHubPublisher
-                            ? "Create a source-backed GitHub PR for this existing page when CiteLoop can map the fix to the published source file."
-                            : "Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks."}
-                      </p>
-                    </div>
-                    {hasConnectedGitHubPublisher ? (
-                      prURL ? (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
-                        >
-                          <FileText className="shrink-0" size={14} />
-                          Open PR
-                        </Button>
-                      ) : sourceAlreadyMatches ? (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          disabled
-                        >
-                          <CheckCircle2 className="shrink-0" size={14} />
-                          Source matches
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          onClick={() => void createSiteFixGitHubPR(action)}
-                          disabled={!!busy}
-                        >
-                          <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
-                            Create GitHub PR
-                          </ButtonProgress>
-                        </Button>
-                      )
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ai"
-                        className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                        onClick={() => void copySiteFixAIJSON(action)}
-                      >
-                        <Clipboard className="shrink-0" size={14} />
-                        Copy fix JSON
-                      </Button>
-                    )}
-                  </div>
-                  <pre className="max-h-80 overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{aiRepairJSON}</pre>
-                </section>
-
-                <section className="grid gap-3 text-sm sm:grid-cols-2">
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Asset type</div>
-                    <div className="mt-1 break-words font-medium text-slate-700">{action.asset_type ?? "direct_action"}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Execution context</div>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Target URL</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{action.target_url ?? action.normalized_target_url ?? "No target URL yet."}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
-                      <div className="mt-1 font-medium text-slate-700">
-                        {action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Baseline</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.baseline_window)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Measurement</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
-                    </div>
-                  </div>
-                </section>
-              </div>
-            </div>
-
-            <div
-              aria-label="Drawer actions"
-              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
-            >
-              {hasConnectedGitHubPublisher ? (
-                prURL ? (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
-                  >
-                    <FileText className="shrink-0" size={14} />
-                    Open PR
-                  </Button>
-                ) : sourceAlreadyMatches ? (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    disabled
-                  >
-                    <CheckCircle2 className="shrink-0" size={14} />
-                    Source matches
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    onClick={() => void createSiteFixGitHubPR(action)}
-                    disabled={!!busy}
-                  >
-                    <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
-                      Create GitHub PR
-                    </ButtonProgress>
-                  </Button>
-                )
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ai"
-                  className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                  onClick={() => void copySiteFixAIJSON(action)}
-                >
-                  <Clipboard className="shrink-0" size={14} />
-                  Copy fix JSON
-                </Button>
-              )}
-              <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
-                <ButtonProgress busy={markAppliedBusy} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
-                  Mark applied
-                </ButtonProgress>
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => dismissSiteFixAction(action)} disabled={!!busy}>
-                <ButtonProgress busy={dismissSiteFixBusy} busyLabel="Dismissing" idleIcon={null}>
-                  Dismiss
                 </ButtonProgress>
               </Button>
             </div>
