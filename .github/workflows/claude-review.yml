@@ -33,9 +33,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Detect review workflow self-change
+        id: workflow_self_change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh pr diff "${PR_NUMBER}" --name-only | grep -Fxq ".github/workflows/claude-review.yml"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Claude review
+        if: steps.workflow_self_change.outputs.changed != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.TOKENGATE_CLAUDE_CODE_API_KEY }}
@@ -43,8 +61,15 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+            REVIEW RUN ID: ${{ github.run_id }}
 
             Review this pull request carefully.
+
+            This must be a real source-grounded Claude Code review, not a status-only pass.
+            Before posting comments:
+            - Inspect the PR diff.
+            - Read the relevant source files, tests, migrations, workflows, and generated code behind the changed behavior.
+            - Use repository evidence for every actionable finding. If a concern cannot be tied to code, schema, tests, or workflow behavior, frame it as an open question.
 
             Focus on:
             - Correctness and behavioral regressions
@@ -56,10 +81,44 @@ jobs:
             Leave concise, actionable GitHub PR comments.
             Prefer inline comments for issues tied to specific changed lines.
             Use top-level comments only for summary findings or cross-file concerns.
+            Every actionable finding must cite the changed line or file and the source evidence that made it actionable.
+
+            Always leave one top-level evidence summary comment containing:
+            - The marker `<!-- claude-pr-review-evidence:${{ github.run_id }} -->`
+            - The changed files reviewed
+            - The source files or commands inspected
+            - A brief list of accepted findings, or `No source-grounded findings`
 
             Do not modify files, create commits, push branches, or open pull requests.
             Only post GitHub comments. Codex will read the comments and make fixes.
 
             The repository is already checked out in the current working directory.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --max-turns 18
+            --allowedTools "Read,Grep,Glob,LS,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git show:*),Bash(rg:*),Bash(sed:*),Bash(nl:*)"
+
+      - name: Verify PR review evidence comment
+        if: steps.workflow_self_change.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "::error::Missing PR number for PR review evidence verification"
+            exit 1
+          fi
+
+          evidence_comment_ids="$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("<!-- claude-pr-review-evidence:${{ github.run_id }} -->")) | .id')"
+
+          if [ -z "${evidence_comment_ids}" ]; then
+            echo "::error::Claude PR review did not leave the required source-grounded evidence summary comment."
+            exit 1
+          fi
+
+      - name: Report skipped PR workflow self-review
+        if: steps.workflow_self_change.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+        run: |
+          gh pr comment "${PR_NUMBER}" --body "Claude PR review skipped because this PR changes \`.github/workflows/claude-review.yml\`. Claude Code Action requires the workflow file to match the default branch before it will run. After this workflow change is merged, the next PR will use the source-grounded review and evidence-comment gate."

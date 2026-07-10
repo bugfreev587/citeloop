@@ -15,7 +15,18 @@ The GitHub reviewer is not a human Claude web account. It is `anthropics/claude-
 
 The actual model is controlled by the TokenGate route or by Claude Code action arguments if a model argument is added. If PRD review must use a specific high-reasoning model such as Opus 4.8, configure the TokenGate route or add an explicit supported Claude Code model argument and verify it in the workflow logs.
 
-## Source-Grounded PRD Review
+## Source-Grounded Reviews
+
+`claude-review.yml` must also leave an auditable review trail:
+
+- It checks out full repository history with `fetch-depth: 0`.
+- It allows Claude Code to inspect changed files plus relevant source, tests, migrations, workflows, and generated code.
+- The prompt requires every actionable finding to cite changed code plus repository evidence.
+- The workflow requires a top-level comment containing a run-specific marker like `<!-- claude-pr-review-evidence:<github-run-id> -->`.
+
+If the current run's evidence summary comment is missing, the workflow fails. A successful PR review should therefore mean Claude Code actually inspected the PR and left an evidence summary, even when it found no source-grounded issues.
+
+PRs that change `.github/workflows/claude-review.yml` itself skip the evidence gate and leave a GitHub comment explaining that the new behavior applies after the workflow change is merged.
 
 `claude-prd-review.yml` must behave like a real Claude Code review, not a diff-only wording check:
 
@@ -35,7 +46,8 @@ The current automated fixer is also Claude Code, not Codex. The workflow name an
 
 If the desired loop is "Claude Code reviews, Codex fixes, then Claude Code re-reviews", add a separate Codex fixer workflow that:
 
-- Runs only after `Claude PR Review` or `Claude PRD Review` completes with a source-grounded evidence comment.
+- Runs only after `Claude PR Review` or `Claude PRD Review` completes with the current run's source-grounded evidence comment.
+- Skips when the evidence summary says `No source-grounded findings` and there are no separate review comments.
 - Reads GitHub inline comments, review comments, and top-level evidence summaries.
 - Applies only comments that are actionable and source-grounded.
 - Commits to the PR branch with a Codex identity.

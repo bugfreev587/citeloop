@@ -68,6 +68,45 @@ function resolvePullRequestNumber(event) {
   return 0;
 }
 
+function expectedEvidenceMarker(event) {
+  const workflowRun = event.workflow_run;
+  if (!workflowRun?.id || !workflowRun?.name) {
+    return "";
+  }
+  if (workflowRun.name === "Claude PR Review") {
+    return `<!-- claude-pr-review-evidence:${workflowRun.id} -->`;
+  }
+  if (workflowRun.name === "Claude PRD Review") {
+    return `<!-- claude-prd-review-evidence:${workflowRun.id} -->`;
+  }
+  return "";
+}
+
+function commentBody(comment) {
+  return String(comment?.body || "");
+}
+
+function commentAuthor(comment) {
+  return String(comment?.user?.login || comment?.author?.login || "");
+}
+
+function isClaudeAutomationComment(comment) {
+  return ["claude", "claude[bot]", "github-actions", "github-actions[bot]"].includes(commentAuthor(comment));
+}
+
+function isLoopComment(comment) {
+  return commentBody(comment).includes(marker) || commentBody(comment).includes("claude-review-fix-loop-skip");
+}
+
+function isEvidenceComment(comment) {
+  const body = commentBody(comment);
+  return body.includes("<!-- claude-pr-review-evidence:") || body.includes("<!-- claude-prd-review-evidence:");
+}
+
+function evidenceHasFindings(comment) {
+  return !commentBody(comment).includes("No source-grounded findings");
+}
+
 function main() {
   if (!repo) {
     throw new Error("GITHUB_REPOSITORY is required");
@@ -90,7 +129,23 @@ function main() {
 
   const pullRequest = ghApi([`repos/${repo}/pulls/${prNumber}`]);
   const comments = ghApi([`repos/${repo}/issues/${prNumber}/comments?per_page=100`]);
+  const reviewComments = ghApi([`repos/${repo}/pulls/${prNumber}/comments?per_page=100`]);
   const files = ghApi([`repos/${repo}/pulls/${prNumber}/files?per_page=100`]);
+  const evidenceMarker = expectedEvidenceMarker(event);
+  const evidenceComments = comments.filter((comment) => {
+    const body = commentBody(comment);
+    return evidenceMarker ? body.includes(evidenceMarker) : isEvidenceComment(comment);
+  });
+  const nonEvidenceIssueComments = comments.filter((comment) => {
+    return isClaudeAutomationComment(comment) && !isEvidenceComment(comment) && !isLoopComment(comment);
+  });
+  const nonLoopReviewComments = reviewComments.filter((comment) => {
+    return isClaudeAutomationComment(comment) && !isLoopComment(comment);
+  });
+  const hasActionableReviewInput =
+    evidenceComments.some(evidenceHasFindings) ||
+    nonEvidenceIssueComments.length > 0 ||
+    nonLoopReviewComments.length > 0;
 
   const loopCount = comments.filter((comment) => (comment.body || "").includes(marker)).length;
   const prdChanged = files.some((file) => /^docs\/.*prd.*\.md$/i.test(file.filename));
@@ -144,6 +199,26 @@ function main() {
       should_fix: "false",
       reason_code: "max_loops",
       reason: `PR #${prNumber} already reached the ${maxLoops}-pass fixer limit.`,
+    });
+    return;
+  }
+
+  if (event.workflow_run && evidenceComments.length === 0) {
+    setOutputs({
+      ...baseOutputs,
+      should_fix: "false",
+      reason_code: "no_evidence",
+      reason: `Workflow run ${event.workflow_run.id} did not leave a Claude evidence summary comment.`,
+    });
+    return;
+  }
+
+  if (!hasActionableReviewInput) {
+    setOutputs({
+      ...baseOutputs,
+      should_fix: "false",
+      reason_code: "no_actionable_comments",
+      reason: `PR #${prNumber} has no actionable Claude review comments to fix.`,
     });
     return;
   }
