@@ -29,6 +29,7 @@ import (
 	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/notification"
+	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
@@ -829,10 +830,46 @@ func (s *Scheduler) TickSEO(ctx context.Context) {
 		return
 	}
 	for _, p := range projects {
-		if err := s.runSEOForProject(ctx, q, p); err != nil {
-			s.logger().Error("seo tick failed", "project", p.ID, "err", err)
+		if err := s.runOpportunityFindingForProject(ctx, q, p); err != nil {
+			s.logger().Error("opportunity finding tick failed", "project", p.ID, "err", err)
 		}
 	}
+}
+
+func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return err
+	}
+	stages := cfg.OpportunityFindingStages(true)
+	var firstErr error
+	if stages.SignalScan {
+		if err := s.runSEOForProject(ctx, q, p); err != nil {
+			firstErr = fmt.Errorf("signal scan: %w", err)
+		}
+	}
+	if stages.AIDiscovery {
+		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q), opportunityfinding.AIDiscoveryOptions{
+			ObserveRequest: s.geoObserveRequest(),
+		})
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("ai discovery: %w", err)
+		}
+		s.logger().Info(
+			"ai discovery tick complete",
+			"project", p.ID,
+			"prompts", result.ActivePromptCount,
+			"prompt_set_generated", result.PromptSetGenerated,
+			"observations", result.ObservationCount,
+			"cost_usd", result.ObservationCostUSD,
+			"opportunities", result.OpportunityCount,
+			"errors", len(result.Errors),
+		)
+	}
+	if !stages.SignalScan && !stages.AIDiscovery {
+		s.logger().Info("opportunity finding tick skipped by settings", "project", p.ID)
+	}
+	return firstErr
 }
 
 func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project) error {
@@ -1291,22 +1328,26 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 }
 
 func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	svc := s.geoService(ctx, q)
-	logStep := func(step string, err error) {
-		if err != nil {
-			s.logger().Warn("geo tick step failed", "project", p.ID, "step", step, "err", err)
-		}
-	}
+	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID)
+	s.logger().Info(
+		"geo tick complete",
+		"project", p.ID,
+		"prompts", result.ActivePromptCount,
+		"prompt_set_generated", result.PromptSetGenerated,
+		"observations", result.ObservationCount,
+		"cost_usd", result.ObservationCostUSD,
+		"opportunities", result.OpportunityCount,
+		"errors", len(result.Errors),
+	)
+	return err
+}
 
-	_, auditErr := svc.RunCrawlerAudit(ctx, p.ID, geo.CrawlerAuditRequest{})
-	logStep("crawler_audit", auditErr)
-	_, observeErr := svc.ObserveAnswerProvider(ctx, p.ID, s.geoObserveRequest())
-	logStep("observe_provider", observeErr)
-	_, surfaceErr := svc.MonitorExternalSurfaces(ctx, p.ID, geo.MonitorExternalSurfacesRequest{Limit: 25})
-	logStep("external_surfaces", surfaceErr)
-	_, analyzeErr := svc.AnalyzeObservations(ctx, p.ID, geo.AnalyzeObservationsRequest{Limit: 100})
-	logStep("analyze", analyzeErr)
-	return nil
+func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID) (opportunityfinding.AIDiscoveryResult, error) {
+	svc := s.geoService(ctx, q)
+	result, err := opportunityfinding.RunAIDiscovery(ctx, projectID, q, svc, opportunityfinding.AIDiscoveryOptions{
+		ObserveRequest: s.geoObserveRequest(),
+	})
+	return result, err
 }
 
 func (s *Scheduler) geoService(ctx context.Context, q *db.Queries) geo.Service {
@@ -1335,7 +1376,30 @@ func (s *Scheduler) adminGEOAnswerProvider(ctx context.Context) geo.AnswerProvid
 		return nil
 	}
 	if credentials == nil {
-		return nil
+		llmCredentials, err := admin.LoadCredentials(ctx, s.Pool)
+		if err != nil {
+			s.logger().Warn("admin LLM credential unavailable for GEO fallback", "err", err)
+			return nil
+		}
+		if llmCredentials == nil || strings.TrimSpace(llmCredentials.APIKey) == "" {
+			return nil
+		}
+		env := config.FromEnv()
+		baseURL := strings.TrimSpace(llmCredentials.BaseURL)
+		if baseURL == "" {
+			baseURL = env.TokenGateBaseURL
+		}
+		model := strings.TrimSpace(llmCredentials.Model)
+		if model == "" {
+			model = env.TokenGateModel
+		}
+		return geo.NewTokenGateAnswerProvider(geo.TokenGateAnswerProviderConfig{
+			Scope:   string(admin.GEOProviderOpenAI),
+			APIKey:  llmCredentials.APIKey,
+			BaseURL: baseURL,
+			Model:   model,
+			Engine:  admin.GEOEngineForScope(admin.GEOProviderOpenAI),
+		}, nil)
 	}
 	return geo.NewTokenGateAnswerProvider(geo.TokenGateAnswerProviderConfig{
 		Scope:   string(credentials.Scope),

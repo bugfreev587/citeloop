@@ -14,6 +14,7 @@ func TestSchedulerGEOLoadsAdminTokenGateCredential(t *testing.T) {
 	source := string(data)
 	for _, want := range []string{
 		"admin.LoadRuntimeGEOCredentials",
+		"admin.LoadCredentials",
 		"geo.NewTokenGateAnswerProvider",
 	} {
 		if !strings.Contains(source, want) {

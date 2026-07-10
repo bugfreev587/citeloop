@@ -17,6 +17,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -282,23 +283,50 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad project id")
 		return
 	}
-	svc := s.seoServiceForProject(r.Context(), projectID)
-	syncResult, err := svc.Sync(r.Context(), projectID, "")
+	project, err := s.Q.GetProject(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	analyzeResult, err := svc.Analyze(r.Context(), projectID)
+	cfg, err := config.Parse(project.Config)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	stages := cfg.OpportunityFindingStages(false)
+	response := map[string]any{}
+	if stages.SignalScan {
+		svc := s.seoServiceForProject(r.Context(), projectID)
+		syncResult, err := svc.Sync(r.Context(), projectID, "")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		analyzeResult, err := svc.Analyze(r.Context(), projectID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		response["sync"] = syncResult
+		response["analyze"] = analyzeResult
+	}
+	if stages.AIDiscovery {
+		aiResult, err := opportunityfinding.RunAIDiscovery(r.Context(), projectID, s.Q, s.geoService(r.Context()), opportunityfinding.AIDiscoveryOptions{
+			ObserveRequest: s.aiDiscoveryObserveRequest(),
+		})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		response["ai_discovery"] = aiResult
 	}
 	status, err := s.opportunityFindingStatus(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sync": syncResult, "analyze": analyzeResult, "status": status})
+	response["status"] = status
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UUID) (OpportunityFindingStatus, error) {

@@ -175,6 +175,11 @@ const (
 	AIDiscoveryAutomationManual        = "manual"
 )
 
+type OpportunityFindingStages struct {
+	SignalScan  bool
+	AIDiscovery bool
+}
+
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
@@ -197,6 +202,23 @@ func Default() ProjectConfig {
 			SitemapURLCap:    2000,
 		},
 	}
+}
+
+func (c ProjectConfig) OpportunityFindingStages(automatic bool) OpportunityFindingStages {
+	stages := OpportunityFindingStages{}
+	switch c.OpportunityFindingSourceMix {
+	case OpportunityFindingSourceAIDiscovery:
+		stages.SignalScan = false
+	case OpportunityFindingSourceSignalScan:
+		stages.SignalScan = true
+	default:
+		stages.SignalScan = true
+	}
+	if c.OpportunityFindingSourceMix == OpportunityFindingSourceSignalScan {
+		return stages
+	}
+	stages.AIDiscovery = !automatic || c.AIDiscoveryAutomation == AIDiscoveryAutomationAutomatic
+	return stages
 }
 
 // Parse decodes a projects.config jsonb payload, filling defaults for zero values.
