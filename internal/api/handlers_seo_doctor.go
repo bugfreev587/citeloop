@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const seoDoctorRunTimeout = 10 * time.Minute
@@ -31,6 +33,7 @@ func (s *Server) registerDoctorRoutes(r chi.Router, prefix string) {
 	r.Get(prefix+"/runs/{runID}/findings", s.listSEODoctorRunFindings)
 	r.Get(prefix+"/latest", s.getLatestSEODoctor)
 	r.Post(prefix+"/findings/{findingID}/dismiss", s.dismissSEODoctorFinding)
+	r.Post(prefix+"/findings/{findingID}/convert", s.convertSEODoctorFinding)
 }
 
 func (s *Server) getSEODoctor(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +149,229 @@ func (s *Server) dismissSEODoctorFinding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, finding)
+}
+
+// convertSEODoctorFinding turns a reviewed Doctor finding into a Site Fix.
+// It synthesizes a fix-site-issue opportunity from the finding and routes it
+// through the shared opportunity → content action lifecycle, then links the
+// finding to the created action. The flow is idempotent: a finding that was
+// already converted returns its existing action untouched.
+func (s *Server) convertSEODoctorFinding(w http.ResponseWriter, r *http.Request) {
+	projectID, findingID, ok := s.seoDoctorIDs(w, r, "findingID")
+	if !ok {
+		return
+	}
+	finding, err := s.Q.GetSEODoctorFinding(r.Context(), db.GetSEODoctorFindingParams{ID: findingID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "doctor finding not found")
+		return
+	}
+	if finding.Status == "converted" && finding.LinkedContentActionID.Valid {
+		if action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{
+			ID:        uuid.UUID(finding.LinkedContentActionID.Bytes),
+			ProjectID: projectID,
+		}); err == nil {
+			writeJSON(w, http.StatusOK, action)
+			return
+		}
+	}
+
+	pageURL := firstDoctorFindingURL(finding.AffectedUrls)
+	normalizedURL := firstDoctorFindingURL(finding.NormalizedUrls)
+	if normalizedURL == "" {
+		normalizedURL = pageURL
+	}
+	recommended := strings.TrimSpace(finding.FixIntent)
+	if recommended == "" {
+		recommended = strings.TrimSpace(finding.IssueType)
+	}
+	if recommended == "" {
+		recommended = "technical SEO fix task"
+	}
+	impact := strings.TrimSpace(finding.WhyItMatters)
+	var pageURLPtr *string
+	if pageURL != "" {
+		pageURLPtr = &pageURL
+	}
+
+	oppRow, err := s.Q.UpsertSEOOpportunity(r.Context(), db.UpsertSEOOpportunityParams{
+		ProjectID:         projectID,
+		Type:              doctorFindingOpportunityType(finding),
+		Status:            "open",
+		PriorityScore:     pgutil.Numeric(doctorFindingPriority(finding.Severity)),
+		Confidence:        pgutil.Numeric(80),
+		PageUrl:           pageURLPtr,
+		NormalizedPageUrl: normalizedURL,
+		Evidence:          doctorFindingOpportunityEvidence(finding),
+		RecommendedAction: &recommended,
+		ExpectedImpact:    &impact,
+		Effort:            2,
+		RiskLevel:         normalizeDoctorRiskLevel(finding.RiskLevel),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: oppRow.ID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	action, err := s.persistContentActionFromOpportunity(r.Context(), projectID, opp, WorkTypeFixSiteIssue, RoutingSourceSystem, contentActionOverrides{
+		ActionType:       recommended,
+		AssetType:        doctorFindingAssetType(finding),
+		EvidenceSnapshot: finding.Evidence,
+		DiffSnapshot:     doctorFindingDiffSnapshot(finding),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if _, err := s.Q.LinkSEODoctorFindingToAction(r.Context(), db.LinkSEODoctorFindingToActionParams{
+		LinkedOpportunityID:   pgtype.UUID{Bytes: opp.ID, Valid: true},
+		LinkedContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
+		ID:                    findingID,
+		ProjectID:             projectID,
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, action)
+}
+
+// firstDoctorFindingURL returns the first non-empty URL from a finding's
+// affected_urls / normalized_urls JSON array.
+func firstDoctorFindingURL(raw json.RawMessage) string {
+	var urls []string
+	if err := json.Unmarshal(raw, &urls); err == nil {
+		for _, u := range urls {
+			if trimmed := strings.TrimSpace(u); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+// doctorFindingOpportunityType maps a finding to one of the fix-site-issue
+// opportunity types so workTypeForOpportunity routes it to Site Fixes.
+func doctorFindingOpportunityType(f db.SeoDoctorFinding) string {
+	text := strings.ToLower(f.Category + " " + f.IssueType + " " + f.FixIntent)
+	switch {
+	case strings.Contains(text, "internal_link") || strings.Contains(text, "internal link"):
+		return "internal_link_gap"
+	case strings.Contains(text, "schema") || strings.Contains(text, "structured_data") || strings.Contains(text, "structured data") || strings.Contains(text, "json-ld"):
+		return "schema_gap"
+	case strings.Contains(text, "geo") || strings.Contains(text, "crawler_access") || strings.Contains(text, "answer engine"):
+		return "geo_crawler_access_blocked"
+	default:
+		return "technical_visibility_issue"
+	}
+}
+
+// doctorFindingAssetType maps a finding to a direct-action asset type so the
+// created content action shows up on the Site Fixes surface.
+func doctorFindingAssetType(f db.SeoDoctorFinding) string {
+	text := strings.ToLower(f.Category + " " + f.IssueType + " " + f.FixIntent + " " + f.DeveloperInstructions)
+	switch {
+	case strings.Contains(text, "schema") || strings.Contains(text, "structured_data") || strings.Contains(text, "structured data") || strings.Contains(text, "json-ld"):
+		return "schema_patch"
+	case strings.Contains(text, "internal_link") || strings.Contains(text, "internal link"):
+		return "internal_link_patch"
+	case strings.Contains(text, "sitemap"):
+		return "sitemap_update"
+	case strings.Contains(text, "meta description") || strings.Contains(text, "meta_description") || strings.Contains(text, "metadata") || strings.Contains(text, "title tag"):
+		return "metadata_rewrite"
+	default:
+		return "technical_fix"
+	}
+}
+
+func doctorFindingPriority(severity string) float64 {
+	switch strings.ToUpper(strings.TrimSpace(severity)) {
+	case "P0":
+		return 92
+	case "P1":
+		return 82
+	case "P2":
+		return 70
+	default:
+		return 60
+	}
+}
+
+func normalizeDoctorRiskLevel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	default:
+		return "medium"
+	}
+}
+
+// doctorFindingOpportunityEvidence preserves the finding's own evidence and adds
+// enough context for downstream copy and the evidence fingerprint.
+func doctorFindingOpportunityEvidence(f db.SeoDoctorFinding) json.RawMessage {
+	base := map[string]any{}
+	if len(f.Evidence) > 0 {
+		_ = json.Unmarshal(f.Evidence, &base)
+	}
+	base["source"] = "seo_doctor_finding"
+	base["doctor_finding_id"] = f.ID.String()
+	base["issue_type"] = f.IssueType
+	base["severity"] = f.Severity
+	base["category"] = f.Category
+	if f.WhyItMatters != "" {
+		base["why_it_matters"] = f.WhyItMatters
+	}
+	if f.FixIntent != "" {
+		base["recommended_action"] = f.FixIntent
+	}
+	b, err := json.Marshal(base)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return b
+}
+
+// doctorFindingDiffSnapshot carries the finding's developer instructions,
+// likely surfaces, and acceptance tests into the content action so the Site Fix
+// AI repair JSON has real fix content.
+func doctorFindingDiffSnapshot(f db.SeoDoctorFinding) json.RawMessage {
+	change := map[string]any{}
+	if instr := strings.TrimSpace(f.DeveloperInstructions); instr != "" {
+		change["instruction"] = instr
+	}
+	var surfaces []string
+	if len(f.LikelyFilesOrSurfaces) > 0 {
+		_ = json.Unmarshal(f.LikelyFilesOrSurfaces, &surfaces)
+	}
+	if len(surfaces) > 0 {
+		change["likely_surfaces"] = surfaces
+	}
+	snapshot := map[string]any{
+		"output_type": "technical_task",
+		"source":      "seo_doctor_finding",
+	}
+	if len(change) > 0 {
+		snapshot["proposed_changes"] = []any{change}
+	}
+	var acceptance []string
+	if len(f.AcceptanceTests) > 0 {
+		_ = json.Unmarshal(f.AcceptanceTests, &acceptance)
+	}
+	if len(acceptance) > 0 {
+		snapshot["acceptance_tests"] = acceptance
+	}
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (s *Server) startSEODoctorRun(projectID, runID uuid.UUID) {
