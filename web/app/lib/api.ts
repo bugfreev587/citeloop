@@ -2279,6 +2279,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
     return normalizeSEODoctorFinding(raw);
   },
+  convertSEODoctorFinding: async (id: string, findingID: string): Promise<SEOContentAction> => {
+    const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/convert`, { method: "POST" }, auth);
+    return normalizeSEOContentAction(raw);
+  },
   syncSEO: async (id: string, siteURL?: string) => {
     return req<any>(`/projects/${id}/seo/sync`, { method: "POST", body: JSON.stringify({ site_url: siteURL ?? "" }) }, auth);
   },

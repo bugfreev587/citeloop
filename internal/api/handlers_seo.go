@@ -666,23 +666,108 @@ func (s *Server) createSEOContentAction(w http.ResponseWriter, r *http.Request) 
 	s.createSEOContentActionFromOpportunity(w, r, http.StatusCreated)
 }
 
+// contentActionOverrides carries the optional caller-supplied fields used when
+// creating a content action from an opportunity. All fields are optional; empty
+// values fall back to opportunity-derived defaults.
+type contentActionOverrides struct {
+	ActionType       string          `json:"action_type"`
+	AssetType        string          `json:"asset_type"`
+	WorkType         string          `json:"work_type"`
+	TargetSurfaceID  *uuid.UUID      `json:"target_surface_id"`
+	RiskReasons      json.RawMessage `json:"risk_reasons"`
+	EvidenceSnapshot json.RawMessage `json:"evidence_snapshot"`
+	InputSnapshot    json.RawMessage `json:"input_snapshot"`
+	OutputSnapshot   json.RawMessage `json:"output_snapshot"`
+	DiffSnapshot     json.RawMessage `json:"diff_snapshot"`
+	ReviewRequired   *bool           `json:"review_required"`
+}
+
+// persistContentActionFromOpportunity creates a content action for an existing
+// opportunity, marks the opportunity converted, and enqueues the reviewed event.
+// It is shared by the opportunity-accept endpoint and the Doctor
+// finding→Site Fix conversion, so the lifecycle stays identical for both origins.
+func (s *Server) persistContentActionFromOpportunity(ctx context.Context, projectID uuid.UUID, opp db.SeoOpportunity, workType, routingSource string, in contentActionOverrides) (db.ContentAction, error) {
+	actionType := strings.TrimSpace(in.ActionType)
+	if actionType == "" && opp.RecommendedAction != nil {
+		actionType = *opp.RecommendedAction
+	}
+	if actionType == "" {
+		actionType = "technical SEO fix task"
+	}
+	assetTypeValue := inferContentActionAssetType(opp, actionType, in.AssetType)
+	var assetType *string
+	if assetTypeValue != "" {
+		assetType = &assetTypeValue
+	}
+	var targetHash *string
+	if opp.ArticleID.Valid {
+		article, err := s.Q.GetArticleForProject(ctx, db.GetArticleForProjectParams{
+			ID:        uuid.UUID(opp.ArticleID.Bytes),
+			ProjectID: projectID,
+		})
+		if err == nil {
+			targetHash = article.ContentHash
+		}
+	}
+	action, err := s.Q.CreateContentAction(ctx, db.CreateContentActionParams{
+		ProjectID:               projectID,
+		OpportunityID:           opp.ID,
+		ActionType:              actionType,
+		Status:                  "ready_for_review",
+		TargetArticleID:         opp.ArticleID,
+		TargetUrl:               opp.PageUrl,
+		NormalizedTargetUrl:     strPtrFrom(opp.NormalizedPageUrl),
+		TargetContentHashBefore: targetHash,
+		BaselineWindow:          json.RawMessage(`{"days":28}`),
+		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
+		ApprovalSource:          ApprovalSourceHumanReview,
+		RoutingSource:           routingSource,
+		WorkType:                &workType,
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	reviewRequired := defaultReviewRequiredForAssetType(assetTypeValue, opp.RiskLevel)
+	if in.ReviewRequired != nil {
+		reviewRequired = *in.ReviewRequired
+	}
+	targetSurfaceID := pgtype.UUID{}
+	if in.TargetSurfaceID != nil {
+		targetSurfaceID = pgtype.UUID{Bytes: *in.TargetSurfaceID, Valid: true}
+	}
+	action, err = s.Q.UpdateContentActionExecutionMetadata(ctx, db.UpdateContentActionExecutionMetadataParams{
+		ID:                   action.ID,
+		ProjectID:            projectID,
+		AssetType:            assetType,
+		TargetSurfaceID:      targetSurfaceID,
+		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
+		EvidenceSnapshot:     contentActionEvidenceSnapshot(in.EvidenceSnapshot, opp),
+		InputSnapshot:        contentActionInputSnapshot(in.InputSnapshot, opp, actionType),
+		OutputSnapshot:       defaultOutputSnapshotForAction(in.OutputSnapshot, assetTypeValue, actionType, opp),
+		DiffSnapshot:         defaultDiffSnapshotForAction(in.DiffSnapshot, assetTypeValue, actionType, opp),
+		ReviewRequired:       reviewRequired,
+		VerificationSnapshot: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		return db.ContentAction{}, err
+	}
+	_, _ = s.Q.UpdateSEOOpportunityStatus(ctx, db.UpdateSEOOpportunityStatusParams{ID: opp.ID, ProjectID: projectID, Status: "converted"})
+	if err := s.enqueueWorkflowEvent(ctx, projectID, workflow.EventOpportunityReviewed, "seo_opportunity", opp.ID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, opp.ID, "converted"), map[string]any{
+		"opportunity_id": opp.ID,
+		"action_id":      action.ID,
+		"status":         "converted",
+	}); err != nil {
+		return db.ContentAction{}, err
+	}
+	return action, nil
+}
+
 func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r *http.Request, successStatus int) {
 	projectID, oppID, ok := s.seoIDs(w, r, "opportunityID")
 	if !ok {
 		return
 	}
-	var in struct {
-		ActionType       string          `json:"action_type"`
-		AssetType        string          `json:"asset_type"`
-		WorkType         string          `json:"work_type"`
-		TargetSurfaceID  *uuid.UUID      `json:"target_surface_id"`
-		RiskReasons      json.RawMessage `json:"risk_reasons"`
-		EvidenceSnapshot json.RawMessage `json:"evidence_snapshot"`
-		InputSnapshot    json.RawMessage `json:"input_snapshot"`
-		OutputSnapshot   json.RawMessage `json:"output_snapshot"`
-		DiffSnapshot     json.RawMessage `json:"diff_snapshot"`
-		ReviewRequired   *bool           `json:"review_required"`
-	}
+	var in contentActionOverrides
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: oppID, ProjectID: projectID})
 	if err != nil {
@@ -700,78 +785,8 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 		workType = requested
 		routingSource = RoutingSourceUserOverride
 	}
-	actionType := strings.TrimSpace(in.ActionType)
-	if actionType == "" && opp.RecommendedAction != nil {
-		actionType = *opp.RecommendedAction
-	}
-	if actionType == "" {
-		actionType = "technical SEO fix task"
-	}
-	assetTypeValue := inferContentActionAssetType(opp, actionType, in.AssetType)
-	var assetType *string
-	if assetTypeValue != "" {
-		assetType = &assetTypeValue
-	}
-	var targetHash *string
-	if opp.ArticleID.Valid {
-		article, err := s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{
-			ID:        uuid.UUID(opp.ArticleID.Bytes),
-			ProjectID: projectID,
-		})
-		if err == nil {
-			targetHash = article.ContentHash
-		}
-	}
-	action, err := s.Q.CreateContentAction(r.Context(), db.CreateContentActionParams{
-		ProjectID:               projectID,
-		OpportunityID:           oppID,
-		ActionType:              actionType,
-		Status:                  "ready_for_review",
-		TargetArticleID:         opp.ArticleID,
-		TargetUrl:               opp.PageUrl,
-		NormalizedTargetUrl:     strPtrFrom(opp.NormalizedPageUrl),
-		TargetContentHashBefore: targetHash,
-		BaselineWindow:          json.RawMessage(`{"days":28}`),
-		MeasurementWindow:       measurementWindowForAction(assetTypeValue, actionType),
-		ApprovalSource:          ApprovalSourceHumanReview,
-		RoutingSource:           routingSource,
-		WorkType:                &workType,
-	})
+	action, err := s.persistContentActionFromOpportunity(r.Context(), projectID, opp, workType, routingSource, in)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	reviewRequired := defaultReviewRequiredForAssetType(assetTypeValue, opp.RiskLevel)
-	if in.ReviewRequired != nil {
-		reviewRequired = *in.ReviewRequired
-	}
-	targetSurfaceID := pgtype.UUID{}
-	if in.TargetSurfaceID != nil {
-		targetSurfaceID = pgtype.UUID{Bytes: *in.TargetSurfaceID, Valid: true}
-	}
-	action, err = s.Q.UpdateContentActionExecutionMetadata(r.Context(), db.UpdateContentActionExecutionMetadataParams{
-		ID:                   action.ID,
-		ProjectID:            projectID,
-		AssetType:            assetType,
-		TargetSurfaceID:      targetSurfaceID,
-		RiskReasons:          rawOrDefault(in.RiskReasons, `[]`),
-		EvidenceSnapshot:     contentActionEvidenceSnapshot(in.EvidenceSnapshot, opp),
-		InputSnapshot:        contentActionInputSnapshot(in.InputSnapshot, opp, actionType),
-		OutputSnapshot:       defaultOutputSnapshotForAction(in.OutputSnapshot, assetTypeValue, actionType, opp),
-		DiffSnapshot:         defaultDiffSnapshotForAction(in.DiffSnapshot, assetTypeValue, actionType, opp),
-		ReviewRequired:       reviewRequired,
-		VerificationSnapshot: json.RawMessage(`{}`),
-	})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_, _ = s.Q.UpdateSEOOpportunityStatus(r.Context(), db.UpdateSEOOpportunityStatusParams{ID: oppID, ProjectID: projectID, Status: "converted"})
-	if err := s.enqueueWorkflowEvent(r.Context(), projectID, workflow.EventOpportunityReviewed, "seo_opportunity", oppID, workflowDedupeKey(workflow.EventOpportunityReviewed, projectID, oppID, "converted"), map[string]any{
-		"opportunity_id": oppID,
-		"action_id":      action.ID,
-		"status":         "converted",
-	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

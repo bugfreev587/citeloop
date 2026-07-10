@@ -85,16 +85,27 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 	}
 }
 
-func TestLegacyDoctorConvertRouteIsNotRegistered(t *testing.T) {
+func TestDoctorConvertRouteIsRegistered(t *testing.T) {
+	// A reviewed Doctor finding can be converted into a Site Fix (content action).
+	// The route is registered on both the canonical /doctor mount and the legacy
+	// /seo/doctor alias; a bad project id returns 400 (registered), not 404.
 	router := (&Server{}).Router()
-	projectID := uuid.New().String()
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/seo/doctor/findings/"+uuid.New().String()+"/convert", nil)
-	res := httptest.NewRecorder()
+	findingID := uuid.New().String()
 
-	router.ServeHTTP(res, req)
+	for _, path := range []string{
+		"/api/projects/not-a-uuid/doctor/findings/" + findingID + "/convert",
+		"/api/projects/not-a-uuid/seo/doctor/findings/" + findingID + "/convert",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			res := httptest.NewRecorder()
 
-	if res.Code != http.StatusNotFound {
-		t.Fatalf("legacy convert route status = %d, want %d", res.Code, http.StatusNotFound)
+			router.ServeHTTP(res, req)
+
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("convert route status = %d, want %d (route should be registered)", res.Code, http.StatusBadRequest)
+			}
+		})
 	}
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
@@ -376,6 +376,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeverityFilter>("all");
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
+  const [busyKind, setBusyKind] = useState<"dismiss" | "add" | null>(null);
   const [selectedFindingID, setSelectedFindingID] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -464,6 +465,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
 
   async function dismissFinding(finding: SEODoctorFinding) {
     setBusyFindingID(finding.id);
+    setBusyKind("dismiss");
     try {
       await api.dismissSEODoctorFinding(projectId, finding.id);
       notify({ tone: "green", title: "Finding dismissed" });
@@ -473,6 +475,27 @@ export function DoctorClient({ projectId }: { projectId: string }) {
       notify({ tone: "red", title: "Could not dismiss finding", detail: err?.apiMessage || err?.message });
     } finally {
       setBusyFindingID(null);
+      setBusyKind(null);
+    }
+  }
+
+  async function addToSiteFixes(finding: SEODoctorFinding) {
+    setBusyFindingID(finding.id);
+    setBusyKind("add");
+    try {
+      await api.convertSEODoctorFinding(projectId, finding.id);
+      notify({
+        tone: "green",
+        title: "Added to Site Fixes",
+        detail: "Track the PR, apply, and verify steps on the Site Fixes page.",
+      });
+      setSelectedFindingID(null);
+      await refresh();
+    } catch (err: any) {
+      notify({ tone: "red", title: "Could not add to Site Fixes", detail: err?.apiMessage || err?.message });
+    } finally {
+      setBusyFindingID(null);
+      setBusyKind(null);
     }
   }
 
@@ -652,7 +675,21 @@ export function DoctorClient({ projectId }: { projectId: string }) {
         footer={
           selectedFinding ? (
             <>
-              <Button size="sm" variant="ai" onClick={() => void copyAIRepairJSON(selectedFinding)}>
+              <Button
+                size="sm"
+                variant="ai"
+                onClick={() => void addToSiteFixes(selectedFinding)}
+                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active"}
+              >
+                <ButtonProgress
+                  busy={busyFindingID === selectedFinding.id && busyKind === "add"}
+                  busyLabel="Adding"
+                  idleIcon={<Wrench size={14} />}
+                >
+                  Add to Site Fixes
+                </ButtonProgress>
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void copyAIRepairJSON(selectedFinding)}>
                 <Clipboard size={14} />
                 Copy fix JSON
               </Button>
@@ -662,7 +699,11 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                 onClick={() => void dismissFinding(selectedFinding)}
                 disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active"}
               >
-                <ButtonProgress busy={busyFindingID === selectedFinding.id} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                <ButtonProgress
+                  busy={busyFindingID === selectedFinding.id && busyKind === "dismiss"}
+                  busyLabel="Dismissing"
+                  idleIcon={<X size={14} />}
+                >
                   Dismiss
                 </ButtonProgress>
               </Button>

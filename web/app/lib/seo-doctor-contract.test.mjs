@@ -23,13 +23,15 @@ test("api client exposes canonical read-only Doctor report, run, and finding met
     "getSEODoctorRun",
     "listSEODoctorRunFindings",
     "dismissSEODoctorFinding",
+    // A reviewed finding can be converted into a Site Fix (content action).
+    "convertSEODoctorFinding",
   ]) {
     assert.match(api, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(api, /`\/projects\/\$\{id\}\/doctor`/);
   assert.match(api, /`\/projects\/\$\{id\}\/doctor\/runs`/);
+  assert.match(api, /\/doctor\/findings\/\$\{findingID\}\/convert`/);
   assert.doesNotMatch(api, /\/seo\/doctor/);
-  assert.doesNotMatch(api, /convertSEODoctorFinding/);
   assert.doesNotMatch(api, /startSEODoctorGrowthLoop/);
   assert.doesNotMatch(api, /start-growth-loop/);
 });
@@ -71,6 +73,10 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     "writeClipboardText",
     "Copy fix JSON",
     "Dismiss",
+    // A reviewed finding can be routed into the dedicated Site Fixes lifecycle.
+    "Add to Site Fixes",
+    "addToSiteFixes",
+    "api.convertSEODoctorFinding",
     "acceptance_tests",
     "dismissSEODoctorFinding",
     "document.execCommand",
@@ -78,13 +84,11 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const forbidden of [
-    // Old centered modal + action-creation affordances are gone; the drawer opens
-    // by clicking the card, not a "Fix with AI" button.
+    // Old centered modal is gone; the drawer opens by clicking the card, not a
+    // "Fix with AI" button.
     "seo-doctor-ai-repair-title",
     "Fix with AI",
     "setSelectedRepairFinding",
-    "Create action",
-    "convertSEODoctorFinding",
     "Start Growth Loop",
     "Select for Growth Loop",
     "selectedFindingIDs",
