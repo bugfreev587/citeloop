@@ -548,7 +548,8 @@ Required states：
 ```text
 finding: active | dismissed | resolved | converted
 site_fix: proposed | approved | preparing | ready_to_apply | applying |
-          awaiting_deploy | verifying | verified | failed | superseded
+          awaiting_deploy | verifying | verified | failed_retryable |
+          reopened | failed_terminal | superseded
 ```
 
 Doctor completion requires verification evidence. `PR merged`、`CMS returned 200` 或 `user clicked done` 只能表示 applied，不能表示 verified。
@@ -688,8 +689,13 @@ Evidence refreshed
 -> Publish
 -> Baseline and measurement window
 -> Positive / Negative / Mixed / Inconclusive / Insufficient data
--> Learning extracted
+-> [Positive / Negative / Mixed / Inconclusive] Learning extracted
 -> Strategy and next discovery updated
+
+or
+
+-> [Final Insufficient data] Closed — insufficient data
+-> Measurement-quality record only
 ```
 
 Required user-visible stages：
@@ -702,7 +708,7 @@ Found
 -> Needs review
 -> Publishing / Applying
 -> Measuring
--> Learned
+-> Learned | Closed — insufficient data
 ```
 
 ### 9.6 Closed-loop learning
@@ -853,7 +859,7 @@ Active reservation statuses：
 
 ```text
 reserved | proposed | approved | preparing | executing | awaiting_deploy |
-verifying | measuring | blocked | watching | snoozed
+verifying | measuring | blocked | watching | snoozed | failed_retryable | reopened
 ```
 
 `verified | learned | dismissed | superseded | cancelled | failed_terminal` 退出 active uniqueness，但 review memory 继续生效。
@@ -864,6 +870,11 @@ verifying | measuring | blocked | watching | snoozed
 
 ```text
 work_signature
+exact_signature_hash_at_decision
+semantic_fingerprint_at_decision
+conflict_bucket_keys
+signature_version
+signature_aliases
 decision = dismissed | snoozed | watching
 decision_scope
 evidence_fingerprint_at_decision
@@ -877,6 +888,9 @@ decided_at
 - `snoozed`：到期前 suppress；到期后重新评估，但不自动 approve。
 - `watching`：允许刷新 evidence 和 measurement，不重新进入 decision queue，除非发生 material change。
 - material change 必须由 versioned deterministic fields 判定；AI 可以解释变化，但不能单独触发 reopen。
+- review-memory lookup 必须使用与 work creation 相同的 conflict bucket locks、exact alias lookup 和 semantic resolver；不得只按当前 exact signature 查询。
+- signature version 升级时，旧 signature 保存为 alias；同一 mutation 的新版本必须继承旧 review decision。
+- semantic variant 命中 dismissed/snoozed/watching memory 且 confidence >= 0.80 时继承 decision；低于阈值时进入 `needs_arbitration_review`，不能当作全新 work。
 - 旧 Doctor/Opportunity 的 dismiss、snooze、watch 状态必须迁移到该 registry，避免换 owner 后复活。
 
 ### 10.5 Cross-line relationship
@@ -1043,7 +1057,8 @@ Opportunity drawer 必须展示：
 Growth loop visualization：
 
 ```text
-Found -> Decided -> Planned -> Created -> Published -> Measuring -> Learned
+Found -> Decided -> Planned -> Created -> Published -> Measuring
+      -> Learned | Closed — insufficient data
 ```
 
 点击任一步必须打开对应真实对象，不能只展示聚合数字。
@@ -1073,6 +1088,7 @@ Results 分两类 outcome：
 ```text
 evidence_runs
 evidence_observations
+ai_call_records
 discovery_candidates
 work_signature_registry
 
@@ -1091,14 +1107,43 @@ growth_learnings
 work_relationships
 ```
 
+`ai_call_records` 是所有 AI 使用的 canonical ledger，不限于 AI-answer observations。每条 provider call 必须记录：
+
+```text
+id
+project_id
+run_id
+stage = evidence|doctor_diagnosis|arbitration|fix_generation|verification|
+        growth_hypothesis|brief|content_generation|qa|outcome_learning
+linked_object_type
+linked_object_id
+provider
+model
+prompt_version
+request_fingerprint
+status = queued|running|ok|partial|failed|skipped
+error_code
+prompt_tokens
+completion_tokens
+total_tokens
+cost_usd
+started_at
+finished_at
+```
+
+- Observation/candidate/finding/action 上的 token/cost 是 ledger aggregate，不是第二个 truth source。
+- Aggregate 必须可由 linked `ai_call_records` 重算；CI/integration tests 校验 aggregate consistency。
+- Retry 每次创建独立 call record，并通过 request fingerprint / parent call 关联，不能覆盖失败记录。
+- Provider 未调用时写 `skipped` 和原因，不写伪造的零结果 observation。
+
 ### 13.2 Physical migration guidance
 
 Canonical target model 确定为 dedicated `site_fixes`。不得把“继续使用 `content_actions` 并增加 product_line”作为最终或并列方案，因为现有 `content_actions.opportunity_id` 非空会让 Doctor 继续依赖 Opportunities。
 
 迁移要求：
 
-1. `seo_doctor_findings` 保留为 Doctor canonical findings，新增 canonical `site_fix_id`；旧 `linked_opportunity_id` / `linked_content_action_id` 只保留 legacy provenance。
-2. 新建 `site_fixes`，直接引用 `doctor_finding_id`、`candidate_id`、`work_signature_id` 和 evidence snapshot，不引用 `seo_opportunities`。
+1. `seo_doctor_findings` 保留为 Doctor canonical findings；不新增反向 `site_fix_id`。旧 `linked_opportunity_id` / `linked_content_action_id` 只保留 legacy provenance，不作为 canonical relationship。
+2. 新建 `site_fixes`，由 `site_fixes.doctor_finding_id` 单向、权威地引用 finding，同时引用 `candidate_id`、`work_signature_id` 和 evidence snapshot，不引用 `seo_opportunities`。一个 Site Fix 恰好属于一个 finding；一个 finding 可以保留 sequential fix attempts/revisions，但同一 work signature 同时只能有一个 active Site Fix。后续 revision 使用 `supersedes_site_fix_id`，不通过 Doctor finding 上的 current pointer 表达。
 3. 现有 technical `seo_opportunities` 经过 dry-run owner classification：
    - 未执行且与 Doctor finding 等价：迁为 Doctor finding/review memory，legacy opportunity 标记 `migrated`；
    - 已批准或执行中：创建对应 `site_fixes`，保留原 ID mapping；
@@ -1122,13 +1167,17 @@ Status mapping：
 | applied / PR merged | `awaiting_deploy` |
 | deployment observed | `verifying` |
 | verified/completed | `verified` |
-| failed with retry available | `failed` |
+| failed with retry available | `failed_retryable` |
+| failed with retry exhausted/user terminated | `failed_terminal` |
+
+Site Fix 与 registry 必须在同一事务中转换：`failed_retryable` / `reopened` 对应 active registry status 并继续阻止重复 work；`failed_terminal` 才释放 active reservation，同时保留 historical alias 和 review memory。
 
 Migration invariants：
 
 - `legacy technical actions = migrated site_fixes + explicitly archived duplicates + migration_review`，逐项目与全局 row counts 必须守恒。
 - 每个 legacy application 必须恰好映射到一个 canonical application source。
 - 每个 legacy ID 必须能通过 alias 查询到 canonical Site Fix。
+- `legacy dismissed/snoozed/watching decisions = migrated review-memory rows + explicitly resolved duplicate decisions + migration_review`，逐项目与全局 counts 必须守恒。
 - rollback 在 cutover window 内恢复 legacy reads/writes，但不得同时允许两套 writer。
 - dual-read 可以存在，dual-write 禁止；每个 phase 只有一个 canonical writer。
 
@@ -1143,6 +1192,7 @@ Migration invariants：
 7. `site_fixes` 必须引用 Doctor finding；Growth Action 必须引用 Growth Opportunity。
 8. `site_change_applications` 必须满足 one-of-source constraint。
 9. review memory 不因 object owner 或 legacy ID 变化而丢失。
+10. review memory 必须跨 signature version、alias 和高置信 semantic equivalent 生效。
 
 ## 14. API Direction
 
@@ -1238,10 +1288,10 @@ growth.learning.ready
 
 | Legacy source mix | `growth_signal_enabled` | `growth_ai_enabled` | `doctor_ai_enabled` | 说明 |
 |---|---:|---:|---:|---|
-| `all` | true | true | true | 保持两类 evidence capability |
+| `all` | true | true | false | 保持旧 Growth AI authority；Doctor AI 是新 authority，等待用户确认 |
 | `signal_scan` | true | false | false | 保留用户显式关闭 AI 的意图；用户可在新的 AI assistance 设置中重新开启 |
-| `ai_discovery` | false | true | true | 不静默开启 deterministic Signal Scan |
-| missing/default legacy config | true | true | true | 与旧 default `all` 一致 |
+| `ai_discovery` | false | true | false | 不静默开启 deterministic Signal Scan 或新增 Doctor AI authority |
+| missing/default legacy config | true | true | false | Growth 与旧 default `all` 一致；Doctor AI 等待用户确认 |
 
 旧 `ai_discovery_automation` 映射：
 
@@ -1258,6 +1308,8 @@ growth.learning.ready
 - `AI run policy: automatic/on demand/manual only`；
 - provider budget/cost visibility；
 - GSC/GA4 connection and evidence freshness。
+
+迁移前已存在的项目一律不自动获得 Doctor AI provider-call authority。用户在新版设置或 onboarding confirmation 中明确开启 `AI assistance for Doctor` 后，`doctor_ai_enabled` 才能变为 true。迁移完成后创建的新项目可以在清晰披露 provider use、automation policy 和 cost visibility 的 onboarding consent 下默认同时开启两条线的 AI assistance。
 
 Signal Scan 不再是产品模式，但 internal `growth_signal_enabled` 在迁移期保留，以尊重 legacy opt-out。Doctor/Opportunities 的事件触发 precedence：显式 manual request > approved event policy > scheduled policy；任何低 authority trigger 都不能覆盖高限制设置。
 
@@ -1443,7 +1495,7 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 
 13. Site Fix applied 后不会直接显示 verified。
 14. Verification 必须重新读取对应 evidence 并执行 acceptance tests。
-15. Verification failure 会保留 evidence、进入 failed/reopened，并给出下一步。
+15. Verification failure 会保留 evidence；可重试时进入 `failed_retryable` 或 `reopened` 并继续占用 work signature，只有 retry policy 耗尽或用户终止后才进入 `failed_terminal`。
 16. GSC/GA4 可以影响 Doctor coverage、priority 和 context，但不能把 delayed uplift 当作 Doctor completion。
 17. Doctor AI output grounded in Context 和 observed page evidence。
 
@@ -1462,7 +1514,7 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 25. AI Discovery automation 不再被 standalone weekly scheduler 绕过项目设置。
 26. Provider unavailable 不产生虚假零 citation/zero mention findings。
 27. Crawl partial failure 不把未检查页面标为 healthy。
-28. 所有 AI calls 记录 provider、model、prompt version、token/cost 和 status。
+28. 所有 AI calls（包括 diagnosis、arbitration、generation、QA、verification、learning）写入 canonical `ai_call_records`，并可重算 object aggregates。
 
 ### 20.6 Migration
 
@@ -1470,6 +1522,9 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 30. Migration dry run 能列出所有 collision、duplicate 和 ambiguous owner。
 31. 没有 active work 因迁移被静默丢失或重复执行。
 32. Legacy routes 在迁移窗口返回 canonical object linkage。
+33. Legacy dismissed/snoozed/watching counts 在 review-memory migration 中守恒，且跨 signature version/alias 生效。
+34. 迁移不为任何 existing project 自动开启 Doctor AI provider-call authority。
+35. `site_fixes.doctor_finding_id` 是唯一权威关系，不存在可冲突的 Doctor finding current-fix pointer。
 
 ### 20.7 Executable Given/When/Then scenarios
 
@@ -1552,6 +1607,13 @@ Given legacy source_mix=signal_scan and AI automation=manual
 When 迁移到新 capability policy
 Then scheduled/event/manual provider-call authority 不扩大
 And Doctor/Opportunities 不会自动调用 AI
+```
+
+```text
+Given 任意 migration 前已存在项目，包括 legacy source_mix=all 或 ai_discovery
+When 迁移到新 capability policy
+Then doctor_ai_enabled=false
+And 只有用户明确确认新版 Doctor AI assistance 后才能开启 provider calls
 ```
 
 #### Measurement terminality
