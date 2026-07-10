@@ -606,8 +606,10 @@ func doctorFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.Technica
 		if missingOrUnknown(check.H1Status) {
 			out = append(out, base.withIssue("P2", "content", "h1_missing", "Missing H1s make page topic hierarchy less clear.", "Add one descriptive H1."))
 		}
-		if missingOrUnknown(check.SitemapStatus) {
-			out = append(out, base.withIssue("P2", "sitemap", "sitemap_unknown", "Sitemap gaps make discovery less reliable.", "Ensure canonical URLs appear in the sitemap."))
+		if sitemapGapObserved(check.SitemapStatus) {
+			candidate := base.withIssue("P2", "sitemap", "important_page_missing_from_sitemap", "Important canonical pages missing from the sitemap are harder for crawlers to discover.", "Include the canonical URL in the sitemap.")
+			candidate.Evidence["sitemap_status"] = statusValue(check.SitemapStatus)
+			out = append(out, candidate)
 		}
 		if check.InternalLinkCount != nil && *check.InternalLinkCount == 0 {
 			out = append(out, base.withIssue("P2", "links", "internal_link_gap", "Pages without internal links are harder for crawlers and users to discover.", "Add relevant internal links to and from this page."))
@@ -788,6 +790,10 @@ func nonInfoIssueCount(findings []doctorFindingCandidate) int {
 func missingOrUnknown(value *string) bool {
 	status := statusValue(value)
 	return status == "" || status == "missing" || status == "unknown" || status == "invalid"
+}
+
+func sitemapGapObserved(value *string) bool {
+	return statusValue(value) == "missing"
 }
 
 func statusValue(value *string) string {
