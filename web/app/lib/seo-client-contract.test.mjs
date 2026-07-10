@@ -146,6 +146,11 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
   }
   assert.doesNotMatch(source, /Needs revision/, "Site Fix review drawer should not expose a non-functional revision action");
   assert.doesNotMatch(source, /verifyAction\(action, "failed"\)/, "Site Fix review drawer should not mark review feedback as verification failure");
+  // RightDrawer marks surfaceRef inert while open and renders inline (no portal),
+  // so the drawer must be a SIBLING of the inert surface — otherwise its own
+  // close button becomes inert and the drawer cannot be closed by pointer.
+  assert.match(source, /surfaceRef=\{surfaceRef\}/, "drawer should inert the page surface");
+  assert.match(source, /<\/div>\s*<RightDrawer/, "RightDrawer must render outside (sibling of) the surfaceRef div, not nested inside it");
 });
 
 test("Analysis Site Fixes expose copyable AI repair JSON", async () => {

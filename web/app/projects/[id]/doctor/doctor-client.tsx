@@ -500,7 +500,8 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="space-y-4" ref={surfaceRef}>
+    <>
+      <div className="space-y-4" ref={surfaceRef}>
       {error && <Notice title="Doctor could not load" detail={error} tone="amber" />}
 
       <section className="rounded-xl border border-slate-200 bg-white px-4 py-4">
@@ -651,6 +652,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
           </div>
         )}
       </section>
+      </div>
 
       <RightDrawer
         open={Boolean(selectedFinding)}
@@ -759,6 +761,6 @@ export function DoctorClient({ projectId }: { projectId: string }) {
           </div>
         )}
       </RightDrawer>
-    </div>
+    </>
   );
 }

@@ -83,6 +83,11 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
   ]) {
     assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  // RightDrawer marks surfaceRef inert while open and renders inline (no portal),
+  // so the drawer must be a SIBLING of the inert surface — otherwise its own close
+  // button becomes inert and the drawer cannot be closed by pointer.
+  assert.match(client, /surfaceRef=\{surfaceRef\}/, "doctor drawer should inert the page surface");
+  assert.match(client, /<\/div>\s*<RightDrawer/, "RightDrawer must render outside (sibling of) the surfaceRef div, not nested inside it");
   for (const forbidden of [
     // Old centered modal is gone; the drawer opens by clicking the card, not a
     // "Fix with AI" button.

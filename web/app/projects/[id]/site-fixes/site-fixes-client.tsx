@@ -286,7 +286,8 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
   const sourceAlreadyMatches = drawerAction ? siteFixAlreadyMatchesSource(drawerAction) : false;
 
   return (
-    <div className="space-y-4" ref={surfaceRef}>
+    <>
+      <div className="space-y-4" ref={surfaceRef}>
       {error && <Notice title="Site Fixes could not load" detail={error} tone="amber" />}
 
       <section className="rounded-xl border border-slate-200 bg-white px-4 py-4">
@@ -349,6 +350,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
           </div>
         </section>
       )}
+      </div>
 
       <RightDrawer
         open={Boolean(drawerAction)}
@@ -525,6 +527,6 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
           </div>
         )}
       </RightDrawer>
-    </div>
+    </>
   );
 }
