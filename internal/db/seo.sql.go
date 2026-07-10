@@ -3750,73 +3750,6 @@ func (q *Queries) MarkContentActionSiteFixPRResult(ctx context.Context, arg Mark
 	return i, err
 }
 
-const markContentActionSiteFixVerified = `-- name: MarkContentActionSiteFixVerified :one
-update content_actions set
-  status = 'measuring',
-  verified_at = $1::timestamptz,
-  verification_snapshot = $2::jsonb,
-  output_snapshot = coalesce(output_snapshot, '{}'::jsonb) ||
-    jsonb_build_object('publisher_result', $3::jsonb),
-  updated_at = now()
-where id = $4 and project_id = $5
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason
-`
-
-type MarkContentActionSiteFixVerifiedParams struct {
-	VerifiedAt           pgtype.Timestamptz `json:"verified_at"`
-	VerificationSnapshot json.RawMessage    `json:"verification_snapshot"`
-	PublisherResult      json.RawMessage    `json:"publisher_result"`
-	ID                   uuid.UUID          `json:"id"`
-	ProjectID            uuid.UUID          `json:"project_id"`
-}
-
-func (q *Queries) MarkContentActionSiteFixVerified(ctx context.Context, arg MarkContentActionSiteFixVerifiedParams) (ContentAction, error) {
-	row := q.db.QueryRow(ctx, markContentActionSiteFixVerified,
-		arg.VerifiedAt,
-		arg.VerificationSnapshot,
-		arg.PublisherResult,
-		arg.ID,
-		arg.ProjectID,
-	)
-	var i ContentAction
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.OpportunityID,
-		&i.ActionType,
-		&i.Status,
-		&i.TargetArticleID,
-		&i.TargetUrl,
-		&i.NormalizedTargetUrl,
-		&i.TargetContentHashBefore,
-		&i.TargetContentHashAfter,
-		&i.DraftArticleID,
-		&i.BaselineWindow,
-		&i.MeasurementWindow,
-		&i.PublishedAt,
-		&i.OutcomeSummary,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.AssetType,
-		&i.TargetSurfaceID,
-		&i.RiskReasons,
-		&i.EvidenceSnapshot,
-		&i.InputSnapshot,
-		&i.OutputSnapshot,
-		&i.DiffSnapshot,
-		&i.ReviewRequired,
-		&i.ApprovedBy,
-		&i.ApprovedAt,
-		&i.VerifiedAt,
-		&i.VerificationSnapshot,
-		&i.ApprovalSource,
-		&i.RoutingSource,
-		&i.WorkType,
-		&i.StatusReason,
-	)
-	return i, err
-}
-
 const markContentActionVerification = `-- name: MarkContentActionVerification :one
 update content_actions set
   status = $1::text,
@@ -4001,6 +3934,90 @@ func (q *Queries) MarkPageUpdateDraftVerification(ctx context.Context, arg MarkP
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markSiteChangeApplicationAndContentActionVerified = `-- name: MarkSiteChangeApplicationAndContentActionVerified :one
+with verified_application as (
+  update site_change_applications set
+    status = 'verified',
+    deployment_snapshot = $5::jsonb,
+    verification_snapshot = $2::jsonb,
+    failure_reason = null,
+    deployed_at = coalesce(deployed_at, $1::timestamptz),
+    verified_at = coalesce(verified_at, $1::timestamptz),
+    updated_at = now()
+  where site_change_applications.id = $6
+    and site_change_applications.project_id = $4
+  returning content_action_id
+)
+update content_actions set
+  status = 'measuring',
+  verified_at = $1::timestamptz,
+  verification_snapshot = $2::jsonb,
+  output_snapshot = coalesce(output_snapshot, '{}'::jsonb) ||
+    jsonb_build_object('publisher_result', $3::jsonb),
+  updated_at = now()
+from verified_application
+where content_actions.id = verified_application.content_action_id
+  and content_actions.project_id = $4
+returning content_actions.id, content_actions.project_id, content_actions.opportunity_id, content_actions.action_type, content_actions.status, content_actions.target_article_id, content_actions.target_url, content_actions.normalized_target_url, content_actions.target_content_hash_before, content_actions.target_content_hash_after, content_actions.draft_article_id, content_actions.baseline_window, content_actions.measurement_window, content_actions.published_at, content_actions.outcome_summary, content_actions.created_at, content_actions.updated_at, content_actions.asset_type, content_actions.target_surface_id, content_actions.risk_reasons, content_actions.evidence_snapshot, content_actions.input_snapshot, content_actions.output_snapshot, content_actions.diff_snapshot, content_actions.review_required, content_actions.approved_by, content_actions.approved_at, content_actions.verified_at, content_actions.verification_snapshot, content_actions.approval_source, content_actions.routing_source, content_actions.work_type, content_actions.status_reason
+`
+
+type MarkSiteChangeApplicationAndContentActionVerifiedParams struct {
+	VerifiedAt           pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot json.RawMessage    `json:"verification_snapshot"`
+	PublisherResult      json.RawMessage    `json:"publisher_result"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	DeploymentSnapshot   json.RawMessage    `json:"deployment_snapshot"`
+	ApplicationID        uuid.UUID          `json:"application_id"`
+}
+
+func (q *Queries) MarkSiteChangeApplicationAndContentActionVerified(ctx context.Context, arg MarkSiteChangeApplicationAndContentActionVerifiedParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, markSiteChangeApplicationAndContentActionVerified,
+		arg.VerifiedAt,
+		arg.VerificationSnapshot,
+		arg.PublisherResult,
+		arg.ProjectID,
+		arg.DeploymentSnapshot,
+		arg.ApplicationID,
+	)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
 	)
 	return i, err
 }

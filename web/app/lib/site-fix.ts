@@ -101,8 +101,10 @@ export function siteFixPRLinkLabel(action: SEOContentAction | ResultsAction) {
   const result = action.output_snapshot?.publisher_result ?? {};
   const status = siteFixPublisherResultStatus(action);
   const state = String(result.github_pr_state ?? "").trim().toLowerCase();
-  if (action.verified_at || status === "verified" || status === "github_pr_merged" || state === "merged") return "View merged PR";
   if (status === "github_pr_closed" || state === "closed") return "View closed PR";
+  if (status === "github_pr_open" || state === "open") return "Open PR";
+  if (status === "github_pr_merged" || state === "merged") return "View merged PR";
+  if (action.verified_at || status === "verified") return "View merged PR";
   return "Open PR";
 }
 

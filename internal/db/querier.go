@@ -199,7 +199,6 @@ type Querier interface {
 	// approved article stranded in the Publish "Ready to post" queue.
 	MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error)
 	MarkContentActionSiteFixPRResult(ctx context.Context, arg MarkContentActionSiteFixPRResultParams) (ContentAction, error)
-	MarkContentActionSiteFixVerified(ctx context.Context, arg MarkContentActionSiteFixVerifiedParams) (ContentAction, error)
 	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
@@ -213,6 +212,7 @@ type Querier interface {
 	MarkPublished(ctx context.Context, arg MarkPublishedParams) (Article, error)
 	MarkPublisherConnectionError(ctx context.Context, arg MarkPublisherConnectionErrorParams) (PublisherConnection, error)
 	MarkPublisherConnectionVerified(ctx context.Context, arg MarkPublisherConnectionVerifiedParams) (PublisherConnection, error)
+	MarkSiteChangeApplicationAndContentActionVerified(ctx context.Context, arg MarkSiteChangeApplicationAndContentActionVerifiedParams) (ContentAction, error)
 	MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg MarkSiteChangeApplicationGitHubPRParams) (SiteChangeApplication, error)
 	MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkSiteChangeApplicationStatusParams) (SiteChangeApplication, error)
 	MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error)

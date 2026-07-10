@@ -19,18 +19,18 @@ After CiteLoop automatically verifies a merged Site Fix:
 
 ## Architecture and Data Flow
 
-The scheduler remains the source of truth for automatic verification. When a URL check or grace-period check succeeds, it will build one verification snapshot and one verified publisher result. A dedicated SQL query will update the content action's lifecycle fields and publisher result together so the action cannot be left as `verification_pending` by the existing PR-result query.
+The scheduler remains the source of truth for automatic verification. When a URL check or grace-period check succeeds, it will build one verification snapshot and one verified publisher result. A dedicated SQL statement will update the Site Change application and content action together so a failure cannot leave one record verified while the other remains stale.
 
 The frontend will derive presentation labels from the normalized action. `verified_at` and `verification_snapshot.source` control the verification label; PR state and publisher-result status control the link label. The UI will not infer that a PR is still open merely because a URL exists.
 
 ## Error Handling
 
-Scheduler errors continue to be logged and retried by the existing five-minute reconciliation loop. The new content-action update returns an error like the current verification update, so a failed persistence step is visible in scheduler logs. No manual database repair or migration is required for existing verified actions because the frontend treats `verified_at` as authoritative even when an older publisher result is stale.
+Scheduler errors continue to be logged and retried by the existing five-minute reconciliation loop. PostgreSQL rolls back the combined statement if either table update errors, leaving the application eligible for the next reconciliation tick. No manual database repair or migration is required for existing verified actions because the frontend treats `verified_at` as authoritative when explicit PR state is unavailable, even when an older publisher result is stale.
 
 ## Testing
 
 - A Go unit test will prove the verified publisher-result payload retains PR identity and records `status: verified`, `github_pr_state: merged`, source, and timestamp.
-- A database contract test will prove the dedicated query sets `measuring`, verification fields, and the nested publisher result in one update.
+- A database contract test will prove one statement updates both the Site Change application and content action, including `measuring`, verification fields, and the nested publisher result.
 - A web contract test will prove Site Fixes consume `Verified automatically` and `View merged PR`, and hide `Mark applied` after verification.
 - Full Go tests, web tests, type checking, and a production web build will run before publishing.
 

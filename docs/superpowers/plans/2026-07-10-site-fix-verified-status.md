@@ -4,7 +4,7 @@
 
 **Goal:** Make automatically verified Site Fixes persist and display their completed state instead of looking like open pull requests.
 
-**Architecture:** Add a Site Fix-specific content-action verification query that updates lifecycle and publisher-result state together. Derive explicit verification and PR-link labels in the shared frontend helper, then consume them in the dedicated Site Fixes page.
+**Architecture:** Add one Site Fix-specific SQL statement that updates the application and content action lifecycle/publisher-result state atomically. Derive explicit verification and PR-link labels in the shared frontend helper, then consume them in the dedicated Site Fixes page.
 
 **Tech Stack:** Go 1.25, PostgreSQL/sqlc, Next.js/TypeScript, Node test runner
 
@@ -22,7 +22,7 @@
 
 - [ ] **Step 1: Write failing scheduler and SQL contract tests**
 
-Add a scheduler unit test that calls `siteFixVerifiedPublisherResult` for a merged PR and asserts the decoded payload includes `status == "verified"`, `github_pr_state == "merged"`, the PR URL, `verification_source`, and the RFC3339 verification time. Extend the database contract test to require a `MarkContentActionSiteFixVerified` query that sets `status = 'measuring'`, `verified_at`, `verification_snapshot`, and `output_snapshot.publisher_result`.
+Add a scheduler unit test that calls `siteFixVerifiedPublisherResult` for a merged PR and asserts the decoded payload includes `status == "verified"`, `github_pr_state == "merged"`, the PR URL, `verification_source`, and the RFC3339 verification time. Extend the database contract test to require `MarkSiteChangeApplicationAndContentActionVerified`, with one data-modifying CTE that updates both tables and sets `status = 'measuring'`, `verified_at`, `verification_snapshot`, and `output_snapshot.publisher_result`.
 
 - [ ] **Step 2: Run the tests and verify RED**
 
@@ -32,14 +32,27 @@ Run:
 go test ./internal/scheduler ./internal/db
 ```
 
-Expected: FAIL because `siteFixVerifiedPublisherResult` and `MarkContentActionSiteFixVerified` do not exist.
+Expected: FAIL because `siteFixVerifiedPublisherResult` and `MarkSiteChangeApplicationAndContentActionVerified` do not exist.
 
-- [ ] **Step 3: Add the dedicated SQL update and regenerate sqlc**
+- [ ] **Step 3: Add the atomic SQL update and regenerate sqlc**
 
 Add this query after `MarkContentActionSiteFixPRResult`:
 
 ```sql
--- name: MarkContentActionSiteFixVerified :one
+-- name: MarkSiteChangeApplicationAndContentActionVerified :one
+with verified_application as (
+  update site_change_applications set
+    status = 'verified',
+    deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
+    verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+    failure_reason = null,
+    deployed_at = coalesce(deployed_at, sqlc.arg(verified_at)::timestamptz),
+    verified_at = coalesce(verified_at, sqlc.arg(verified_at)::timestamptz),
+    updated_at = now()
+  where site_change_applications.id = sqlc.arg(application_id)
+    and site_change_applications.project_id = sqlc.arg(project_id)
+  returning content_action_id
+)
 update content_actions set
   status = 'measuring',
   verified_at = sqlc.arg(verified_at)::timestamptz,
@@ -47,8 +60,10 @@ update content_actions set
   output_snapshot = coalesce(output_snapshot, '{}'::jsonb) ||
     jsonb_build_object('publisher_result', sqlc.arg(publisher_result)::jsonb),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
-returning *;
+from verified_application
+where content_actions.id = verified_application.content_action_id
+  and content_actions.project_id = sqlc.arg(project_id)
+returning content_actions.*;
 ```
 
 Run `make sqlc` to regenerate `internal/db/seo.sql.go` and `internal/db/querier.go`.
@@ -64,7 +79,7 @@ Add `siteFixVerifiedPublisherResult(app, source, now)` in `internal/scheduler/si
 "verified_at":          now.UTC().Format(time.RFC3339),
 ```
 
-Replace the general `MarkContentActionVerification` call with `MarkContentActionSiteFixVerified`, passing the same `verified_at` and verification snapshot plus the new publisher result.
+Replace the separate application and content-action updates with `MarkSiteChangeApplicationAndContentActionVerified`, passing the application ID, deployment snapshot, verification time/snapshot, and new publisher result.
 
 - [ ] **Step 5: Run the backend tests and verify GREEN**
 
@@ -112,8 +127,10 @@ export function siteFixPRLinkLabel(action: SEOContentAction | ResultsAction) {
   const result = action.output_snapshot?.publisher_result ?? {};
   const status = siteFixPublisherResultStatus(action);
   const state = String(result.github_pr_state ?? "").trim().toLowerCase();
-  if (action.verified_at || status === "verified" || status === "github_pr_merged" || state === "merged") return "View merged PR";
   if (status === "github_pr_closed" || state === "closed") return "View closed PR";
+  if (status === "github_pr_open" || state === "open") return "Open PR";
+  if (status === "github_pr_merged" || state === "merged") return "View merged PR";
+  if (action.verified_at || status === "verified") return "View merged PR";
   return "Open PR";
 }
 ```

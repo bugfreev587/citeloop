@@ -247,20 +247,14 @@ func (s *Scheduler) markSiteChangeVerified(ctx context.Context, q *db.Queries, p
 		snapshot[k] = v
 	}
 	snapRaw := json.RawMessage(mustJSON(snapshot))
-	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
-		ID:                   app.ID,
-		ProjectID:            p.ID,
-		Status:               "verified",
-		DeploymentSnapshot:   json.RawMessage(`{}`),
-		VerificationSnapshot: snapRaw,
-	}); err != nil {
-		return err
-	}
 	// Advance the content action into the measurement loop (same transition the
-	// manual "Mark applied" path uses), so the fix enters attribution.
-	if _, err := q.MarkContentActionSiteFixVerified(ctx, db.MarkContentActionSiteFixVerifiedParams{
-		ID:                   app.ContentActionID,
+	// manual "Mark applied" path uses), so the fix enters attribution. The
+	// application and action move together in one SQL statement so a failed
+	// action update cannot strand the application as verified.
+	if _, err := q.MarkSiteChangeApplicationAndContentActionVerified(ctx, db.MarkSiteChangeApplicationAndContentActionVerifiedParams{
+		ApplicationID:        app.ID,
 		ProjectID:            p.ID,
+		DeploymentSnapshot:   json.RawMessage(`{}`),
 		VerifiedAt:           pgutil.TS(now),
 		VerificationSnapshot: snapRaw,
 		PublisherResult:      siteFixVerifiedPublisherResult(app, source, now),
