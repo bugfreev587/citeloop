@@ -252,6 +252,23 @@ func TestFromEnvReadsNotificationSecretKey(t *testing.T) {
 	}
 }
 
+func TestFromEnvReadsResendNotificationConfig(t *testing.T) {
+	t.Setenv("RESEND_API_KEY", "resend-key")
+	t.Setenv("NOTIFICATION_EMAIL_FROM", "CiteLoop <notifications@citeloop.app>")
+	t.Setenv("NOTIFICATION_EMAIL_REPLY_TO", "support@citeloop.app")
+
+	env := FromEnv()
+	if env.ResendAPIKey != "resend-key" {
+		t.Fatalf("ResendAPIKey = %q", env.ResendAPIKey)
+	}
+	if env.NotificationEmailFrom != "CiteLoop <notifications@citeloop.app>" {
+		t.Fatalf("NotificationEmailFrom = %q", env.NotificationEmailFrom)
+	}
+	if env.NotificationEmailReplyTo != "support@citeloop.app" {
+		t.Fatalf("NotificationEmailReplyTo = %q", env.NotificationEmailReplyTo)
+	}
+}
+
 func TestFromEnvReadsGoogleOAuthConfig(t *testing.T) {
 	t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "google-client-id")
 	t.Setenv("GOOGLE_OAUTH_CLIENT_SECRET", "google-client-secret")

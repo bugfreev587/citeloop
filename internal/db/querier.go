@@ -24,6 +24,7 @@ type Querier interface {
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
 	CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error)
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
+	CountNotificationChannelProjectSubscriptions(ctx context.Context, arg CountNotificationChannelProjectSubscriptionsParams) (int32, error)
 	CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
 	// publishing plus topics reserved for generation before their first article
@@ -158,7 +159,7 @@ type Querier interface {
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]AiCrawlerAccessSnapshot, error)
 	ListLatestTechnicalChecks(ctx context.Context, arg ListLatestTechnicalChecksParams) ([]TechnicalCheck, error)
 	ListMergedSiteChangeApplicationsForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
-	ListNotificationChannels(ctx context.Context, projectID uuid.UUID) ([]NotificationChannel, error)
+	ListNotificationChannels(ctx context.Context, id uuid.UUID) ([]ListNotificationChannelsRow, error)
 	ListNotificationDeliveries(ctx context.Context, arg ListNotificationDeliveriesParams) ([]NotificationDelivery, error)
 	ListNotificationSubscriptions(ctx context.Context, projectID uuid.UUID) ([]NotificationSubscription, error)
 	ListOpenSiteChangePRApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
@@ -280,6 +281,7 @@ type Querier interface {
 	UpdateGEOPrompt(ctx context.Context, arg UpdateGEOPromptParams) (GeoPrompt, error)
 	UpdateGEOPromptSet(ctx context.Context, arg UpdateGEOPromptSetParams) (GeoPromptSet, error)
 	UpdateInventoryItem(ctx context.Context, arg UpdateInventoryItemParams) (ContentInventory, error)
+	UpdateNotificationChannelLabel(ctx context.Context, arg UpdateNotificationChannelLabelParams) (NotificationChannel, error)
 	UpdatePageUpdateDraftContent(ctx context.Context, arg UpdatePageUpdateDraftContentParams) (PageUpdateDraft, error)
 	UpdatePageUpdateDraftStatus(ctx context.Context, arg UpdatePageUpdateDraftStatusParams) (PageUpdateDraft, error)
 	UpdateProfile(ctx context.Context, arg UpdateProfileParams) (ProductProfile, error)

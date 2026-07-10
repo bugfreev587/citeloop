@@ -378,7 +378,8 @@ type InternalLinkEdge struct {
 
 type NotificationChannel struct {
 	ID         uuid.UUID          `json:"id"`
-	ProjectID  uuid.UUID          `json:"project_id"`
+	ProjectID  pgtype.UUID        `json:"project_id"`
+	OwnerID    string             `json:"owner_id"`
 	Kind       string             `json:"kind"`
 	Config     json.RawMessage    `json:"config"`
 	Label      string             `json:"label"`

@@ -20,11 +20,15 @@ func TestNotificationSchemaContracts(t *testing.T) {
 		"notification_channels_legacy_",
 		"notification_subscriptions_legacy_",
 		"notification_deliveries_legacy_",
-		"kind text not null check (kind in ('slack_webhook','discord_webhook'))",
+		"owner_id",
+		"kind text not null check (kind in ('slack_webhook','discord_webhook','email'))",
 		"config jsonb not null",
 		"unique (project_id, event_type, channel_id)",
 		"unique (event_id, channel_id)",
 		"status text not null default 'pending' check (status in ('pending','sent','dead'))",
+		"idx_notification_channels_owner",
+		"notification_subscription_owner_guard",
+		"projects.owner_id",
 	} {
 		if !strings.Contains(schema, want) {
 			t.Fatalf("notification migration missing %q", want)
@@ -59,8 +63,20 @@ func TestNotificationQueriesExposeFoundation(t *testing.T) {
 	if !strings.Contains(listEnabledNotificationSubscriptionsForEvent, "enabled = true") {
 		t.Fatal("ListEnabledNotificationSubscriptionsForEvent must only return enabled subscriptions")
 	}
+	if !strings.Contains(listNotificationChannels, "p.owner_id") {
+		t.Fatal("ListNotificationChannels must be account-owner scoped")
+	}
+	if !strings.Contains(listNotificationChannels, "project_subscription_count") {
+		t.Fatal("ListNotificationChannels must expose account-wide channel usage counts")
+	}
+	if !strings.Contains(getNotificationChannel, "p.owner_id") {
+		t.Fatal("GetNotificationChannel must find channels by project owner, not channel project")
+	}
+	if !strings.Contains(upsertNotificationSubscription, "verified_at is not null") {
+		t.Fatal("UpsertNotificationSubscription must require accepted Email channels before enabling")
+	}
 	if !strings.Contains(markNotificationChannelVerified, "verified_at = now()") {
-		t.Fatal("MarkNotificationChannelVerified must mark the channel verified after a successful test send")
+		t.Fatal("MarkNotificationChannelVerified must mark the channel test accepted after a successful test send")
 	}
 	if !strings.Contains(listPendingNotificationDeliveries, "for update skip locked") {
 		t.Fatal("ListPendingNotificationDeliveries must lock claimed rows")

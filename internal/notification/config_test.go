@@ -39,6 +39,53 @@ func TestPrepareWebhookConfigRejectsMismatchedKindURL(t *testing.T) {
 	}
 }
 
+func TestPrepareEmailConfigEncryptsRedactsAndHashesPerOwner(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+
+	cfg, err := PrepareEmailConfig("owner-1", " Ops@Example.COM ", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EncryptedTo == "" {
+		t.Fatal("encrypted email is empty")
+	}
+	if strings.Contains(strings.ToLower(cfg.EncryptedTo), "ops@example.com") {
+		t.Fatalf("encrypted email leaks plaintext: %s", cfg.EncryptedTo)
+	}
+	if cfg.RedactedTo != "o***@example.com" {
+		t.Fatalf("redacted email = %q", cfg.RedactedTo)
+	}
+	decrypted, err := DecryptEmailTo(cfg, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decrypted != "ops@example.com" {
+		t.Fatalf("decrypted email = %q", decrypted)
+	}
+
+	sameOwner, err := PrepareEmailConfig("owner-1", "ops@example.com", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherOwner, err := PrepareEmailConfig("owner-2", "ops@example.com", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AddressHash != sameOwner.AddressHash {
+		t.Fatal("same owner and normalized address must produce a stable hash")
+	}
+	if cfg.AddressHash == otherOwner.AddressHash {
+		t.Fatal("same address under another owner must not produce the same hash")
+	}
+}
+
+func TestPrepareEmailConfigRejectsInvalidEmail(t *testing.T) {
+	_, err := PrepareEmailConfig("owner-1", "not-an-email", "0123456789abcdef0123456789abcdef")
+	if err == nil {
+		t.Fatal("expected invalid email to be rejected")
+	}
+}
+
 func TestBudgetStoppedEventIDIncludesBudgetHash(t *testing.T) {
 	a := BudgetStoppedEventID("project-1", "2026-06", "50")
 	b := BudgetStoppedEventID("project-1", "2026-06", "75")

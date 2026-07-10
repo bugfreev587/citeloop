@@ -47,17 +47,11 @@ func (s *fakeWorkerStore) CreateNotificationDelivery(ctx context.Context, arg db
 
 type fakeSender struct {
 	err  error
-	sent []sentMessage
+	sent []DeliveryTarget
 }
 
-type sentMessage struct {
-	kind string
-	url  string
-	body json.RawMessage
-}
-
-func (s *fakeSender) Send(ctx context.Context, kind, webhookURL string, payload json.RawMessage) error {
-	s.sent = append(s.sent, sentMessage{kind: kind, url: webhookURL, body: payload})
+func (s *fakeSender) Send(ctx context.Context, target DeliveryTarget) error {
+	s.sent = append(s.sent, target)
 	return s.err
 }
 
@@ -84,7 +78,7 @@ func TestWorkerSendsPendingDeliveryAndMarksSent(t *testing.T) {
 	if processed != 1 {
 		t.Fatalf("processed = %d, want 1", processed)
 	}
-	if len(sender.sent) != 1 || sender.sent[0].url != rawURL || sender.sent[0].kind != KindSlackWebhook {
+	if len(sender.sent) != 1 || sender.sent[0].Destination != rawURL || sender.sent[0].Kind != KindSlackWebhook || sender.sent[0].DeliveryID != deliveryID {
 		t.Fatalf("sender calls = %+v", sender.sent)
 	}
 	if len(store.sent) != 1 || store.sent[0] != deliveryID {
@@ -92,6 +86,40 @@ func TestWorkerSendsPendingDeliveryAndMarksSent(t *testing.T) {
 	}
 	if len(store.failed) != 0 {
 		t.Fatalf("unexpected failed marks = %+v", store.failed)
+	}
+}
+
+func TestWorkerSendsEmailDeliveryWithDecryptedRecipientAndDeliveryID(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	cfg, err := PrepareEmailConfig("owner-1", "ops@example.com", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveryID := uuid.New()
+	store := &fakeWorkerStore{rows: []db.ListPendingNotificationDeliveriesRow{{
+		ID:            deliveryID,
+		ChannelKind:   KindEmail,
+		ChannelConfig: cfg.JSON(),
+		Payload:       json.RawMessage(`{"title":"Generation failed","message":"writer failed"}`),
+	}}}
+	sender := &fakeSender{}
+
+	processed, err := Worker{Store: store, Sender: sender, Secret: secret, Limit: 10}.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want 1", processed)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("sender calls = %+v", sender.sent)
+	}
+	got := sender.sent[0]
+	if got.Kind != KindEmail || got.Destination != "ops@example.com" || got.DeliveryID != deliveryID {
+		t.Fatalf("email target = %+v", got)
+	}
+	if len(store.sent) != 1 || store.sent[0] != deliveryID {
+		t.Fatalf("sent marks = %+v", store.sent)
 	}
 }
 
