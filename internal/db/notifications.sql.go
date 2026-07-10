@@ -13,30 +13,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countNotificationChannelProjectSubscriptions = `-- name: CountNotificationChannelProjectSubscriptions :one
+select count(distinct s.project_id)::int as project_subscription_count
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+left join notification_subscriptions s
+  on s.channel_id = c.id
+ and s.enabled = true
+where p.id = $1
+  and c.id = $2
+  and c.deleted_at is null
+`
+
+type CountNotificationChannelProjectSubscriptionsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ChannelID uuid.UUID `json:"channel_id"`
+}
+
+func (q *Queries) CountNotificationChannelProjectSubscriptions(ctx context.Context, arg CountNotificationChannelProjectSubscriptionsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countNotificationChannelProjectSubscriptions, arg.ProjectID, arg.ChannelID)
+	var project_subscription_count int32
+	err := row.Scan(&project_subscription_count)
+	return project_subscription_count, err
+}
+
 const createNotificationChannel = `-- name: CreateNotificationChannel :one
-insert into notification_channels (project_id, kind, config, label)
-values ($1, $2, $3, $4)
-returning id, project_id, kind, config, label, verified_at, created_at, deleted_at
+insert into notification_channels (owner_id, kind, config, label)
+select p.owner_id, $1, $2, $3
+from projects p
+where p.id = $4
+returning id, project_id, owner_id, kind, config, label, verified_at, created_at, deleted_at
 `
 
 type CreateNotificationChannelParams struct {
-	ProjectID uuid.UUID       `json:"project_id"`
 	Kind      string          `json:"kind"`
 	Config    json.RawMessage `json:"config"`
 	Label     string          `json:"label"`
+	ProjectID uuid.UUID       `json:"project_id"`
 }
 
 func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotificationChannelParams) (NotificationChannel, error) {
 	row := q.db.QueryRow(ctx, createNotificationChannel,
-		arg.ProjectID,
 		arg.Kind,
 		arg.Config,
 		arg.Label,
+		arg.ProjectID,
 	)
 	var i NotificationChannel
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
+		&i.OwnerID,
 		&i.Kind,
 		&i.Config,
 		&i.Label,
@@ -92,10 +120,12 @@ func (q *Queries) CreateNotificationDelivery(ctx context.Context, arg CreateNoti
 }
 
 const getNotificationChannel = `-- name: GetNotificationChannel :one
-select id, project_id, kind, config, label, verified_at, created_at, deleted_at from notification_channels
-where id = $1
-  and project_id = $2
-  and deleted_at is null
+select c.id, c.project_id, c.owner_id, c.kind, c.config, c.label, c.verified_at, c.created_at, c.deleted_at from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+where c.id = $1
+  and p.id = $2
+  and c.deleted_at is null
 `
 
 type GetNotificationChannelParams struct {
@@ -109,6 +139,7 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
+		&i.OwnerID,
 		&i.Kind,
 		&i.Config,
 		&i.Label,
@@ -123,10 +154,14 @@ const listEnabledNotificationSubscriptionsForEvent = `-- name: ListEnabledNotifi
 select s.id, s.project_id, s.event_type, s.channel_id, s.enabled, s.filter, s.created_at from notification_subscriptions s
 join notification_channels c
   on c.id = s.channel_id
+join projects p
+  on p.id = s.project_id
 where s.project_id = $1
   and s.event_type = $2
   and s.enabled = true
+  and c.owner_id = p.owner_id
   and c.deleted_at is null
+  and (c.kind <> 'email' or c.verified_at is not null)
 order by s.created_at asc
 `
 
@@ -164,30 +199,62 @@ func (q *Queries) ListEnabledNotificationSubscriptionsForEvent(ctx context.Conte
 }
 
 const listNotificationChannels = `-- name: ListNotificationChannels :many
-select id, project_id, kind, config, label, verified_at, created_at, deleted_at from notification_channels
-where project_id = $1
-  and deleted_at is null
-order by created_at desc
+select
+  c.id,
+  c.project_id,
+  c.owner_id,
+  c.kind,
+  c.config,
+  c.label,
+  c.verified_at,
+  c.created_at,
+  c.deleted_at,
+  count(distinct s.project_id)::int as project_subscription_count
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+left join notification_subscriptions s
+  on s.channel_id = c.id
+ and s.enabled = true
+where p.id = $1
+  and c.deleted_at is null
+group by c.id
+order by c.created_at desc
 `
 
-func (q *Queries) ListNotificationChannels(ctx context.Context, projectID uuid.UUID) ([]NotificationChannel, error) {
-	rows, err := q.db.Query(ctx, listNotificationChannels, projectID)
+type ListNotificationChannelsRow struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                pgtype.UUID        `json:"project_id"`
+	OwnerID                  string             `json:"owner_id"`
+	Kind                     string             `json:"kind"`
+	Config                   json.RawMessage    `json:"config"`
+	Label                    string             `json:"label"`
+	VerifiedAt               pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
+	ProjectSubscriptionCount int32              `json:"project_subscription_count"`
+}
+
+func (q *Queries) ListNotificationChannels(ctx context.Context, id uuid.UUID) ([]ListNotificationChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listNotificationChannels, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []NotificationChannel
+	var items []ListNotificationChannelsRow
 	for rows.Next() {
-		var i NotificationChannel
+		var i ListNotificationChannelsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.OwnerID,
 			&i.Kind,
 			&i.Config,
 			&i.Label,
 			&i.VerifiedAt,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.ProjectSubscriptionCount,
 		); err != nil {
 			return nil, err
 		}
@@ -364,12 +431,14 @@ func (q *Queries) ListPendingNotificationDeliveries(ctx context.Context, limit i
 }
 
 const markNotificationChannelVerified = `-- name: MarkNotificationChannelVerified :one
-update notification_channels
+update notification_channels c
 set verified_at = now()
-where id = $1
-  and project_id = $2
-  and deleted_at is null
-returning id, project_id, kind, config, label, verified_at, created_at, deleted_at
+from projects p
+where c.id = $1
+  and p.id = $2
+  and c.owner_id = p.owner_id
+  and c.deleted_at is null
+returning c.id, c.project_id, c.owner_id, c.kind, c.config, c.label, c.verified_at, c.created_at, c.deleted_at
 `
 
 type MarkNotificationChannelVerifiedParams struct {
@@ -383,6 +452,7 @@ func (q *Queries) MarkNotificationChannelVerified(ctx context.Context, arg MarkN
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
+		&i.OwnerID,
 		&i.Kind,
 		&i.Config,
 		&i.Label,
@@ -501,11 +571,13 @@ func (q *Queries) RetryNotificationDelivery(ctx context.Context, arg RetryNotifi
 }
 
 const softDeleteNotificationChannel = `-- name: SoftDeleteNotificationChannel :one
-update notification_channels
+update notification_channels c
 set deleted_at = now()
-where id = $1
-  and project_id = $2
-returning id, project_id, kind, config, label, verified_at, created_at, deleted_at
+from projects p
+where c.id = $1
+  and p.id = $2
+  and c.owner_id = p.owner_id
+returning c.id, c.project_id, c.owner_id, c.kind, c.config, c.label, c.verified_at, c.created_at, c.deleted_at
 `
 
 type SoftDeleteNotificationChannelParams struct {
@@ -519,6 +591,41 @@ func (q *Queries) SoftDeleteNotificationChannel(ctx context.Context, arg SoftDel
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
+		&i.OwnerID,
+		&i.Kind,
+		&i.Config,
+		&i.Label,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateNotificationChannelLabel = `-- name: UpdateNotificationChannelLabel :one
+update notification_channels c
+set label = $1
+from projects p
+where c.id = $2
+  and p.id = $3
+  and c.owner_id = p.owner_id
+  and c.deleted_at is null
+returning c.id, c.project_id, c.owner_id, c.kind, c.config, c.label, c.verified_at, c.created_at, c.deleted_at
+`
+
+type UpdateNotificationChannelLabelParams struct {
+	Label     string    `json:"label"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) UpdateNotificationChannelLabel(ctx context.Context, arg UpdateNotificationChannelLabelParams) (NotificationChannel, error) {
+	row := q.db.QueryRow(ctx, updateNotificationChannelLabel, arg.Label, arg.ID, arg.ProjectID)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OwnerID,
 		&i.Kind,
 		&i.Config,
 		&i.Label,
@@ -531,7 +638,19 @@ func (q *Queries) SoftDeleteNotificationChannel(ctx context.Context, arg SoftDel
 
 const upsertNotificationSubscription = `-- name: UpsertNotificationSubscription :one
 insert into notification_subscriptions (project_id, event_type, channel_id, enabled, filter)
-values ($1, $2, $3, $4, $5)
+select
+  $1,
+  $2,
+  $3,
+  $4,
+  $5
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+where p.id = $1
+  and c.id = $3
+  and c.deleted_at is null
+  and (not $4::boolean or c.kind <> 'email' or c.verified_at is not null)
 on conflict (project_id, event_type, channel_id) do update
 set enabled = excluded.enabled,
     filter = excluded.filter

@@ -27,6 +27,9 @@ type Env struct {
 	BlogBaseURL              string // public base for published canonical URLs
 	UniPostDeployHookURL     string // Vercel deploy hook for UniPost build-time content fetch
 	NotificationSecretKey    string // AEAD key material for webhook URL encryption
+	ResendAPIKey             string // Resend API key for platform-owned Email notifications
+	NotificationEmailFrom    string // verified sender for platform-owned Email notifications
+	NotificationEmailReplyTo string // optional reply-to for Email notifications
 	GoogleServiceAccountJSON string // service account JSON for GSC/GA4 read-only ingestion
 	GoogleOAuthClientID      string // Google OAuth client ID for customer-owned GSC connections
 	GoogleOAuthClientSecret  string // Google OAuth client secret for customer-owned GSC connections
@@ -61,6 +64,9 @@ func FromEnv() Env {
 		BlogBaseURL:              getenv("BLOG_BASE_URL", "https://unipost.example/blog"),
 		UniPostDeployHookURL:     os.Getenv("UNIPOST_DEPLOY_HOOK_URL"),
 		NotificationSecretKey:    os.Getenv("NOTIFICATION_SECRET_KEY"),
+		ResendAPIKey:             os.Getenv("RESEND_API_KEY"),
+		NotificationEmailFrom:    os.Getenv("NOTIFICATION_EMAIL_FROM"),
+		NotificationEmailReplyTo: os.Getenv("NOTIFICATION_EMAIL_REPLY_TO"),
 		GoogleServiceAccountJSON: os.Getenv("GOOGLE_SERVICE_ACCOUNT_JSON"),
 		GoogleOAuthClientID:      os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret:  os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),

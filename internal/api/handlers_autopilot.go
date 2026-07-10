@@ -388,7 +388,7 @@ func (s *Server) autopilotReadiness(r *http.Request, projectID uuid.UUID) (Autop
 	gates := []AutopilotReadinessGate{
 		readinessGate("search_read", "Search data", searchReady, "First-party Search Console data is required before Level 2 can execute SEO changes.", "Connect Search Console or keep Autopilot below Level 2."),
 		readinessGate("publisher_write", "Publisher write", publisherReady, "A connected, enabled publisher with scoped credentials is required before Autopilot can create or update content.", "Connect and test the GitHub/Next.js publisher."),
-		readinessGateWithStatus("notification_write", "Notifications", notificationReady, notificationStatus, "Verified notifications are required so failures and approval needs reach the operator.", "Create and test a Slack or Discord notification channel."),
+		readinessGateWithStatus("notification_write", "Notifications", notificationReady, notificationStatus, "Tested notifications are required so failures and approval needs reach the operator.", "Create and test a Slack, Discord, or Email notification channel."),
 		readinessGate("autopilot_policy_confirmed", "Policy confirmed", policyConfirmed, "Level 2 requires an explicit policy level so CiteLoop knows which low-risk actions may run.", "Set Autopilot level to 2 after reviewing limits and risk thresholds."),
 		readinessGate("automation_pause_clear", "Automation paused", !policy.AutomationPaused, "Automation is paused and blocks scheduled automation and guarded execution.", "Resume automation in Settings when you want CiteLoop to run eligible work again."),
 		readinessGate("monthly_budget_configured", "Monthly budget", budgetConfigured, "A project-level budget cap is required before automated execution can spend variable cost.", "Set a monthly Autopilot budget greater than 0."),
@@ -646,7 +646,7 @@ func checklistStatus(items []seopkg.SetupChecklistItem, key string) string {
 	return ""
 }
 
-func verifiedNotificationChannelStatus(channels []db.NotificationChannel) (bool, string) {
+func verifiedNotificationChannelStatus(channels []db.ListNotificationChannelsRow) (bool, string) {
 	if len(channels) == 0 {
 		return false, "blocked"
 	}

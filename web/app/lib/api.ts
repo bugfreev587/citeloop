@@ -268,17 +268,19 @@ export type TopicCreateInput = TopicUpdateInput & {
   scheduled_at?: string | null;
 };
 
-export type NotificationChannelKind = "slack_webhook" | "discord_webhook";
+export type NotificationChannelKind = "slack_webhook" | "discord_webhook" | "email";
 
 export type NotificationChannel = {
   id: string;
-  project_id: string;
+  project_id?: string | null;
+  owner_id?: string;
   kind: NotificationChannelKind;
-  config: { redacted_url?: string };
+  config: { redacted_url?: string; redacted_to?: string };
   label: string;
   verified_at?: any;
   created_at?: any;
   deleted_at?: any;
+  project_subscription_count?: number;
 };
 
 export type NotificationEvent = {
@@ -2682,9 +2684,20 @@ export function createApi(auth?: AuthOptions) {
   },
   createNotificationChannel: async (
     id: string,
-    body: { kind: NotificationChannelKind; url: string; label: string },
+    body: { kind: NotificationChannelKind; label: string; url?: string; destination?: string },
   ): Promise<NotificationChannel> => {
     return req<NotificationChannel>(`/projects/${id}/notifications/channels`, { method: "POST", body: JSON.stringify(body) }, auth);
+  },
+  updateNotificationChannel: async (
+    id: string,
+    channelID: string,
+    body: { label?: string; url?: string; destination?: string },
+  ): Promise<NotificationChannel> => {
+    return req<NotificationChannel>(
+      `/projects/${id}/notifications/channels/${channelID}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      auth,
+    );
   },
   deleteNotificationChannel: async (id: string, channelID: string): Promise<NotificationChannel> => {
     return req<NotificationChannel>(`/projects/${id}/notifications/channels/${channelID}`, { method: "DELETE" }, auth);

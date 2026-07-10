@@ -59,6 +59,12 @@ function friendlyError(raw: unknown) {
   if (lower.includes("repo")) {
     return "Enter the GitHub repository as owner/repo.";
   }
+  if (lower.includes("resend_api_key") || lower.includes("resend api key")) {
+    return "Email sending is not configured yet. Add the Resend API key before testing an email channel.";
+  }
+  if (lower.includes("email") || lower.includes("destination")) {
+    return "Enter a valid email address for this notification channel.";
+  }
   if (lower.includes("webhook") || (lower.includes("url") && lower.includes("required"))) {
     return "Enter a valid webhook URL (a Slack or Discord incoming webhook).";
   }
@@ -266,6 +272,7 @@ function ConnectionInstructions({ steps }: { steps: string[] }) {
 const channelKinds: Array<{ value: NotificationChannelKind; label: string }> = [
   { value: "slack_webhook", label: "Slack" },
   { value: "discord_webhook", label: "Discord" },
+  { value: "email", label: "Email" },
 ];
 
 const eventLabels: Record<string, string> = {
@@ -477,7 +484,7 @@ function automationGateSummary(key: string, blocked: boolean) {
   if (key === "safe_mode_clear") return blocked ? "Safe mode is active" : "Safe mode is clear";
   if (key === "autopilot_policy_confirmed") return blocked ? "Review policy before guarded execution" : "Policy confirmed";
   if (key === "monthly_budget_configured") return blocked ? "Set an Autopilot budget limit" : "Budget limit is set";
-  if (key === "notification_write") return blocked ? "Add a verified notification channel" : "Notification channel ready";
+  if (key === "notification_write") return blocked ? "Add a tested notification channel" : "Notification channel ready";
   if (key === "rollback_or_recovery_ready") return blocked ? "Confirm recovery before writes" : "Recovery plan confirmed";
   if (key === "publisher_write") return blocked ? "Connect a publisher target" : "Publisher access ready";
   if (key === "search_read") return blocked ? "Connect first-party search data" : "Search data ready";
@@ -518,10 +525,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [subscriptions, setSubscriptions] = useState<NotificationSubscription[]>([]);
   const [deliveries, setDeliveries] = useState<NotificationDelivery[]>([]);
   const [deliveryStatus, setDeliveryStatus] = useState("");
-  const [channelDraft, setChannelDraft] = useState<{ kind: NotificationChannelKind; label: string; url: string }>({
+  const [channelDraft, setChannelDraft] = useState<{ kind: NotificationChannelKind; label: string; destination: string }>({
     kind: "slack_webhook",
     label: "Ops",
-    url: "",
+    destination: "",
   });
   const [activeEventsChannel, setActiveEventsChannel] = useState<NotificationChannel | null>(null);
   const [eventSelection, setEventSelection] = useState<Record<string, boolean>>({});
@@ -907,9 +914,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   async function createChannel() {
-    const url = channelDraft.url.trim();
-    if (!url) {
-      setMessage({ title: "Webhook URL required", tone: "amber" });
+    const destination = channelDraft.destination.trim();
+    const isEmail = channelDraft.kind === "email";
+    if (!destination) {
+      setMessage({ title: isEmail ? "Email address required" : "Webhook URL required", tone: "amber" });
       return;
     }
     setNotificationBusy("create-channel");
@@ -917,10 +925,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       await api.createNotificationChannel(projectId, {
         kind: channelDraft.kind,
-        label: channelDraft.label.trim() || channelKinds.find((item) => item.value === channelDraft.kind)?.label || "Webhook",
-        url,
+        label: channelDraft.label.trim() || channelKinds.find((item) => item.value === channelDraft.kind)?.label || "Channel",
+        ...(isEmail ? { destination } : { url: destination }),
       });
-      setChannelDraft((current) => ({ ...current, url: "" }));
+      setChannelDraft((current) => ({ ...current, destination: "" }));
       setMessage({ title: "Notification channel saved", tone: "green" });
       await refreshNotifications();
     } catch (e: any) {
@@ -930,8 +938,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function deleteChannel(channelID: string) {
-    if (!window.confirm("Delete this notification channel? Subscriptions using it will stop delivering.")) return;
+  async function deleteChannel(channel: NotificationChannel) {
+    const usedBy = channel.project_subscription_count ?? 0;
+    const detail = usedBy > 0 ? ` It is used by ${usedBy} project subscription${usedBy === 1 ? "" : "s"}.` : "";
+    if (!window.confirm(`Delete this account notification channel?${detail} Subscriptions using it will stop delivering.`)) return;
+    const channelID = channel.id;
     setNotificationBusy(`delete-${channelID}`);
     setMessage(null);
     try {
@@ -945,15 +956,20 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }
 
-  async function testChannel(channelID: string) {
+  async function testChannel(channel: NotificationChannel) {
+    const channelID = channel.id;
     setNotificationBusy(`test-${channelID}`);
     setMessage(null);
     try {
       await api.testNotificationChannel(projectId, channelID);
-      setMessage({ title: "Test notification sent", detail: "Channel is now verified.", tone: "green" });
+      setMessage({
+        title: "Test accepted",
+        detail: channel.kind === "email" ? "Email channel can now be subscribed to project events." : "Channel can now be subscribed to project events.",
+        tone: "green",
+      });
       await refreshNotifications();
     } catch (e: any) {
-      setMessage({ title: "Test notification failed", detail: e.message, tone: "red" });
+      setMessage({ title: "Test notification failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setNotificationBusy(null);
     }
@@ -1271,10 +1287,37 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }
 
   function channelDisplayLabel(channel: NotificationChannel) {
-    return channel.label || (channel.kind === "slack_webhook" ? "Slack" : "Discord");
+    return channel.label || channelKinds.find((item) => item.value === channel.kind)?.label || "Channel";
+  }
+
+  function channelKindLabel(channel: NotificationChannel) {
+    return channelKinds.find((item) => item.value === channel.kind)?.label || channel.kind;
+  }
+
+  function channelKindTone(channel: NotificationChannel): "green" | "blue" | "amber" {
+    if (channel.kind === "slack_webhook") return "green";
+    if (channel.kind === "discord_webhook") return "blue";
+    return "amber";
+  }
+
+  function channelDestination(channel: NotificationChannel) {
+    return channel.config?.redacted_to ?? channel.config?.redacted_url ?? "Redacted";
+  }
+
+  function channelUsageLabel(channel: NotificationChannel) {
+    const count = channel.project_subscription_count ?? 0;
+    return `Used by ${count} project${count === 1 ? "" : "s"}`;
   }
 
   function openChannelEvents(channel: NotificationChannel) {
+    if (channel.kind === "email" && !channel.verified_at) {
+      setMessage({
+        title: "Test email first",
+        detail: "Email channels must have a test accepted before project events can subscribe to them.",
+        tone: "amber",
+      });
+      return;
+    }
     setActiveEventsChannel(channel);
     setMessage(null);
     setEventSelection(
@@ -2618,7 +2661,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       <section id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0} className="space-y-7">
         <div id="notifications">
           <SectionHeader
-            title="Subscriptions"
+            title="Account channels"
             eyebrow="Operations"
             action={
               <Button size="sm" onClick={refreshNotifications} disabled={!!notificationBusy}>
@@ -2633,17 +2676,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <div className="text-sm font-bold text-slate-950">Set notifications</div>
             <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-600">
               Automation needs a notification channel. Failures, approval requests, safe mode alerts, and delivery problems should reach an operator.
-              Add a Slack or Discord webhook, then send a test notification to verify it.
+              Add Slack, Discord, or Email once, then reuse it across this account's projects.
             </p>
           </div>
 
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <Bell size={16} />
-            Channels
+            Project subscriptions
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[220px_1fr_1fr_auto]">
-            <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-3 lg:grid-cols-[260px_1fr_1fr_auto]">
+            <div className="grid grid-cols-3 gap-2">
               {channelKinds.map((kind) => {
                 const active = channelDraft.kind === kind.value;
                 return (
@@ -2667,10 +2710,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               placeholder="Label"
             />
             <TextInput
-              value={channelDraft.url}
-              onChange={(event) => setChannelDraft((current) => ({ ...current, url: event.target.value }))}
-              placeholder="Webhook URL"
-              type="password"
+              value={channelDraft.destination}
+              onChange={(event) => setChannelDraft((current) => ({ ...current, destination: event.target.value }))}
+              placeholder={channelDraft.kind === "email" ? "Email address" : "Webhook URL"}
+              type={channelDraft.kind === "email" ? "email" : "password"}
               autoComplete="off"
             />
             <Button variant="primary" onClick={createChannel} disabled={notificationBusy === "create-channel"}>
@@ -2684,8 +2727,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
             <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-5 text-sm">
               <div className="font-bold text-slate-900">Automation needs a notification channel</div>
               <p className="mt-1 max-w-2xl leading-5 text-slate-500">
-                Failures, approval requests, safe mode alerts, and delivery problems should reach an operator. Add a Slack or Discord webhook, then
-                send a test notification to verify it.
+                Failures, approval requests, safe mode alerts, and delivery problems should reach an operator.
+                Add Slack, Discord, or Email once, then reuse it across this account's projects.
               </p>
             </div>
           ) : (
@@ -2695,8 +2738,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   <tr>
                     <th className="px-3 py-2">Label</th>
                     <th className="px-3 py-2">Kind</th>
-                    <th className="px-3 py-2">Webhook</th>
+                    <th className="px-3 py-2">Destination</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Used by</th>
                     <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -2705,16 +2749,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                     <tr key={channel.id}>
                       <td className="px-3 py-2 font-semibold text-slate-900">{channelDisplayLabel(channel)}</td>
                       <td className="px-3 py-2">
-                        <Badge tone={channel.kind === "slack_webhook" ? "green" : "blue"}>
-                          {channel.kind === "slack_webhook" ? "Slack" : "Discord"}
-                        </Badge>
+                        <Badge tone={channelKindTone(channel)}>{channelKindLabel(channel)}</Badge>
                       </td>
-                      <td className="max-w-[320px] truncate px-3 py-2 text-slate-500">{channel.config?.redacted_url ?? "Redacted"}</td>
+                      <td className="max-w-[320px] truncate px-3 py-2 text-slate-500">{channelDestination(channel)}</td>
                       <td className="px-3 py-2">
                         <Badge tone={channel.verified_at ? "green" : "amber"}>
-                          {channel.verified_at ? "Verified" : "Untested"}
+                          {channel.verified_at ? "Test accepted" : "Untested"}
                         </Badge>
                       </td>
+                      <td className="px-3 py-2 text-slate-500">{channelUsageLabel(channel)}</td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex justify-end gap-2">
                           <Button
@@ -2730,16 +2773,16 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => testChannel(channel.id)}
+                            onClick={() => testChannel(channel)}
                             disabled={notificationBusy === `test-${channel.id}`}
-                            title={channel.verified_at ? `Verified ${formatDate(channel.verified_at)}` : "Send test notification"}
+                            title={channel.verified_at ? `Test accepted ${formatDate(channel.verified_at)}` : channel.kind === "email" ? "Send test email" : "Send test notification"}
                           >
                             <ButtonProgress busy={notificationBusy === `test-${channel.id}`} busyLabel="Testing" idleIcon={<Send size={14} />} />
                           </Button>
                           <Button
                             size="sm"
                             variant="danger"
-                            onClick={() => deleteChannel(channel.id)}
+                            onClick={() => deleteChannel(channel)}
                             disabled={notificationBusy === `delete-${channel.id}`}
                             title="Delete channel"
                           >
@@ -2838,7 +2881,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
                   Events for {channelDisplayLabel(activeEventsChannel)}
                 </h3>
                 <p className="mt-1 text-sm leading-5 text-slate-500">
-                  Choose which eligible events this webhook receives.
+                  Choose which events from this project send to this account channel.
                 </p>
               </div>
 

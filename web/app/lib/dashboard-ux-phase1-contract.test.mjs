@@ -1531,7 +1531,10 @@ test("settings groups every top-level section behind a tab", () => {
   assert.doesNotMatch(settings, /\| "subscriptions"/);
   assert.doesNotMatch(settings, /\| "deliveries"/);
   const notificationsPanel = settings.slice(settings.indexOf('id="settings-panel-notifications"'));
-  assert.match(notificationsPanel, /title="Subscriptions"[\s\S]*Channels[\s\S]*Events[\s\S]*title="Deliveries"/);
+  assert.match(notificationsPanel, /title="Account channels"[\s\S]*Project subscriptions[\s\S]*Destination[\s\S]*title="Deliveries"/);
+  assert.match(notificationsPanel, /Email address/);
+  assert.match(notificationsPanel, /Test accepted/);
+  assert.match(notificationsPanel, /Used by/);
   assert.doesNotMatch(notificationsPanel, /title="Notifications"/);
   assert.doesNotMatch(notificationsPanel, /lg:grid-cols-\[220px_1fr\]/);
   assert.match(settings, /activeEventsChannel/);
@@ -1764,7 +1767,7 @@ test("notifications setup has an empty state that explains the automation gate",
   for (const expected of [
     "Automation needs a notification channel",
     "Failures, approval requests, safe mode alerts, and delivery problems should reach an operator.",
-    "Add a Slack or Discord webhook, then send a test notification to verify it.",
+    "Add Slack, Discord, or Email once, then reuse it across this account's projects.",
     "Set notifications",
     "create-channel",
   ]) {
@@ -1772,6 +1775,7 @@ test("notifications setup has an empty state that explains the automation gate",
   }
 
   assert.doesNotMatch(notificationsPanel, />\s*No channels\s*</);
+  assert.doesNotMatch(notificationsPanel, /Slack or Discord webhook/);
 });
 
 test("context page is a user-reviewable product cognition center, not a raw knowledge JSON page", () => {

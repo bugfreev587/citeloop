@@ -1060,6 +1060,14 @@ test("notification APIs call project scoped endpoints", async () => {
       label: "Ops",
       url: "https://hooks.slack.com/services/T/B/token",
     });
+    await client.createNotificationChannel("project-1", {
+      kind: "email",
+      label: "Ops email",
+      destination: "ops@example.com",
+    });
+    await client.updateNotificationChannel("project-1", "channel-1", {
+      label: "Renamed ops",
+    });
     await client.testNotificationChannel("project-1", "channel-1");
     await client.upsertNotificationSubscription("project-1", {
       event_type: "publish.failed",
@@ -1076,18 +1084,29 @@ test("notification APIs call project scoped endpoints", async () => {
       label: "Ops",
       url: "https://hooks.slack.com/services/T/B/token",
     });
-    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/notifications/channels/channel-1/test");
     assert.equal(calls[2].init.method, "POST");
-    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/notifications/subscriptions");
-    assert.equal(calls[3].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[2].init.body), {
+      kind: "email",
+      label: "Ops email",
+      destination: "ops@example.com",
+    });
+    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/notifications/channels/channel-1");
+    assert.equal(calls[3].init.method, "PATCH");
     assert.deepEqual(JSON.parse(calls[3].init.body), {
+      label: "Renamed ops",
+    });
+    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/notifications/channels/channel-1/test");
+    assert.equal(calls[4].init.method, "POST");
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/notifications/subscriptions");
+    assert.equal(calls[5].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[5].init.body), {
       event_type: "publish.failed",
       channel_id: "channel-1",
       enabled: true,
     });
-    assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/notifications/deliveries?status=dead&limit=20");
-    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/notifications/deliveries/delivery-1/retry");
-    assert.equal(calls[5].init.method, "POST");
+    assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/notifications/deliveries?status=dead&limit=20");
+    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/notifications/deliveries/delivery-1/retry");
+    assert.equal(calls[7].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

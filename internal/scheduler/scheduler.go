@@ -58,22 +58,25 @@ type seoRunner interface {
 }
 
 type Scheduler struct {
-	Pool                    *pgxpool.Pool
-	LLM                     llm.Provider
-	Search                  search.Provider
-	Blog                    *publisher.BlogPublisher
-	SEOData                 seopkg.GoogleDataProvider
-	GEOAnswerProvider       geo.AnswerProvider
-	GEOProviderRunBudgetUSD float64
-	BlogBaseURL             string
-	Log                     *slog.Logger
-	now                     func() time.Time
-	alert                   func(projectID uuid.UUID, msg string)
-	httpClient              *http.Client
-	seoRunnerFactory        func(q *db.Queries) seoRunner
-	NotificationSecret      string
-	UniPostDeployHookURL    string
-	GitHubApp               *githubapp.Service
+	Pool                     *pgxpool.Pool
+	LLM                      llm.Provider
+	Search                   search.Provider
+	Blog                     *publisher.BlogPublisher
+	SEOData                  seopkg.GoogleDataProvider
+	GEOAnswerProvider        geo.AnswerProvider
+	GEOProviderRunBudgetUSD  float64
+	BlogBaseURL              string
+	Log                      *slog.Logger
+	now                      func() time.Time
+	alert                    func(projectID uuid.UUID, msg string)
+	httpClient               *http.Client
+	seoRunnerFactory         func(q *db.Queries) seoRunner
+	NotificationSecret       string
+	ResendAPIKey             string
+	NotificationEmailFrom    string
+	NotificationEmailReplyTo string
+	UniPostDeployHookURL     string
+	GitHubApp                *githubapp.Service
 }
 
 type publisherConnectionQuerier interface {
@@ -99,8 +102,13 @@ func (s *Scheduler) TickNotifications(ctx context.Context) {
 		return
 	}
 	worker := notification.Worker{
-		Store:  db.New(s.Pool),
-		Sender: notification.HTTPSender{Client: s.httpClient},
+		Store: db.New(s.Pool),
+		Sender: notification.HTTPSender{
+			Client:       s.httpClient,
+			ResendAPIKey: s.ResendAPIKey,
+			EmailFrom:    s.NotificationEmailFrom,
+			EmailReplyTo: s.NotificationEmailReplyTo,
+		},
 		Secret: s.NotificationSecret,
 		Limit:  20,
 	}

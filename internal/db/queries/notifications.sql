@@ -1,38 +1,97 @@
 -- name: CreateNotificationChannel :one
-insert into notification_channels (project_id, kind, config, label)
-values ($1, $2, $3, $4)
+insert into notification_channels (owner_id, kind, config, label)
+select p.owner_id, sqlc.arg(kind), sqlc.arg(config), sqlc.arg(label)
+from projects p
+where p.id = sqlc.arg(project_id)
 returning *;
 
 -- name: ListNotificationChannels :many
-select * from notification_channels
-where project_id = $1
-  and deleted_at is null
-order by created_at desc;
+select
+  c.id,
+  c.project_id,
+  c.owner_id,
+  c.kind,
+  c.config,
+  c.label,
+  c.verified_at,
+  c.created_at,
+  c.deleted_at,
+  count(distinct s.project_id)::int as project_subscription_count
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+left join notification_subscriptions s
+  on s.channel_id = c.id
+ and s.enabled = true
+where p.id = $1
+  and c.deleted_at is null
+group by c.id
+order by c.created_at desc;
 
 -- name: GetNotificationChannel :one
-select * from notification_channels
-where id = $1
-  and project_id = $2
-  and deleted_at is null;
+select c.* from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+where c.id = sqlc.arg(id)
+  and p.id = sqlc.arg(project_id)
+  and c.deleted_at is null;
 
 -- name: MarkNotificationChannelVerified :one
-update notification_channels
+update notification_channels c
 set verified_at = now()
-where id = $1
-  and project_id = $2
-  and deleted_at is null
-returning *;
+from projects p
+where c.id = sqlc.arg(id)
+  and p.id = sqlc.arg(project_id)
+  and c.owner_id = p.owner_id
+  and c.deleted_at is null
+returning c.*;
+
+-- name: UpdateNotificationChannelLabel :one
+update notification_channels c
+set label = sqlc.arg(label)
+from projects p
+where c.id = sqlc.arg(id)
+  and p.id = sqlc.arg(project_id)
+  and c.owner_id = p.owner_id
+  and c.deleted_at is null
+returning c.*;
 
 -- name: SoftDeleteNotificationChannel :one
-update notification_channels
+update notification_channels c
 set deleted_at = now()
-where id = $1
-  and project_id = $2
-returning *;
+from projects p
+where c.id = sqlc.arg(id)
+  and p.id = sqlc.arg(project_id)
+  and c.owner_id = p.owner_id
+returning c.*;
+
+-- name: CountNotificationChannelProjectSubscriptions :one
+select count(distinct s.project_id)::int as project_subscription_count
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+left join notification_subscriptions s
+  on s.channel_id = c.id
+ and s.enabled = true
+where p.id = sqlc.arg(project_id)
+  and c.id = sqlc.arg(channel_id)
+  and c.deleted_at is null;
 
 -- name: UpsertNotificationSubscription :one
 insert into notification_subscriptions (project_id, event_type, channel_id, enabled, filter)
-values ($1, $2, $3, $4, $5)
+select
+  sqlc.arg(project_id),
+  sqlc.arg(event_type),
+  sqlc.arg(channel_id),
+  sqlc.arg(enabled),
+  sqlc.arg(filter)
+from projects p
+join notification_channels c
+  on c.owner_id = p.owner_id
+where p.id = sqlc.arg(project_id)
+  and c.id = sqlc.arg(channel_id)
+  and c.deleted_at is null
+  and (not sqlc.arg(enabled)::boolean or c.kind <> 'email' or c.verified_at is not null)
 on conflict (project_id, event_type, channel_id) do update
 set enabled = excluded.enabled,
     filter = excluded.filter
@@ -47,10 +106,14 @@ order by event_type, created_at desc;
 select s.* from notification_subscriptions s
 join notification_channels c
   on c.id = s.channel_id
+join projects p
+  on p.id = s.project_id
 where s.project_id = $1
   and s.event_type = $2
   and s.enabled = true
+  and c.owner_id = p.owner_id
   and c.deleted_at is null
+  and (c.kind <> 'email' or c.verified_at is not null)
 order by s.created_at asc;
 
 -- name: CreateNotificationDelivery :one

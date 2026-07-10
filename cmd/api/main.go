@@ -84,6 +84,9 @@ func main() {
 	sched.SEOData = seoData
 	sched.GEOProviderRunBudgetUSD = env.GEOProviderRunBudgetUSD
 	sched.NotificationSecret = env.NotificationSecretKey
+	sched.ResendAPIKey = env.ResendAPIKey
+	sched.NotificationEmailFrom = env.NotificationEmailFrom
+	sched.NotificationEmailReplyTo = env.NotificationEmailReplyTo
 	sched.UniPostDeployHookURL = env.UniPostDeployHookURL
 	sched.GitHubApp = githubapp.New(githubapp.Config{
 		AppID:         env.GitHubAppID,

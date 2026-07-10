@@ -35,8 +35,9 @@ end $$;
 
 create table if not exists notification_channels (
   id          uuid primary key default gen_random_uuid(),
-  project_id  uuid not null references projects(id),
-  kind text not null check (kind in ('slack_webhook','discord_webhook')),
+  project_id  uuid references projects(id),
+  owner_id    text not null,
+  kind text not null check (kind in ('slack_webhook','discord_webhook','email')),
   config jsonb not null,
   label       text not null default '',
   verified_at timestamptz,
@@ -76,6 +77,33 @@ create index if not exists idx_notification_channels_project
   on notification_channels (project_id)
   where deleted_at is null;
 
+create index if not exists idx_notification_channels_owner
+  on notification_channels (owner_id, created_at desc)
+  where deleted_at is null;
+
 create index if not exists idx_notification_deliveries_pending
   on notification_deliveries (status, next_retry_at, created_at)
   where status = 'pending';
+
+create or replace function notification_subscription_owner_guard()
+returns trigger as $$
+begin
+  if not exists (
+    select 1
+    from projects
+    join notification_channels
+      on notification_channels.id = new.channel_id
+    where projects.id = new.project_id
+      and notification_channels.owner_id = projects.owner_id
+      and notification_channels.deleted_at is null
+  ) then
+    raise exception 'notification subscription channel owner mismatch';
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_notification_subscription_owner_guard on notification_subscriptions;
+create trigger trg_notification_subscription_owner_guard
+before insert or update of project_id, channel_id on notification_subscriptions
+for each row execute function notification_subscription_owner_guard();

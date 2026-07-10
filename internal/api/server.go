@@ -217,6 +217,7 @@ func (s *Server) Router() http.Handler {
 			})
 			r.Get("/notifications/channels", s.listNotificationChannels)
 			r.Post("/notifications/channels", s.createNotificationChannel)
+			r.Patch("/notifications/channels/{channelID}", s.updateNotificationChannel)
 			r.Post("/notifications/channels/{channelID}/test", s.testNotificationChannel)
 			r.Delete("/notifications/channels/{channelID}", s.deleteNotificationChannel)
 			r.Get("/notifications/events", s.listNotificationEvents)

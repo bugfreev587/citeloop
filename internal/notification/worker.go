@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
@@ -16,7 +17,7 @@ type WorkerStore interface {
 }
 
 type Sender interface {
-	Send(ctx context.Context, kind, webhookURL string, payload json.RawMessage) error
+	Send(ctx context.Context, target DeliveryTarget) error
 }
 
 type Worker struct {
@@ -38,21 +39,14 @@ func (w Worker) ProcessOnce(ctx context.Context) (int, error) {
 	processed := 0
 	for _, row := range rows {
 		processed++
-		var cfg WebhookConfig
-		if err := json.Unmarshal(row.ChannelConfig, &cfg); err != nil {
-			if markErr := w.markFailed(ctx, row, err); markErr != nil {
-				return processed, markErr
-			}
-			continue
-		}
-		webhookURL, err := DecryptWebhookURL(cfg, w.Secret)
+		target, err := w.deliveryTarget(row)
 		if err != nil {
 			if markErr := w.markFailed(ctx, row, err); markErr != nil {
 				return processed, markErr
 			}
 			continue
 		}
-		if err := w.Sender.Send(ctx, row.ChannelKind, webhookURL, row.Payload); err != nil {
+		if err := w.Sender.Send(ctx, target); err != nil {
 			if markErr := w.markFailed(ctx, row, err); markErr != nil {
 				return processed, markErr
 			}
@@ -63,6 +57,40 @@ func (w Worker) ProcessOnce(ctx context.Context) (int, error) {
 		}
 	}
 	return processed, nil
+}
+
+func (w Worker) deliveryTarget(row db.ListPendingNotificationDeliveriesRow) (DeliveryTarget, error) {
+	target := DeliveryTarget{
+		Kind:       row.ChannelKind,
+		DeliveryID: row.ID,
+		Payload:    row.Payload,
+	}
+	switch row.ChannelKind {
+	case KindSlackWebhook, KindDiscordWebhook:
+		var cfg WebhookConfig
+		if err := json.Unmarshal(row.ChannelConfig, &cfg); err != nil {
+			return DeliveryTarget{}, err
+		}
+		webhookURL, err := DecryptWebhookURL(cfg, w.Secret)
+		if err != nil {
+			return DeliveryTarget{}, err
+		}
+		target.Destination = webhookURL
+		return target, nil
+	case KindEmail:
+		var cfg EmailConfig
+		if err := json.Unmarshal(row.ChannelConfig, &cfg); err != nil {
+			return DeliveryTarget{}, err
+		}
+		to, err := DecryptEmailTo(cfg, w.Secret)
+		if err != nil {
+			return DeliveryTarget{}, err
+		}
+		target.Destination = to
+		return target, nil
+	default:
+		return DeliveryTarget{}, fmt.Errorf("unsupported notification channel kind %q", row.ChannelKind)
+	}
 }
 
 func (w Worker) markFailed(ctx context.Context, row db.ListPendingNotificationDeliveriesRow, err error) error {

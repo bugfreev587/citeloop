@@ -3,6 +3,7 @@ package notification
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"net/url"
 	"strings"
 )
@@ -18,11 +20,18 @@ import (
 const (
 	KindSlackWebhook   = "slack_webhook"
 	KindDiscordWebhook = "discord_webhook"
+	KindEmail          = "email"
 )
 
 type WebhookConfig struct {
 	EncryptedURL string `json:"encrypted_url"`
 	RedactedURL  string `json:"redacted_url"`
+}
+
+type EmailConfig struct {
+	EncryptedTo string `json:"encrypted_to"`
+	RedactedTo  string `json:"redacted_to"`
+	AddressHash string `json:"address_hash"`
 }
 
 func PrepareWebhookConfig(kind, rawURL, secret string) (WebhookConfig, error) {
@@ -40,7 +49,32 @@ func DecryptWebhookURL(cfg WebhookConfig, secret string) (string, error) {
 	return decryptString(cfg.EncryptedURL, secret)
 }
 
+func PrepareEmailConfig(ownerID, rawEmail, secret string) (EmailConfig, error) {
+	normalized, err := normalizeEmail(rawEmail)
+	if err != nil {
+		return EmailConfig{}, err
+	}
+	encrypted, err := encryptString(normalized, secret)
+	if err != nil {
+		return EmailConfig{}, err
+	}
+	return EmailConfig{
+		EncryptedTo: encrypted,
+		RedactedTo:  redactEmail(normalized),
+		AddressHash: emailAddressHash(ownerID, normalized, secret),
+	}, nil
+}
+
+func DecryptEmailTo(cfg EmailConfig, secret string) (string, error) {
+	return decryptString(cfg.EncryptedTo, secret)
+}
+
 func (c WebhookConfig) JSON() json.RawMessage {
+	b, _ := json.Marshal(c)
+	return b
+}
+
+func (c EmailConfig) JSON() json.RawMessage {
 	b, _ := json.Marshal(c)
 	return b
 }
@@ -65,7 +99,7 @@ func validateWebhookURL(kind, rawURL string) error {
 			return errors.New("discord webhook url must start with https://discord.com/api/webhooks/")
 		}
 	default:
-		return errors.New("notification channel kind must be slack_webhook or discord_webhook")
+		return errors.New("notification channel kind must be slack_webhook, discord_webhook, or email")
 	}
 	return nil
 }
@@ -82,6 +116,35 @@ func redactWebhookURL(rawURL string) string {
 	}
 	parts[len(parts)-1] = "****"
 	return parsed.Scheme + "://" + parsed.Host + "/" + strings.Join(parts, "/")
+}
+
+func normalizeEmail(rawEmail string) (string, error) {
+	parsed, err := mail.ParseAddress(strings.TrimSpace(rawEmail))
+	if err != nil {
+		return "", errors.New("email address must be valid")
+	}
+	address := strings.ToLower(strings.TrimSpace(parsed.Address))
+	local, domain, ok := strings.Cut(address, "@")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, " ") {
+		return "", errors.New("email address must be valid")
+	}
+	return address, nil
+}
+
+func redactEmail(email string) string {
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || local == "" || domain == "" {
+		return "****"
+	}
+	return local[:1] + "***@" + domain
+}
+
+func emailAddressHash(ownerID, email, secret string) string {
+	mac := hmac.New(sha256.New, []byte(strings.TrimSpace(secret)))
+	_, _ = mac.Write([]byte(strings.TrimSpace(ownerID)))
+	_, _ = mac.Write([]byte("\n"))
+	_, _ = mac.Write([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func encryptString(plaintext, secret string) (string, error) {
@@ -117,7 +180,7 @@ func decryptString(ciphertext, secret string) (string, error) {
 		return "", err
 	}
 	if len(raw) < gcm.NonceSize() {
-		return "", errors.New("encrypted webhook url is malformed")
+		return "", errors.New("encrypted notification destination is malformed")
 	}
 	nonce, sealed := raw[:gcm.NonceSize()], raw[gcm.NonceSize():]
 	opened, err := gcm.Open(nil, nonce, sealed, nil)
