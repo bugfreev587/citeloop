@@ -752,10 +752,12 @@ max_follow_up_attempts
 max_measuring_duration
 minimum_sample/evidence requirements
 terminalization_grace_period
+absolute_terminal_at
 ```
 
-- 所有 offsets 和 `max_measuring_duration` 必须是有限值；不得创建无限期 Measuring action。
+- 所有 offsets、`max_measuring_duration` 和 `terminalization_grace_period` 必须是有限值；不得创建无限期 Measuring action。
 - `max_measuring_duration` 不得早于最后一个允许的 follow-up checkpoint，并由 action family policy 参数化，而不是散落在 scheduler 代码中。
+- action 首次进入 Measuring 时必须计算并持久化 immutable `absolute_terminal_at = measuring_started_at + max_measuring_duration + terminalization_grace_period`。普通 policy upgrade、checkpoint retry、provider outage 或 scheduler delay 不能向后移动该时间；需要继续观察时必须先 terminalize 当前 action，再以有审计的新 hypothesis/action 开启新窗口。
 - 到达 `max_measuring_duration + terminalization_grace_period` 后仍无足够数据时，action 必须以 `insufficient_data` 关闭并生成 measurement-quality record。
 - checkpoint 延迟、跳过、重试或 policy upgrade 都必须留下原因和原 policy version；不能静默延长 Measuring。
 
@@ -895,6 +897,8 @@ AI 只提供 advisory semantic judgment，不能代替唯一约束和事务 rese
 3. 如果 bucket version、overlap set、signature version 或 relevant evidence fingerprint 与 Phase A snapshot 不一致，立即 rollback；释放锁后使用新 snapshot 重跑 Phase A。锁内不得调用 AI。
 4. 只有 snapshot 仍然有效、deterministic checks 无冲突且 Phase A decision 达标时，才能在同一事务中 reserve 并创建 Doctor finding/Opportunity/Site Fix/Growth Action。
 5. reserve/merge/suppress/dependency 写入后递增所有相关 bucket versions，再 commit。
+
+Snapshot mutation discipline：任何能够改变 Phase A snapshot input 的 writer，包括 active-work membership/status、signature/fingerprint version、relevant evidence fingerprint、review-memory alias/decision、target/topic/slug identity 或 bucket membership，都必须按相同稳定顺序取得相关 bucket locks，并在同一事务中更新数据与递增所有相关 `bucket_version`。不得存在绕过 bucket lock/version 的后台 backfill、status transition、migration 或 admin writer；否则 Phase B recheck 不构成并发保证。
 
 Operational requirements：
 
@@ -1691,6 +1695,8 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 43. 每个 migration-derived row 有 batch ledger 与 inverse operation；rollback 后 row conservation、one-of-source、review-memory counts 和 single-writer invariant 仍通过。
 44. Doctor citation-readiness optimization 的 `added_propositions` 必须为空；需要把新事实写入页面的 candidate 归 Opportunities。
 45. 当前 technical Site Fix 的 legacy `verified -> content_action.measuring` transition 在 Phase 2 被移除；canonical Doctor Site Fix 止于 `verified`。
+46. 所有会改变 arbitration snapshot input 的 writer 使用相同 bucket locks，并在同一事务中递增相关 bucket versions；不存在 unversioned snapshot mutation path。
+47. `terminalization_grace_period` 有限，首次进入 Measuring 时持久化的 `absolute_terminal_at` 不可被 retry 或 policy upgrade 延后。
 
 ### 20.7 Executable Given/When/Then scenarios
 
@@ -1773,7 +1779,7 @@ And 用户不能 override uniqueness/measurement-integrity guardrail
 
 ```text
 Given Growth Action 已用完 primary 与最多两次 follow-up checkpoint
-And 当前时间超过 max_measuring_duration + terminalization_grace_period
+And 当前时间超过 immutable absolute_terminal_at
 When measurement scheduler reconcile
 Then action 以 insufficient_data terminalize
 And 生成 measurement-quality record
