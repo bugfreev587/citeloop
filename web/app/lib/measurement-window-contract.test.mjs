@@ -7,7 +7,8 @@ const appRoot = path.resolve(import.meta.dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 
 test("SEO action list renders structured measurement checkpoints", () => {
-  const seo = read("projects/[id]/seo/seo-client.tsx");
+  // The measurement checkpoint label logic moved to the shared site-fix helper.
+  const lib = read("lib/site-fix.ts");
   for (const snippet of [
     "measurementWindowLabel",
     "measurement_window?.checkpoints",
@@ -16,6 +17,9 @@ test("SEO action list renders structured measurement checkpoints", () => {
     "D+",
     "Scheduled",
   ]) {
-    assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(lib, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  // The Site Fixes surface renders the structured checkpoint label.
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  assert.match(siteFixes, /measurementWindowLabel\(/);
 });

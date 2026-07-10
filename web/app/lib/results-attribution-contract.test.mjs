@@ -130,8 +130,12 @@ test("Results does not treat empty verification snapshots as measurement evidenc
   const resultsStart = seo.indexOf('{mode === "results"');
   const resultsBlock = seo.slice(resultsStart);
 
+  // The snapshot-emptiness helper moved to the shared site-fix module.
+  const lib = read("lib/site-fix.ts");
+  assert.match(lib, /function hasActionVerificationSnapshot/);
+
+  // The Results UI still consumes it to distinguish measured from unmeasured work.
   for (const marker of [
-    "function hasActionVerificationSnapshot",
     "hasActionVerificationSnapshot(action)",
     'action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"',
   ]) {
@@ -155,8 +159,12 @@ test("Results attribution only shows published or applied actions", () => {
   const resultsStart = seo.indexOf('{mode === "results"');
   const resultsBlock = seo.slice(resultsStart);
 
+  // The results-eligibility helper moved to the shared site-fix module.
+  const lib = read("lib/site-fix.ts");
+  assert.match(lib, /function hasResultsExecutionEvidence/);
+
+  // The Results UI still gates its attribution list on published/applied evidence.
   for (const marker of [
-    "function hasResultsExecutionEvidence",
     "Boolean(action.published_at || action.verified_at)",
     '!["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action)',
   ]) {

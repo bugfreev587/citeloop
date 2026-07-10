@@ -16,6 +16,7 @@ import {
   Settings2,
   Stethoscope,
   Target,
+  Wrench,
 } from "lucide-react";
 import { ProjectAccountMenu } from "./project-account-menu";
 import { Project } from "../lib/api";
@@ -59,6 +60,7 @@ const navSections = [
     items: [
       { label: "Home", href: "", icon: Home },
       { label: "Doctor", href: "doctor", icon: Stethoscope },
+      { label: "Site Fixes", href: "site-fixes", icon: Wrench },
     ],
   },
   {

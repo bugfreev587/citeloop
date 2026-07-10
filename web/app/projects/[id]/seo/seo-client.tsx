@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, Code2, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -35,6 +35,23 @@ import {
 import { visibilityLifecycleLabel } from "../../../lib/dashboard-ux-logic";
 import { normalizeNumeric } from "../../../lib/normalize";
 import { deriveVisibilityLifecycleStage, visibilityLifecycleCounts } from "../../../lib/visibility-lifecycle";
+import {
+  actionOutputTypeLabel,
+  actionPostExecutionText,
+  actionSEOContributionText,
+  actionWhyNowText,
+  approvalSourceLabel,
+  compactOutcomeText,
+  directActionAssetTypes,
+  hasActionVerificationSnapshot,
+  hasResultsExecutionEvidence,
+  humanizeInternalType,
+  isDirectAction,
+  lifecycleStageLabel,
+  lifecycleStageTone,
+  measurementWindowLabel,
+  toneForStatus,
+} from "../../../lib/site-fix";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -78,12 +95,6 @@ function toneForRisk(risk?: string): "green" | "amber" | "red" | "neutral" {
   return "neutral";
 }
 
-function toneForStatus(status: string): "green" | "amber" | "red" | "neutral" {
-  if (["open", "ready_for_review", "approved", "measuring", "ok", "connected"].includes(status)) return "green";
-  if (["degraded", "accepted", "converted", "drafting"].includes(status)) return "amber";
-  if (["error", "failed", "expired"].includes(status)) return "red";
-  return "neutral";
-}
 
 function toneForSetupStatus(status?: string): "green" | "amber" | "red" | "neutral" {
   if (status === "connected") return "green";
@@ -144,16 +155,6 @@ function measurementLabel(schedule: any) {
   return checkpoints.map((day) => `D+${day}`).join(" / ");
 }
 
-function measurementWindowLabel(measurement_window: any) {
-  const structured = Array.isArray(measurement_window?.checkpoints)
-    ? measurement_window.checkpoints.map((checkpoint: any) => checkpoint?.day).filter(Boolean)
-    : [];
-  const legacy = Array.isArray(measurement_window?.checkpoints_days) ? measurement_window.checkpoints_days : [];
-  const checkpoints: Array<number | string> = structured.length > 0 ? structured : legacy;
-  if (checkpoints.length === 0) return "Not scheduled";
-  const metric = measurement_window?.primary_metric ? `${measurement_window.primary_metric}: ` : "";
-  return `Scheduled: ${metric}${checkpoints.map((day) => `D+${day}`).join(" / ")}`;
-}
 
 function settledValue<T>(result: PromiseSettledResult<T>): T | null {
   return result.status === "fulfilled" ? result.value : null;
@@ -380,29 +381,7 @@ function approvalCopyForWorkType(workType: OpportunityWorkType) {
   return `Approve to send this to Content Plan.`;
 }
 
-function approvalSourceLabel(source?: string | null) {
-  switch (source) {
-    case "autopilot_policy":
-      return "Approved by Autopilot policy";
-    case "manual":
-      return "Created manually by user";
-    case "retry_recovery":
-      return "Retry of approved work";
-    case "admin_import":
-      return "Imported by admin";
-    case "human_review":
-    default:
-      return "Human opportunity approval";
-  }
-}
 
-function humanizeInternalType(value: string) {
-  const spaced = value.replace(/[_-]+/g, " ").trim();
-  if (!spaced) return value;
-  return spaced
-    .replace(/\b(gsc|geo|ctr|seo|url)\b/gi, (match) => match.toUpperCase())
-    .replace(/^[a-z]/, (match) => match.toUpperCase());
-}
 
 function watchlistItemTitle(item: SEOWatchlistItem) {
   return (
@@ -498,7 +477,7 @@ function loopActionCurrentHref(projectId: string, action: LoopAction) {
   const surface = loopActionCurrentSurface(action);
   if (surface === "Review") return `/projects/${projectId}/review?article=${action.draft_article_id}`;
   if (surface === "Results") return `/projects/${projectId}/results?action=${action.id}`;
-  if (surface === "Site Fixes") return `#site-fix-${action.id}`;
+  if (surface === "Site Fixes") return `/projects/${projectId}/site-fixes`;
   return actionHandoffHref(projectId, action) ?? `/projects/${projectId}/plan?action=${action.id}`;
 }
 
@@ -570,778 +549,6 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
-function hasNonEmptyStructuredValue(value: any) {
-  if (!value) return false;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed !== "" && trimmed !== "{}" && trimmed !== "[]" && trimmed !== "null";
-  }
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-}
-
-function hasActionVerificationSnapshot(action: SEOContentAction | ResultsAction) {
-  return hasNonEmptyStructuredValue(action.verification_snapshot);
-}
-
-function hasResultsExecutionEvidence(action: SEOContentAction | ResultsAction) {
-  return Boolean(action.published_at || action.verified_at);
-}
-
-function actionWhyNowText(action: SEOContentAction | ResultsAction) {
-  const input = action.input_snapshot ?? {};
-  const evidence = action.evidence_snapshot ?? {};
-  const value =
-    input.recommended_action ??
-    input.query ??
-    input.opportunity_type ??
-    evidence.recommended_action ??
-    evidence.query ??
-    evidence.intent_type ??
-    (action as ResultsAction).opportunity_recommended_action ??
-    (action as ResultsAction).opportunity_query;
-  return value ? String(value) : "Created from a reviewed visibility finding.";
-}
-
-function actionSEOContributionText(action: SEOContentAction | ResultsAction) {
-  const contribution = action.output_snapshot?.seo_geo_contribution;
-  if (contribution) return String(contribution);
-  const assetType = String(action.asset_type ?? "").toLowerCase();
-  if (assetType === "metadata_rewrite") return "Improve SERP CTR and query-page relevance without publishing a new page.";
-  if (assetType === "internal_link_patch") return "Move authority and context toward the target page so crawlers and answer engines can understand the cluster.";
-  if (assetType === "schema_patch") return "Expose structured facts that search engines and answer engines can extract.";
-  if (assetType === "sitemap_update" || assetType === "technical_fix") return "Improve crawl, indexability, and measurement reliability.";
-  if (assetType.includes("glossary") || assetType.includes("geo")) return "Create answer-ready entities and citations for AI discovery surfaces.";
-  return "Create or refresh an indexable asset that can earn rankings, citations, and downstream measurement.";
-}
-
-function actionOutputTypeLabel(action: SEOContentAction | ResultsAction) {
-  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
-  if (outputType === "direct_patch") return "Direct patch";
-  if (outputType === "technical_task") return "Technical task";
-  const assetType = String(action.asset_type ?? "").toLowerCase();
-  if (assetType.includes("patch") || assetType === "metadata_rewrite") return "Direct patch";
-  if (assetType === "sitemap_update" || assetType === "technical_fix") return "Technical task";
-  return "Topic-backed asset";
-}
-
-const directActionAssetTypes = new Set(["internal_link_patch", "schema_patch", "sitemap_update", "technical_fix"]);
-
-function isDirectAction(action: SEOContentAction | ResultsAction) {
-  const outputType = String(action.output_snapshot?.output_type ?? action.diff_snapshot?.output_type ?? "").toLowerCase();
-  const assetType = String(action.asset_type ?? "").toLowerCase();
-  return outputType === "direct_patch" || outputType === "technical_task" || directActionAssetTypes.has(assetType);
-}
-
-function siteFixGitHubPRURL(action: SEOContentAction | ResultsAction) {
-  const publisherResult = action.output_snapshot?.publisher_result;
-  const url = publisherResult?.github_pr_url;
-  return typeof url === "string" && url.trim() ? url.trim() : "";
-}
-
-function siteFixPublisherResultStatus(action: SEOContentAction | ResultsAction) {
-  const status = action.output_snapshot?.publisher_result?.status;
-  return typeof status === "string" ? status.trim() : "";
-}
-
-function siteFixAlreadyMatchesSource(action: SEOContentAction | ResultsAction) {
-  return siteFixPublisherResultStatus(action) === "already_applied";
-}
-
-function siteFixFollowUpReason(action: SEOContentAction | ResultsAction) {
-  const reason = action.output_snapshot?.publisher_result?.follow_up_reason;
-  return typeof reason === "string" && reason.trim() ? reason.trim() : "";
-}
-
-function actionPostExecutionText(action: SEOContentAction | ResultsAction) {
-  if (action.status === "completed") return "Measurement complete";
-  if (action.status === "measuring") return "Measuring impact";
-  if (siteFixAlreadyMatchesSource(action)) return "Source already matches; verify production";
-  if (action.verified_at) return "Applied or published and verified";
-  if (action.status === "approved") return "Approved for execution";
-  if (siteFixPublisherResultStatus(action) === "needs_follow_up") return siteFixFollowUpReason(action) || "Needs follow-up — merge or verify manually";
-  if (siteFixPublisherResultStatus(action) === "github_pr_closed") return "PR closed without merging — reopen or dismiss";
-  if (siteFixPublisherResultStatus(action) === "github_pr_merged") return "PR merged — verifying in production";
-  if (action.status === "verification_pending") return "Waiting for production verification";
-  if (action.status === "ready_for_review") return "Waiting for review";
-  if (action.published_at) return "Published and waiting for verification";
-  return action.status || "Queued";
-}
-
-function actionOutputPreviewText(action: SEOContentAction | ResultsAction) {
-  const output = action.output_snapshot ?? {};
-  const diff = action.diff_snapshot ?? {};
-  const directValue = output.deliverable ?? output.summary ?? output.title ?? output.proposed_copy ?? output.recommended_copy;
-  if (directValue) return String(directValue);
-
-  const proposedChanges = diff.proposed_changes;
-  if (Array.isArray(proposedChanges) && proposedChanges.length > 0) {
-    const change = proposedChanges[0];
-    if (typeof change === "string") return change;
-    if (change?.instruction) return String(change.instruction);
-    if (change?.field && change?.after) return `${change.field}: ${change.after}`;
-    if (change?.selector && change?.after) return `${change.selector}: ${change.after}`;
-    return compactOutcomeText(change);
-  }
-
-  const checklist = diff.checklist ?? output.checklist;
-  if (Array.isArray(checklist) && checklist.length > 0) {
-    const item = checklist[0];
-    if (typeof item === "string") return item;
-    if (item?.task) return String(item.task);
-    if (item?.instruction) return String(item.instruction);
-    return compactOutcomeText(item);
-  }
-
-  const target = action.target_url ?? action.normalized_target_url;
-  return target ? `Review proposed changes for ${target}.` : "Review the generated output before execution.";
-}
-
-function firstProposedChange(action: SEOContentAction | ResultsAction) {
-  const proposedChanges = action.diff_snapshot?.proposed_changes;
-  if (!Array.isArray(proposedChanges) || proposedChanges.length === 0) return null;
-  const first = proposedChanges[0];
-  return first && typeof first === "object" && !Array.isArray(first) ? first : null;
-}
-
-function stringArrayValue(value: any) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
-}
-
-function siteFixAssetType(action: SEOContentAction | ResultsAction) {
-  const change = firstProposedChange(action);
-  return String(action.asset_type ?? change?.asset_type ?? "technical_fix").toLowerCase();
-}
-
-function siteFixTargetURL(action: SEOContentAction | ResultsAction) {
-  return action.target_url ?? action.normalized_target_url ?? action.diff_snapshot?.target_url ?? "";
-}
-
-function siteFixTargetLabel(targetURL: string) {
-  return targetURL || "the target URL";
-}
-
-function normalizeMetadataKey(value: string) {
-  return value.trim().toLowerCase().replace(/[_\-\s.]/g, "");
-}
-
-function firstObservedMetadataStringIn(value: any, wanted: Set<string>): string {
-  if (!value) return "";
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = firstObservedMetadataStringIn(entry, wanted);
-      if (found) return found;
-    }
-    return "";
-  }
-  if (typeof value !== "object") return "";
-
-  const record = value as Record<string, any>;
-  for (const [key, entry] of Object.entries(record)) {
-    if (!wanted.has(normalizeMetadataKey(key))) continue;
-    if (typeof entry === "string" && entry.trim()) return entry.trim();
-  }
-
-  for (const preferred of ["observed_metadata", "metadata", "page_metadata", "seo_metadata", "open_graph", "opengraph"]) {
-    const foundEntry = Object.entries(record).find(([key]) => normalizeMetadataKey(key) === normalizeMetadataKey(preferred));
-    const found = firstObservedMetadataStringIn(foundEntry?.[1], wanted);
-    if (found) return found;
-  }
-
-  for (const key of Object.keys(record).sort()) {
-    const found = firstObservedMetadataStringIn(record[key], wanted);
-    if (found) return found;
-  }
-  return "";
-}
-
-function firstObservedMetadataString(value: any, aliases: string[]) {
-  return firstObservedMetadataStringIn(value, new Set(aliases.map(normalizeMetadataKey)));
-}
-
-function siteFixObservedMetadata(action: SEOContentAction | ResultsAction) {
-  const diff = action.diff_snapshot ?? {};
-  const output = action.output_snapshot ?? {};
-  const evidence = action.evidence_snapshot ?? {};
-  const change = firstProposedChange(action);
-  const sources = [
-    evidence.observed_metadata,
-    output.observed_metadata,
-    diff.observed_metadata,
-    change?.observed_metadata,
-    evidence.metadata,
-    evidence.page_metadata,
-    evidence.source_evidence,
-    evidence,
-  ];
-  const fields = [
-    { name: "canonical_url", aliases: ["canonical_url", "canonical", "canonicalUrl", "canonical_href", "canonicalHref"] },
-    { name: "title", aliases: ["title", "page_title", "pageTitle"] },
-    { name: "description", aliases: ["description", "meta_description", "metaDescription"] },
-    { name: "og_title", aliases: ["og_title", "ogTitle"] },
-    { name: "og_description", aliases: ["og_description", "ogDescription"] },
-    { name: "og_image", aliases: ["og_image", "ogImage"] },
-    { name: "brand_name", aliases: ["brand_name", "brandName", "site_name", "siteName", "og_site_name", "ogSiteName", "application_name", "applicationName"] },
-  ];
-  const observed: Record<string, string> = {};
-  for (const field of fields) {
-    for (const source of sources) {
-      const found = firstObservedMetadataString(source, field.aliases);
-      if (!found) continue;
-      observed[field.name] = found;
-      break;
-    }
-  }
-  return observed;
-}
-
-function siteFixCompactPayload(value: Record<string, any>) {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => {
-      if (entry == null) return false;
-      if (typeof entry === "string") return entry.trim() !== "";
-      if (Array.isArray(entry)) return entry.length > 0;
-      if (typeof entry === "object") return Object.keys(entry).length > 0;
-      return true;
-    }),
-  );
-}
-
-function metadataRewriteSources(action: SEOContentAction | ResultsAction) {
-  const change = firstProposedChange(action);
-  const diff = action.diff_snapshot ?? {};
-  const output = action.output_snapshot ?? {};
-  const input = action.input_snapshot ?? {};
-  const evidence = action.evidence_snapshot ?? {};
-  return [
-    change,
-    diff.ai_repair,
-    output.ai_repair,
-    evidence.source_evidence,
-    evidence,
-    input,
-    diff,
-    output,
-  ].filter(Boolean);
-}
-
-function firstSiteFixScalar(value: any) {
-  if (typeof value === "string") return value.trim() || null;
-  if (typeof value === "number" || typeof value === "boolean") return value;
-  return null;
-}
-
-function firstSiteFixValueIn(value: any, wanted: Set<string>): any {
-  if (!value) return null;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = firstSiteFixValueIn(entry, wanted);
-      if (found != null) return found;
-    }
-    return null;
-  }
-  if (typeof value !== "object") return null;
-
-  const record = value as Record<string, any>;
-  for (const [key, entry] of Object.entries(record)) {
-    if (!wanted.has(normalizeMetadataKey(key))) continue;
-    const scalar = firstSiteFixScalar(entry);
-    if (scalar != null) return scalar;
-  }
-
-  for (const preferred of ["observed", "observed_metadata", "metadata", "page_metadata", "seo_metadata", "technical", "raw_details", "opportunity", "proposed_change"]) {
-    const foundEntry = Object.entries(record).find(([key]) => normalizeMetadataKey(key) === normalizeMetadataKey(preferred));
-    const found = firstSiteFixValueIn(foundEntry?.[1], wanted);
-    if (found != null) return found;
-  }
-
-  for (const key of Object.keys(record).sort()) {
-    const found = firstSiteFixValueIn(record[key], wanted);
-    if (found != null) return found;
-  }
-  return null;
-}
-
-function firstSiteFixValue(sources: any[], aliases: string[]) {
-  const wanted = new Set(aliases.map(normalizeMetadataKey));
-  for (const source of sources) {
-    const found = firstSiteFixValueIn(source, wanted);
-    if (found != null) return found;
-  }
-  return null;
-}
-
-function firstSiteFixValueInContainers(value: any, containerNames: Set<string>, aliases: Set<string>): any {
-  if (!value) return null;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = firstSiteFixValueInContainers(entry, containerNames, aliases);
-      if (found != null) return found;
-    }
-    return null;
-  }
-  if (typeof value !== "object") return null;
-
-  const record = value as Record<string, any>;
-  for (const key of Object.keys(record).sort()) {
-    if (!containerNames.has(normalizeMetadataKey(key))) continue;
-    const found = firstSiteFixValueIn(record[key], aliases);
-    if (found != null) return found;
-  }
-  for (const key of Object.keys(record).sort()) {
-    const found = firstSiteFixValueInContainers(record[key], containerNames, aliases);
-    if (found != null) return found;
-  }
-  return null;
-}
-
-function firstMetadataRewriteProposedValue(sources: any[], aliases: string[]) {
-  const containers = new Set(["proposed_change", "proposedChange", "proposed_metadata", "proposedMetadata", "metadata_rewrite", "metadataRewrite", "recommended_metadata", "recommendedMetadata", "recommendation"].map(normalizeMetadataKey));
-  const wanted = new Set(aliases.map(normalizeMetadataKey));
-  for (const source of sources) {
-    const found = firstSiteFixValueInContainers(source, containers, wanted);
-    if (found != null) return found;
-  }
-  return firstSiteFixValue(sources, aliases.filter((alias) => normalizeMetadataKey(alias).startsWith("proposed") || normalizeMetadataKey(alias).startsWith("recommended") || normalizeMetadataKey(alias).startsWith("new")));
-}
-
-function firstMetadataRewriteObservedValue(sources: any[], aliases: string[]) {
-  const containers = new Set(["observed", "observed_metadata", "observedMetadata", "metadata", "page_metadata", "pageMetadata", "seo_metadata", "seoMetadata", "technical", "raw_details", "rawDetails"].map(normalizeMetadataKey));
-  const wanted = new Set(aliases.map(normalizeMetadataKey));
-  for (const source of sources) {
-    const found = firstSiteFixValueInContainers(source, containers, wanted);
-    if (found != null) return found;
-  }
-  return firstSiteFixValue(sources, aliases.filter((alias) => normalizeMetadataKey(alias).startsWith("observed") || normalizeMetadataKey(alias).startsWith("current")));
-}
-
-function metadataRewriteObservedSnapshot(action: SEOContentAction | ResultsAction) {
-  const sources = metadataRewriteSources(action);
-  return siteFixCompactPayload({
-    status: firstMetadataRewriteObservedValue(sources, ["status", "http_status", "httpStatus", "status_code", "statusCode"]),
-    title: firstMetadataRewriteObservedValue(sources, ["title", "page_title", "pageTitle", "current_title", "currentTitle", "observed_title", "observedTitle"]),
-    meta_description: firstMetadataRewriteObservedValue(sources, ["meta_description", "metaDescription", "description", "current_meta_description", "currentMetaDescription", "observed_meta_description", "observedMetaDescription"]),
-    canonical: firstMetadataRewriteObservedValue(sources, ["canonical", "canonical_url", "canonicalUrl", "canonical_href", "canonicalHref"]),
-    robots: firstMetadataRewriteObservedValue(sources, ["robots", "robots_status", "robotsStatus", "robots_state", "robotsState", "meta_robots", "metaRobots", "indexability"]),
-    observed_at: firstMetadataRewriteObservedValue(sources, ["observed_at", "observedAt", "checked_at", "checkedAt", "crawled_at", "crawledAt", "fetched_at", "fetchedAt"]),
-  });
-}
-
-function metadataRewriteOpportunityContext(action: SEOContentAction | ResultsAction) {
-  const sources = metadataRewriteSources(action);
-  return siteFixCompactPayload({
-    query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? firstSiteFixValue(sources, ["query", "opportunity_query", "opportunityQuery"]),
-    intent: firstSiteFixValue(sources, ["query_intent", "queryIntent", "intent", "intent_type", "intentType"]),
-    problem_detail: firstSiteFixValue(sources, ["problem_detail", "problemDetail", "snippet_issue", "snippetIssue", "current_snippet_issue", "currentSnippetIssue", "issue_detail", "issueDetail"]),
-    confidence: firstSiteFixValue(sources, ["confidence", "confidence_score", "confidenceScore"]),
-    priority: firstSiteFixValue(sources, ["priority", "priority_score", "priorityScore"]),
-    recommended_action: action.action_type,
-  });
-}
-
-function metadataRewriteProposedChange(action: SEOContentAction | ResultsAction) {
-  const sources = metadataRewriteSources(action);
-  return siteFixCompactPayload({
-    title: firstMetadataRewriteProposedValue(sources, ["title", "proposed_title", "proposedTitle", "recommended_title", "recommendedTitle", "new_title", "newTitle"]),
-    meta_description: firstMetadataRewriteProposedValue(sources, ["meta_description", "metaDescription", "description", "proposed_meta_description", "proposedMetaDescription", "recommended_meta_description", "recommendedMetaDescription", "new_meta_description", "newMetaDescription"]),
-    seo_impact: firstMetadataRewriteProposedValue(sources, ["seo_impact", "seoImpact", "seo_contribution", "seoContribution"]),
-    geo_impact: firstMetadataRewriteProposedValue(sources, ["geo_impact", "geoImpact", "geo_contribution", "geoContribution"]),
-    content_support_required: firstMetadataRewriteProposedValue(sources, ["content_support_required", "contentSupportRequired", "requires_content_support", "requiresContentSupport"]),
-    preserve: ["canonical", "indexability", "production URL"],
-  });
-}
-
-function isHomepageTarget(targetURL: string) {
-  try {
-    const parsed = new URL(targetURL);
-    return parsed.pathname === "" || parsed.pathname === "/";
-  } catch {
-    return false;
-  }
-}
-
-function siteFixLikelySurfaces(assetType: string, targetURL: string) {
-  const target = siteFixTargetLabel(targetURL);
-  if (assetType === "schema_patch") {
-    return [
-      `Page route or template that renders ${target}`,
-      "Shared SEO metadata or structured-data component used by that route",
-      "Server-rendered head/layout file where JSON-LD can be emitted in initial HTML",
-    ];
-  }
-  if (assetType === "internal_link_patch") {
-    return [
-      `Target page content for ${target}`,
-      "Relevant source pages in the same topic cluster",
-      "Navigation, related-content, or body-copy components that own internal links",
-    ];
-  }
-  if (assetType === "sitemap_update") {
-    return [
-      "Production sitemap generator or sitemap.xml route",
-      "Robots.txt sitemap declaration",
-      `Canonical URL config for ${target}`,
-    ];
-  }
-  return [
-    `Page route, metadata config, or crawler-facing component for ${target}`,
-    "Robots, canonical, redirect, sitemap, or server response configuration that controls discoverability",
-  ];
-}
-
-function siteFixImplementationSteps(assetType: string, actionType: string, targetURL: string) {
-  if (assetType === "metadata_rewrite") {
-    return [
-      `Locate the page route, layout metadata, or SEO config that emits the production <title> and meta description for ${targetURL}.`,
-      "Replace the existing title and meta description with the exact proposed_change values in this JSON.",
-      "Preserve the canonical URL, indexability, and production host while checking OpenGraph and Twitter card metadata for intentional consistency.",
-    ];
-  }
-  if (assetType === "schema_patch") {
-    return [
-      "Locate the route/template that renders the target URL and confirm whether JSON-LD already exists.",
-      "Add or update server-rendered JSON-LD in a script[type=\"application/ld+json\"] block using real production page metadata.",
-      "Preserve the canonical target URL, omit placeholder fields, and keep all URL fields absolute production URLs.",
-    ];
-  }
-  if (assetType === "internal_link_patch") {
-    return [
-      "Identify source pages with topical relevance and enough body context to link naturally to the target URL.",
-      "Add descriptive anchor text that matches the destination intent without keyword stuffing.",
-      "Confirm the new links are crawlable HTML links and do not point through redirects or non-canonical URL variants.",
-    ];
-  }
-  if (assetType === "sitemap_update") {
-    return [
-      "Locate the production sitemap generator and confirm the target URL inclusion or exclusion rule.",
-      "Update sitemap and robots declarations so the canonical target URL is discoverable by crawlers.",
-      "Keep generated sitemap URLs canonical, absolute, indexable, and free of staging or preview hosts.",
-    ];
-  }
-  return [
-    "Locate the code or configuration that controls the crawler-facing behavior for the target URL.",
-    `Apply the requested site fix: ${actionType}.`,
-    "Preserve canonical URLs, indexability, and production-only hosts while making the smallest safe change.",
-  ];
-}
-
-function siteFixDeduplicationRule(assetType: string) {
-  if (assetType === "metadata_rewrite") {
-    return "Update the existing title/meta description source of truth; check OpenGraph and Twitter card metadata for duplicates or conflicting values instead of adding parallel SEO signals.";
-  }
-  if (assetType === "schema_patch") {
-    return "If JSON-LD already exists, update or extend the existing graph instead of adding duplicate Organization, WebSite, or WebPage nodes.";
-  }
-  if (assetType === "internal_link_patch") {
-    return "If a crawlable canonical link to the target already exists on a source page, update anchor/context only when it improves clarity instead of adding duplicate boilerplate links.";
-  }
-  if (assetType === "sitemap_update") {
-    return "Update the canonical sitemap entry or generation rule instead of adding duplicate URL variants.";
-  }
-  return "Update the existing crawler-facing signal when present instead of adding duplicate or conflicting signals.";
-}
-
-function siteFixDoNot(assetType: string) {
-  if (assetType === "schema_patch") {
-    return [
-      "Do not add unverified sameAs links.",
-      "Do not add placeholder logo, address, founder, phone, or social profile fields.",
-      "Do not inject JSON-LD only on the client after hydration.",
-      "Do not change visible page content unless required.",
-    ];
-  }
-  if (assetType === "internal_link_patch") {
-    return [
-      "Do not add links with generic anchor text such as click here.",
-      "Do not point links at staging, preview, redirecting, or non-canonical URLs.",
-      "Do not add duplicate navigation or footer links when contextual body links are the intended fix.",
-    ];
-  }
-  return [
-    "Do not add placeholder values or staging URLs.",
-    "Do not change unrelated visible page content unless required.",
-    "Do not create duplicate or conflicting SEO signals.",
-  ];
-}
-
-function siteFixHumanReview(assetType: string) {
-  if (assetType === "schema_patch") {
-    return {
-      required: true,
-      reason: "Structured data affects public search and entity interpretation and should use verified brand metadata only.",
-      review_focus: ["brand name", "description", "canonical URL", "organization identity"],
-    };
-  }
-  return {
-    required: true,
-    reason: "This fix changes crawler-facing production signals and should be reviewed before applying.",
-    review_focus: ["target URL", "canonical URL", "production-only values"],
-  };
-}
-
-const siteFixSchemaGraphIDFragments = {
-  organization: "#organization",
-  website: "#website",
-  webpage: "#webpage",
-} as const;
-
-function siteFixSchemaFragmentID(targetURL: string, fragment: "organization" | "website" | "webpage") {
-  const trimmed = targetURL.trim();
-  const hash = siteFixSchemaGraphIDFragments[fragment];
-  if (!trimmed) return hash;
-  try {
-    const parsed = new URL(trimmed);
-    parsed.search = "";
-    parsed.hash = hash;
-    if (!parsed.pathname) parsed.pathname = "/";
-    return parsed.toString();
-  } catch {
-    return `${trimmed.replace(/\/+$/, "")}/${hash}`;
-  }
-}
-
-function siteFixSchemaGraphGuidance(targetURL: string) {
-  const webpageID = siteFixSchemaFragmentID(targetURL, "webpage");
-  if (!isHomepageTarget(targetURL)) {
-    return {
-      recommended_shape: "Use one JSON-LD object with @context set to https://schema.org and an @graph array.",
-      stable_ids: {
-        WebPage: webpageID,
-      },
-      relationships: ["Use stable @id values so entities can reference each other without duplicating nodes."],
-      example: {
-        "@context": "https://schema.org",
-        "@graph": [{ "@type": "WebPage", "@id": webpageID }],
-      },
-    };
-  }
-  const organizationID = siteFixSchemaFragmentID(targetURL, "organization");
-  const websiteID = siteFixSchemaFragmentID(targetURL, "website");
-  return {
-    recommended_shape: "Use one JSON-LD object with @context set to https://schema.org and an @graph array.",
-    stable_ids: {
-      Organization: organizationID,
-      WebSite: websiteID,
-      WebPage: webpageID,
-    },
-    relationships: [
-      "WebSite.publisher should reference the Organization @id.",
-      "WebPage.isPartOf should reference the WebSite @id.",
-      "WebPage.about or WebPage.publisher should reference the Organization @id when verified.",
-    ],
-    example: {
-      "@context": "https://schema.org",
-      "@graph": [
-        { "@type": "Organization", "@id": organizationID },
-        { "@type": "WebSite", "@id": websiteID },
-        { "@type": "WebPage", "@id": webpageID },
-      ],
-    },
-  };
-}
-
-function siteFixPatchContract(assetType: string, targetURL: string) {
-  if (assetType === "schema_patch") {
-    return {
-      change_type: "json_ld_schema_patch",
-      target_url: targetURL,
-      page_role: isHomepageTarget(targetURL) ? "homepage" : "web_page",
-      schema_types: isHomepageTarget(targetURL) ? ["WebSite", "Organization", "WebPage"] : ["WebPage"],
-      render_requirement: "JSON-LD must be present in the initial server-rendered HTML.",
-      deduplication_rule: siteFixDeduplicationRule(assetType),
-      graph_guidance: siteFixSchemaGraphGuidance(targetURL),
-      do_not: siteFixDoNot(assetType),
-      constraints: [
-        "Use real production brand, page, and canonical metadata.",
-        "Use absolute production URLs only.",
-        "Omit fields that cannot be verified instead of shipping blank or placeholder values.",
-        siteFixDeduplicationRule(assetType),
-      ],
-    };
-  }
-  if (assetType === "internal_link_patch") {
-    return {
-      change_type: "internal_link_patch",
-      target_url: targetURL,
-      constraints: [
-        "Links must be crawlable HTML anchors.",
-        "Anchor copy must describe the destination intent.",
-        "Use canonical production URLs and avoid redirect chains.",
-      ],
-    };
-  }
-  if (assetType === "metadata_rewrite") {
-    return {
-      change_type: "metadata_rewrite",
-      target_url: targetURL,
-      constraints: [
-        "Update the existing title and meta description signal instead of creating new page content.",
-        "Use only reviewed production copy values from proposed_change.",
-        "Do not use staging, preview, localhost, or placeholder URLs.",
-        "Verify the exact crawler-facing values in production after deployment.",
-      ],
-      preserve: ["canonical", "indexability", "production URL"],
-    };
-  }
-  return {
-    change_type: assetType,
-    target_url: targetURL,
-    constraints: [
-      "Make the smallest production-safe change that resolves the crawler-facing issue.",
-      "Do not use staging, preview, localhost, or placeholder URLs.",
-      "Verify the signal in production after deployment.",
-    ],
-  };
-}
-
-function fallbackSiteFixAcceptanceTests(assetType: string, actionType: string, targetURL: string) {
-  const target = siteFixTargetLabel(targetURL);
-  if (assetType === "schema_patch") {
-    return [
-      `Inspect the initial HTML for ${target} and verify it includes server-rendered JSON-LD in a script[type=\"application/ld+json\"] element.`,
-      "Parse every JSON-LD block as valid JSON and verify it has @context set to https://schema.org, a relevant @type, and no placeholders.",
-      `Validate the JSON-LD with Schema Markup Validator for ${target} and resolve every parser error.`,
-      "Use Google Rich Results Test only to confirm the page is readable and parser-error free; WebSite, Organization, and WebPage schema does not require rich result eligibility.",
-    ];
-  }
-  if (assetType === "internal_link_patch") {
-    return [
-      `Fetch the updated source pages and confirm they contain crawlable HTML links to ${target}.`,
-      "Verify anchor text is descriptive, unique enough to explain the destination, and does not duplicate existing boilerplate links.",
-      "Confirm linked URLs resolve to canonical production URLs without redirect chains.",
-    ];
-  }
-  if (assetType === "sitemap_update") {
-    return [
-      "Fetch the production sitemap and confirm it contains the canonical target URL when the page should be indexed.",
-      "Fetch robots.txt and confirm it advertises the correct sitemap and does not block the target URL.",
-      "Confirm the sitemap URL returns 200, valid XML, production hosts only, and no non-canonical variants.",
-    ];
-  }
-  return [
-    `Fetch ${target} and confirm the crawler-facing behavior now matches the requested site fix: ${actionType}.`,
-    "Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
-    "Confirm production pages still return the expected status, canonical URL, and indexability signals.",
-  ];
-}
-
-function metadataRewriteAcceptanceTests(action: SEOContentAction | ResultsAction, targetURL: string) {
-  const proposed = metadataRewriteProposedChange(action);
-  const observed = metadataRewriteObservedSnapshot(action);
-  const tests: string[] = [];
-  if (typeof proposed.title === "string" && proposed.title.trim()) {
-    tests.push("Fetch " + targetURL + " and confirm the initial HTML <title> equals " + JSON.stringify(proposed.title.trim()) + ".");
-  }
-  if (typeof proposed.meta_description === "string" && proposed.meta_description.trim()) {
-    tests.push("Fetch " + targetURL + " and confirm meta[name=\"description\"] equals " + JSON.stringify(proposed.meta_description.trim()) + ".");
-  }
-  if (typeof observed.canonical === "string" && observed.canonical.trim()) {
-    tests.push(`Confirm canonical URL remains "${observed.canonical.trim()}".`);
-  } else {
-    tests.push(`Confirm canonical URL remains the production canonical URL for ${targetURL}.`);
-  }
-  tests.push(
-    "Confirm the page remains indexable: no noindex robots meta, no blocking X-Robots-Tag, and robots.txt does not disallow the URL.",
-    "Check OpenGraph and Twitter card title/description values for duplicate or conflicting metadata signals.",
-    "Run the relevant SEO/technical check again and confirm the active finding no longer appears for the target URL.",
-  );
-  return tests;
-}
-
-function siteFixAcceptanceTests(action: SEOContentAction | ResultsAction) {
-  const diff = action.diff_snapshot ?? {};
-  const change = firstProposedChange(action);
-  const assetType = siteFixAssetType(action);
-  if (assetType === "metadata_rewrite") return metadataRewriteAcceptanceTests(action, siteFixTargetURL(action));
-  const direct = stringArrayValue(diff.acceptance_tests);
-  if (direct.length > 0) return direct;
-  const changeTests = stringArrayValue(change?.verification_steps);
-  if (changeTests.length > 0) return changeTests;
-  return fallbackSiteFixAcceptanceTests(assetType, action.action_type, siteFixTargetURL(action));
-}
-
-function buildSiteFixAIPayload(action: SEOContentAction | ResultsAction) {
-  const diff = action.diff_snapshot ?? {};
-  const output = action.output_snapshot ?? {};
-  const aiRepair = diff.ai_repair ?? output.ai_repair;
-  if (hasNonEmptyStructuredValue(aiRepair)) return aiRepair;
-
-  const change = firstProposedChange(action);
-  const assetType = siteFixAssetType(action);
-  const target = siteFixTargetURL(action);
-  const implementationSteps = stringArrayValue(change?.implementation_steps);
-  const likelySurfaces = stringArrayValue(change?.likely_surfaces);
-  const observedMetadata = siteFixObservedMetadata(action);
-  const metadataRewrite = assetType === "metadata_rewrite";
-  const observed = metadataRewrite ? metadataRewriteObservedSnapshot(action) : {};
-  const opportunity = metadataRewrite ? metadataRewriteOpportunityContext(action) : {};
-  const proposedChange = metadataRewrite ? metadataRewriteProposedChange(action) : {};
-  return {
-    issue: {
-      category: "site_fix",
-      issue_type: assetType,
-      affected_urls: target ? [target] : [],
-      problem: action.action_type,
-      why_it_matters: actionSEOContributionText(action),
-    },
-    ...(metadataRewrite ? { observed, opportunity, proposed_change: proposedChange } : {}),
-    evidence: {
-      page_url: target,
-      opportunity_query: (action as ResultsAction).opportunity_query ?? action.input_snapshot?.query ?? null,
-      recommended_action: metadataRewrite ? action.action_type : (action as ResultsAction).opportunity_recommended_action ?? action.input_snapshot?.recommended_action ?? action.action_type,
-      proposed_changes: diff.proposed_changes ?? [],
-      ...(Object.keys(observedMetadata).length > 0 ? { observed_metadata: observedMetadata } : {}),
-    },
-    fix: {
-      goal: action.action_type,
-      instructions: implementationSteps.length ? implementationSteps : siteFixImplementationSteps(assetType, action.action_type, target),
-      likely_surfaces: likelySurfaces.length ? likelySurfaces : siteFixLikelySurfaces(assetType, target),
-      seo_contract: change?.patch_contract ?? siteFixPatchContract(assetType, target),
-      deduplication_rule: siteFixDeduplicationRule(assetType),
-      do_not: siteFixDoNot(assetType),
-      risk_level: action.risk_reasons?.risk_level ?? null,
-    },
-    acceptance_tests: siteFixAcceptanceTests(action),
-    human_review: siteFixHumanReview(assetType),
-  };
-}
-
-function siteFixAIJSON(action: SEOContentAction | ResultsAction) {
-  return JSON.stringify(buildSiteFixAIPayload(action), null, 2);
-}
-
-async function writeClipboardText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall through to the textarea fallback for browsers that block async clipboard writes.
-    }
-  }
-
-  const textarea = document.createElement("textarea");
-  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  textarea.setSelectionRange(0, text.length);
-
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  activeElement?.focus();
-
-  if (!copied) {
-    throw new Error("Clipboard write failed.");
-  }
-}
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
 type ActionMeasurementState = {
@@ -1447,32 +654,6 @@ function measurementQueueState(action: SEOContentAction | ResultsAction): Measur
   return { key: "waiting", label: "Waiting", tone: "neutral", detail: "Action is waiting for publish or URL verification before measurement starts." };
 }
 
-function lifecycleStageLabel(stage: string) {
-  switch (stage) {
-    case "detected":
-      return "Detected";
-    case "added_to_plan":
-      return "Added";
-    case "planned":
-      return "Topic planned";
-    case "drafting":
-      return "Drafting";
-    case "ready_for_review":
-      return "Review";
-    case "approved":
-      return "Approved";
-    case "published_or_applied":
-      return "Published/Applied";
-    case "measuring":
-      return "Measuring";
-    case "learned":
-      return "Learned";
-    case "blocked":
-      return "Blocked";
-    default:
-      return visibilityLifecycleLabel(stage);
-  }
-}
 
 function loopLifecycleSummaryLabel(stage: string) {
   return lifecycleStageLabel(stage);
@@ -1482,12 +663,6 @@ function loopActionDestinationLabel(action: LoopAction) {
   return loopActionCurrentSurface(action);
 }
 
-function lifecycleStageTone(stage: string): "green" | "amber" | "red" | "neutral" {
-  if (["learned", "published_or_applied", "measuring"].includes(stage)) return "green";
-  if (["added_to_plan", "planned", "drafting", "ready_for_review", "approved"].includes(stage)) return "amber";
-  if (stage === "blocked") return "red";
-  return "neutral";
-}
 
 function loopActionTitle(action: LoopAction) {
   return action.topic_title || action.opportunity_recommended_action || action.opportunity_query || action.action_type || "Visibility action";
@@ -1517,17 +692,6 @@ function resultSourceEvidenceUrl(action: SEOContentAction | ResultsAction | Loop
   return sourceURL && sourceURL !== publishedURL ? sourceURL : "";
 }
 
-function compactOutcomeText(outcome: any) {
-  if (!outcome || (typeof outcome === "object" && Object.keys(outcome).length === 0)) return "No outcome summary yet.";
-  if (typeof outcome === "string") return outcome;
-  if (typeof outcome === "object") {
-    return Object.entries(outcome)
-      .slice(0, 5)
-      .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
-      .join(" / ");
-  }
-  return String(outcome);
-}
 
 function GSCStatusMenu({
   projectId,
@@ -1805,10 +969,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [opportunityBusy, setOpportunityBusy] = useState<Record<string, "create" | "dismiss" | "snooze" | "watch">>({});
   const [routeOverrides, setRouteOverrides] = useState<Record<string, OpportunityWorkType>>({});
   const [watchlist, setWatchlist] = useState<SEOWatchlistItem[]>([]);
-  const [showAllSiteFixes, setShowAllSiteFixes] = useState(false);
-  const [pendingSiteFixFocusID, setPendingSiteFixFocusID] = useState<string | null>(null);
   const [selectedOpportunityID, setSelectedOpportunityID] = useState<string | null>(null);
-  const [selectedDirectActionID, setSelectedDirectActionID] = useState<string | null>(null);
   const [analysisRecentDrawer, setAnalysisRecentDrawer] = useState<"opportunities" | "site-fixes" | null>(null);
   const [selectedResultActionID, setSelectedResultActionID] = useState<string | null>(null);
   const [highlightedResultActionID, setHighlightedResultActionID] = useState<string | null>(null);
@@ -1817,15 +978,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const refreshSequenceRef = useRef(0);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
-  const directActionDrawerRef = useRef<HTMLElement | null>(null);
-  const directActionReturnFocusRef = useRef<HTMLElement | null>(null);
-  const siteFixCardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
   const resultDrawerRef = useRef<HTMLElement | null>(null);
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
-  const [highlightedSiteFixID, setHighlightedSiteFixID] = useState<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -2230,19 +1387,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     };
   }, [selectedResultAction?.id]);
 
-  const highlightSiteFixTarget = useCallback((actionID: string) => {
-    const target = siteFixCardRefs.current[actionID];
-    if (!target) return false;
-    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
-    target.focus({ preventScroll: true });
-    setHighlightedSiteFixID(actionID);
-    window.setTimeout(() => {
-      setHighlightedSiteFixID((current) => (current === actionID ? null : current));
-    }, prefersReducedMotion ? 2200 : 2600);
-    return true;
-  }, []);
-
   const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
   const visibleLoopActions = loopActions.filter(isVisibleLoopAction);
@@ -2279,35 +1423,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const directReviewActionsAll = visibleLoopActions
-    .filter((action) => isDirectAction(action))
-    .filter((action) => !["published", "measuring", "completed", "archived", "dismissed"].includes(action.status));
-  const directReviewActions = showAllSiteFixes ? directReviewActionsAll : directReviewActionsAll.slice(0, 6);
-
-  // Same-page linked focus (PRD §8.8): if the target card is hidden by the
-  // compact list, expand the list first; if it no longer exists, explain
-  // instead of failing silently.
-  function focusSiteFixCard(actionID: string) {
-    if (highlightSiteFixTarget(actionID)) return;
-    if (directReviewActionsAll.some((action) => action.id === actionID)) {
-      setShowAllSiteFixes(true);
-      setPendingSiteFixFocusID(actionID);
-      return;
-    }
-    setMessage({
-      title: "This item moved or was completed",
-      detail: "Check Site Fixes or Results for its latest state.",
-      tone: "neutral",
-    });
-  }
-
-  useEffect(() => {
-    if (!pendingSiteFixFocusID) return;
-    if (highlightSiteFixTarget(pendingSiteFixFocusID)) {
-      setPendingSiteFixFocusID(null);
-    }
-  }, [pendingSiteFixFocusID, directReviewActions.length, highlightSiteFixTarget]);
-
   const snoozedOpportunities = opportunities.filter((opportunity) => opportunity.status === "snoozed");
   const watchingOpportunityLinks = opportunities.filter((opportunity) => opportunity.status === "watching");
   const sentOpportunityLinks = visibleLoopActions
@@ -2319,83 +1434,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       return right - left;
     });
   const opportunityRecentCount = sentOpportunityLinks.length + watchingOpportunityLinks.length;
-  const recentlyFixedSiteActions = visibleLoopActions
-    .filter((action) => isDirectAction(action))
-    .filter((action) => {
-      const stage = deriveVisibilityLifecycleStage(action);
-      return resultLoopStages.has(stage) || (stage === "blocked" && hasResultsExecutionEvidence(action));
-    })
-    .slice()
-    .sort((a, b) => {
-      const left = a.verified_at ?? a.published_at ?? a.created_at ?? "";
-      const right = b.verified_at ?? b.published_at ?? b.created_at ?? "";
-      return right.localeCompare(left);
-    });
-  const selectedDirectAction = useMemo(
-    () => directReviewActions.find((action) => action.id === selectedDirectActionID) ?? null,
-    [directReviewActions, selectedDirectActionID],
-  );
-
-  useEffect(() => {
-    if (!selectedDirectActionID || selectedDirectAction) return;
-    setSelectedDirectActionID(null);
-  }, [selectedDirectAction, selectedDirectActionID]);
-
-  useEffect(() => {
-    if (!selectedDirectAction?.id) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedDirectActionID(null);
-      if (event.key === "Tab") {
-        const drawer = directActionDrawerRef.current;
-        if (!drawer) return;
-        const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter(
-          (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
-        );
-        if (focusable.length === 0) {
-          event.preventDefault();
-          return;
-        }
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [selectedDirectAction?.id]);
-
-  useEffect(() => {
-    if (!selectedDirectAction?.id) return;
-
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeButton = directActionDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-close]");
-    const firstFocusable = closeButton ?? directActionDrawerRef.current?.querySelector<HTMLElement>(drawerFocusableSelector);
-    firstFocusable?.focus();
-    if (analysisSurfaceRef.current) {
-      analysisSurfaceRef.current.setAttribute("aria-hidden", "true");
-      analysisSurfaceRef.current.inert = true;
-    }
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      if (analysisSurfaceRef.current) {
-        analysisSurfaceRef.current.removeAttribute("aria-hidden");
-        analysisSurfaceRef.current.inert = false;
-      }
-      if (directActionReturnFocusRef.current?.isConnected) {
-        directActionReturnFocusRef.current?.focus();
-      }
-    };
-  }, [selectedDirectAction?.id]);
-
   function createActionBusy(opp: SEOOpportunity) {
     return opportunityBusy[opp.id] === "create";
   }
@@ -2749,59 +1787,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     }
   }
 
-  async function copySiteFixAIJSON(action: SEOContentAction | ResultsAction) {
-    try {
-      await writeClipboardText(siteFixAIJSON(action));
-      setMessage({ title: "Fix JSON copied", detail: "Paste it into Codex or Claude Code to apply the site fix.", tone: "green" });
-    } catch {
-      setMessage({ title: "Could not copy fix JSON", detail: "Select the JSON in the drawer and copy it manually.", tone: "red" });
-    }
-  }
-
-  async function createSiteFixGitHubPR(action: SEOContentAction) {
-    setBusy(`site-fix-pr-${action.id}`);
-    setMessage(null);
-    try {
-      const updated = await api.createSiteFixGitHubPR(projectId, action.id);
-      setActions((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setResultsActions((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
-      const prURL = siteFixGitHubPRURL(updated);
-      if (siteFixAlreadyMatchesSource(updated)) {
-        setMessage({
-          title: "Source already matches",
-          detail: "No PR was needed. Verify production, then mark the Site Fix applied.",
-          tone: "green",
-        });
-      } else {
-        setMessage({
-          title: "GitHub PR created",
-          detail: prURL || "Open it from this Site Fix after GitHub returns the PR URL.",
-          tone: "green",
-        });
-      }
-    } catch (e: any) {
-      setMessage({ title: "Could not create GitHub PR", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function dismissSiteFixAction(action: SEOContentAction) {
-    setBusy(`dismiss-${action.id}`);
-    setMessage(null);
-    try {
-      const updated = await api.dismissSEOContentAction(projectId, action.id);
-      setActions((current) => current.filter((item) => item.id !== updated.id));
-      setResultsActions((current) => current.filter((item) => item.id !== updated.id));
-      setSelectedDirectActionID(null);
-      setMessage({ title: "Site fix dismissed", detail: action.action_type, tone: "neutral" });
-    } catch (e: any) {
-      setMessage({ title: "Could not dismiss site fix", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function dismiss(opp: SEOOpportunity) {
     setOpportunityPending(opp.id, "dismiss");
     setMessage(null);
@@ -2983,7 +1968,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       type="button"
                       onClick={(event) => {
                         analysisReturnFocusRef.current = event.currentTarget;
-                        setSelectedDirectActionID(null);
                         setSelectedOpportunityID(opp.id);
                       }}
                       aria-label={`Open opportunity details: ${opportunityTitle(opp)}`}
@@ -3059,98 +2043,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
             )}
           </section>
 
-          <section data-site-fixes-queue className="space-y-3">
-            <SectionHeader
-              title="Site Fixes"
-              eyebrow="Approved site work"
-              action={
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Badge tone={directReviewActionsAll.length ? "amber" : "neutral"}>{directReviewActionsAll.length} to review</Badge>
-                  <Button
-                    data-site-fixes-recent-drawer-trigger
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setAnalysisRecentDrawer("site-fixes")}
-                    aria-label={`Open Recently Fixed (${recentlyFixedSiteActions.length})`}
-                  >
-                    <History size={14} />
-                    Recently Fixed
-                    <Badge tone={recentlyFixedSiteActions.length ? "green" : "neutral"}>{recentlyFixedSiteActions.length}</Badge>
-                  </Button>
-                </div>
-              }
-            />
-            {directReviewActions.length === 0 ? (
-              <EmptyState title="No site fixes to review" detail="Approved schema, internal link, crawler, canonical, and metadata fixes will appear here." />
-            ) : (
-              <div data-site-fixes-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {directReviewActions.map((action) => {
-                  const stage = deriveVisibilityLifecycleStage(action);
-                  const highlighted = highlightedSiteFixID === action.id;
-                  return (
-                    <button
-                      key={action.id}
-                      type="button"
-                      data-site-fix-card
-                      id={`site-fix-${action.id}`}
-                      ref={(node) => {
-                        siteFixCardRefs.current[action.id] = node;
-                      }}
-                      aria-label={`Open site fix details: ${action.action_type}`}
-                      onClick={(event) => {
-                        directActionReturnFocusRef.current = event.currentTarget;
-                        setSelectedOpportunityID(null);
-                        setSelectedDirectActionID(action.id);
-                      }}
-                      className={`group flex h-full min-h-[220px] w-full flex-col rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px ${
-                        highlighted ? "citeloop-linked-card-pulse border-[#d93820] ring-2 ring-[#d93820]/15" : selectedDirectActionID === action.id ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-200"
-                      }`}
-                    >
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">Fix Site Issue</Badge>
-                            <Badge tone="neutral">{approvalSourceLabel(action.approval_source)}</Badge>
-                            <Badge tone={action.review_required === false ? "neutral" : "amber"}>
-                              {action.review_required === false ? "Review optional" : "Review required"}
-                            </Badge>
-                          </div>
-                          <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">
-                            {action.action_type.includes("_") ? humanizeInternalType(action.action_type) : action.action_type}
-                          </h3>
-                          <p className="mt-1 truncate text-sm leading-5 text-slate-500">{action.target_url ?? action.normalized_target_url ?? action.id}</p>
-                        </div>
-                        <div className="grid gap-3 text-sm">
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">Reviewable output</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionOutputPreviewText(action)}</div>
-                          </div>
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                          <span>Open details</span>
-                          <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-                {!showAllSiteFixes && directReviewActionsAll.length > directReviewActions.length && (
-                  <button
-                    type="button"
-                    onClick={() => setShowAllSiteFixes(true)}
-                    className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:bg-slate-50"
-                  >
-                    Show all site fixes ({directReviewActionsAll.length})
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
 
           <section data-analysis-loop-strip aria-label="Loop in motion for Content Plan and Site Fixes work through Published / Applied stages" className="space-y-3">
             <SectionHeader
@@ -3229,19 +2121,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="text-xs font-semibold text-slate-600">Open current location: {label}</div>
                         </div>
                       );
-                      if (loopActionCurrentSurface(action) === "Site Fixes") {
-                        return (
-                          <button
-                            key={action.id}
-                            type="button"
-                            data-loop-action-card
-                            onClick={() => focusSiteFixCard(action.id)}
-                            className="group w-full rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-slate-300 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                          >
-                            {content}
-                          </button>
-                        );
-                      }
                       return (
                         <Link
                           key={action.id}
@@ -3322,23 +2201,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     </div>
                   );
 
-                  if (label === "Site Fixes") {
-                    return (
-                      <button
-                        key={action.id}
-                        type="button"
-                        data-opportunity-handoff-card
-                        aria-label={`Open "${loopActionTitle(action as any)}" in ${label}`}
-                        onClick={() => {
-                          setAnalysisRecentDrawer(null);
-                          focusSiteFixCard(action.id);
-                        }}
-                        className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                      >
-                        {content}
-                      </button>
-                    );
-                  }
 
                   return (
                     <Link
@@ -3375,58 +2237,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                         <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
                           <span>View in Results</span>
                           <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </RightDrawer>
-
-          <RightDrawer
-            open={analysisRecentDrawer === "site-fixes"}
-            title="Recently Fixed"
-            eyebrow="Site Fixes"
-            subtitle="Site fixes that are applied, measuring, or already learned in Results."
-            dataAttribute="site-fixes-recent-drawer"
-            maxWidthClassName="max-w-5xl"
-            onClose={() => setAnalysisRecentDrawer(null)}
-          >
-            {recentlyFixedSiteActions.length === 0 ? (
-              <EmptyState title="No recent fixed items" detail="Verified or measuring site fixes will appear here after they leave the active Site Fixes queue." />
-            ) : (
-              <div data-site-fixes-recent-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {recentlyFixedSiteActions.map((action) => {
-                  const stage = deriveVisibilityLifecycleStage(action);
-                  const href = loopActionCurrentHref(projectId, action as LoopAction);
-                  return (
-                    <Link
-                      key={action.id}
-                      data-site-fixes-recent-card
-                      href={href}
-                      className="group flex h-full min-h-[220px] w-full flex-col rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
-                    >
-                      <div className="flex h-full min-w-0 flex-col justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                            <Badge tone="blue">Fix Site Issue</Badge>
-                          </div>
-                          <h3 className="mt-3 line-clamp-2 text-base font-bold leading-6 text-slate-950">{loopActionTitle(action as LoopAction)}</h3>
-                          <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">
-                            {action.target_url ?? action.normalized_target_url ?? "Applied site work is visible in Results."}
-                          </p>
-                        </div>
-                        <div className="grid gap-2 border-t border-slate-100 pt-3 text-sm">
-                          <div>
-                            <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                            <div className="mt-1 line-clamp-2 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                          </div>
-                          <div className="flex items-center justify-between gap-3 font-semibold text-slate-700">
-                            <span>View in Results</span>
-                            <ChevronRight size={17} className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" />
-                          </div>
                         </div>
                       </div>
                     </Link>
@@ -4605,267 +3415,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
               <Button size="sm" variant="danger" onClick={() => verifyAction(action, "failed")} disabled={busy === `verify-${action.id}-failed`}>
                 <ButtonProgress busy={busy === `verify-${action.id}-failed`} busyLabel="Marking failed" idleIcon={null}>
                   Verification failed
-                </ButtonProgress>
-              </Button>
-            </div>
-          </aside>
-        </div>
-      );
-    })()}
-    {mode === "analysis" && selectedDirectAction && (() => {
-      const action = selectedDirectAction;
-      const stage = deriveVisibilityLifecycleStage(action);
-      const markAppliedBusy = busy === `verify-${action.id}-verified`;
-      const dismissSiteFixBusy = busy === `dismiss-${action.id}`;
-      const createPRBusy = busy === `site-fix-pr-${action.id}`;
-      const prURL = siteFixGitHubPRURL(action);
-      const sourceAlreadyMatches = siteFixAlreadyMatchesSource(action);
-      const aiRepairJSON = siteFixAIJSON(action);
-
-      return (
-        <div className="fixed inset-0 z-30">
-          <button
-            type="button"
-            aria-label="Close action details"
-            onClick={() => setSelectedDirectActionID(null)}
-            className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
-          />
-          <aside
-            ref={directActionDrawerRef}
-            data-direct-action-drawer
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="direct-action-details-title"
-            className="absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Review site fix details</div>
-                <h3 id="direct-action-details-title" className="mt-2 text-xl font-bold leading-7 text-slate-950">
-                  {action.action_type}
-                </h3>
-                <p className="mt-2 break-words text-sm leading-5 text-slate-500">
-                  {action.target_url ?? action.normalized_target_url ?? action.id}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
-                  <Badge tone="blue">{actionOutputTypeLabel(action)}</Badge>
-                  <Badge tone={toneForStatus(action.status)}>{action.status}</Badge>
-                  <Badge tone={action.review_required === false ? "neutral" : "amber"}>
-                    {action.review_required === false ? "Review optional" : "Review required"}
-                  </Badge>
-                </div>
-              </div>
-              <button
-                type="button"
-                data-drawer-close
-                aria-label="Close action details"
-                onClick={() => setSelectedDirectActionID(null)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:translate-y-px"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
-              <div className="space-y-5">
-                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewable output</div>
-                  <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{actionOutputPreviewText(action)}</p>
-                </section>
-
-                <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Action timeline</div>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Created</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.created_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Approved</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.approved_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Applied</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.verified_at ?? action.published_at ?? null)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Last updated</div>
-                      <div className="mt-1 font-medium text-slate-700">{formatDate(action.updated_at ?? null)}</div>
-                    </div>
-                  </div>
-                </section>
-
-                <section data-site-fix-ai-payload className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50">
-                  <div className="flex flex-col gap-3 border-b border-cyan-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-800">
-                        <Code2 size={14} />
-                        AI coding fix JSON
-                      </div>
-                      <p className="mt-2 text-sm font-semibold leading-5 text-cyan-950">
-                        {sourceAlreadyMatches
-                          ? "The mapped source already contains this fix. Verify production before marking it applied."
-                          : hasConnectedGitHubPublisher
-                            ? "Create a source-backed GitHub PR for this existing page when CiteLoop can map the fix to the published source file."
-                            : "Copy this JSON into Codex or Claude Code. It names the target page, concrete patch contract, likely files or surfaces, and verification checks."}
-                      </p>
-                    </div>
-                    {hasConnectedGitHubPublisher ? (
-                      prURL ? (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
-                        >
-                          <FileText className="shrink-0" size={14} />
-                          Open PR
-                        </Button>
-                      ) : sourceAlreadyMatches ? (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          disabled
-                        >
-                          <CheckCircle2 className="shrink-0" size={14} />
-                          Source matches
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="ai"
-                          className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                          onClick={() => void createSiteFixGitHubPR(action)}
-                          disabled={!!busy}
-                        >
-                          <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
-                            Create GitHub PR
-                          </ButtonProgress>
-                        </Button>
-                      )
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ai"
-                        className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                        onClick={() => void copySiteFixAIJSON(action)}
-                      >
-                        <Clipboard className="shrink-0" size={14} />
-                        Copy fix JSON
-                      </Button>
-                    )}
-                  </div>
-                  <pre className="max-h-80 overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">{aiRepairJSON}</pre>
-                </section>
-
-                <section className="grid gap-3 text-sm sm:grid-cols-2">
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Output type</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionOutputTypeLabel(action)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Asset type</div>
-                    <div className="mt-1 break-words font-medium text-slate-700">{action.asset_type ?? "direct_action"}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">Why now</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionWhyNowText(action)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase text-slate-400">After execution</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionPostExecutionText(action)}</div>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <div className="text-xs font-semibold uppercase text-slate-400">SEO/GEO contribution</div>
-                    <div className="mt-1 font-medium leading-5 text-slate-700">{actionSEOContributionText(action)}</div>
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Execution context</div>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Target URL</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{action.target_url ?? action.normalized_target_url ?? "No target URL yet."}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
-                      <div className="mt-1 font-medium text-slate-700">
-                        {action.verified_at ? "Verified" : hasActionVerificationSnapshot(action) ? "Needs check" : "Not started"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Baseline</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.baseline_window)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold uppercase text-slate-400">Measurement</div>
-                      <div className="mt-1 break-words font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
-                    </div>
-                  </div>
-                </section>
-              </div>
-            </div>
-
-            <div
-              aria-label="Drawer actions"
-              className="shrink-0 flex flex-col gap-2 border-t border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-4 sm:flex-row sm:justify-end"
-            >
-              {hasConnectedGitHubPublisher ? (
-                prURL ? (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-open-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
-                  >
-                    <FileText className="shrink-0" size={14} />
-                    Open PR
-                  </Button>
-                ) : sourceAlreadyMatches ? (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-source-matches-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    disabled
-                  >
-                    <CheckCircle2 className="shrink-0" size={14} />
-                    Source matches
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ai"
-                    className="site-fix-create-pr-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                    onClick={() => void createSiteFixGitHubPR(action)}
-                    disabled={!!busy}
-                  >
-                    <ButtonProgress busy={createPRBusy} busyLabel="Creating PR" idleIcon={<FileText size={14} />}>
-                      Create GitHub PR
-                    </ButtonProgress>
-                  </Button>
-                )
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ai"
-                  className="site-fix-copy-json-button min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto"
-                  onClick={() => void copySiteFixAIJSON(action)}
-                >
-                  <Clipboard className="shrink-0" size={14} />
-                  Copy fix JSON
-                </Button>
-              )}
-              <Button size="sm" onClick={() => verifyAction(action, "verified")} disabled={!!busy}>
-                <ButtonProgress busy={markAppliedBusy} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
-                  Mark applied
-                </ButtonProgress>
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => dismissSiteFixAction(action)} disabled={!!busy}>
-                <ButtonProgress busy={dismissSiteFixBusy} busyLabel="Dismissing" idleIcon={null}>
-                  Dismiss
                 </ButtonProgress>
               </Button>
             </div>

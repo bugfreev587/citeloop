@@ -14,19 +14,21 @@ test("Analysis Recently sent exit rule is event-driven, not time- or count-based
   );
   assert.doesNotMatch(source, /7 \* 24 \* 60 \* 60 \* 1000/, "handoff exit must not use a time window");
 
-  const sentBlock = source.slice(source.indexOf("const sentOpportunityLinks"), source.indexOf("const selectedDirectAction"));
+  const sentBlock = source.slice(source.indexOf("const sentOpportunityLinks"), source.indexOf("const opportunityRecentCount"));
   assert.ok(sentBlock.length > 0, "sentOpportunityLinks derivation must exist");
   assert.doesNotMatch(sentBlock, /slice\(0,\s*\d+\)/, "sent handoff cards must not be silently capped; overflow scrolls in-group");
 });
 
 test("Analysis loop and sent cards exclude actions hidden by their destination queues", async () => {
   const source = await read("projects/[id]/seo/seo-client.tsx");
-  const loopBlock = source.slice(source.indexOf("const activeOpportunities"), source.indexOf("const selectedDirectAction"));
+  const loopBlock = source.slice(source.indexOf("const activeOpportunities"), source.indexOf("const opportunityRecentCount"));
   const helperBlock = source.slice(source.indexOf("const inactiveLoopActionStatuses"), source.indexOf("function isRecentlySentAction"));
 
   assert.ok(loopBlock.length > 0, "loop action derivation block must exist");
   assert.ok(helperBlock.length > 0, "visible loop helper must exist before sent handoff filtering");
 
+  // Site Fixes moved to their own page, so seo-client no longer derives
+  // `directReviewActionsAll`; the shared visible-loop filtering still stands.
   for (const marker of [
     "function isVisibleLoopAction",
     "hasDismissedSourceOpportunity(action)",
@@ -34,7 +36,6 @@ test("Analysis loop and sent cards exclude actions hidden by their destination q
     "const visibleLoopActions = loopActions.filter(isVisibleLoopAction)",
     "visibilityLifecycleCounts(visibleLoopActions)",
     "visibleLoopActions.filter((action) => deriveVisibilityLifecycleStage(action) === selectedLoopStage)",
-    "const directReviewActionsAll = visibleLoopActions",
     "const sentOpportunityLinks = visibleLoopActions",
   ]) {
     assert.equal(source.includes(marker), true, `seo-client.tsx missing ${marker}`);
@@ -61,7 +62,10 @@ test("Analysis handoff cards expose accessible names with title and destination"
   const source = await read("projects/[id]/seo/seo-client.tsx");
 
   assert.match(source, /aria-label=\{`Open "\$\{loopActionTitle\(action as any\)\}" in \$\{label\}`\}/);
-  assert.match(source, /if \(label === "Site Fixes"\)/);
+  // Site Fixes handoff is no longer a special-cased on-page focus button; every
+  // handoff card is a plain <Link> that routes to its current surface.
+  assert.match(source, /<Link[\s\S]{0,240}data-opportunity-handoff-card[\s\S]{0,240}href=\{href\}/);
+  assert.equal(source.includes("focusSiteFixCard"), false, "Site Fixes handoff should not focus an on-page card");
 });
 
 test("Analysis Recently Decided lives in a right drawer opened from the section header", async () => {
