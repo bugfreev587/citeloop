@@ -108,6 +108,9 @@ test("Analysis page leads with Opportunity Queue before Site Fixes", async () =>
 
 test("Analysis page exposes Opportunity Finding run status", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf("function OpportunityFindingStatusPanel");
+  const panelEnd = source.indexOf("type SEOClientMode");
+  const panelSource = source.slice(panelStart, panelEnd);
 
   for (const expected of [
     "api.getOpportunityFindingStatus(projectId)",
@@ -122,6 +125,11 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+
+  assert.notEqual(panelStart, -1, "seo-client.tsx missing OpportunityFindingStatusPanel");
+  assert.notEqual(panelEnd, -1, "seo-client.tsx missing OpportunityFindingStatusPanel boundary");
+  assert.equal(panelSource.includes("{manualMode && ("), false, "Run finding should be available from the status card in automatic mode too");
+  assert.match(panelSource, /<Button size="sm" variant="primary" onClick=\{onRun\} disabled=\{!!busy\}>/);
 });
 
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {

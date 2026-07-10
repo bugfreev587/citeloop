@@ -885,13 +885,11 @@ function OpportunityFindingStatusPanel({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          {manualMode && (
-            <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy}>
-              <ButtonProgress busy={busy === "opportunity-finding"} busyLabel="Finding" idleIcon={<Search size={14} />}>
-                Run finding
-              </ButtonProgress>
-            </Button>
-          )}
+          <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy}>
+            <ButtonProgress busy={busy === "opportunity-finding"} busyLabel="Finding" idleIcon={<Search size={14} />}>
+              Run finding
+            </ButtonProgress>
+          </Button>
           <Link
             href={`/projects/${projectId}/settings#opportunity-finding`}
             className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
