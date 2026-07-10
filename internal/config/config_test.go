@@ -118,6 +118,51 @@ func TestParseKeepsExplicitOpportunityFindingSettings(t *testing.T) {
 	}
 }
 
+func TestOpportunityFindingStagesRespectAutomaticEligibility(t *testing.T) {
+	cfg := Default()
+	stages := cfg.OpportunityFindingStages(true)
+	if !stages.SignalScan {
+		t.Fatal("default automatic run should keep deterministic Signal Scan scheduled")
+	}
+	if stages.AIDiscovery {
+		t.Fatal("default semi-automatic AI Discovery should not spend provider tokens on the daily automatic tick")
+	}
+
+	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationAutomatic
+	stages = cfg.OpportunityFindingStages(true)
+	if !stages.SignalScan || !stages.AIDiscovery {
+		t.Fatalf("automatic all-mode stages = %+v, want Signal Scan and AI Discovery", stages)
+	}
+
+	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAIDiscovery
+	stages = cfg.OpportunityFindingStages(true)
+	if stages.SignalScan || !stages.AIDiscovery {
+		t.Fatalf("automatic AI-only stages = %+v, want AI Discovery only", stages)
+	}
+
+	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceSignalScan
+	stages = cfg.OpportunityFindingStages(true)
+	if !stages.SignalScan || stages.AIDiscovery {
+		t.Fatalf("signal-scan stages = %+v, want Signal Scan only", stages)
+	}
+}
+
+func TestOpportunityFindingStagesManualRunTriggersEnabledAIDiscovery(t *testing.T) {
+	cfg := Default()
+	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationManual
+	stages := cfg.OpportunityFindingStages(false)
+	if !stages.SignalScan || !stages.AIDiscovery {
+		t.Fatalf("manual all-mode run stages = %+v, want Signal Scan and AI Discovery", stages)
+	}
+
+	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
+	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAIDiscovery
+	stages = cfg.OpportunityFindingStages(false)
+	if stages.SignalScan || !stages.AIDiscovery {
+		t.Fatalf("manual semi-automatic AI-only run stages = %+v, want AI Discovery only", stages)
+	}
+}
+
 func TestParseNormalizesInvalidOpportunityFindingSettings(t *testing.T) {
 	c, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"unknown","ai_discovery_automation":"always"}`))
 	if err != nil {

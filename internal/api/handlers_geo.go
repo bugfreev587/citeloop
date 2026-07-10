@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/citeloop/citeloop/internal/admin"
+	"github.com/citeloop/citeloop/internal/config"
 	geopkg "github.com/citeloop/citeloop/internal/geo"
 )
 
@@ -28,11 +30,48 @@ func (s *Server) geoAnswerProvider(ctx context.Context) geopkg.AnswerProvider {
 		if err != nil && s.Log != nil {
 			s.Log.Warn("admin GEO credential unavailable", "err", err)
 		}
+		llmCredentials, err := admin.LoadCredentials(ctx, s.Pool)
+		if err == nil && llmCredentials != nil && strings.TrimSpace(llmCredentials.APIKey) != "" {
+			return tokenGateProviderFromLLMCredentials(*llmCredentials, s.Env)
+		}
+		if err != nil && s.Log != nil {
+			s.Log.Warn("admin LLM credential unavailable for GEO fallback", "err", err)
+		}
 	}
 	if s.Env.PerplexityAPIKey != "" {
 		return geopkg.NewPerplexityProvider(s.Env.PerplexityAPIKey, s.Env.PerplexityBaseURL, s.Env.PerplexityModel, nil)
 	}
 	return nil
+}
+
+func tokenGateProviderFromLLMCredentials(credentials admin.Credentials, env config.Env) geopkg.TokenGateAnswerProvider {
+	baseURL := strings.TrimSpace(credentials.BaseURL)
+	if baseURL == "" {
+		baseURL = env.TokenGateBaseURL
+	}
+	model := strings.TrimSpace(credentials.Model)
+	if model == "" {
+		model = env.TokenGateModel
+	}
+	return geopkg.NewTokenGateAnswerProvider(geopkg.TokenGateAnswerProviderConfig{
+		Scope:   string(admin.GEOProviderOpenAI),
+		APIKey:  credentials.APIKey,
+		BaseURL: baseURL,
+		Model:   model,
+		Engine:  admin.GEOEngineForScope(admin.GEOProviderOpenAI),
+	}, nil)
+}
+
+func (s *Server) aiDiscoveryObserveRequest() geopkg.ObserveAnswerProviderRequest {
+	budgetUSD := s.Env.GEOProviderRunBudgetUSD
+	if budgetUSD <= 0 {
+		budgetUSD = 1
+	}
+	return geopkg.ObserveAnswerProviderRequest{
+		Engine:     "OpenAI",
+		MaxPrompts: 10,
+		BudgetUSD:  budgetUSD,
+	}
 }
 
 func (s *Server) runGEOCrawlerAudit(w http.ResponseWriter, r *http.Request) {

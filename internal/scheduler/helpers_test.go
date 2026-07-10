@@ -96,6 +96,23 @@ func TestStartRegistersFrequentGenerationTick(t *testing.T) {
 	}
 }
 
+func TestDailySEOTickRunsAutomaticAIDiscoveryWhenConfigured(t *testing.T) {
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := functionBody(t, string(raw), "func (s *Scheduler) runOpportunityFindingForProject")
+	for _, want := range []string{
+		"OpportunityFindingStages(true)",
+		"opportunityfinding.RunAIDiscovery",
+		"runSEOForProject",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("daily opportunity finding must include configured AI Discovery; missing %q", want)
+		}
+	}
+}
+
 func TestGenerationFailureRequeuesTopic(t *testing.T) {
 	raw, err := os.ReadFile("scheduler.go")
 	if err != nil {

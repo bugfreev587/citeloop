@@ -14,7 +14,9 @@ func TestGEORuntimeLoadsAdminTokenGateCredential(t *testing.T) {
 	source := string(data)
 	for _, want := range []string{
 		"admin.LoadRuntimeGEOCredentials",
+		"admin.LoadCredentials",
 		"tokenGateProviderFromGEOCredentials",
+		"tokenGateProviderFromLLMCredentials",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("GEO runtime wiring missing %q", want)
