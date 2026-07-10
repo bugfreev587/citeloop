@@ -269,7 +269,6 @@ test("analysis surface uses a compact GSC status control and keeps decisions out
     "Create Page Update",
     "Create Site Fix",
     "Recently Decided",
-    "Recently Fixed",
     "Open details",
     "Opportunity details",
     "Evidence",
@@ -356,32 +355,37 @@ test("analysis handoff cards mirror Content Plan actions from visibility summary
 });
 
 test("analysis cards and drawers expose finding and action timestamps", () => {
+  // Opportunity finding timestamps stay on the analysis surface.
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const opportunityGridStart = seo.indexOf("data-analysis-finding-grid");
-  const siteFixesStart = seo.indexOf("data-site-fixes-queue");
-  const siteFixesEnd = seo.indexOf("data-analysis-loop-strip", siteFixesStart);
+  const opportunityGridEnd = seo.indexOf("data-analysis-loop-strip", opportunityGridStart);
   const opportunityDrawerStart = seo.indexOf('{mode === "analysis" && selectedOpportunity');
   const opportunityDrawerEnd = seo.indexOf("Drawer actions", opportunityDrawerStart);
-  const siteFixDrawerStart = seo.indexOf('{mode === "analysis" && selectedDirectAction');
-  const siteFixDrawerEnd = seo.indexOf('{mode === "analysis" && selectedOpportunity', siteFixDrawerStart);
 
-  const opportunityGrid = seo.slice(opportunityGridStart, siteFixesStart);
-  const siteFixesBlock = seo.slice(siteFixesStart, siteFixesEnd);
+  const opportunityGrid = seo.slice(opportunityGridStart, opportunityGridEnd);
   const opportunityDrawer = seo.slice(opportunityDrawerStart, opportunityDrawerEnd);
-  const siteFixDrawer = seo.slice(siteFixDrawerStart, siteFixDrawerEnd);
 
   assert.match(opportunityGrid, /Detected \{formatDate\(opp\.created_at \?\? null\)\}/);
   assert.match(opportunityDrawer, /Opportunity timeline/);
   assert.match(opportunityDrawer, /Detected/);
   assert.match(opportunityDrawer, /formatDate\(selectedOpportunity\.created_at \?\? null\)/);
 
+  // Site Fix action timestamps moved to the dedicated Site Fixes page: its grid
+  // and its RightDrawer "Action timeline" section.
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const siteFixesGridStart = siteFixes.indexOf("data-site-fixes-grid");
+  const siteFixesGridEnd = siteFixes.indexOf("</section>", siteFixesGridStart);
+  const siteFixDrawerStart = siteFixes.indexOf("data-site-fix-drawer");
+  const siteFixesBlock = siteFixes.slice(siteFixesGridStart, siteFixesGridEnd);
+  const siteFixDrawer = siteFixes.slice(siteFixDrawerStart);
+
   assert.match(siteFixesBlock, /data-site-fixes-grid/);
   assert.match(siteFixesBlock, /md:grid-cols-2 xl:grid-cols-3/);
-  assert.match(siteFixesBlock, /min-h-\[220px\]/);
+  assert.match(siteFixes, /min-h-\[220px\]/);
   assert.match(siteFixDrawer, /Action timeline/);
   assert.match(siteFixDrawer, /Approved/);
-  assert.match(siteFixDrawer, /formatDate\(action\.approved_at \?\? null\)/);
-  assert.match(siteFixDrawer, /formatDate\(action\.created_at \?\? null\)/);
+  assert.match(siteFixDrawer, /formatDate\(drawerAction\.approved_at \?\? null\)/);
+  assert.match(siteFixDrawer, /formatDate\(drawerAction\.created_at \?\? null\)/);
 });
 
 test("results surface defaults to published outcomes with card-triggered attribution details", () => {

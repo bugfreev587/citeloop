@@ -73,19 +73,27 @@ test("Analysis page does not render Automation readiness as a primary module", a
 
 test("Analysis page leads with Opportunity Queue before Site Fixes", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  const siteFixes = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
 
-  for (const expected of ["data-analysis-opportunity-finding-status", "data-analysis-growth-findings-section", "Opportunity Queue ·", "data-site-fixes-queue", "Site Fixes", "data-site-fix-card"]) {
+  // Site Fixes moved to their own dedicated page. Analysis now leads with the
+  // Opportunity Queue and keeps loop diagnostics below it.
+  for (const expected of ["data-analysis-opportunity-finding-status", "data-analysis-growth-findings-section", "Opportunity Queue ·", "data-analysis-loop-strip"]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+  assert.equal(source.includes("data-site-fixes-queue"), false, "Analysis should no longer render an on-page Site Fixes queue");
+  assert.equal(source.includes("data-site-fix-card"), false, "Site Fix cards moved to the dedicated Site Fixes page");
 
   const findingStatusIndex = source.indexOf("data-analysis-opportunity-finding-status");
   const opportunityQueueIndex = source.indexOf("data-analysis-growth-findings-section");
-  const siteFixesIndex = source.indexOf("data-site-fixes-queue");
   const loopIndex = source.indexOf("data-analysis-loop-strip");
 
   assert.ok(findingStatusIndex < opportunityQueueIndex, "Opportunity Finding status should sit above the queue");
-  assert.ok(opportunityQueueIndex < siteFixesIndex, "Opportunity Queue should appear before Site Fixes");
-  assert.ok(siteFixesIndex < loopIndex, "Site Fixes should stay before lower-priority loop diagnostics");
+  assert.ok(opportunityQueueIndex < loopIndex, "Opportunity Queue should appear before lower-priority loop diagnostics");
+
+  // The Site Fixes surface now lives on its own page and still owns the cards/grid.
+  assert.equal(siteFixes.includes("data-site-fix-card"), true, "site-fixes-client.tsx should own the Site Fix cards");
+  assert.equal(siteFixes.includes("data-site-fixes-grid"), true, "site-fixes-client.tsx should own the Site Fixes grid");
+
   assert.equal(source.includes("data-analysis-focus-cards"), false, "Analysis should not render the old top metrics board");
   assert.equal(source.includes("What needs review next"), false, "Analysis should not render the old metrics board headline");
   assert.equal(source.includes("Review direct action"), false, "Analysis should not expose Direct Action as user-facing queue copy");
@@ -117,33 +125,34 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
 });
 
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {
-  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
-  const drawerStart = source.indexOf("data-direct-action-drawer");
-  const drawerEnd = source.indexOf('{mode === "analysis" && selectedOpportunity', drawerStart);
-  const drawerSource = source.slice(drawerStart, drawerEnd);
+  // The Site Fixes review surface moved to its own page and now uses the shared
+  // RightDrawer instead of a bespoke analysis drawer.
+  const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
 
   for (const expected of [
-    "selectedDirectActionID",
-    "selectedDirectAction",
-    "directActionDrawerRef",
+    "selectedID",
+    "SiteFixAction",
     "data-site-fix-card",
-    "data-direct-action-drawer",
+    "data-site-fix-drawer",
+    "RightDrawer",
     "Review site fix details",
-    "Close action details",
+    "returnFocusRef",
     "Mark applied",
     "Dismiss",
-    "dismissSiteFixAction",
+    "dismissSiteFix",
     "api.dismissSEOContentAction",
   ]) {
-    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+    assert.equal(source.includes(expected), true, `site-fixes-client.tsx missing ${expected}`);
   }
-  assert.notEqual(drawerStart, -1, "seo-client.tsx missing direct action drawer");
-  assert.doesNotMatch(drawerSource, /Needs revision/, "Site Fix review drawer should not expose a non-functional revision action");
-  assert.doesNotMatch(drawerSource, /verifyAction\(action, "failed"\)/, "Site Fix review drawer should not mark review feedback as verification failure");
+  assert.doesNotMatch(source, /Needs revision/, "Site Fix review drawer should not expose a non-functional revision action");
+  assert.doesNotMatch(source, /verifyAction\(action, "failed"\)/, "Site Fix review drawer should not mark review feedback as verification failure");
 });
 
 test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
-  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  // The AI repair payload builders and their contract copy moved to the shared
+  // helper module; the copy affordance lives on the dedicated Site Fixes page.
+  const lib = await readFile(new URL("site-fix.ts", import.meta.url), "utf8");
+  const ui = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
 
   for (const expected of [
     "buildSiteFixAIPayload",
@@ -155,15 +164,6 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
     "metadataRewriteProposedChange",
     "metadataRewriteAcceptanceTests",
     "siteFixAIJSON",
-    "copySiteFixAIJSON",
-    "writeClipboardText",
-    "data-site-fix-ai-payload",
-    "AI coding fix JSON",
-    "Copy fix JSON",
-    "site-fix-copy-json-button",
-    "whitespace-nowrap",
-    "min-w-[9.5rem]",
-    "Copy this JSON into Codex or Claude Code",
     "ai_repair",
     "acceptance_tests",
     "observed",
@@ -189,40 +189,49 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
     "does not require rich result eligibility",
     "schema_patch",
     "script[type=\\\"application/ld+json\\\"]",
+  ]) {
+    assert.equal(lib.includes(expected), true, `lib/site-fix.ts missing ${expected}`);
+  }
+
+  for (const expected of [
+    "siteFixAIJSON",
+    "copyFixJSON",
+    "writeClipboardText",
+    "data-site-fix-ai-payload",
+    "AI coding fix JSON",
+    "Copy fix JSON",
+    "whitespace-nowrap",
+    "min-w-[9.5rem]",
+    "Copy this JSON into Codex or Claude Code",
     "Clipboard",
     "Code2",
   ]) {
-    assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
+    assert.equal(ui.includes(expected), true, `site-fixes-client.tsx missing ${expected}`);
   }
 });
 
 test("Analysis Site Fixes switch from JSON copy to GitHub PR when connected", async () => {
-  const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
+  // Now owned by the dedicated Site Fixes page.
+  const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
   const refreshStart = source.indexOf("const refresh = useCallback(async () => {");
-  const refreshEnd = source.indexOf("useEffect(() => {\n    refresh();", refreshStart);
-  const drawerStart = source.indexOf("data-direct-action-drawer");
-  const drawerEnd = source.indexOf('{mode === "analysis" && selectedOpportunity', drawerStart);
+  const refreshEnd = source.indexOf("useEffect(() => {", refreshStart);
   const refreshSource = source.slice(refreshStart, refreshEnd);
-  const drawerSource = source.slice(drawerStart, drawerEnd);
 
-  assert.notEqual(refreshStart, -1, "seo-client.tsx missing refresh callback");
-  assert.notEqual(drawerStart, -1, "seo-client.tsx missing Site Fix drawer");
+  assert.notEqual(refreshStart, -1, "site-fixes-client.tsx missing refresh callback");
   assert.match(source, /const \[publisherConnections, setPublisherConnections\] = useState<PublisherConnection\[\]>\(\[\]\)/);
   assert.match(refreshSource, /api\.listPublisherConnections\(projectId\)/);
-  assert.match(refreshSource, /if \(publisherRows\) setPublisherConnections\(publisherRows\)/);
+  assert.match(refreshSource, /setPublisherConnections\(connections\)/);
   assert.match(source, /const hasConnectedGitHubPublisher = useMemo/);
-  assert.match(source, /siteFixGitHubPRURL\(action\)/);
-  assert.match(source, /siteFixAlreadyMatchesSource\(action\)/);
-  assert.match(source, /async function createSiteFixGitHubPR\(action: SEOContentAction\)/);
+  assert.match(source, /siteFixGitHubPRURL\(/);
+  assert.match(source, /siteFixAlreadyMatchesSource\(/);
+  assert.match(source, /async function createPR\(action: SiteFixAction\)/);
   assert.match(source, /api\.createSiteFixGitHubPR\(projectId, action\.id\)/);
-  assert.match(drawerSource, /hasConnectedGitHubPublisher/);
-  assert.match(drawerSource, /Create GitHub PR/);
-  assert.match(drawerSource, /Open PR/);
-  assert.match(drawerSource, /Source matches/);
-  assert.match(drawerSource, /Copy fix JSON/);
-  assert.match(drawerSource, /site-fix-create-pr-button/);
-  assert.match(drawerSource, /site-fix-open-pr-button/);
-  assert.match(drawerSource, /site-fix-source-matches-button/);
+  // The drawer footer swaps the primary CTA based on publisher connectivity.
+  assert.match(source, /hasConnectedGitHubPublisher/);
+  assert.match(source, /Create GitHub PR/);
+  assert.match(source, /Open PR/);
+  assert.match(source, /Source matches/);
+  assert.match(source, /Copy fix JSON/);
 });
 
 test("Analysis Site Fixes treat connected enabled GitHub App publishers as PR-capable", async () => {
@@ -263,16 +272,15 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
     "opportunityPrimaryCTA",
     "assetTypeForWorkType",
     "sentOpportunityLinks",
-    "recentlyFixedSiteActions",
     "data-opportunity-handoff-card",
     "Recently Decided",
-    "Recently Fixed",
     "data-opportunity-recent-drawer-trigger",
-    "data-site-fixes-recent-drawer-trigger",
     "Sent to Site Fixes",
     "View in Site Fixes",
     "plan?action=${action.id}",
-    "focusSiteFixCard",
+    // Site Fixes handoff now navigates to the dedicated page rather than focusing
+    // an on-page card.
+    "/projects/${projectId}/site-fixes",
     "citeloop-linked-card-pulse",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
@@ -280,7 +288,11 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
 
   assert.equal(source.includes("Create content task"), false, "Opportunity Queue should not show generic Create content task CTA");
   assert.equal(source.includes("Create technical task"), false, "Opportunity Queue should not show generic technical task CTA");
-  const directAssetTypes = source.match(/const directActionAssetTypes = new Set\(\[([^\]]+)\]\)/)?.[1] ?? "";
+
+  // The direct-action asset routing table moved to the shared helper module.
+  const lib = await readFile(new URL("site-fix.ts", import.meta.url), "utf8");
+  const directAssetTypes = lib.match(/const directActionAssetTypes = new Set\(\[([^\]]+)\]\)/)?.[1] ?? "";
+  assert.notEqual(directAssetTypes, "", "lib/site-fix.ts should define the Site Fixes asset-type routing table");
   assert.equal(directAssetTypes.includes("metadata_rewrite"), false, "Metadata/page-update work should not be routed to Site Fixes");
 });
 
@@ -295,20 +307,21 @@ test("Opportunity queue supports snooze, watch, and approval-source provenance",
     "Watching in Results",
     "Snoozed (",
     "approvalSourceLabel(action.approval_source)",
-    "Approved by Autopilot policy",
     "results-watchlist",
     "watchlistStatusLabel",
-    "This item moved or was completed",
-    "Show all site fixes",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+
+  // The approval-source provenance copy is produced by the shared helper.
+  const lib = await readFile(new URL("site-fix.ts", import.meta.url), "utf8");
+  assert.equal(lib.includes("Approved by Autopilot policy"), true, "lib/site-fix.ts should label autopilot-approved provenance");
 });
 
 test("Opportunity review drawer explains work type destination and approval source", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const drawerStart = source.indexOf('data-analysis-drawer');
-  const drawerEnd = source.indexOf('data-direct-action-drawer');
+  const drawerEnd = source.indexOf('aria-label="Drawer actions"', drawerStart);
   const drawerSource = source.slice(drawerStart, drawerEnd);
 
   for (const expected of [
@@ -408,20 +421,10 @@ test("Analysis Site Fix handoff cards use the loop action source for same-page t
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const loopActionsStart = source.indexOf("const actionsByID = new Map(actions.map((action) => [action.id, action]));");
   const loopActionsEnd = source.indexOf("const measuredActions = loopActions");
-  const directStart = source.indexOf("const directReviewActionsAll =");
-  const directEnd = source.indexOf("const directReviewActions =");
-  const focusStart = source.indexOf("function focusSiteFixCard");
-  const focusEnd = source.indexOf("useEffect(() => {\n    if (!pendingSiteFixFocusID)");
   const loopActionsSource = source.slice(loopActionsStart, loopActionsEnd);
-  const directSource = source.slice(directStart, directEnd);
-  const focusSource = source.slice(focusStart, focusEnd);
 
   assert.notEqual(loopActionsStart, -1, "loop actions should index full content actions by id");
   assert.notEqual(loopActionsEnd, -1, "loop action source boundary should resolve");
-  assert.notEqual(directStart, -1, "seo-client.tsx missing Site Fixes action source");
-  assert.notEqual(directEnd, -1, "Site Fixes action source boundary should resolve");
-  assert.notEqual(focusStart, -1, "seo-client.tsx missing Site Fix focus handler");
-  assert.notEqual(focusEnd, -1, "Site Fix focus handler boundary should resolve");
 
   for (const expected of [
     "const summaryLoopActions = (visibilitySummary?.actions_in_loop ?? []).map",
@@ -431,9 +434,16 @@ test("Analysis Site Fix handoff cards use the loop action source for same-page t
     assert.equal(loopActionsSource.includes(expected), true, `loop action source should include ${expected}`);
   }
 
-  assert.match(directSource, /const directReviewActionsAll = visibleLoopActions\s+\.filter\(\(action\) => isDirectAction\(action\)\)/);
-  assert.equal(directSource.includes("const directReviewActionsAll = actions"), false, "Site Fixes should not depend on the separately paged content action list");
-  assert.equal(focusSource.includes("directReviewActionsAll.some((action) => action.id === actionID)"), true, "Loop Site Fix cards should expand the same source they render from");
+  // Site Fixes now live on their own page. The loop action source resolves the
+  // Site Fixes surface to a real route, and the old on-page focus hack — which
+  // expanded and scrolled to an in-page Site Fix card — is gone. Handoff cards
+  // are plain links to the current surface.
+  assert.match(source, /if \(surface === "Site Fixes"\) return `\/projects\/\$\{projectId\}\/site-fixes`;/);
+  assert.match(source, /const href = loopActionCurrentHref\(projectId, action as LoopAction\);/);
+  assert.match(source, /data-opportunity-handoff-card/);
+  assert.equal(source.includes("focusSiteFixCard"), false, "the on-page Site Fix focus handler should be removed");
+  assert.equal(source.includes("pendingSiteFixFocusID"), false, "the Site Fix focus scroll state should be removed");
+  assert.equal(source.includes("directReviewActionsAll"), false, "Site Fixes no longer derive from the analysis content-action list");
 });
 
 test("Opportunity queue lays finding cards out as responsive rectangles with three per row at most", async () => {

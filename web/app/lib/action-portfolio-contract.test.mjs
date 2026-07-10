@@ -101,13 +101,15 @@ test("Action cards expose why, contribution, output type, and execution result",
 });
 
 test("Merged and closed site fix PRs surface in the after-execution status", () => {
-  const seo = read("projects/[id]/seo/seo-client.tsx");
-  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_merged"/);
-  assert.match(seo, /PR merged — verifying in production/);
-  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
-  assert.match(seo, /PR closed without merging/);
-  assert.match(seo, /siteFixPublisherResultStatus\(action\) === "needs_follow_up"/);
-  assert.match(seo, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
+  // The after-execution status copy now lives in the shared site-fix helper
+  // (actionPostExecutionText), consumed by both the analysis and Site Fixes UIs.
+  const lib = read("lib/site-fix.ts");
+  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "github_pr_merged"/);
+  assert.match(lib, /PR merged — verifying in production/);
+  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
+  assert.match(lib, /PR closed without merging/);
+  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "needs_follow_up"/);
+  assert.match(lib, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
 });
 
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {
@@ -116,18 +118,19 @@ test("Site fix PR awaiting-merge nag is a subscribable notification event", () =
 });
 
 test("Analysis surfaces approved site fixes as user-visible output", () => {
-  const seo = read("projects/[id]/seo/seo-client.tsx");
+  // Approved site fixes are now surfaced on the dedicated Site Fixes page.
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
   for (const snippet of [
     "isDirectAction",
-    "directReviewActions",
-    "data-site-fixes-queue",
+    "visibleSiteFixes",
+    "data-site-fixes-grid",
     "Site Fixes",
     "Reviewable output",
     "actionOutputPreviewText",
-    "actionOutputTypeLabel(action)",
-    "actionSEOContributionText(action)",
+    "actionOutputTypeLabel(drawerAction)",
+    "actionSEOContributionText(drawerAction)",
     "actionWhyNowText(action)",
   ]) {
-    assert.match(seo, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(siteFixes, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });

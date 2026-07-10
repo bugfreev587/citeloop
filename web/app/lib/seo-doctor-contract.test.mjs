@@ -57,13 +57,20 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     "Last run",
     "latest crawl checks",
     "Doctor refreshed",
-    "Fix with AI",
+    // Findings now live in a responsive card grid that opens a reusable right drawer
+    // instead of the old centered "Fix with AI" modal.
+    "data-doctor-findings-grid",
+    "data-doctor-finding-card",
+    "data-doctor-finding-drawer",
+    "Finding details",
+    "data-doctor-ai-payload",
+    "AI coding fix JSON",
     "buildAIRepairPayload",
     "copyAIRepairJSON",
+    "selectedRepairJSON",
     "writeClipboardText",
-    "selectedRepairFinding",
-    "AI coding repair JSON",
-    "Copy JSON",
+    "Copy fix JSON",
+    "Dismiss",
     "acceptance_tests",
     "dismissSEODoctorFinding",
     "document.execCommand",
@@ -71,8 +78,11 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const forbidden of [
-    "Codex",
-    "Claude Code",
+    // Old centered modal + action-creation affordances are gone; the drawer opens
+    // by clicking the card, not a "Fix with AI" button.
+    "seo-doctor-ai-repair-title",
+    "Fix with AI",
+    "setSelectedRepairFinding",
     "Create action",
     "convertSEODoctorFinding",
     "Start Growth Loop",
