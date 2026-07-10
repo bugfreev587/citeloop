@@ -1,6 +1,86 @@
 package seo
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/google/uuid"
+)
+
+func TestDoctorSitemapFindingRequiresObservedMissingStatus(t *testing.T) {
+	empty := ""
+	unknown := "unknown"
+	invalid := "invalid"
+	cases := []struct {
+		name   string
+		status *string
+	}{
+		{name: "absent", status: nil},
+		{name: "empty", status: &empty},
+		{name: "unknown", status: &unknown},
+		{name: "invalid", status: &invalid},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			httpStatus := int32(200)
+			present := "present"
+			robots := "present"
+			internalLinks := int32(1)
+			candidates := doctorFindingCandidatesFromChecks(uuid.New(), []db.TechnicalCheck{{
+				PageUrl:               "https://example.com/docs",
+				NormalizedPageUrl:     "https://example.com/docs",
+				HttpStatus:            &httpStatus,
+				CanonicalStatus:       &present,
+				RobotsStatus:          &robots,
+				TitleStatus:           &present,
+				MetaDescriptionStatus: &present,
+				H1Status:              &present,
+				StructuredDataStatus:  &present,
+				SitemapStatus:         tc.status,
+				InternalLinkCount:     &internalLinks,
+			}})
+
+			for _, candidate := range candidates {
+				if candidate.Category == "sitemap" {
+					t.Fatalf("sitemap candidate = %#v, want none without observed inclusion evidence", candidate)
+				}
+			}
+		})
+	}
+
+	t.Run("observed missing", func(t *testing.T) {
+		httpStatus := int32(200)
+		present := "present"
+		robots := "present"
+		missing := "missing"
+		internalLinks := int32(1)
+		candidates := doctorFindingCandidatesFromChecks(uuid.New(), []db.TechnicalCheck{{
+			PageUrl:               "https://example.com/docs",
+			NormalizedPageUrl:     "https://example.com/docs",
+			HttpStatus:            &httpStatus,
+			CanonicalStatus:       &present,
+			RobotsStatus:          &robots,
+			TitleStatus:           &present,
+			MetaDescriptionStatus: &present,
+			H1Status:              &present,
+			StructuredDataStatus:  &present,
+			SitemapStatus:         &missing,
+			InternalLinkCount:     &internalLinks,
+		}})
+
+		if len(candidates) != 1 {
+			t.Fatalf("candidates = %#v, want one observed sitemap gap", candidates)
+		}
+		candidate := candidates[0]
+		if candidate.IssueType != "important_page_missing_from_sitemap" {
+			t.Fatalf("issue type = %q, want important_page_missing_from_sitemap", candidate.IssueType)
+		}
+		if got := candidate.Evidence["sitemap_status"]; got != "missing" {
+			t.Fatalf("sitemap_status evidence = %#v, want missing", got)
+		}
+	})
+}
 
 func TestDoctorHealthScoreCapsActiveP0At69(t *testing.T) {
 	findings := []doctorFindingCandidate{{
