@@ -112,6 +112,27 @@ test("Merged and closed site fix PRs surface in the after-execution status", () 
   assert.match(lib, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
 });
 
+test("Verified site fixes expose automatic verification and accurate PR actions", () => {
+  const lib = read("lib/site-fix.ts");
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  for (const snippet of ["siteFixVerificationLabel", "Verified automatically", "siteFixPRLinkLabel", "View merged PR"]) {
+    assert.match(lib, new RegExp(snippet));
+  }
+  assert.match(siteFixes, /siteFixVerificationLabel/);
+  assert.match(siteFixes, /siteFixPRLinkLabel/);
+  assert.match(siteFixes, /!drawerAction\.verified_at/);
+
+  const linkLabel = lib.match(/export function siteFixPRLinkLabel[\s\S]*?\n}/)?.[0] ?? "";
+  const closedIndex = linkLabel.indexOf('state === "closed"');
+  const openIndex = linkLabel.indexOf('state === "open"');
+  const mergedIndex = linkLabel.indexOf('state === "merged"');
+  const verifiedFallbackIndex = linkLabel.indexOf("action.verified_at");
+  assert.ok(closedIndex >= 0, "closed PR state should have an explicit label");
+  assert.ok(openIndex > closedIndex, "open PR state should be checked after closed state");
+  assert.ok(mergedIndex > openIndex, "merged PR state should be checked after open state");
+  assert.ok(verifiedFallbackIndex > mergedIndex, "verified_at should only be a fallback after explicit PR states");
+});
+
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   assert.match(settings, /"sitefix\.pr\.awaiting_merge": "Site fix PR awaiting merge"/);

@@ -91,6 +91,23 @@ export function siteFixPublisherResultStatus(action: SEOContentAction | ResultsA
   return typeof status === "string" ? status.trim() : "";
 }
 
+export function siteFixVerificationLabel(action: SEOContentAction | ResultsAction) {
+  if (!action.verified_at) return "";
+  const source = String(action.verification_snapshot?.source ?? "").trim().toLowerCase();
+  return source.startsWith("auto_") ? "Verified automatically" : "Verified";
+}
+
+export function siteFixPRLinkLabel(action: SEOContentAction | ResultsAction) {
+  const result = action.output_snapshot?.publisher_result ?? {};
+  const status = siteFixPublisherResultStatus(action);
+  const state = String(result.github_pr_state ?? "").trim().toLowerCase();
+  if (status === "github_pr_closed" || state === "closed") return "View closed PR";
+  if (status === "github_pr_open" || state === "open") return "Open PR";
+  if (status === "github_pr_merged" || state === "merged") return "View merged PR";
+  if (action.verified_at || status === "verified") return "View merged PR";
+  return "Open PR";
+}
+
 export function siteFixAlreadyMatchesSource(action: SEOContentAction | ResultsAction) {
   return siteFixPublisherResultStatus(action) === "already_applied";
 }

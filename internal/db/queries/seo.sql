@@ -918,6 +918,32 @@ update content_actions set
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
+-- name: MarkSiteChangeApplicationAndContentActionVerified :one
+with verified_application as (
+  update site_change_applications set
+    status = 'verified',
+    deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
+    verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+    failure_reason = null,
+    deployed_at = coalesce(deployed_at, sqlc.arg(verified_at)::timestamptz),
+    verified_at = coalesce(verified_at, sqlc.arg(verified_at)::timestamptz),
+    updated_at = now()
+  where site_change_applications.id = sqlc.arg(application_id)
+    and site_change_applications.project_id = sqlc.arg(project_id)
+  returning content_action_id
+)
+update content_actions set
+  status = 'measuring',
+  verified_at = sqlc.arg(verified_at)::timestamptz,
+  verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+  output_snapshot = coalesce(output_snapshot, '{}'::jsonb) ||
+    jsonb_build_object('publisher_result', sqlc.arg(publisher_result)::jsonb),
+  updated_at = now()
+from verified_application
+where content_actions.id = verified_application.content_action_id
+  and content_actions.project_id = sqlc.arg(project_id)
+returning content_actions.*;
+
 -- name: MarkContentActionDraftReady :one
 update content_actions set
   status = 'ready_for_review',

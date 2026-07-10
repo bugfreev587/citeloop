@@ -67,3 +67,35 @@ func TestNextSiteFixVerifyPollAtStopsAtDeadline(t *testing.T) {
 		t.Fatal("expected verification give-up at the 24h deadline")
 	}
 }
+
+func TestSiteFixVerifiedPublisherResultRecordsCompletedPRState(t *testing.T) {
+	prNumber := int32(175)
+	prURL := "https://github.com/bugfreev587/unipost/pull/175"
+	repo := "bugfreev587/unipost"
+	base := "main"
+	verifiedAt := time.Date(2026, 7, 9, 21, 50, 0, 0, time.UTC)
+	app := db.SiteChangeApplication{
+		ID:             [16]byte{1},
+		GithubPrNumber: &prNumber,
+		GithubPrUrl:    &prURL,
+		RepoFullName:   &repo,
+		BaseBranch:     &base,
+		TargetUrl:      "https://unipost.dev/",
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(siteFixVerifiedPublisherResult(app, "auto_url_check", verifiedAt), &result); err != nil {
+		t.Fatalf("decode verified publisher result: %v", err)
+	}
+	for key, want := range map[string]any{
+		"status":              "verified",
+		"github_pr_state":     "merged",
+		"github_pr_url":       prURL,
+		"verification_source": "auto_url_check",
+		"verified_at":         "2026-07-09T21:50:00Z",
+	} {
+		if got := result[key]; got != want {
+			t.Fatalf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+}

@@ -212,6 +212,7 @@ type Querier interface {
 	MarkPublished(ctx context.Context, arg MarkPublishedParams) (Article, error)
 	MarkPublisherConnectionError(ctx context.Context, arg MarkPublisherConnectionErrorParams) (PublisherConnection, error)
 	MarkPublisherConnectionVerified(ctx context.Context, arg MarkPublisherConnectionVerifiedParams) (PublisherConnection, error)
+	MarkSiteChangeApplicationAndContentActionVerified(ctx context.Context, arg MarkSiteChangeApplicationAndContentActionVerifiedParams) (ContentAction, error)
 	MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg MarkSiteChangeApplicationGitHubPRParams) (SiteChangeApplication, error)
 	MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkSiteChangeApplicationStatusParams) (SiteChangeApplication, error)
 	MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error)

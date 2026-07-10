@@ -247,26 +247,36 @@ func (s *Scheduler) markSiteChangeVerified(ctx context.Context, q *db.Queries, p
 		snapshot[k] = v
 	}
 	snapRaw := json.RawMessage(mustJSON(snapshot))
-	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
-		ID:                   app.ID,
-		ProjectID:            p.ID,
-		Status:               "verified",
-		DeploymentSnapshot:   json.RawMessage(`{}`),
-		VerificationSnapshot: snapRaw,
-	}); err != nil {
-		return err
-	}
 	// Advance the content action into the measurement loop (same transition the
-	// manual "Mark applied" path uses), so the fix enters attribution.
-	if _, err := q.MarkContentActionVerification(ctx, db.MarkContentActionVerificationParams{
-		ID:                   app.ContentActionID,
+	// manual "Mark applied" path uses), so the fix enters attribution. The
+	// application and action move together in one SQL statement so a failed
+	// action update cannot strand the application as verified.
+	if _, err := q.MarkSiteChangeApplicationAndContentActionVerified(ctx, db.MarkSiteChangeApplicationAndContentActionVerifiedParams{
+		ApplicationID:        app.ID,
 		ProjectID:            p.ID,
-		Status:               "measuring",
+		DeploymentSnapshot:   json.RawMessage(`{}`),
 		VerifiedAt:           pgutil.TS(now),
 		VerificationSnapshot: snapRaw,
+		PublisherResult:      siteFixVerifiedPublisherResult(app, source, now),
 	}); err != nil {
 		return err
 	}
 	s.Log.Info("site fix verified", "project", p.ID, "application", app.ID, "source", source, "target_url", app.TargetUrl)
 	return nil
+}
+
+func siteFixVerifiedPublisherResult(app db.SiteChangeApplication, source string, verifiedAt time.Time) json.RawMessage {
+	return json.RawMessage(mustJSON(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "verified",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            "merged",
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"target_url":                 app.TargetUrl,
+		"verification_source":        source,
+		"verified_at":                verifiedAt.UTC().Format(time.RFC3339),
+	}))
 }
