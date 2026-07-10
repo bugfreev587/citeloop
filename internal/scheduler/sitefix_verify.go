@@ -258,15 +258,31 @@ func (s *Scheduler) markSiteChangeVerified(ctx context.Context, q *db.Queries, p
 	}
 	// Advance the content action into the measurement loop (same transition the
 	// manual "Mark applied" path uses), so the fix enters attribution.
-	if _, err := q.MarkContentActionVerification(ctx, db.MarkContentActionVerificationParams{
+	if _, err := q.MarkContentActionSiteFixVerified(ctx, db.MarkContentActionSiteFixVerifiedParams{
 		ID:                   app.ContentActionID,
 		ProjectID:            p.ID,
-		Status:               "measuring",
 		VerifiedAt:           pgutil.TS(now),
 		VerificationSnapshot: snapRaw,
+		PublisherResult:      siteFixVerifiedPublisherResult(app, source, now),
 	}); err != nil {
 		return err
 	}
 	s.Log.Info("site fix verified", "project", p.ID, "application", app.ID, "source", source, "target_url", app.TargetUrl)
 	return nil
+}
+
+func siteFixVerifiedPublisherResult(app db.SiteChangeApplication, source string, verifiedAt time.Time) json.RawMessage {
+	return json.RawMessage(mustJSON(map[string]any{
+		"mode":                       "github_pr",
+		"status":                     "verified",
+		"site_change_application_id": app.ID,
+		"github_pr_number":           app.GithubPrNumber,
+		"github_pr_url":              app.GithubPrUrl,
+		"github_pr_state":            "merged",
+		"repo":                       app.RepoFullName,
+		"base_branch":                app.BaseBranch,
+		"target_url":                 app.TargetUrl,
+		"verification_source":        source,
+		"verified_at":                verifiedAt.UTC().Format(time.RFC3339),
+	}))
 }

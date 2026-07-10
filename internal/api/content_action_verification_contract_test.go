@@ -35,6 +35,7 @@ func TestContentActionVerificationEndpointPersistsSnapshot(t *testing.T) {
 	combined := string(handler) + string(server) + string(query) + migrations
 	for _, want := range []string{
 		"MarkContentActionVerification",
+		"MarkContentActionSiteFixVerified",
 		"/actions/{actionID}/verify",
 		"/actions/{actionID}/dismiss",
 		"verifySEOContentAction",
@@ -44,6 +45,8 @@ func TestContentActionVerificationEndpointPersistsSnapshot(t *testing.T) {
 		"recovery_required",
 		"verified_at",
 		"verification_snapshot",
+		"status = 'measuring'",
+		"jsonb_build_object('publisher_result'",
 		"VerificationSnapshot",
 		"'verification_failed','recovery_required','dismissed'",
 	} {

@@ -25,6 +25,8 @@ import {
   siteFixAIJSON,
   siteFixAlreadyMatchesSource,
   siteFixGitHubPRURL,
+  siteFixPRLinkLabel,
+  siteFixVerificationLabel,
   toneForStatus,
 } from "../../../lib/site-fix";
 
@@ -233,6 +235,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
 
   function renderCard(action: SiteFixAction) {
     const stage = deriveVisibilityLifecycleStage(action);
+    const verificationLabel = siteFixVerificationLabel(action);
     return (
       <button
         key={action.id}
@@ -256,6 +259,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
               <Badge tone={action.review_required === false ? "neutral" : "amber"}>
                 {action.review_required === false ? "Review optional" : "Review required"}
               </Badge>
+              {verificationLabel && <Badge tone="green">{verificationLabel}</Badge>}
             </div>
             <h3 className="mt-2 truncate text-base font-bold leading-6 text-slate-950">
               {action.action_type.includes("_") ? humanizeInternalType(action.action_type) : action.action_type}
@@ -283,6 +287,8 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
 
   const drawerAction = selected;
   const prURL = drawerAction ? siteFixGitHubPRURL(drawerAction) : "";
+  const prLabel = drawerAction ? siteFixPRLinkLabel(drawerAction) : "Open PR";
+  const verificationLabel = drawerAction ? siteFixVerificationLabel(drawerAction) : "";
   const sourceAlreadyMatches = drawerAction ? siteFixAlreadyMatchesSource(drawerAction) : false;
 
   return (
@@ -372,6 +378,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
               <Badge tone={drawerAction.review_required === false ? "neutral" : "amber"}>
                 {drawerAction.review_required === false ? "Review optional" : "Review required"}
               </Badge>
+              {verificationLabel && <Badge tone="green">{verificationLabel}</Badge>}
             </>
           ) : undefined
         }
@@ -387,7 +394,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
                     onClick={() => window.open(prURL, "_blank", "noopener,noreferrer")}
                   >
                     <FileText className="shrink-0" size={14} />
-                    Open PR
+                    {prLabel}
                   </Button>
                 ) : sourceAlreadyMatches ? (
                   <Button size="sm" variant="ai" className="min-w-[9.5rem] shrink-0 whitespace-nowrap px-4 sm:w-auto" disabled>
@@ -418,11 +425,13 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
                   Copy fix JSON
                 </Button>
               )}
-              <Button size="sm" onClick={() => void verifyApplied(drawerAction)} disabled={!!busy}>
-                <ButtonProgress busy={busy === `verify-${drawerAction.id}`} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
-                  Mark applied
-                </ButtonProgress>
-              </Button>
+              {!drawerAction.verified_at && (
+                <Button size="sm" onClick={() => void verifyApplied(drawerAction)} disabled={!!busy}>
+                  <ButtonProgress busy={busy === `verify-${drawerAction.id}`} busyLabel="Marking applied" idleIcon={<CheckCircle2 size={14} />}>
+                    Mark applied
+                  </ButtonProgress>
+                </Button>
+              )}
               <Button size="sm" variant="ghost" onClick={() => void dismissSiteFix(drawerAction)} disabled={!!busy}>
                 <ButtonProgress busy={busy === `dismiss-${drawerAction.id}`} busyLabel="Dismissing" idleIcon={null}>
                   Dismiss
@@ -511,7 +520,7 @@ export function SiteFixesClient({ projectId }: { projectId: string }) {
                 <div>
                   <div className="text-xs font-semibold uppercase text-slate-400">Verification</div>
                   <div className="mt-1 font-medium text-slate-700">
-                    {drawerAction.verified_at ? "Verified" : hasActionVerificationSnapshot(drawerAction) ? "Needs check" : "Not started"}
+                    {verificationLabel || (hasActionVerificationSnapshot(drawerAction) ? "Needs check" : "Not started")}
                   </div>
                 </div>
                 <div>

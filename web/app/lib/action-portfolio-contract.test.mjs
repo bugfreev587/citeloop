@@ -112,6 +112,17 @@ test("Merged and closed site fix PRs surface in the after-execution status", () 
   assert.match(lib, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
 });
 
+test("Verified site fixes expose automatic verification and accurate PR actions", () => {
+  const lib = read("lib/site-fix.ts");
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  for (const snippet of ["siteFixVerificationLabel", "Verified automatically", "siteFixPRLinkLabel", "View merged PR"]) {
+    assert.match(lib, new RegExp(snippet));
+  }
+  assert.match(siteFixes, /siteFixVerificationLabel/);
+  assert.match(siteFixes, /siteFixPRLinkLabel/);
+  assert.match(siteFixes, /!drawerAction\.verified_at/);
+});
+
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   assert.match(settings, /"sitefix\.pr\.awaiting_merge": "Site fix PR awaiting merge"/);

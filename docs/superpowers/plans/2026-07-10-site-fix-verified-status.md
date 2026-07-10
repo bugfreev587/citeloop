@@ -18,7 +18,7 @@
 - Modify: `internal/db/seo.sql.go`
 - Modify: `internal/db/querier.go`
 - Modify: `internal/scheduler/sitefix_verify.go`
-- Test: `internal/db/content_action_verification_contract_test.go`
+- Test: `internal/api/content_action_verification_contract_test.go`
 
 - [ ] **Step 1: Write failing scheduler and SQL contract tests**
 
@@ -142,7 +142,7 @@ Expected: PASS.
 Run:
 
 ```bash
-gofmt -w internal/scheduler/sitefix_verify.go internal/scheduler/sitefix_verify_test.go internal/db/content_action_verification_contract_test.go
+gofmt -w internal/scheduler/sitefix_verify.go internal/scheduler/sitefix_verify_test.go internal/api/content_action_verification_contract_test.go
 go test ./internal/scheduler ./internal/db
 cd web && node --test app/lib/action-portfolio-contract.test.mjs
 ```

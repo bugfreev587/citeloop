@@ -199,6 +199,7 @@ type Querier interface {
 	// approved article stranded in the Publish "Ready to post" queue.
 	MarkContentActionReturnedToOpportunity(ctx context.Context, arg MarkContentActionReturnedToOpportunityParams) (MarkContentActionReturnedToOpportunityRow, error)
 	MarkContentActionSiteFixPRResult(ctx context.Context, arg MarkContentActionSiteFixPRResultParams) (ContentAction, error)
+	MarkContentActionSiteFixVerified(ctx context.Context, arg MarkContentActionSiteFixVerifiedParams) (ContentAction, error)
 	MarkContentActionVerification(ctx context.Context, arg MarkContentActionVerificationParams) (ContentAction, error)
 	MarkDistributed(ctx context.Context, id uuid.UUID) (Article, error)
 	MarkDistributedForProject(ctx context.Context, arg MarkDistributedForProjectParams) (Article, error)
