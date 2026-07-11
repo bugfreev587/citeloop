@@ -252,6 +252,50 @@ func TestLatestTechnicalCheckCrawlCompletenessControlsResolutionAndHealth(t *tes
 	}
 }
 
+func TestDoctorResolutionScopesRequireConclusiveSourceEvidence(t *testing.T) {
+	present := "present"
+	missing := "missing"
+	unknown := "unknown"
+	checks := []db.TechnicalCheck{
+		{NormalizedPageUrl: "https://example.com/sitemap-present", SitemapStatus: &present},
+		{NormalizedPageUrl: "https://example.com/sitemap-missing", SitemapStatus: &missing},
+		{NormalizedPageUrl: "https://example.com/sitemap-unknown", SitemapStatus: &unknown},
+		{NormalizedPageUrl: "https://example.com/sitemap-partial", SitemapStatus: &missing, RawDetails: json.RawMessage(`{"crawl_status":"partial"}`)},
+	}
+	snapshots := []db.AiCrawlerAccessSnapshot{
+		{NormalizedPageUrl: "https://example.com/geo-allowed", EvidenceType: "robots_static", Confidence: "high", RobotsState: "allowed"},
+		{NormalizedPageUrl: "https://example.com/geo-disallowed", EvidenceType: "robots_static", Confidence: "high", RobotsState: "disallowed"},
+		{NormalizedPageUrl: "https://example.com/geo-low", EvidenceType: "robots_static", Confidence: "medium", RobotsState: "allowed"},
+		{NormalizedPageUrl: "https://example.com/geo-probe", EvidenceType: "honest_probe", Confidence: "high", RobotsState: "allowed"},
+	}
+
+	sitemapURLs, geoURLs := doctorAssessedResolutionURLs(checks, snapshots, false)
+	if got, want := strings.Join(sitemapURLs, ","), "https://example.com/sitemap-missing,https://example.com/sitemap-present"; got != want {
+		t.Fatalf("assessed sitemap URLs = %q, want %q", got, want)
+	}
+	if len(geoURLs) != 0 {
+		t.Fatalf("non-ok GEO run assessed URLs = %#v, want none", geoURLs)
+	}
+	_, geoURLs = doctorAssessedResolutionURLs(checks, snapshots, true)
+	if got, want := strings.Join(geoURLs, ","), "https://example.com/geo-allowed,https://example.com/geo-disallowed"; got != want {
+		t.Fatalf("assessed GEO URLs = %q, want %q", got, want)
+	}
+}
+
+func TestDoctorCoverageMarksMissingOrFailedGEOAuditSkipped(t *testing.T) {
+	coverage := appendGEOAuditCompletenessCoverage(nil, false)
+	geoCoverage, ok := coverageByCheck(coverage)["geo_crawler_access"]
+	if !ok {
+		t.Fatal("missing GEO audit must still emit GEO coverage")
+	}
+	if len(geoCoverage.SkippedURLs) == 0 {
+		t.Fatalf("GEO coverage = %#v, want skipped marker", geoCoverage)
+	}
+	if doctorCoverageComplete(coverage) {
+		t.Fatal("missing or failed latest GEO audit must not report complete healthy coverage")
+	}
+}
+
 func fullyCheckedDoctorPage(url string, status *int32, present *string, links *int32, details map[string]any) db.TechnicalCheck {
 	raw, _ := json.Marshal(details)
 	return db.TechnicalCheck{PageUrl: url, NormalizedPageUrl: url, HttpStatus: status, CanonicalStatus: present, RobotsStatus: present, TitleStatus: present, MetaDescriptionStatus: present, H1Status: present, StructuredDataStatus: present, SitemapStatus: present, InternalLinkCount: links, RawDetails: raw}

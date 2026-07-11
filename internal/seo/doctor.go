@@ -233,9 +233,18 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 			return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawl results.", err)
 		}
 	}
-	crawlerAccess, err := s.Q.ListLatestAICrawlerAccessSnapshots(ctx, run.ProjectID)
-	if err != nil {
-		return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawler-access evidence.", err)
+	crawlerAccess := []db.AiCrawlerAccessSnapshot{}
+	geoRunComplete := false
+	geoRun, err := s.Q.GetLatestGEOCrawlerAuditRun(ctx, run.ProjectID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawler-access audit state.", err)
+	}
+	if err == nil {
+		crawlerAccess, err = s.Q.ListAICrawlerAccessSnapshotsForRun(ctx, db.ListAICrawlerAccessSnapshotsForRunParams{ProjectID: run.ProjectID, RunID: geoRun.ID})
+		if err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawler-access evidence.", err)
+		}
+		geoRunComplete = strings.EqualFold(geoRun.Status, "ok")
 	}
 
 	pages := int32(len(checks))
@@ -294,11 +303,14 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		seenKeys = append(seenKeys, finding.FindingKey)
 	}
 	if crawlComplete {
+		assessedSitemapURLs, assessedGeoURLs := doctorAssessedResolutionURLs(checks, crawlerAccess, geoRunComplete)
 		if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
-			ProjectID:  run.ProjectID,
-			RunID:      run.ID,
-			ResolvedAt: now,
-			ActiveKeys: seenKeys,
+			ProjectID:           run.ProjectID,
+			RunID:               run.ID,
+			ResolvedAt:          now,
+			ActiveKeys:          seenKeys,
+			AssessedSitemapUrls: assessedSitemapURLs,
+			AssessedGeoUrls:     assessedGeoURLs,
 		}); err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
 		}
@@ -309,7 +321,8 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	issuesFound := int32(nonInfoIssueCount(candidates))
 	human := buildDoctorHumanReport(score, candidates, len(checks))
 	human.Status = doctorDisplayStatus(score, candidates)
-	coverage := appendCrawlCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), crawlComplete)
+	coverage := appendGEOAuditCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), geoRunComplete)
+	coverage = appendCrawlCompletenessCoverage(coverage, crawlComplete)
 	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
 		human.Status = "needs_attention"
 	}
@@ -335,6 +348,33 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 	return s.DoctorReport(ctx, run.ProjectID, run.ID)
+}
+
+func doctorAssessedResolutionURLs(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
+	sitemapURLs := []string{}
+	for _, check := range checks {
+		crawlState := strings.ToLower(normalizedEvidenceText(jsonObject(check.RawDetails)["crawl_status"]))
+		if crawlState == "partial" || crawlState == "unchecked" || crawlState == "skipped" {
+			continue
+		}
+		status := statusValue(check.SitemapStatus)
+		if status != "present" && status != "missing" {
+			continue
+		}
+		sitemapURLs = append(sitemapURLs, firstNonEmpty(check.NormalizedPageUrl, check.PageUrl))
+	}
+	geoURLs := []string{}
+	if !geoRunComplete {
+		return sortedUniqueStrings(sitemapURLs), geoURLs
+	}
+	for _, snapshot := range snapshots {
+		state := strings.ToLower(strings.TrimSpace(snapshot.RobotsState))
+		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.Confidence, "high") || (state != "allowed" && state != "disallowed") {
+			continue
+		}
+		geoURLs = append(geoURLs, firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl))
+	}
+	return sortedUniqueStrings(sitemapURLs), sortedUniqueStrings(geoURLs)
 }
 
 func (s Service) loadNewestTechnicalChecks(ctx context.Context, projectID uuid.UUID) ([]db.TechnicalCheck, bool, error) {
@@ -384,6 +424,30 @@ func appendCrawlCompletenessCoverage(coverage []doctorCheckCoverage, complete bo
 		PassedURLs:  []string{},
 		FailedURLs:  []string{},
 		SkippedURLs: []string{"latest_crawl_incomplete_or_bounded"},
+	})
+}
+
+func appendGEOAuditCompletenessCoverage(coverage []doctorCheckCoverage, complete bool) []doctorCheckCoverage {
+	for i := range coverage {
+		if coverage[i].Check != "geo_crawler_access" {
+			continue
+		}
+		if !complete {
+			coverage[i].SkippedURLs = append(coverage[i].SkippedURLs, "latest_geo_crawler_audit_incomplete_or_missing")
+			normalizeDoctorCoverage(&coverage[i])
+		}
+		return coverage
+	}
+	marker := "latest_geo_crawler_audit_has_no_evidence"
+	if !complete {
+		marker = "latest_geo_crawler_audit_incomplete_or_missing"
+	}
+	return append(coverage, doctorCheckCoverage{
+		Check:       "geo_crawler_access",
+		CheckedURLs: []string{},
+		PassedURLs:  []string{},
+		FailedURLs:  []string{},
+		SkippedURLs: []string{marker},
 	})
 }
 

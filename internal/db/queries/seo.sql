@@ -420,7 +420,24 @@ update seo_doctor_findings set
 where project_id = sqlc.arg(project_id)
   and status = 'active'
   and run_id <> sqlc.arg(run_id)
-  and not (finding_key = any(sqlc.arg(active_keys)::text[]));
+  and not (finding_key = any(sqlc.arg(active_keys)::text[]))
+  and (
+    issue_type not in ('important_page_missing_from_sitemap', 'geo_crawler_access_blocked')
+    or (
+      issue_type = 'important_page_missing_from_sitemap'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value = any(sqlc.arg(assessed_sitemap_urls)::text[])
+      )
+    )
+    or (
+      issue_type = 'geo_crawler_access_blocked'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value = any(sqlc.arg(assessed_geo_urls)::text[])
+      )
+    )
+  );
 
 -- name: ListSEODoctorFindingsForRun :many
 select * from seo_doctor_findings

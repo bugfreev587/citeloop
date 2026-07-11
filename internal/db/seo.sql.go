@@ -4419,13 +4419,32 @@ where project_id = $2
   and status = 'active'
   and run_id <> $3
   and not (finding_key = any($4::text[]))
+  and (
+    issue_type not in ('important_page_missing_from_sitemap', 'geo_crawler_access_blocked')
+    or (
+      issue_type = 'important_page_missing_from_sitemap'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value = any($5::text[])
+      )
+    )
+    or (
+      issue_type = 'geo_crawler_access_blocked'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value = any($6::text[])
+      )
+    )
+  )
 `
 
 type ResolveMissingSEODoctorFindingsParams struct {
-	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
-	ProjectID  uuid.UUID          `json:"project_id"`
-	RunID      uuid.UUID          `json:"run_id"`
-	ActiveKeys []string           `json:"active_keys"`
+	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	RunID               uuid.UUID          `json:"run_id"`
+	ActiveKeys          []string           `json:"active_keys"`
+	AssessedSitemapUrls []string           `json:"assessed_sitemap_urls"`
+	AssessedGeoUrls     []string           `json:"assessed_geo_urls"`
 }
 
 func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error {
@@ -4434,6 +4453,8 @@ func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg Resol
 		arg.ProjectID,
 		arg.RunID,
 		arg.ActiveKeys,
+		arg.AssessedSitemapUrls,
+		arg.AssessedGeoUrls,
 	)
 	return err
 }

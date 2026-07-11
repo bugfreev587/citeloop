@@ -115,23 +115,21 @@ type TechnicalResult struct {
 }
 
 type sitemapInventory struct {
-	URLs      map[string]struct{}
-	Complete  bool
-	Documents int
-	Bytes     int
+	URLs          map[string]struct{}
+	Complete      bool
+	Documents     int
+	Bytes         int
+	SiteURL       string
+	Normalization URLNormalizationConfig
 }
 
 func (s sitemapInventory) Contains(rawURL string) bool {
-	_, ok := s.URLs[rawURL]
-	if ok {
-		return true
+	normalized, err := NormalizeURL(rawURL, s.SiteURL, s.Normalization)
+	if err != nil {
+		return false
 	}
-	for value := range s.URLs {
-		if normalized, err := NormalizeURL(rawURL, value, URLNormalizationConfig{}); err == nil && normalized == value {
-			return true
-		}
-	}
-	return false
+	_, ok := s.URLs[normalized]
+	return ok
 }
 
 func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, error) {
@@ -269,7 +267,8 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	if client == nil {
 		client = http.DefaultClient
 	}
-	sitemap := loadSitemapInventory(ctx, client, prop.SiteUrl)
+	normalization := decodeNormalizationConfig(prop.UrlNormalizationConfig)
+	sitemap := loadSitemapInventory(ctx, client, prop.SiteUrl, normalization)
 	for _, article := range articles {
 		if article.CanonicalUrl == nil || strings.TrimSpace(*article.CanonicalUrl) == "" {
 			continue
@@ -1279,7 +1278,7 @@ func (s Service) recordTechnicalCheck(
 }
 
 func technicalCheckParams(projectID, runID uuid.UUID, rawURL, normalized string, articleID pgtype.UUID, contentHash *string, unsafeMDX bool, check TechnicalResult) db.UpsertTechnicalCheckParams {
-	return db.UpsertTechnicalCheckParams{
+	params := db.UpsertTechnicalCheckParams{
 		ProjectID:             projectID,
 		RunID:                 runID,
 		PageUrl:               rawURL,
@@ -1293,12 +1292,15 @@ func technicalCheckParams(projectID, runID uuid.UUID, rawURL, normalized string,
 		H1Status:              strPtr(check.H1Status),
 		StructuredDataStatus:  strPtr(check.StructuredDataStatus),
 		SitemapStatus:         strPtr(check.SitemapStatus),
-		InternalLinkCount:     &check.InternalLinkCount,
-		OutboundLinkCount:     &check.OutboundLinkCount,
 		ContentHash:           contentHash,
 		UnsafeMdxDetected:     unsafeMDX,
 		RawDetails:            mustJSON(check.RawDetails),
 	}
+	if crawlState := strings.ToLower(normalizedEvidenceText(check.RawDetails["crawl_status"])); crawlState != "partial" && crawlState != "unchecked" && crawlState != "skipped" {
+		params.InternalLinkCount = &check.InternalLinkCount
+		params.OutboundLinkCount = &check.OutboundLinkCount
+	}
+	return params
 }
 
 func (s Service) ensureProperty(ctx context.Context, projectID uuid.UUID, siteURL string) (db.SeoProperty, error) {
@@ -1329,7 +1331,7 @@ func (s Service) checkURL(ctx context.Context, rawURL, siteURL string) Technical
 	if client == nil {
 		client = http.DefaultClient
 	}
-	inventory := loadSitemapInventory(ctx, client, siteURL)
+	inventory := loadSitemapInventory(ctx, client, siteURL, URLNormalizationConfig{})
 	return s.checkURLWithSitemap(ctx, rawURL, siteURL, URLNormalizationConfig{}, &inventory)
 }
 
@@ -1356,15 +1358,41 @@ func (s Service) checkURLWithSitemap(ctx context.Context, rawURL, siteURL string
 	if bodyTruncated {
 		body = body[:1<<20]
 	}
+	bodyPartial := bodyTruncated || readErr != nil
 	htmlStr := string(body)
 	htmlLower := strings.ToLower(htmlStr)
-	canonicalState, canonicalURLs := classifyCanonical(htmlStr, rawURL, res.Request.URL.String(), normalization)
+	canonicalState := "unknown"
+	canonicalURLs := []string{}
+	robotsState := "unknown"
+	titleState := "unknown"
+	metaDescriptionState := "unknown"
+	h1State := "unknown"
+	structuredDataState := "unknown"
+	internalLinkCount := int32(0)
+	outboundLinkCount := int32(0)
+	if !bodyPartial {
+		canonicalState, canonicalURLs = classifyCanonical(htmlStr, rawURL, res.Request.URL.String(), normalization)
+		robotsState = robotsStatus(htmlLower, res.Header.Values("X-Robots-Tag")...)
+		titleState = presenceStatus(htmlLower, `<title`)
+		metaDescriptionState = presenceStatus(htmlLower, `name=["']description["']`)
+		h1State = presenceStatus(htmlLower, `<h1`)
+		structuredDataState = presenceStatus(htmlLower, `application/ld\+json`)
+		internalLinkCount = countLinks(htmlLower, siteURL, true)
+		outboundLinkCount = countLinks(htmlLower, siteURL, false)
+	} else {
+		for _, header := range res.Header.Values("X-Robots-Tag") {
+			if xRobotsNoindex(header) {
+				robotsState = "noindex"
+				break
+			}
+		}
+	}
 	rawDetails := map[string]any{
 		"status":     res.Status,
 		"final_url":  res.Request.URL.String(),
 		"body_bytes": len(body),
 	}
-	if bodyTruncated || readErr != nil {
+	if bodyPartial {
 		rawDetails["crawl_status"] = "partial"
 	}
 	if bodyTruncated {
@@ -1373,8 +1401,10 @@ func (s Service) checkURLWithSitemap(ctx context.Context, rawURL, siteURL string
 	if readErr != nil {
 		rawDetails["error"] = "read response body: " + readErr.Error()
 	}
-	for key, value := range extractRepairMetadataFacts(htmlStr, res.Request.URL) {
-		rawDetails[key] = value
+	if !bodyPartial {
+		for key, value := range extractRepairMetadataFacts(htmlStr, res.Request.URL) {
+			rawDetails[key] = value
+		}
 	}
 	rawDetails["canonical_urls"] = canonicalURLs
 	rawDetails["requested_url"] = rawURL
@@ -1390,14 +1420,14 @@ func (s Service) checkURLWithSitemap(ctx context.Context, rawURL, siteURL string
 	return TechnicalResult{
 		HTTPStatus:            &status,
 		CanonicalStatus:       canonicalState,
-		RobotsStatus:          robotsStatus(htmlLower, res.Header.Values("X-Robots-Tag")...),
-		TitleStatus:           presenceStatus(htmlLower, `<title`),
-		MetaDescriptionStatus: presenceStatus(htmlLower, `name=["']description["']`),
-		H1Status:              presenceStatus(htmlLower, `<h1`),
-		StructuredDataStatus:  presenceStatus(htmlLower, `application/ld\+json`),
+		RobotsStatus:          robotsState,
+		TitleStatus:           titleState,
+		MetaDescriptionStatus: metaDescriptionState,
+		H1Status:              h1State,
+		StructuredDataStatus:  structuredDataState,
 		SitemapStatus:         sitemapState,
-		InternalLinkCount:     countLinks(htmlLower, siteURL, true),
-		OutboundLinkCount:     countLinks(htmlLower, siteURL, false),
+		InternalLinkCount:     internalLinkCount,
+		OutboundLinkCount:     outboundLinkCount,
 		RawDetails:            rawDetails,
 	}
 }
@@ -1799,7 +1829,7 @@ func classifyCanonical(htmlText, requestedURL, finalURL string, normalization UR
 }
 
 func checkSitemapStatus(ctx context.Context, client *http.Client, siteURL, pageURL string) string {
-	inventory := loadSitemapInventory(ctx, client, siteURL)
+	inventory := loadSitemapInventory(ctx, client, siteURL, URLNormalizationConfig{})
 	if !inventory.Complete {
 		return "unknown"
 	}
@@ -1809,9 +1839,9 @@ func checkSitemapStatus(ctx context.Context, client *http.Client, siteURL, pageU
 	return "missing"
 }
 
-func loadSitemapInventory(ctx context.Context, client *http.Client, siteURL string) sitemapInventory {
+func loadSitemapInventory(ctx context.Context, client *http.Client, siteURL string, normalization URLNormalizationConfig) sitemapInventory {
 	const maxDocuments, maxDepth, maxTotalBytes = 32, 2, 4 << 20
-	out := sitemapInventory{URLs: map[string]struct{}{}, Complete: true}
+	out := sitemapInventory{URLs: map[string]struct{}{}, Complete: true, SiteURL: siteURL, Normalization: normalization}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -1927,7 +1957,7 @@ func loadSitemapInventory(ctx context.Context, client *http.Client, siteURL stri
 			}
 		} else if root == "urlset" {
 			for _, loc := range locs {
-				if normalized, e := NormalizeURL(loc, siteURL, URLNormalizationConfig{}); e == nil {
+				if normalized, e := NormalizeURL(loc, siteURL, normalization); e == nil {
 					out.URLs[normalized] = struct{}{}
 				}
 			}

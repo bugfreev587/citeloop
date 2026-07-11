@@ -481,6 +481,32 @@ func (q *Queries) GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromp
 	return i, err
 }
 
+const getLatestGEOCrawlerAuditRun = `-- name: GetLatestGEOCrawlerAuditRun :one
+select id, project_id, agent, status, provider, started_at, finished_at, input, output, error, cost_usd from geo_runs
+where project_id = $1 and agent = 'geo_crawler_audit'
+order by started_at desc, id desc
+limit 1
+`
+
+func (q *Queries) GetLatestGEOCrawlerAuditRun(ctx context.Context, projectID uuid.UUID) (GeoRun, error) {
+	row := q.db.QueryRow(ctx, getLatestGEOCrawlerAuditRun, projectID)
+	var i GeoRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Agent,
+		&i.Status,
+		&i.Provider,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Input,
+		&i.Output,
+		&i.Error,
+		&i.CostUsd,
+	)
+	return i, err
+}
+
 const getLatestGEOVisibilityScore = `-- name: GetLatestGEOVisibilityScore :one
 select id, project_id, run_id, score, coverage, confidence, breakdown, prompt_count_total, prompt_count_observed, engine_count_observed, computed_at from geo_visibility_scores
 where project_id = $1
@@ -505,6 +531,56 @@ func (q *Queries) GetLatestGEOVisibilityScore(ctx context.Context, projectID uui
 		&i.ComputedAt,
 	)
 	return i, err
+}
+
+const listAICrawlerAccessSnapshotsForRun = `-- name: ListAICrawlerAccessSnapshotsForRun :many
+select id, project_id, run_id, page_url, normalized_page_url, target_user_agent, probe_user_agent, evidence_type, robots_state, http_status, access_state, confidence, inferred, meta_robots_state, sitemap_state, body_extractable, raw_details, checked_at from ai_crawler_access_snapshots
+where project_id = $1 and run_id = $2
+order by normalized_page_url asc, target_user_agent asc, evidence_type asc
+`
+
+type ListAICrawlerAccessSnapshotsForRunParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	RunID     uuid.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListAICrawlerAccessSnapshotsForRun(ctx context.Context, arg ListAICrawlerAccessSnapshotsForRunParams) ([]AiCrawlerAccessSnapshot, error) {
+	rows, err := q.db.Query(ctx, listAICrawlerAccessSnapshotsForRun, arg.ProjectID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AiCrawlerAccessSnapshot
+	for rows.Next() {
+		var i AiCrawlerAccessSnapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.TargetUserAgent,
+			&i.ProbeUserAgent,
+			&i.EvidenceType,
+			&i.RobotsState,
+			&i.HttpStatus,
+			&i.AccessState,
+			&i.Confidence,
+			&i.Inferred,
+			&i.MetaRobotsState,
+			&i.SitemapState,
+			&i.BodyExtractable,
+			&i.RawDetails,
+			&i.CheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listActiveGEOPrompts = `-- name: ListActiveGEOPrompts :many

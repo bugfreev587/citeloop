@@ -12,6 +12,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProviderCanAttemptAfterRecoverableStatus(t *testing.T) {
@@ -214,18 +215,38 @@ func TestCheckURLValidatesCanonicalAgainstRedirectFinalURL(t *testing.T) {
 }
 
 func TestCheckURLMarksTruncatedBodyAsPartial(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sitemap.xml" {
-			_, _ = w.Write([]byte(`<urlset></urlset>`))
+			_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/large</loc></url></urlset>`))
 			return
 		}
-		_, _ = w.Write([]byte(`<html><head><title>Large page</title></head><body>` + strings.Repeat("x", (1<<20)+1) + `</body></html>`))
+		_, _ = w.Write([]byte(`<html><head>` + strings.Repeat("x", (1<<20)+1) + `<title>Large page</title><link rel="canonical" href="` + server.URL + `/large"><meta name="description" content="after cutoff"><meta name="robots" content="noindex"><script type="application/ld+json">{}</script></head><body><h1>After cutoff</h1><a href="/inside">Inside</a></body></html>`))
 	}))
 	defer server.Close()
 
 	result := (Service{HTTPClient: server.Client()}).checkURL(context.Background(), server.URL+"/large", server.URL)
 	if got := result.RawDetails["crawl_status"]; got != "partial" {
 		t.Fatalf("crawl_status = %#v, want partial", got)
+	}
+	for name, status := range map[string]string{
+		"canonical":        result.CanonicalStatus,
+		"robots":           result.RobotsStatus,
+		"title":            result.TitleStatus,
+		"meta_description": result.MetaDescriptionStatus,
+		"h1":               result.H1Status,
+		"structured_data":  result.StructuredDataStatus,
+	} {
+		if status != "unknown" {
+			t.Fatalf("%s status = %q, want unknown for partial body", name, status)
+		}
+	}
+	params := technicalCheckParams(uuid.New(), uuid.New(), server.URL+"/large", server.URL+"/large", pgtype.UUID{}, nil, false, result)
+	if params.InternalLinkCount != nil || params.OutboundLinkCount != nil {
+		t.Fatalf("partial body link counts must be nil: internal=%v outbound=%v", params.InternalLinkCount, params.OutboundLinkCount)
+	}
+	if findings := doctorFindingCandidatesFromChecks(uuid.New(), []db.TechnicalCheck{technicalCheckFromParams(params)}); len(findings) != 0 {
+		t.Fatalf("partial body produced repair candidates: %#v", findings)
 	}
 }
 
@@ -244,7 +265,7 @@ func TestSitemapInventoryTraversesIndexOnceAndReusesExactLocations(t *testing.T)
 		}
 	}))
 	defer server.Close()
-	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL)
+	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL, URLNormalizationConfig{})
 	for _, page := range []string{server.URL + "/a", server.URL + "/b"} {
 		_ = (Service{HTTPClient: server.Client()}).checkURLWithSitemap(context.Background(), page, server.URL, URLNormalizationConfig{}, &inv)
 	}
@@ -273,7 +294,7 @@ func TestSitemapInventoryStopsAtDocumentBound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL)
+	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL, URLNormalizationConfig{})
 	if inv.Complete {
 		t.Fatal("bounded sitemap inventory must be marked incomplete")
 	}
@@ -295,7 +316,7 @@ func TestSitemapInventoryRejectsCrossOriginRedirects(t *testing.T) {
 	}))
 	defer property.Close()
 
-	inv := loadSitemapInventory(context.Background(), property.Client(), property.URL)
+	inv := loadSitemapInventory(context.Background(), property.Client(), property.URL, URLNormalizationConfig{})
 	if inv.Complete {
 		t.Fatal("cross-origin sitemap redirect must make inventory incomplete")
 	}
@@ -304,6 +325,41 @@ func TestSitemapInventoryRejectsCrossOriginRedirects(t *testing.T) {
 	}
 	if len(inv.URLs) != 0 {
 		t.Fatalf("cross-origin sitemap URLs were accepted: %#v", inv.URLs)
+	}
+}
+
+func TestSitemapInventoryUsesPropertyNormalizationConfig(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/Product?id=1&amp;drop=source</loc></url></urlset>`))
+	}))
+	defer server.Close()
+
+	configured := loadSitemapInventory(context.Background(), server.Client(), server.URL, URLNormalizationConfig{
+		KeepQueryKeys: []string{"id"},
+		LowercasePath: true,
+		PreserveHTTP:  true,
+	})
+	if !configured.Contains(server.URL + "/PRODUCT?id=1&drop=request") {
+		t.Fatal("configured inventory did not apply KeepQueryKeys and LowercasePath")
+	}
+	if configured.Contains(server.URL + "/product?id=2") {
+		t.Fatal("configured inventory collapsed distinct kept query values")
+	}
+	httpsURL := "https://" + strings.TrimPrefix(server.URL, "http://") + "/product?id=1"
+	if configured.Contains(httpsURL) {
+		t.Fatal("configured inventory ignored PreserveHTTP")
+	}
+
+	defaults := loadSitemapInventory(context.Background(), server.Client(), server.URL, URLNormalizationConfig{})
+	if !defaults.Contains(server.URL + "/Product?id=2") {
+		t.Fatal("default inventory should drop unconfigured query keys")
+	}
+	if defaults.Contains(server.URL + "/PRODUCT?id=2") {
+		t.Fatal("default inventory should preserve path case")
+	}
+	if !defaults.Contains("https://" + strings.TrimPrefix(server.URL, "http://") + "/Product?id=2") {
+		t.Fatal("default inventory should normalize same-host HTTP to HTTPS")
 	}
 }
 
