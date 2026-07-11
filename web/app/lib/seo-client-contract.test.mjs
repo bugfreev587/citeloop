@@ -119,12 +119,15 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
     "Next finding",
     "Manual mode",
     "Run finding",
-    "Signal Scan",
-    "AI Discovery",
+    "Evidence + AI",
+    "Evidence only",
+    "AI only",
     "summary.slice(0, 5)",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
+  assert.equal(source.includes("Signal Scan"), false, "legacy source modes must not remain user-facing");
+  assert.equal(source.includes("AI Discovery"), false, "legacy source modes must not remain user-facing");
 
   assert.notEqual(panelStart, -1, "seo-client.tsx missing OpportunityFindingStatusPanel");
   assert.notEqual(panelEnd, -1, "seo-client.tsx missing OpportunityFindingStatusPanel boundary");
