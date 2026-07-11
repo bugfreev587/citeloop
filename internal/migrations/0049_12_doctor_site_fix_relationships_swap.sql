@@ -19,6 +19,8 @@ alter table site_fix_verifications
   drop constraint if exists site_fix_verifications_site_fix_id_fkey;
 alter table site_change_applications
   drop constraint if exists site_change_applications_site_fix_id_fkey;
+alter table rollback_records
+  drop constraint if exists rollback_records_site_fix_id_fkey;
 
 alter table migration_ledger
   drop constraint if exists migration_ledger_migration_batch_id_fkey;

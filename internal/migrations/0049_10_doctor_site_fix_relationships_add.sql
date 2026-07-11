@@ -134,7 +134,23 @@ begin
       add constraint site_change_applications_site_fix_project_fk
       foreign key (project_id, site_fix_id)
       references site_fixes(project_id, id)
-      on delete cascade not valid;
+      on delete no action deferrable initially deferred not valid;
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'rollback_records_site_fix_project_fk'
+      and conrelid = 'rollback_records'::regclass
+  ) then
+    alter table rollback_records
+      add constraint rollback_records_site_fix_project_fk
+      foreign key (project_id, site_fix_id)
+      references site_fixes(project_id, id)
+      on delete no action deferrable initially deferred not valid;
   end if;
 end;
 $$;

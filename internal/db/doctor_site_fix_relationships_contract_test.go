@@ -77,6 +77,7 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			"site_fixes_work_signature_project_fk",
 			"site_fix_verifications_site_fix_project_fk",
 			"site_change_applications_site_fix_project_fk",
+			"rollback_records_site_fix_project_fk",
 			"site_fixes_supersedes_project_fk",
 			"site_fixes_migration_batch_project_fk",
 			"migration_ledger_batch_project_fk",
@@ -104,6 +105,7 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			"references migration_ledger(project_id, migration_batch_id, id)",
 			"foreign key (project_id, candidate_id, supersedes_site_fix_id)",
 			"references site_fixes(project_id, candidate_id, id)",
+			"foreign key (project_id, site_fix_id)",
 		)
 		for _, constraint := range []string{
 			"site_fixes_doctor_finding_project_fk",
@@ -115,6 +117,17 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 				t.Errorf("%s must preserve provenance while deferring project erasure checks", constraint)
 			}
 		}
+		for _, relationship := range []string{
+			"site_change_applications_site_fix_project_fk",
+			"rollback_records_site_fix_project_fk",
+		} {
+			pattern := regexp.MustCompile(`(?s)constraint ` + relationship + `\s+foreign key \(project_id, site_fix_id\)\s+references site_fixes\(project_id, id\)\s+on delete no action deferrable initially deferred not valid`)
+			if !pattern.MatchString(add) {
+				t.Errorf("%s must preserve direct Site Fix provenance while deferring tenant erasure", relationship)
+			}
+		}
+		requireDoctorMigrationSQL(t, swap, "drop constraint if exists rollback_records_site_fix_id_fkey")
+		requireDoctorMigrationSQL(t, indexes, "on rollback_records (project_id, site_fix_id)")
 	})
 
 	t.Run("revision graph cannot branch or self reference", func(t *testing.T) {

@@ -22,6 +22,8 @@ alter table site_fix_verifications
   validate constraint site_fix_verifications_site_fix_project_fk;
 alter table site_change_applications
   validate constraint site_change_applications_site_fix_project_fk;
+alter table rollback_records
+  validate constraint rollback_records_site_fix_project_fk;
 
 alter table migration_ledger
   validate constraint migration_ledger_batch_project_fk;

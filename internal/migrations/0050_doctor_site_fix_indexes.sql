@@ -92,7 +92,7 @@ create index if not exists idx_site_change_applications_site_fix
   where site_fix_id is not null;
 
 create index if not exists idx_rollback_records_site_fix_id
-  on rollback_records (site_fix_id)
+  on rollback_records (project_id, site_fix_id)
   where site_fix_id is not null;
 
 create index if not exists idx_discovery_candidates_shadow_run_fk
