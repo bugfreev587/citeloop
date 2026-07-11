@@ -297,6 +297,25 @@ func TestLegacyTechnicalMigrationTreatsMissingApplicationAsNotDeployed(t *testin
 	)
 }
 
+func TestMigrationDoctorArtifactsKeepSiteFixParameterUUIDTyped(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	query := namedSQL(t, siteFixes, "CreateMigrationDoctorArtifacts")
+	requireQuerySQL(t, query,
+		"'site_fix', sqlc.arg(site_fix_id)::uuid::text, 'site_fix', sqlc.arg(site_fix_id)::uuid",
+		"select sqlc.arg(site_fix_id)::uuid, sqlc.arg(project_id), chosen_finding.id",
+	)
+	if strings.Contains(query, "'site_fix', sqlc.arg(site_fix_id)::text") {
+		t.Fatal("casting the shared site_fix_id parameter directly to text makes PostgreSQL infer text for reserved_work_id")
+	}
+	generated, err := os.ReadFile("site_fixes.sql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "SiteFixID               uuid.UUID") {
+		t.Fatal("sqlc must generate CreateMigrationDoctorArtifactsParams.SiteFixID as uuid.UUID")
+	}
+}
+
 func TestCanonicalSiteFixListDetailsAreBoundedAndBatchReadable(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	list := namedSQL(t, siteFixes, "ListCanonicalSiteFixes")

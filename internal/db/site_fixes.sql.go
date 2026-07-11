@@ -1802,7 +1802,7 @@ with locked_authority as materialized (
          candidate.shadow_run_id, 'enforced', $27, $28,
          $23, $24::jsonb,
          $25::jsonb, 'work-signature/v1', 'doctor',
-         'site_fix', $29::text, 'site_fix', $29,
+         'site_fix', $29::uuid::text, 'site_fix', $29::uuid,
          $22
   from candidate
   where (select count(*) from bumped_buckets) =
@@ -1815,7 +1815,7 @@ with locked_authority as materialized (
     verification_snapshot, retry_count, max_retries, legacy_opportunity_id,
     legacy_content_action_id, migration_batch_id, approved_at, created_at, updated_at
   )
-  select $29, $2, chosen_finding.id,
+  select $29::uuid, $2, chosen_finding.id,
          signature.candidate_id, signature.id, $30,
          chosen_finding.finding_kind, $13::jsonb, $6::jsonb,
          $31::jsonb, $14::jsonb,
@@ -1878,7 +1878,7 @@ type CreateMigrationDoctorArtifactsParams struct {
 	WorkSignatureID         uuid.UUID          `json:"work_signature_id"`
 	RegistryStatus          string             `json:"registry_status"`
 	RegistryActive          bool               `json:"registry_active"`
-	SiteFixID               pgtype.UUID        `json:"site_fix_id"`
+	SiteFixID               uuid.UUID          `json:"site_fix_id"`
 	SiteFixStatus           string             `json:"site_fix_status"`
 	ProposedFix             json.RawMessage    `json:"proposed_fix"`
 	ApprovedAt              pgtype.Timestamptz `json:"approved_at"`
