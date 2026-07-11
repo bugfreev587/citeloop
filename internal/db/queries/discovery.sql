@@ -324,3 +324,65 @@ do update set
   review_memory_id = excluded.review_memory_id,
   alias_semantic_fingerprint = excluded.alias_semantic_fingerprint
 returning *;
+
+-- name: GetArbitrationDecision :one
+select * from discovery_arbitration_decisions
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id);
+
+-- name: LockArbitrationDecisionForReserve :one
+select * from discovery_arbitration_decisions
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id)
+for update;
+
+-- name: LockDiscoveryCandidateForReserve :one
+select * from discovery_candidates
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(candidate_id)
+for update;
+
+-- name: LockConflictBucketsForReserve :many
+select * from work_conflict_buckets
+where project_id = sqlc.arg(project_id)
+  and bucket_key = any(sqlc.arg(bucket_keys)::text[])
+order by bucket_key asc
+for update;
+
+-- name: InsertEnforcedWorkSignature :one
+insert into work_signature_registry
+  (project_id, candidate_id, shadow_run_id, mode, status, active,
+   exact_signature_hash, signature_payload, semantic_fingerprint,
+   conflict_bucket_keys, signature_version, owner,
+   source_object_type, source_object_id, arbitration_decision_id,
+   reserved_work_type, reserved_work_id, evidence_fingerprint)
+values
+  (sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
+   'enforced', 'reserved', true, sqlc.arg(exact_signature_hash),
+   sqlc.arg(signature_payload)::jsonb, sqlc.arg(semantic_fingerprint),
+   sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),
+   sqlc.arg(owner), sqlc.arg(source_object_type), sqlc.arg(source_object_id),
+   sqlc.arg(arbitration_decision_id), sqlc.arg(reserved_work_type),
+   sqlc.arg(reserved_work_id), sqlc.arg(evidence_fingerprint))
+returning *;
+
+-- name: IncrementConflictBucketVersions :many
+update work_conflict_buckets
+set bucket_version = bucket_version + 1,
+    updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and bucket_key = any(sqlc.arg(bucket_keys)::text[])
+returning *;
+
+-- name: MarkArbitrationDecisionReserved :one
+update discovery_arbitration_decisions
+set status = 'reserved',
+    updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id)
+  and status = 'prepared'
+returning *;
+
+-- name: GetDiscoveryArbitrationConfig :one
+select * from discovery_arbitration_configs
+where project_id = sqlc.arg(project_id);

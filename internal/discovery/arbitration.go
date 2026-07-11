@@ -41,6 +41,7 @@ const (
 
 type ArbitrationCandidate struct {
 	ID        uuid.UUID
+	RunID     uuid.UUID
 	Version   int64
 	Candidate Candidate
 	Identity  Identity
@@ -143,7 +144,7 @@ type PreparedDecision struct {
 }
 
 type ArbitrationStore interface {
-	LoadCandidate(context.Context, uuid.UUID) (ArbitrationCandidate, error)
+	LoadCandidate(context.Context, uuid.UUID, uuid.UUID) (ArbitrationCandidate, error)
 	MaterializeBuckets(context.Context, uuid.UUID, []string) error
 	ReadSnapshot(context.Context, uuid.UUID, []string) (BucketSnapshot, error)
 	LoadConfig(context.Context, uuid.UUID) (ArbitrationConfig, error)
@@ -163,16 +164,22 @@ func NewArbitrationService(store ArbitrationStore, comparator SemanticComparator
 	return &ArbitrationService{store: store, comparator: comparator, now: time.Now}
 }
 
-func (s *ArbitrationService) Prepare(ctx context.Context, candidateID uuid.UUID) (PreparedDecision, error) {
+func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID uuid.UUID) (PreparedDecision, error) {
 	if s == nil || s.store == nil {
 		return PreparedDecision{}, errors.New("arbitration store is required")
 	}
-	candidate, err := s.store.LoadCandidate(ctx, candidateID)
+	if projectID == uuid.Nil || candidateID == uuid.Nil {
+		return PreparedDecision{}, errors.New("project and candidate ids are required")
+	}
+	candidate, err := s.store.LoadCandidate(ctx, projectID, candidateID)
 	if err != nil {
 		return PreparedDecision{}, fmt.Errorf("load arbitration candidate: %w", err)
 	}
 	if candidate.ID == uuid.Nil || candidate.Candidate.ProjectID == uuid.Nil || candidate.Version < 1 {
 		return PreparedDecision{}, errors.New("invalid arbitration candidate")
+	}
+	if candidate.Candidate.ProjectID != projectID {
+		return PreparedDecision{}, errors.New("arbitration candidate does not belong to project")
 	}
 	if candidate.Candidate.Status != StatusIdentityReady || candidate.Identity.ExactSignatureHash == "" || len(candidate.Identity.ConflictBucketKeys) == 0 {
 		return s.persistHold(ctx, candidate, BucketSnapshot{Versions: map[string]int64{}}, PreparedDecision{
@@ -183,7 +190,6 @@ func (s *ArbitrationService) Prepare(ctx context.Context, candidateID uuid.UUID)
 			Status:      ArbitrationStatusHeld,
 		})
 	}
-	projectID := candidate.Candidate.ProjectID
 	if err := s.store.MaterializeBuckets(ctx, projectID, candidate.Identity.ConflictBucketKeys); err != nil {
 		return PreparedDecision{}, fmt.Errorf("materialize arbitration buckets: %w", err)
 	}
@@ -525,6 +531,4 @@ func arbitrationRequestFingerprint(candidate ArbitrationCandidate, snapshotFinge
 	return hex.EncodeToString(sum[:])
 }
 
-// CandidateRunID is intentionally nil until a canonical cross-stage run ID is
-// introduced. AI call records still link directly to the candidate.
-func (candidate ArbitrationCandidate) CandidateRunID() uuid.UUID { return uuid.Nil }
+func (candidate ArbitrationCandidate) CandidateRunID() uuid.UUID { return candidate.RunID }

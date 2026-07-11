@@ -13,7 +13,7 @@ func TestArbitrationPrepareDeterministicSafeWithoutProvider(t *testing.T) {
 	store, comparator, candidate := arbitrationFixture(t)
 	service := NewArbitrationService(store, comparator)
 
-	prepared, err := service.Prepare(context.Background(), candidate.ID)
+	prepared, err := service.Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestArbitrationPrepareExactActiveWorkMergesWithoutProvider(t *testing.T) {
 		SignaturePayload: candidate.Identity.SignaturePayload,
 	}}
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestArbitrationPrepareCallsProviderOutsideTransactionBoundary(t *testing.T)
 	}
 	comparator.events = &store.events
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestArbitrationPrepareFailsClosedForLowConfidence(t *testing.T) {
 		Reason:        "uncertain", Confidence: 0.79, SemanticFingerprint: "semantic-candidate",
 	}
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestArbitrationPrepareFailsClosedForProviderFailure(t *testing.T) {
 	}}
 	comparator.err = errors.New("provider unavailable")
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatalf("provider failure must persist a hold, got %v", err)
 	}
@@ -130,7 +130,7 @@ func TestArbitrationPrepareGatesSemanticSuppressionUntilLaunchReady(t *testing.T
 	store.config.LaunchReady = false
 	store.config.AutomaticSuppressionEnabled = false
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestArbitrationPrepareAppliesExactReviewMemoryWithoutProvider(t *testing.T)
 		Active:              true,
 	}}
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestArbitrationPrepareFailsClosedForIncompleteActiveWork(t *testing.T) {
 		ID: uuid.New(), ExactSignatureHash: "different", SignaturePayload: nil,
 	}}
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestArbitrationPrepareAllowsSuppressionOnlyAfterLaunchGate(t *testing.T) {
 		SemanticFingerprint: "semantic-candidate",
 	}
 
-	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.ID)
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ type arbitrationStoreStub struct {
 	aiFinishes []AICallFinish
 }
 
-func (s *arbitrationStoreStub) LoadCandidate(_ context.Context, _ uuid.UUID) (ArbitrationCandidate, error) {
+func (s *arbitrationStoreStub) LoadCandidate(_ context.Context, _ uuid.UUID, _ uuid.UUID) (ArbitrationCandidate, error) {
 	s.events = append(s.events, "load")
 	return s.candidate, nil
 }
