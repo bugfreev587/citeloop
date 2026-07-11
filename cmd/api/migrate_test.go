@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/migrations"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestMigrationRunnerSafetyContract(t *testing.T) {
@@ -102,6 +110,13 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 				return
 			}
 			sql := strings.ToLower(string(raw))
+			spec, err := parseMigrationSpec(name, raw)
+			if err != nil {
+				t.Fatalf("parse embedded migration: %v", err)
+			}
+			if spec.Mode != migrationModeNontransactional || spec.IndexName != indexName {
+				t.Fatalf("unexpected embedded migration spec: %+v", spec)
+			}
 			for _, want := range []string{
 				"-- citeloop:migration-mode=nontransactional",
 				"-- citeloop:index=" + indexName,
@@ -131,5 +146,195 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		if strings.Contains(groupedSQL, "on "+populatedTable+" ") {
 			t.Errorf("grouped migration must not build an ordinary index on populated table %s", populatedTable)
 		}
+	}
+}
+
+func TestParseMigrationSpecFailsClosed(t *testing.T) {
+	valid := "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id);"
+	spec, err := parseMigrationSpec("valid.sql", []byte(valid))
+	if err != nil {
+		t.Fatalf("parse valid migration: %v", err)
+	}
+	if spec.Mode != migrationModeNontransactional || spec.IndexName != "idx_safe" {
+		t.Fatalf("unexpected spec: %+v", spec)
+	}
+
+	for name, sql := range map[string]string{
+		"unknown directive":   "-- citeloop:wat=yes\nselect 1;",
+		"missing index":       "-- citeloop:migration-mode=nontransactional\ncreate index concurrently if not exists idx_safe on widgets (id);",
+		"unsafe index":        "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe;drop_table\ncreate index concurrently if not exists idx_safe on widgets (id);",
+		"name mismatch":       "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_other\ncreate index concurrently if not exists idx_safe on widgets (id);",
+		"not concurrent":      "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index if not exists idx_safe on widgets (id);",
+		"multiple statements": valid + "\nselect 1;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseMigrationSpec(name+".sql", []byte(sql)); err == nil {
+				t.Fatal("expected fail-closed parse error")
+			}
+		})
+	}
+}
+
+type migrationTestRow struct {
+	value bool
+	err   error
+}
+
+func (r migrationTestRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != 1 {
+		return errors.New("unexpected scan destination count")
+	}
+	value, ok := dest[0].(*bool)
+	if !ok {
+		return errors.New("unexpected scan destination type")
+	}
+	*value = r.value
+	return nil
+}
+
+type migrationTestConn struct {
+	events        []string
+	marker        bool
+	indexExists   bool
+	indexValid    bool
+	boundedNonTxn bool
+}
+
+func (c *migrationTestConn) record(event string) { c.events = append(c.events, event) }
+
+func (c *migrationTestConn) Exec(ctx context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	lower := strings.ToLower(sql)
+	switch {
+	case strings.Contains(lower, "pg_advisory_lock"):
+		c.record("lock")
+	case strings.Contains(lower, "pg_advisory_unlock"):
+		c.record("unlock")
+	case strings.Contains(lower, "create table if not exists schema_migrations"):
+		c.record("schema")
+	case strings.HasPrefix(strings.TrimSpace(lower), "drop index concurrently"):
+		c.record("drop-invalid")
+		c.indexExists = false
+		_, c.boundedNonTxn = ctx.Deadline()
+	case strings.Contains(lower, "index concurrently"):
+		c.record("create-concurrent")
+		c.indexExists, c.indexValid = true, true
+		_, c.boundedNonTxn = ctx.Deadline()
+	case strings.Contains(lower, "insert into schema_migrations"):
+		c.record("mark-nontransactional")
+		c.marker = true
+	default:
+		c.record("conn-exec")
+	}
+	return pgconn.NewCommandTag("OK"), nil
+}
+
+func (c *migrationTestConn) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	lower := strings.ToLower(sql)
+	if strings.Contains(lower, "schema_migrations") {
+		c.record("marker-check")
+		return migrationTestRow{value: c.marker}
+	}
+	c.record("index-check")
+	if !c.indexExists {
+		return migrationTestRow{err: pgx.ErrNoRows}
+	}
+	return migrationTestRow{value: c.indexValid}
+}
+
+func (c *migrationTestConn) BeginMigration(_ context.Context) (migrationTx, error) {
+	c.record("begin")
+	return &migrationTestTx{conn: c}, nil
+}
+
+type migrationTestTx struct {
+	conn          *migrationTestConn
+	pendingMarker bool
+	closed        bool
+}
+
+func (tx *migrationTestTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+	tx.conn.record("tx-marker-check")
+	return migrationTestRow{value: tx.conn.marker}
+}
+
+func (tx *migrationTestTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(strings.ToLower(sql), "insert into schema_migrations") {
+		tx.conn.record("tx-mark")
+		tx.pendingMarker = true
+	} else {
+		tx.conn.record("tx-migration")
+	}
+	return pgconn.NewCommandTag("OK"), nil
+}
+
+func (tx *migrationTestTx) Commit(_ context.Context) error {
+	tx.conn.record("commit")
+	tx.conn.marker = tx.pendingMarker
+	tx.closed = true
+	return nil
+}
+
+func (tx *migrationTestTx) Rollback(_ context.Context) error {
+	if !tx.closed {
+		tx.conn.record("rollback")
+	}
+	return nil
+}
+
+func TestRunMigrationPassLocksAndCommitsOrdinaryMigrationAtomically(t *testing.T) {
+	conn := &migrationTestConn{}
+	migrationFS := fstest.MapFS{
+		"0001_test.sql": &fstest.MapFile{Data: []byte("create table test_table (id int);")},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock", "schema", "begin", "tx-marker-check", "tx-migration", "tx-mark", "commit", "unlock"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected migration order: got %v want %v", conn.events, want)
+	}
+	if !conn.marker {
+		t.Fatal("transactional marker was not committed")
+	}
+}
+
+func TestRunMigrationPassRecoversInvalidConcurrentIndex(t *testing.T) {
+	conn := &migrationTestConn{indexExists: true, indexValid: false}
+	migrationFS := fstest.MapFS{
+		"0001_index.sql": &fstest.MapFile{Data: []byte("-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id);")},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runMigrationPass(ctx, conn, migrationFS, log); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock", "schema", "marker-check", "index-check", "drop-invalid", "create-concurrent", "mark-nontransactional", "unlock"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected recovery order: got %v want %v", conn.events, want)
+	}
+	if !conn.boundedNonTxn {
+		t.Fatal("nontransactional index execution must have a deadline")
+	}
+}
+
+func TestRunMigrationPassMarksExistingValidConcurrentIndex(t *testing.T) {
+	conn := &migrationTestConn{indexExists: true, indexValid: true}
+	migrationFS := fstest.MapFS{
+		"0001_index.sql": &fstest.MapFile{Data: []byte("-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id);")},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(conn.events, ","), "create-concurrent") {
+		t.Fatalf("valid existing index should be marked without rebuild: %v", conn.events)
+	}
+	if !conn.marker {
+		t.Fatal("valid existing index was not marked applied")
 	}
 }

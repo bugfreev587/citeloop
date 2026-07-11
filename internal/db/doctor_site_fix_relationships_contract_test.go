@@ -36,6 +36,16 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 	validate := readDoctorMigrationContractFile(t, "0049_11_doctor_site_fix_relationships_validate.sql")
 	swap := readDoctorMigrationContractFile(t, "0049_12_doctor_site_fix_relationships_swap.sql")
 	indexes := readDoctorMigrationContractFile(t, "0050_doctor_site_fix_indexes.sql")
+	for _, name := range []string{
+		"0051_01_site_change_active_content_action.sql",
+		"0051_02_site_change_active_site_fix.sql",
+		"0051_03_site_change_site_fix_history.sql",
+		"0051_04_rollback_records_site_fix.sql",
+		"0051_05_discovery_candidates_shadow_run.sql",
+		"0051_06_work_signature_registry_shadow_run.sql",
+	} {
+		indexes += "\n" + readDoctorMigrationContractFile(t, name)
+	}
 
 	t.Run("finding rollback status is safely replaced", func(t *testing.T) {
 		requireDoctorMigrationSQL(t, add,
@@ -56,15 +66,15 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 
 	t.Run("canonical relationships are project consistent", func(t *testing.T) {
 		requireDoctorMigrationSQL(t, findingsIdentity,
-			"create unique index if not exists seo_doctor_findings_project_id_kind_key",
+			"create unique index concurrently if not exists seo_doctor_findings_project_id_kind_key",
 			"on seo_doctor_findings (project_id, id, finding_kind)",
 		)
 		requireDoctorMigrationSQL(t, candidatesIdentity,
-			"create unique index if not exists discovery_candidates_project_id_id_key",
+			"create unique index concurrently if not exists discovery_candidates_project_id_id_key",
 			"on discovery_candidates (project_id, id)",
 		)
 		requireDoctorMigrationSQL(t, registryIdentity,
-			"create unique index if not exists work_signature_registry_project_candidate_id_key",
+			"create unique index concurrently if not exists work_signature_registry_project_candidate_id_key",
 			"on work_signature_registry (project_id, candidate_id, id)",
 		)
 		requireDoctorMigrationSQL(t, base,
@@ -161,17 +171,15 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			"candidates": candidatesIdentity,
 			"registry":   registryIdentity,
 		} {
-			if !strings.Contains(identitySQL, "create unique index if not exists") {
-				t.Errorf("%s identity index must be rerunnable", name)
+			if !strings.Contains(identitySQL, "create unique index concurrently if not exists") {
+				t.Errorf("%s identity index must be concurrent and rerunnable", name)
 			}
 			requireDoctorMigrationSQL(t, identitySQL,
-				"set local lock_timeout = '5s'",
-				"set local statement_timeout = '30s'",
-				"reset statement_timeout",
-				"reset lock_timeout",
+				"-- citeloop:migration-mode=nontransactional",
+				"-- citeloop:index=",
 			)
-			if strings.Contains(identitySQL, "concurrently") {
-				t.Errorf("%s uses concurrent index creation that cannot recover an invalid index with this runner", name)
+			if got := strings.Count(identitySQL, "create "); got != 1 {
+				t.Errorf("%s identity migration must contain one CREATE statement, got %d", name, got)
 			}
 		}
 		if strings.Contains(add, "validate constraint") || strings.Contains(add, "drop constraint if exists seo_doctor_findings_status_check;") {

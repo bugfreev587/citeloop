@@ -31,10 +31,6 @@ create index if not exists idx_site_fixes_candidate
 create index if not exists idx_site_fixes_work_signature
   on site_fixes (project_id, candidate_id, work_signature_id);
 
-create index if not exists idx_site_fixes_supersedes
-  on site_fixes (project_id, supersedes_site_fix_id)
-  where supersedes_site_fix_id is not null;
-
 create index if not exists idx_site_fixes_migration_batch
   on site_fixes (project_id, migration_batch_id)
   where migration_batch_id is not null;
@@ -70,36 +66,6 @@ create index if not exists idx_legacy_object_aliases_canonical
 
 create index if not exists idx_legacy_object_aliases_batch
   on legacy_object_aliases (project_id, migration_batch_id);
-
-create index if not exists idx_active_site_change_application_content_action
-  on site_change_applications (project_id, content_action_id)
-  where content_action_id is not null and status in (
-    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
-    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
-    'needs_follow_up','conflict','manual_apply_required'
-  );
-
-create unique index if not exists uniq_active_site_change_application_site_fix
-  on site_change_applications (project_id, site_fix_id)
-  where site_fix_id is not null and status in (
-    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
-    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
-    'needs_follow_up','conflict','manual_apply_required'
-  );
-
-create index if not exists idx_site_change_applications_site_fix
-  on site_change_applications (project_id, site_fix_id, updated_at desc)
-  where site_fix_id is not null;
-
-create index if not exists idx_rollback_records_site_fix_id
-  on rollback_records (project_id, site_fix_id)
-  where site_fix_id is not null;
-
-create index if not exists idx_discovery_candidates_shadow_run_fk
-  on discovery_candidates (shadow_run_id);
-
-create index if not exists idx_work_signature_registry_shadow_run_fk
-  on work_signature_registry (shadow_run_id);
 
 reset statement_timeout;
 reset lock_timeout;

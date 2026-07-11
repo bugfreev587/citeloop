@@ -15,7 +15,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 	}
 	migration := strings.ToLower(string(raw))
 	var followOn []string
-	for _, pattern := range []string{"0049*.sql", "0050*.sql"} {
+	for _, pattern := range []string{"0049*.sql", "0050*.sql", "0051*.sql"} {
 		matches, globErr := filepath.Glob(filepath.Join("..", "migrations", pattern))
 		if globErr != nil {
 			t.Fatalf("glob Doctor relationship migrations: %v", globErr)
@@ -138,9 +138,9 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		"validate constraint site_change_applications_exactly_one_source",
 		"constraint site_change_applications_kind_source_consistency",
 		"validate constraint site_change_applications_kind_source_consistency",
-		"create index if not exists idx_active_site_change_application_content_action",
+		"create index concurrently if not exists idx_active_site_change_application_content_action",
 		"where content_action_id is not null and status in (",
-		"create unique index if not exists uniq_active_site_change_application_site_fix",
+		"create unique index concurrently if not exists uniq_active_site_change_application_site_fix",
 		"where site_fix_id is not null and status in (",
 	)
 	if strings.Contains(migration, "drop index if exists uniq_active_site_change_application") {
@@ -180,7 +180,7 @@ func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 	}
 	migration := strings.ToLower(string(raw))
 	var followOn []string
-	for _, pattern := range []string{"0049*.sql", "0050*.sql"} {
+	for _, pattern := range []string{"0049*.sql", "0050*.sql", "0051*.sql"} {
 		matches, globErr := filepath.Glob(filepath.Join("..", "migrations", pattern))
 		if globErr != nil {
 			t.Fatalf("glob Doctor relationship migrations: %v", globErr)
