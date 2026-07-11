@@ -39,10 +39,10 @@ type ReviewResolutionRequest struct {
 }
 
 type ReviewResolutionResult struct {
-	DecisionID     uuid.UUID
-	ReviewMemoryID uuid.UUID
-	Action         ReviewResolutionAction
-	Reopened       bool
+	DecisionID     uuid.UUID              `json:"decision_id"`
+	ReviewMemoryID uuid.UUID              `json:"review_memory_id,omitempty"`
+	Action         ReviewResolutionAction `json:"action"`
+	Reopened       bool                   `json:"reopened"`
 }
 
 type ReviewStore interface {

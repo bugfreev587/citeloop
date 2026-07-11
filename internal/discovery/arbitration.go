@@ -128,29 +128,29 @@ type ReviewHold struct {
 }
 
 type PreparedDecision struct {
-	ID                     uuid.UUID
-	ProjectID              uuid.UUID
-	CandidateID            uuid.UUID
-	CandidateVersion       int64
-	AICallID               uuid.UUID
-	Disposition            ArbitrationDisposition
-	Decision               DecisionKind
-	Owner                  Owner
-	OverlapWorkIDs         []uuid.UUID
-	Reason                 string
-	Confidence             float64
-	SemanticFingerprint    string
-	ComparedWorkIDs        []uuid.UUID
-	ExpectedBucketVersions map[string]int64
-	SnapshotFingerprint    string
-	ExactSignatureHash     string
-	SignatureVersion       string
-	EvidenceFingerprint    string
-	RulesVersion           string
-	PromptVersion          string
-	Provider               string
-	Model                  string
-	Status                 ArbitrationStatus
+	ID                     uuid.UUID              `json:"id"`
+	ProjectID              uuid.UUID              `json:"project_id"`
+	CandidateID            uuid.UUID              `json:"candidate_id"`
+	CandidateVersion       int64                  `json:"candidate_version"`
+	AICallID               uuid.UUID              `json:"ai_call_id,omitempty"`
+	Disposition            ArbitrationDisposition `json:"disposition"`
+	Decision               DecisionKind           `json:"decision"`
+	Owner                  Owner                  `json:"owner"`
+	OverlapWorkIDs         []uuid.UUID            `json:"overlap_work_ids"`
+	Reason                 string                 `json:"reason"`
+	Confidence             float64                `json:"confidence"`
+	SemanticFingerprint    string                 `json:"semantic_fingerprint"`
+	ComparedWorkIDs        []uuid.UUID            `json:"compared_work_ids"`
+	ExpectedBucketVersions map[string]int64       `json:"expected_bucket_versions"`
+	SnapshotFingerprint    string                 `json:"snapshot_fingerprint"`
+	ExactSignatureHash     string                 `json:"exact_signature_hash"`
+	SignatureVersion       string                 `json:"signature_version"`
+	EvidenceFingerprint    string                 `json:"evidence_fingerprint"`
+	RulesVersion           string                 `json:"rules_version"`
+	PromptVersion          string                 `json:"prompt_version"`
+	Provider               string                 `json:"provider"`
+	Model                  string                 `json:"model"`
+	Status                 ArbitrationStatus      `json:"status"`
 }
 
 type ArbitrationStore interface {
