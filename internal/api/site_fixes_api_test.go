@@ -247,7 +247,10 @@ func TestDoctorSiteFixRuntimeWiresConcreteCanonicalService(t *testing.T) {
 func TestDoctorSiteFixRuntimeAuthorityDoesNotUseEnvOrResponseModelIdentity(t *testing.T) {
 	provider := &runtimeAuthorityProviderStub{fingerprint: "admin-route-authority-v7", responseModel: "runtime-response-model"}
 	service := NewDoctorSiteFixService(nil, nil, provider, "stale-env-model").(*postgresDoctorSiteFixService)
-	manager := service.creation.preparations.(*postgresDoctorSiteFixPreparationManager)
+	cfg := config.Default()
+	cfg.DoctorAIEnabled = true
+	cfg.DoctorAIRunPolicy = config.DoctorAIRunPolicyManualOnly
+	manager := service.creationForProjectConfig(cfg).preparations.(*postgresDoctorSiteFixPreparationManager)
 	fingerprint, err := manager.runtimeAuthorityFingerprint(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -352,6 +355,90 @@ func TestDoctorSiteFixGrowthCutoverUsesGrowthPlanningPurposeAndReportsCost(t *te
 	}
 	if provider.request.Purpose != llm.PurposeDefault {
 		t.Fatalf("Growth purpose = %q, want planning purpose %q", provider.request.Purpose, llm.PurposeDefault)
+	}
+}
+
+func TestDoctorSiteFixArbitrationRequiresProjectDoctorAuthority(t *testing.T) {
+	for _, growthEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("growth_ai_%t", growthEnabled), func(t *testing.T) {
+			provider := &growthAuthorityProviderStub{}
+			service := NewDoctorSiteFixService(nil, nil, provider, "site-fix-model").(*postgresDoctorSiteFixService)
+			cfg := config.Default()
+			cfg.GrowthAIEnabled = growthEnabled
+			cfg.DoctorAIEnabled = false
+
+			creation := service.creationForProjectConfig(cfg)
+			backend := creation.backend.(*postgresDoctorSiteFixBackend)
+			manager := creation.preparations.(*postgresDoctorSiteFixPreparationManager)
+			if backend.comparator != nil || manager.runtimeProvider != nil {
+				t.Fatal("Doctor AI off must produce a deterministic request-scoped coordinator")
+			}
+			if provider.calls != 0 {
+				t.Fatalf("provider calls=%d, want 0", provider.calls)
+			}
+		})
+	}
+}
+
+func TestDoctorSiteFixArbitrationUsesSiteFixPurposeWhenAuthorized(t *testing.T) {
+	provider := &growthAuthorityProviderStub{response: llm.CompletionResp{
+		Text:  `{"decision":"create","owner":"doctor","work_signature":"doctor-candidate","overlaps":[],"reason":"distinct Doctor work","confidence":0.98}`,
+		Model: "site-fix-model", Tokens: 23, CostUSD: 0.006,
+	}}
+	service := NewDoctorSiteFixService(nil, nil, provider, "site-fix-model").(*postgresDoctorSiteFixService)
+	cfg := config.Default()
+	cfg.DoctorAIEnabled = true
+	cfg.DoctorAIRunPolicy = config.DoctorAIRunPolicyManualOnly
+
+	creation := service.creationForProjectConfig(cfg)
+	backend := creation.backend.(*postgresDoctorSiteFixBackend)
+	if backend.comparator == nil {
+		t.Fatal("authorized Doctor request has no comparator")
+	}
+	_, usage, err := backend.comparator.Compare(context.Background(), discovery.SemanticRequest{
+		CandidateID: uuid.New(), Candidate: discovery.Candidate{ProjectID: uuid.New(), SuggestedOwner: discovery.OwnerDoctor, VerificationMode: discovery.VerificationImmediate},
+		Identity: discovery.Identity{ExactSignatureHash: "doctor-candidate", SignaturePayload: json.RawMessage(`{"project_id":"p","change_family":"repair","normalized_target_set":["https://example.com"],"normalized_mutations":[{"operation":"replace","field":"title"}]}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.request.Purpose != llm.PurposeSiteFix || usage.TotalTokens != 23 || usage.CostUSD != 0.006 {
+		t.Fatalf("purpose=%q usage=%+v", provider.request.Purpose, usage)
+	}
+}
+
+func TestDoctorSiteFixProjectAuthoritiesDoNotMutateSharedBackendConcurrently(t *testing.T) {
+	provider := &growthAuthorityProviderStub{}
+	service := NewDoctorSiteFixService(nil, nil, provider, "site-fix-model").(*postgresDoctorSiteFixService)
+	originalBackend := service.creation.backend.(*postgresDoctorSiteFixBackend)
+	originalManager := service.creation.preparations.(*postgresDoctorSiteFixPreparationManager)
+	start := make(chan struct{})
+	results := make(chan error, 64)
+	for i := 0; i < 64; i++ {
+		enabled := i%2 == 0
+		go func() {
+			<-start
+			cfg := config.Default()
+			cfg.DoctorAIEnabled = enabled
+			cfg.DoctorAIRunPolicy = config.DoctorAIRunPolicyManualOnly
+			creation := service.creationForProjectConfig(cfg)
+			backend := creation.backend.(*postgresDoctorSiteFixBackend)
+			manager := creation.preparations.(*postgresDoctorSiteFixPreparationManager)
+			if (backend.comparator != nil) != enabled || (manager.runtimeProvider != nil) != enabled {
+				results <- fmt.Errorf("enabled=%v comparator=%v provider=%v", enabled, backend.comparator != nil, manager.runtimeProvider != nil)
+				return
+			}
+			results <- nil
+		}()
+	}
+	close(start)
+	for i := 0; i < 64; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if originalBackend.comparator != nil || originalManager.runtimeProvider != nil {
+		t.Fatal("request authority mutated the shared coordinator template")
 	}
 }
 

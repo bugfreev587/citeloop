@@ -590,11 +590,7 @@ type growthProjectCutover interface {
 }
 
 func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Provider, model string) DoctorSiteFixService {
-	var comparator discovery.SemanticComparator
-	if provider != nil {
-		comparator = discovery.NewLLMSemanticComparator(provider, "tokengate", model).WithPurpose(llm.PurposeSiteFix)
-	}
-	backend := &postgresDoctorSiteFixBackend{pool: pool, q: q, comparator: comparator, model: strings.TrimSpace(model)}
+	backend := &postgresDoctorSiteFixBackend{pool: pool, q: q, model: strings.TrimSpace(model)}
 	return &postgresDoctorSiteFixService{
 		q: q,
 		loadProjectConfig: func(ctx context.Context, projectID uuid.UUID) (config.ProjectConfig, error) {
@@ -611,13 +607,35 @@ func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Pro
 		growthModel:    strings.TrimSpace(model),
 		creation: doctorSiteFixCreationCoordinator{
 			preparations: &postgresDoctorSiteFixPreparationManager{
-				q: q, runtimeProvider: provider, requestedModel: strings.TrimSpace(model),
+				q: q, requestedModel: strings.TrimSpace(model),
 				leaseTTL: 2 * time.Minute, resultTTL: 5 * time.Minute,
 				waitTimeout: 30 * time.Second, pollInterval: 100 * time.Millisecond,
 			},
 			backend: backend,
 		},
 	}
+}
+
+func (s *postgresDoctorSiteFixService) creationForProjectConfig(projectConfig config.ProjectConfig) doctorSiteFixCreationCoordinator {
+	creation := s.creation
+	allowed := projectConfig.AllowsDoctorAI(config.DoctorAITriggerApplyUser)
+	if backend, ok := creation.backend.(*postgresDoctorSiteFixBackend); ok && backend != nil {
+		requestBackend := *backend
+		requestBackend.comparator = nil
+		if allowed && s.growthProvider != nil {
+			requestBackend.comparator = discovery.NewLLMSemanticComparator(s.growthProvider, "tokengate", s.growthModel).WithPurpose(llm.PurposeSiteFix)
+		}
+		creation.backend = &requestBackend
+	}
+	if manager, ok := creation.preparations.(*postgresDoctorSiteFixPreparationManager); ok && manager != nil {
+		requestManager := *manager
+		requestManager.runtimeProvider = nil
+		if allowed {
+			requestManager.runtimeProvider = s.growthProvider
+		}
+		creation.preparations = &requestManager
+	}
+	return creation
 }
 
 func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, projectID, findingID uuid.UUID) (DoctorSiteFixResponse, bool, error) {
@@ -639,7 +657,8 @@ func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, pr
 	if err := growthCutover.EnsureProjectCutover(ctx, projectID); err != nil {
 		return DoctorSiteFixResponse{}, false, fmt.Errorf("ensure Growth reservation visibility: %w", err)
 	}
-	fix, created, err := s.creation.CreateFromFinding(ctx, projectID, findingID)
+	creation := s.creationForProjectConfig(projectConfig)
+	fix, created, err := creation.CreateFromFinding(ctx, projectID, findingID)
 	if err != nil {
 		return DoctorSiteFixResponse{}, false, err
 	}
