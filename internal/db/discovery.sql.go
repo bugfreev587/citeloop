@@ -113,6 +113,23 @@ func (q *Queries) CreateDiscoveryShadowRun(ctx context.Context, arg CreateDiscov
 	return i, err
 }
 
+const deleteShadowWorkSignatureForCandidate = `-- name: DeleteShadowWorkSignatureForCandidate :exec
+delete from work_signature_registry
+where project_id = $1
+  and candidate_id = $2
+  and mode = 'shadow'
+`
+
+type DeleteShadowWorkSignatureForCandidateParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	CandidateID uuid.UUID `json:"candidate_id"`
+}
+
+func (q *Queries) DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error {
+	_, err := q.db.Exec(ctx, deleteShadowWorkSignatureForCandidate, arg.ProjectID, arg.CandidateID)
+	return err
+}
+
 const ensureWorkConflictBucket = `-- name: EnsureWorkConflictBucket :one
 insert into work_conflict_buckets (project_id, bucket_key, bucket_version)
 values ($1, $2, 0)

@@ -37,6 +37,7 @@ func TestDiscoveryQueriesExposeShadowFoundation(t *testing.T) {
 		"FailDiscoveryShadowRun":                       failDiscoveryShadowRun,
 		"UpsertDiscoveryCandidate":                     upsertDiscoveryCandidate,
 		"UpsertShadowWorkSignature":                    upsertShadowWorkSignature,
+		"DeleteShadowWorkSignatureForCandidate":        deleteShadowWorkSignatureForCandidate,
 		"EnsureWorkConflictBucket":                     ensureWorkConflictBucket,
 		"ListActiveSEOOpportunitiesForDiscoveryShadow": listActiveSEOOpportunitiesForDiscoveryShadow,
 		"ListActiveDoctorFindingsForDiscoveryShadow":   listActiveDoctorFindingsForDiscoveryShadow,

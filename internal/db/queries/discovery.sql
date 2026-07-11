@@ -104,6 +104,12 @@ on conflict (candidate_id) do update set
   updated_at = now()
 returning *;
 
+-- name: DeleteShadowWorkSignatureForCandidate :exec
+delete from work_signature_registry
+where project_id = sqlc.arg(project_id)
+  and candidate_id = sqlc.arg(candidate_id)
+  and mode = 'shadow';
+
 -- name: EnsureWorkConflictBucket :one
 insert into work_conflict_buckets (project_id, bucket_key, bucket_version)
 values (sqlc.arg(project_id), sqlc.arg(bucket_key), 0)
