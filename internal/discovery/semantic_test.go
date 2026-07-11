@@ -89,6 +89,7 @@ func TestSemanticComparatorRejectsMalformedOrUnsafeResponses(t *testing.T) {
 		{name: "unknown owner", text: `{"decision":"create","owner":"other","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "confidence high", text: `{"decision":"create","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":1.2}`},
 		{name: "unknown overlap", text: `{"decision":"suppress","owner":"doctor","work_signature":"abc123","overlaps":["` + uuid.NewString() + `"],"reason":"x","confidence":0.9}`},
+		{name: "non-create without overlap", text: `{"decision":"suppress","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "wrong signature", text: `{"decision":"create","owner":"doctor","work_signature":"wrong","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "missing reason", text: `{"decision":"create","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"","confidence":0.9}`},
 	}

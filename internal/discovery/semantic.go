@@ -238,6 +238,9 @@ func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecisio
 		}
 	}
 	sort.Slice(overlaps, func(i, j int) bool { return overlaps[i].String() < overlaps[j].String() })
+	if decision != DecisionCreate && len(overlaps) == 0 {
+		return SemanticDecision{}, fmt.Errorf("semantic decision %q requires at least one overlap", decision)
+	}
 	return SemanticDecision{
 		Decision:      decision,
 		Owner:         owner,
