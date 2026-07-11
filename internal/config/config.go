@@ -353,8 +353,9 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 		default:
 			c.GrowthAIRunPolicy = GrowthAIRunPolicyOnDemandRecommended
 		}
-		c.DoctorAIEnabled = false
-		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
+		// Doctor fields predate capability_policy_version in some configs. Keep
+		// explicit consent/revocation from those payloads; Default already makes
+		// projects with no Doctor fields fail closed at off/manual_only.
 		c.CapabilityPolicyVersion = CapabilityPolicyVersionV1
 	} else {
 		// Versioned but incomplete payloads fail closed for provider calls. The

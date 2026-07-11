@@ -213,6 +213,32 @@ func TestExplicitCapabilityPolicyRoundTripsIndependentLineAuthority(t *testing.T
 	}
 }
 
+func TestParsePreservesExplicitPreVersionDoctorConsent(t *testing.T) {
+	enabled, err := Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"automatic"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.DoctorAIEnabled || enabled.DoctorAIRunPolicy != DoctorAIRunPolicyAutomatic {
+		t.Fatalf("explicit pre-version Doctor consent was lost: %+v", enabled)
+	}
+
+	disabled, err := Parse(json.RawMessage(`{"doctor_ai_enabled":false,"doctor_ai_run_policy":"on_demand"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.DoctorAIEnabled || disabled.DoctorAIRunPolicy != DoctorAIRunPolicyOnDemand {
+		t.Fatalf("explicit pre-version Doctor revocation/policy was lost: %+v", disabled)
+	}
+
+	absent, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"all"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.DoctorAIEnabled || absent.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
+		t.Fatalf("missing Doctor consent must default off/manual: %+v", absent)
+	}
+}
+
 func TestOpportunityFindingStagesRespectAutomaticEligibility(t *testing.T) {
 	cfg := Default()
 	stages := cfg.OpportunityFindingStages(true)

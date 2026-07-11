@@ -28,8 +28,8 @@ func TestAIAuthorityMigrationMapsLegacySettingsWithoutExpansion(t *testing.T) {
 			t.Fatalf("migration missing %q", want)
 		}
 	}
-	if !strings.Contains(sql, "'doctor_ai_enabled', false") {
-		t.Fatal("existing projects must not gain Doctor AI authority")
+	if !strings.Contains(sql, "config ? 'doctor_ai_enabled'") || !strings.Contains(sql, "else false") {
+		t.Fatal("migration must preserve explicit Doctor consent and default only absent consent off")
 	}
 	if !strings.Contains(sql, "opportunity_finding_source_mix") || !strings.Contains(sql, "ai_discovery_automation") {
 		t.Fatal("migration must derive capabilities from both legacy settings")
