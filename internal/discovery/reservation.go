@@ -18,6 +18,9 @@ type ReservedWork struct {
 	DecisionID      uuid.UUID
 	WorkSignatureID uuid.UUID
 	Owner           Owner
+	Decision        DecisionKind
+	OverlapWorkIDs  []uuid.UUID
+	Reason          string
 }
 
 type WorkReference struct {
@@ -76,8 +79,11 @@ func (s *ReservationService) ReservePrepared(ctx context.Context, projectID, dec
 	if decision.Status != ArbitrationStatusPrepared {
 		return ReservationResult{}, fmt.Errorf("decision status %q cannot reserve", decision.Status)
 	}
-	if decision.Decision != DecisionCreate {
+	if decision.Decision != DecisionCreate && decision.Decision != DecisionBlockOnOtherLine {
 		return ReservationResult{}, fmt.Errorf("decision %q does not create new work", decision.Decision)
+	}
+	if decision.Decision == DecisionBlockOnOtherLine && (decision.Owner != OwnerOpportunities || len(decision.OverlapWorkIDs) == 0) {
+		return ReservationResult{}, errors.New("only Growth work with a blocking overlap can reserve a cross-line dependency")
 	}
 	if decision.Confidence < config.ConfidenceThreshold {
 		return ReservationResult{}, fmt.Errorf("decision confidence %.4f is below threshold %.4f", decision.Confidence, config.ConfidenceThreshold)

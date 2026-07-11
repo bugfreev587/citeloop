@@ -290,7 +290,7 @@ func TestProjectAllCurrentlyEmittedOpportunityTypesHaveExplicitOutcome(t *testin
 		{typeName: "indexing_anomaly", want: StatusNeedsSpecification},
 		{typeName: "cold_start_context_plan", want: StatusNeedsSpecification},
 		{typeName: "cold_start_competitive_gap", want: StatusNeedsSpecification},
-		{typeName: "cold_start_evidence_page", want: StatusNeedsSpecification},
+		{typeName: "cold_start_evidence_page", want: StatusIdentityReady},
 	}
 	for _, tt := range tests {
 		t.Run(tt.typeName, func(t *testing.T) {

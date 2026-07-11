@@ -1903,9 +1903,39 @@ with eligible as materialized (
   from verified_fix vf
   where w.id = vf.work_signature_id and w.project_id = vf.project_id
   returning w.id
+), resolved_growth_relationships as (
+  update work_relationships relationship
+  set active = false, resolved_at = now(), updated_at = now()
+  from verified_fix fix
+  where relationship.project_id = fix.project_id
+    and relationship.blocking_work_signature_id = fix.work_signature_id
+    and relationship.active = true
+    and relationship.reassessment_trigger = 'blocking_work_verified'
+  returning relationship.id
+), unblocked_growth_signatures as (
+  update work_signature_registry growth_signature
+  set status = 'reserved', updated_at = now()
+  where growth_signature.project_id = sqlc.arg(project_id)
+    and growth_signature.status = 'blocked'
+    and growth_signature.active = true
+    and exists (
+      select 1 from work_relationships resolved
+      where resolved.id in (select id from resolved_growth_relationships)
+        and resolved.dependent_work_signature_id = growth_signature.id
+    )
+    and not exists (
+      select 1 from work_relationships remaining
+      where remaining.project_id = growth_signature.project_id
+        and remaining.dependent_work_signature_id = growth_signature.id
+        and remaining.dependency_class = 'hard_blocker'
+        and remaining.active = true
+    )
+  returning growth_signature.id
 )
 select verified_fix.* from verified_fix
-cross join signature_transition;
+cross join signature_transition
+cross join lateral (select count(*) from resolved_growth_relationships) relationship_resolution
+cross join lateral (select count(*) from unblocked_growth_signatures) growth_unblock;
 
 -- name: MarkCanonicalSiteFixRetryable :one
 with eligible as materialized (

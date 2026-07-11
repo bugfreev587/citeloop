@@ -10,11 +10,17 @@ import (
 
 	"github.com/citeloop/citeloop/internal/admin"
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/discovery"
 	geopkg "github.com/citeloop/citeloop/internal/geo"
+	"github.com/citeloop/citeloop/internal/growthwork"
 )
 
 func (s *Server) geoService(ctx context.Context) geopkg.Service {
-	service := geopkg.Service{Q: s.Q}
+	var comparator discovery.SemanticComparator
+	if s.LLM != nil {
+		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.Env.TokenGateModel)
+	}
+	service := geopkg.Service{Q: s.Q, GrowthWriter: growthwork.NewService(s.Pool, s.Q, comparator)}
 	if provider := s.geoAnswerProvider(ctx); provider != nil {
 		service.AnswerProvider = provider
 	}

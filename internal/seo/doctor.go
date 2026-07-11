@@ -292,7 +292,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		if pageURL != "" {
 			pageURLPtr = &pageURL
 		}
-		if _, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		if _, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         run.ProjectID,
 			Type:              candidate.Type,
 			Status:            "open",

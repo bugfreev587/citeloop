@@ -188,8 +188,12 @@ func opportunityWorkSpec(opportunityType string) (legacyWorkSpec, bool) {
 		return delayedSpec("content.refresh", "update", "page_content", ArtifactUpdateExistingContent, "search_traffic"), true
 	case "gsc_query_cannibalization":
 		return delayedQuerySpec("content.consolidation", "consolidate", "pages", ArtifactConsolidateAssets, "search_visibility"), true
+	case "cold_start_context_plan":
+		return delayedQuerySpec("content.new_asset", "create", "page", ArtifactCreateNewAsset, "search_visibility"), true
 	case "cold_start_competitive_gap", "comparison_page", "alternative_page", "missing_use_case":
 		return delayedSpec("content.new_asset", "create", "page", ArtifactCreateNewAsset, "search_and_citation"), true
+	case "cold_start_evidence_page":
+		return delayedSpec("content.evidence", "update", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
 	case "ranking_cluster_opportunity", "internal_link_strategy":
 		return delayedSpec("links.strategy", "update", "internal_link_plan", ArtifactUpdateExistingContent, "rankings"), true
 	default:

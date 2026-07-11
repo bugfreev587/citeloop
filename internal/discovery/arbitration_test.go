@@ -49,6 +49,59 @@ func TestArbitrationPrepareExactActiveWorkMergesWithoutProvider(t *testing.T) {
 	}
 }
 
+func TestArbitrationPrepareDeterministicallyBlocksGrowthOnDoctorTitleRepair(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	doctor := dependencyCandidate(candidate.Candidate.ProjectID, OwnerDoctor, VerificationImmediate, "metadata.title", "add", "title")
+	doctorIdentity, err := BuildIdentity(doctor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doctorSignatureID := uuid.New()
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: doctorSignatureID, Owner: OwnerDoctor, ExactSignatureHash: doctorIdentity.ExactSignatureHash,
+		SignaturePayload: doctorIdentity.SignaturePayload,
+	}}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparator.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0 for deterministic mutation overlap", comparator.calls)
+	}
+	if prepared.Decision != DecisionBlockOnOtherLine || prepared.Owner != OwnerOpportunities || prepared.Status != ArbitrationStatusPrepared {
+		t.Fatalf("prepared = %+v", prepared)
+	}
+	if len(prepared.OverlapWorkIDs) != 1 || prepared.OverlapWorkIDs[0] != doctorSignatureID {
+		t.Fatalf("overlaps = %v", prepared.OverlapWorkIDs)
+	}
+}
+
+func TestArbitrationPrepareDeterministicallyAllowsSoftCrossLineDependency(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	doctor := dependencyCandidate(candidate.Candidate.ProjectID, OwnerDoctor, VerificationImmediate, "metadata.description", "add", "meta_description")
+	doctorIdentity, err := BuildIdentity(doctor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doctorSignatureID := uuid.New()
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: doctorSignatureID, Owner: OwnerDoctor, ExactSignatureHash: doctorIdentity.ExactSignatureHash,
+		SignaturePayload: doctorIdentity.SignaturePayload,
+	}}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparator.calls != 0 || prepared.Decision != DecisionCreate || prepared.Owner != OwnerOpportunities {
+		t.Fatalf("calls/prepared = %d/%+v", comparator.calls, prepared)
+	}
+	if len(prepared.OverlapWorkIDs) != 1 || prepared.OverlapWorkIDs[0] != doctorSignatureID {
+		t.Fatalf("overlaps = %v", prepared.OverlapWorkIDs)
+	}
+}
+
 func TestArbitrationPrepareCallsProviderOutsideTransactionBoundary(t *testing.T) {
 	store, comparator, candidate := arbitrationFixture(t)
 	existingID := uuid.New()

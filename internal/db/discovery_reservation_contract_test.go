@@ -31,10 +31,13 @@ func TestDiscoveryReservationQueriesEnforceShortTransaction(t *testing.T) {
 		}
 	}
 	insert := strings.ToLower(insertEnforcedWorkSignature)
-	for _, want := range []string{"'enforced'", "'reserved'", "true", "arbitration_decision_id", "reserved_work_type", "reserved_work_id"} {
+	for _, want := range []string{"'enforced'", "true", "arbitration_decision_id", "reserved_work_type", "reserved_work_id"} {
 		if !strings.Contains(insert, want) {
 			t.Fatalf("enforced signature insert missing %q: %s", want, insertEnforcedWorkSignature)
 		}
+	}
+	if !strings.Contains(insert, "'enforced', $5, true") {
+		t.Fatalf("enforced signature insert must persist reserved versus blocked status: %s", insertEnforcedWorkSignature)
 	}
 	increment := strings.ToLower(incrementConflictBucketVersions)
 	if !strings.Contains(increment, "bucket_version = bucket_version + 1") {

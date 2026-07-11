@@ -815,6 +815,9 @@ func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uu
 			return db.ContentAction{}, errCanonicalDoctorOwnsTechnicalRepair
 		}
 	}
+	if err := s.requireGrowthOpportunityExecutable(r.Context(), projectID, opp.ID); err != nil {
+		return db.ContentAction{}, err
+	}
 	actionType := strings.TrimSpace(valueOr(candidate.RecommendedAction, candidate.Type))
 	if actionType == "" {
 		actionType = candidate.ActionBucket

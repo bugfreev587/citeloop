@@ -570,6 +570,15 @@ type GeoVisibilityScore struct {
 	ComputedAt          pgtype.Timestamptz `json:"computed_at"`
 }
 
+type GrowthOpportunityWorkAlias struct {
+	ProjectID              uuid.UUID          `json:"project_id"`
+	LegacyOpportunityID    uuid.UUID          `json:"legacy_opportunity_id"`
+	CanonicalOpportunityID uuid.UUID          `json:"canonical_opportunity_id"`
+	WorkSignatureID        uuid.UUID          `json:"work_signature_id"`
+	Disposition            string             `json:"disposition"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
 type GuardrailCheck struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`
@@ -1098,6 +1107,7 @@ type SeoOpportunity struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	CanonicalGrowth            bool               `json:"canonical_growth"`
 }
 
 type SeoOpportunityReviewState struct {
@@ -1352,6 +1362,26 @@ type WorkConflictBucket struct {
 	BucketVersion int64              `json:"bucket_version"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkRelationship struct {
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DependentCandidateID      uuid.UUID          `json:"dependent_candidate_id"`
+	DependentWorkSignatureID  uuid.UUID          `json:"dependent_work_signature_id"`
+	DependentWorkType         string             `json:"dependent_work_type"`
+	DependentWorkID           uuid.UUID          `json:"dependent_work_id"`
+	BlockingWorkSignatureID   uuid.UUID          `json:"blocking_work_signature_id"`
+	RelationshipType          string             `json:"relationship_type"`
+	DependencyClass           string             `json:"dependency_class"`
+	Reason                    string             `json:"reason"`
+	OverlappingMutationFields json.RawMessage    `json:"overlapping_mutation_fields"`
+	ReassessmentTrigger       string             `json:"reassessment_trigger"`
+	AttributionConfounder     *bool              `json:"attribution_confounder"`
+	Active                    bool               `json:"active"`
+	ResolvedAt                pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkReviewMemory struct {

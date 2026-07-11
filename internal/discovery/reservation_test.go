@@ -105,6 +105,26 @@ func TestReservePreparedUsesAtomicStoreWithoutSemanticProvider(t *testing.T) {
 	}
 }
 
+func TestReservePreparedCarriesBlockedGrowthRelationshipsIntoTransaction(t *testing.T) {
+	decision := reservablePreparedDecision()
+	decision.Owner = OwnerOpportunities
+	decision.Decision = DecisionBlockOnOtherLine
+	decision.OverlapWorkIDs = []uuid.UUID{uuid.New()}
+	decision.Reason = "title repair invalidates the CTR baseline"
+	store := &reservationStoreStub{decision: decision, config: ArbitrationConfig{ConfidenceThreshold: 0.80}}
+	creator := &workCreatorStub{reference: WorkReference{Type: "seo_opportunity", ID: uuid.New()}}
+
+	if _, err := NewReservationService(store).ReservePrepared(context.Background(), decision.ProjectID, decision.ID, creator); err != nil {
+		t.Fatalf("ReservePrepared: %v", err)
+	}
+	if creator.work.Decision != DecisionBlockOnOtherLine || creator.work.Reason != decision.Reason {
+		t.Fatalf("reserved work = %+v", creator.work)
+	}
+	if len(creator.work.OverlapWorkIDs) != 1 || creator.work.OverlapWorkIDs[0] != decision.OverlapWorkIDs[0] {
+		t.Fatalf("overlaps = %v", creator.work.OverlapWorkIDs)
+	}
+}
+
 func TestReservePreparedRejectsUnsafeDecisionBeforeTransaction(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -112,6 +132,14 @@ func TestReservePreparedRejectsUnsafeDecisionBeforeTransaction(t *testing.T) {
 	}{
 		{name: "held", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) { d.Status = ArbitrationStatusHeld }},
 		{name: "merge", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) { d.Decision = DecisionMergeEvidence }},
+		{name: "Doctor cannot wait on Growth", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) {
+			d.Decision = DecisionBlockOnOtherLine
+			d.OverlapWorkIDs = []uuid.UUID{uuid.New()}
+		}},
+		{name: "block without overlap", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) {
+			d.Owner = OwnerOpportunities
+			d.Decision = DecisionBlockOnOtherLine
+		}},
 		{name: "low confidence", mutate: func(d *PreparedDecision, c *ArbitrationConfig) { d.Confidence = 0.79; c.ConfidenceThreshold = 0.80 }},
 		{name: "missing snapshot", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) { d.ExpectedBucketVersions = nil }},
 		{name: "missing project", mutate: func(d *PreparedDecision, _ *ArbitrationConfig) { d.ProjectID = uuid.Nil }},
@@ -193,6 +221,7 @@ func (s *reservationStoreStub) ReserveAtomically(ctx context.Context, decision P
 	work, err := creator.CreateInTransaction(ctx, nil, ReservedWork{
 		ProjectID: decision.ProjectID, CandidateID: decision.CandidateID,
 		DecisionID: decision.ID, WorkSignatureID: signatureID, Owner: decision.Owner,
+		Decision: decision.Decision, OverlapWorkIDs: decision.OverlapWorkIDs, Reason: decision.Reason,
 	})
 	if err != nil {
 		return ReservationResult{}, err

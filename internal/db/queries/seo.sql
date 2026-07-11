@@ -670,6 +670,57 @@ reopened_review_state as (
 )
 select * from upserted;
 
+-- name: CreateCanonicalGrowthOpportunity :one
+insert into seo_opportunities
+  (id, project_id, type, status, priority_score, confidence, page_url,
+   normalized_page_url, article_id, topic_id, query, evidence,
+   recommended_action, expected_impact, effort, risk_level, created_by_run_id,
+   opportunity_key, opportunity_identity_key, evidence_fingerprint, canonical_growth)
+values
+  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(type), 'open',
+   sqlc.arg(priority_score), sqlc.arg(confidence), sqlc.narg(page_url),
+   sqlc.arg(normalized_page_url), sqlc.narg(article_id), sqlc.narg(topic_id),
+   sqlc.narg(query), sqlc.arg(evidence)::jsonb, sqlc.narg(recommended_action),
+   sqlc.narg(expected_impact), sqlc.arg(effort), sqlc.arg(risk_level),
+   sqlc.narg(created_by_run_id), sqlc.arg(exact_signature_hash),
+   sqlc.arg(exact_signature_hash), sqlc.arg(evidence_fingerprint), true)
+returning *;
+
+-- name: MergeCanonicalGrowthOpportunityEvidence :one
+with locked_signature as (
+  select signature.id, signature.reserved_work_id
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = sqlc.arg(work_signature_id)
+    and signature.mode = 'enforced' and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+  for update
+), merged as (
+  update seo_opportunities opportunity set
+    evidence = opportunity.evidence || jsonb_build_object(
+      'merged_cross_source_evidence',
+      coalesce(opportunity.evidence->'merged_cross_source_evidence', '[]'::jsonb)
+        || jsonb_build_array(sqlc.arg(evidence)::jsonb)
+    ),
+    priority_score = greatest(opportunity.priority_score, sqlc.arg(incoming_priority_score)::numeric),
+    confidence = greatest(opportunity.confidence, sqlc.arg(incoming_confidence)::numeric),
+    evidence_fingerprint = sqlc.arg(evidence_fingerprint),
+    updated_at = now()
+  from locked_signature signature
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = signature.reserved_work_id
+  returning opportunity.*
+), updated_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = sqlc.arg(evidence_fingerprint), updated_at = now()
+  from locked_signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = locked_signature.id
+  returning signature.id
+)
+select merged.* from merged, updated_signature;
+
 -- name: ListSEOOpportunities :many
 select * from seo_opportunities
 where project_id = sqlc.arg(project_id)
@@ -682,6 +733,57 @@ limit sqlc.arg(limit_rows);
 -- name: GetSEOOpportunity :one
 select * from seo_opportunities
 where id = $1 and project_id = $2;
+
+-- name: LockSEOOpportunityForGrowthReserve :one
+select * from seo_opportunities
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+  and status in ('open','accepted','converted','snoozed','watching')
+for update;
+
+-- name: ListActiveLegacyGrowthOpportunities :many
+select opportunity.* from seo_opportunities opportunity
+where opportunity.project_id = sqlc.arg(project_id)
+  and opportunity.canonical_growth = false
+  and opportunity.canonical_read_only = false
+  and not is_legacy_doctor_technical_opportunity(opportunity.type, opportunity.evidence)
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = opportunity.project_id
+      and alias.legacy_opportunity_id = opportunity.id
+  )
+  and opportunity.status in ('open','accepted','converted','snoozed','watching')
+order by opportunity.created_at, opportunity.id
+limit sqlc.arg(limit_rows);
+
+-- name: MarkLegacyGrowthOpportunityCanonical :one
+update seo_opportunities set canonical_growth = true, updated_at = now()
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(id)
+  and canonical_growth = false and canonical_read_only = false
+returning *;
+
+-- name: CreateDuplicateGrowthOpportunityAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_opportunity_id, work_signature_id, disposition)
+select sqlc.arg(project_id), sqlc.arg(legacy_opportunity_id), signature.reserved_work_id,
+       signature.id, 'duplicate'
+from work_signature_registry signature
+where signature.project_id = sqlc.arg(project_id)
+  and signature.id = sqlc.arg(work_signature_id)
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'opportunities'
+  and signature.reserved_work_type = 'seo_opportunity'
+  and signature.reserved_work_id is not null
+  and signature.reserved_work_id <> sqlc.arg(legacy_opportunity_id)
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_opportunity_id = excluded.canonical_opportunity_id,
+  work_signature_id = excluded.work_signature_id,
+  disposition = 'duplicate'
+returning *;
+
+-- name: GetGrowthOpportunityWorkAlias :one
+select * from growth_opportunity_work_aliases
+where project_id = sqlc.arg(project_id)
+  and legacy_opportunity_id = sqlc.arg(legacy_opportunity_id);
 
 -- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set

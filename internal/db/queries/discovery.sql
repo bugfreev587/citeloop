@@ -484,7 +484,7 @@ insert into work_signature_registry
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
   (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
-   'enforced', 'reserved', true, sqlc.arg(exact_signature_hash),
+   'enforced', sqlc.arg(status), true, sqlc.arg(exact_signature_hash),
    sqlc.arg(signature_payload)::jsonb, sqlc.arg(semantic_fingerprint),
    sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),
    sqlc.arg(owner), sqlc.arg(source_object_type), sqlc.arg(source_object_id),
@@ -500,10 +500,74 @@ where project_id = sqlc.arg(project_id)
   and bucket_key = any(sqlc.arg(bucket_keys)::text[])
 returning *;
 
+-- name: UpsertWorkRelationship :one
+insert into work_relationships
+  (project_id, dependent_candidate_id, dependent_work_signature_id,
+   dependent_work_type, dependent_work_id, blocking_work_signature_id,
+   relationship_type, dependency_class, reason,
+   overlapping_mutation_fields, reassessment_trigger, active)
+values
+  (sqlc.arg(project_id), sqlc.arg(dependent_candidate_id), sqlc.arg(dependent_work_signature_id),
+   sqlc.arg(dependent_work_type), sqlc.arg(dependent_work_id), sqlc.arg(blocking_work_signature_id),
+   sqlc.arg(relationship_type), sqlc.arg(dependency_class), sqlc.arg(reason),
+   sqlc.arg(overlapping_mutation_fields)::jsonb, sqlc.arg(reassessment_trigger), true)
+on conflict (project_id, dependent_work_signature_id, blocking_work_signature_id, relationship_type)
+do update set
+  dependency_class = excluded.dependency_class,
+  reason = excluded.reason,
+  overlapping_mutation_fields = excluded.overlapping_mutation_fields,
+  reassessment_trigger = excluded.reassessment_trigger,
+  active = true,
+  resolved_at = null,
+  updated_at = now()
+returning *;
+
+-- name: GrowthOpportunityExecutionGuard :one
+select case when exists (
+  select 1 from product_writer_authority authority
+  where authority.project_id = sqlc.arg(project_id)
+    and authority.product = 'opportunities'
+    and authority.writer_authority = 'legacy'
+    and authority.write_fenced = false
+) then true else exists (
+  select 1
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.mode = 'enforced'
+    and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = sqlc.arg(opportunity_id)
+    and not exists (
+      select 1
+      from work_relationships relationship
+      where relationship.project_id = signature.project_id
+        and relationship.dependent_work_signature_id = signature.id
+        and relationship.dependency_class = 'hard_blocker'
+        and relationship.active = true
+    )
+) end::boolean as can_execute;
+
+-- name: ListWorkSignaturesForRelationship :many
+select * from work_signature_registry
+where project_id = sqlc.arg(project_id)
+  and id = any(sqlc.arg(signature_ids)::uuid[])
+  and mode = 'enforced'
+  and active = true
+order by id;
+
 -- name: MarkArbitrationDecisionReserved :one
 update discovery_arbitration_decisions
 set status = 'reserved',
     updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id)
+  and status = 'prepared'
+returning *;
+
+-- name: MarkArbitrationDecisionResolved :one
+update discovery_arbitration_decisions
+set status = 'resolved', updated_at = now()
 where project_id = sqlc.arg(project_id)
   and id = sqlc.arg(id)
   and status = 'prepared'

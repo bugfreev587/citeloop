@@ -30,7 +30,7 @@ import (
 )
 
 func (s *Server) seoService() seopkg.Service {
-	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData, LLM: s.LLM, DoctorAIModel: s.Env.TokenGateModel}
+	return seopkg.Service{Q: s.Q, Pool: s.Pool, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData, LLM: s.LLM, DoctorAIModel: s.Env.TokenGateModel}
 }
 
 func (s *Server) seoServiceForProject(ctx context.Context, projectID uuid.UUID) seopkg.Service {
@@ -805,6 +805,11 @@ func (s *Server) persistContentActionFromOpportunity(ctx context.Context, projec
 var errGrowthOpportunityHardBlocked = errors.New("Growth opportunity is blocked by unresolved Doctor work")
 
 func (s *Server) requireGrowthOpportunityExecutable(ctx context.Context, projectID, opportunityID uuid.UUID) error {
+	if s.Pool != nil {
+		if err := s.seoService().EnsureGrowthOpportunityReserved(ctx, projectID, opportunityID); err != nil {
+			return fmt.Errorf("canonicalize Growth opportunity reservations: %w", err)
+		}
+	}
 	canExecute, err := s.Q.GrowthOpportunityExecutionGuard(ctx, db.GrowthOpportunityExecutionGuardParams{
 		ProjectID: projectID, OpportunityID: pgtype.UUID{Bytes: opportunityID, Valid: true},
 	})

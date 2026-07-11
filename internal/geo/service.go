@@ -59,9 +59,16 @@ type Store interface {
 
 type Service struct {
 	Q              Store
+	GrowthWriter   GrowthOpportunityWriter
 	HTTPClient     *http.Client
 	AnswerProvider AnswerProvider
 	Now            func() time.Time
+}
+
+type GrowthOpportunityWriter interface {
+	CreateOpportunity(context.Context, db.CreateCanonicalGrowthOpportunityParams) (db.SeoOpportunity, error)
+	EnsureOpportunityReserved(context.Context, uuid.UUID, uuid.UUID) error
+	CanExecuteOpportunity(context.Context, uuid.UUID, uuid.UUID) (bool, error)
 }
 
 type CrawlerAuditRequest struct {

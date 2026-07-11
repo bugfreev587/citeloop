@@ -25,8 +25,10 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
@@ -952,6 +954,7 @@ func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
 	}
 	return seopkg.Service{
 		Q:           q,
+		Pool:        s.Pool,
 		HTTPClient:  s.httpClient,
 		BlogBaseURL: s.BlogBaseURL,
 		GoogleData:  s.SEOData,
@@ -1353,8 +1356,13 @@ func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries,
 }
 
 func (s *Scheduler) geoService(ctx context.Context, q *db.Queries) geo.Service {
+	var comparator discovery.SemanticComparator
+	if s.LLM != nil {
+		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", "")
+	}
 	return geo.Service{
 		Q:              q,
+		GrowthWriter:   growthwork.NewService(s.Pool, q, comparator),
 		HTTPClient:     s.httpClient,
 		AnswerProvider: s.geoAnswerProvider(ctx),
 		Now:            s.currentTime,

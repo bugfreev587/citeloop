@@ -17,13 +17,16 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/googledata"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
 )
 
@@ -45,12 +48,44 @@ type GoogleDataProvider interface {
 // Service coordinates the Operations Loop backend workflow.
 type Service struct {
 	Q             *db.Queries
+	Pool          *pgxpool.Pool
 	HTTPClient    *http.Client
 	BlogBaseURL   string
 	GoogleData    GoogleDataProvider
 	LLM           llm.Provider
 	DoctorAIModel string
 	Now           func() time.Time
+}
+
+func (s Service) createGrowthOpportunity(ctx context.Context, in db.UpsertSEOOpportunityParams) (db.SeoOpportunity, error) {
+	var comparator discovery.SemanticComparator
+	if s.LLM != nil {
+		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
+	}
+	return growthwork.NewService(s.Pool, s.Q, comparator).CreateOpportunity(ctx, db.CreateCanonicalGrowthOpportunityParams{
+		ID: uuid.New(), ProjectID: in.ProjectID, Type: in.Type,
+		PriorityScore: in.PriorityScore, Confidence: in.Confidence, PageUrl: in.PageUrl,
+		NormalizedPageUrl: in.NormalizedPageUrl, ArticleID: in.ArticleID, TopicID: in.TopicID,
+		Query: in.Query, Evidence: in.Evidence, RecommendedAction: in.RecommendedAction,
+		ExpectedImpact: in.ExpectedImpact, Effort: in.Effort, RiskLevel: in.RiskLevel,
+		CreatedByRunID: in.CreatedByRunID,
+	})
+}
+
+func (s Service) EnsureGrowthOpportunityReservations(ctx context.Context, projectID uuid.UUID) error {
+	var comparator discovery.SemanticComparator
+	if s.LLM != nil {
+		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
+	}
+	return growthwork.NewService(s.Pool, s.Q, comparator).EnsureLegacyReservations(ctx, projectID)
+}
+
+func (s Service) EnsureGrowthOpportunityReserved(ctx context.Context, projectID, opportunityID uuid.UUID) error {
+	var comparator discovery.SemanticComparator
+	if s.LLM != nil {
+		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
+	}
+	return growthwork.NewService(s.Pool, s.Q, comparator).EnsureOpportunityReserved(ctx, projectID, opportunityID)
 }
 
 type SyncResult struct {
@@ -607,7 +642,7 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		_, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -673,7 +708,7 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		_, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -939,7 +974,7 @@ func (s Service) generateColdStartOpportunities(ctx context.Context, projectID u
 		query := candidate.Query
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err = s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		_, err = s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -983,14 +1018,15 @@ func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.C
 	source, evidenceCount := strongestEvidenceSource(inventory)
 
 	baseEvidence := map[string]any{
-		"source":         "context_confirmation",
-		"positioning":    positioning,
-		"icp":            icp,
-		"value_props":    firstN(valueProps, 5),
-		"features":       firstN(features, 5),
-		"key_terms":      firstN(keyTerms, 8),
-		"source_pages":   len(inventory),
-		"evidence_count": evidenceCount,
+		"source":                     "context_confirmation",
+		"positioning":                positioning,
+		"icp":                        icp,
+		"value_props":                firstN(valueProps, 5),
+		"features":                   firstN(features, 5),
+		"key_terms":                  firstN(keyTerms, 8),
+		"source_pages":               len(inventory),
+		"evidence_count":             evidenceCount,
+		"intended_slug_or_canonical": strings.TrimRight(siteURL, "/") + "/use-cases",
 	}
 	candidates := []coldStartOpportunityCandidate{
 		{
@@ -1018,9 +1054,10 @@ func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.C
 			Effort:            4,
 			RiskLevel:         "medium",
 			Evidence: map[string]any{
-				"source":          "context_confirmation",
-				"differentiators": firstN(differentiators, 6),
-				"competitors":     firstN(competitors, 6),
+				"source":                     "context_confirmation",
+				"differentiators":            firstN(differentiators, 6),
+				"competitors":                firstN(competitors, 6),
+				"intended_slug_or_canonical": strings.TrimRight(siteURL, "/") + "/compare",
 			},
 		})
 	}

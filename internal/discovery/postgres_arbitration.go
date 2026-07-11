@@ -306,6 +306,7 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 	work, err := creator.CreateInTransaction(ctx, tq, ReservedWork{
 		ProjectID: prepared.ProjectID, CandidateID: prepared.CandidateID,
 		DecisionID: prepared.ID, WorkSignatureID: signatureID, Owner: prepared.Owner,
+		Decision: prepared.Decision, OverlapWorkIDs: append([]uuid.UUID(nil), prepared.OverlapWorkIDs...), Reason: prepared.Reason,
 	})
 	if err != nil {
 		return ReservationResult{}, fmt.Errorf("create reserved work: %w", err)
@@ -331,6 +332,7 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		SourceObjectType: lockedCandidate.SourceObjectType, SourceObjectID: lockedCandidate.SourceObjectID,
 		ArbitrationDecisionID: nullableUUID(prepared.ID), ReservedWorkType: &workType,
 		ReservedWorkID: nullableUUID(work.ID), EvidenceFingerprint: prepared.EvidenceFingerprint,
+		Status: reservedSignatureStatus(prepared.Decision),
 	})
 	if err != nil {
 		return ReservationResult{}, staleOnConflict(err)
@@ -353,6 +355,13 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		return ReservationResult{}, staleOnConflict(err)
 	}
 	return ReservationResult{SignatureID: signature.ID, Work: work}, nil
+}
+
+func reservedSignatureStatus(decision DecisionKind) string {
+	if decision == DecisionBlockOnOtherLine {
+		return "blocked"
+	}
+	return "reserved"
 }
 
 var ErrWriterUnavailable = errors.New("canonical product writer is unavailable")

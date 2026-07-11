@@ -1224,6 +1224,45 @@ func (q *Queries) GetSEODoctorFindingForSiteFixForUpdate(ctx context.Context, ar
 	return i, err
 }
 
+const growthOpportunityExecutionGuard = `-- name: GrowthOpportunityExecutionGuard :one
+select case when exists (
+  select 1 from product_writer_authority authority
+  where authority.project_id = $1
+    and authority.product = 'opportunities'
+    and authority.writer_authority = 'legacy'
+    and authority.write_fenced = false
+) then true else exists (
+  select 1
+  from work_signature_registry signature
+  where signature.project_id = $1
+    and signature.mode = 'enforced'
+    and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = $2
+    and not exists (
+      select 1
+      from work_relationships relationship
+      where relationship.project_id = signature.project_id
+        and relationship.dependent_work_signature_id = signature.id
+        and relationship.dependency_class = 'hard_blocker'
+        and relationship.active = true
+    )
+) end::boolean as can_execute
+`
+
+type GrowthOpportunityExecutionGuardParams struct {
+	ProjectID     uuid.UUID   `json:"project_id"`
+	OpportunityID pgtype.UUID `json:"opportunity_id"`
+}
+
+func (q *Queries) GrowthOpportunityExecutionGuard(ctx context.Context, arg GrowthOpportunityExecutionGuardParams) (bool, error) {
+	row := q.db.QueryRow(ctx, growthOpportunityExecutionGuard, arg.ProjectID, arg.OpportunityID)
+	var can_execute bool
+	err := row.Scan(&can_execute)
+	return can_execute, err
+}
+
 const incrementConflictBucketVersions = `-- name: IncrementConflictBucketVersions :many
 update work_conflict_buckets
 set bucket_version = bucket_version + 1,
@@ -1274,12 +1313,12 @@ insert into work_signature_registry
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
   ($1, $2, $3, $4,
-   'enforced', 'reserved', true, $5,
-   $6::jsonb, $7,
-   $8::jsonb, $9,
-   $10, $11, $12,
-   $13, $14,
-   $15, $16)
+   'enforced', $5, true, $6,
+   $7::jsonb, $8,
+   $9::jsonb, $10,
+   $11, $12, $13,
+   $14, $15,
+   $16, $17)
 returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint
 `
 
@@ -1288,6 +1327,7 @@ type InsertEnforcedWorkSignatureParams struct {
 	ProjectID             uuid.UUID       `json:"project_id"`
 	CandidateID           uuid.UUID       `json:"candidate_id"`
 	ShadowRunID           uuid.UUID       `json:"shadow_run_id"`
+	Status                string          `json:"status"`
 	ExactSignatureHash    string          `json:"exact_signature_hash"`
 	SignaturePayload      json.RawMessage `json:"signature_payload"`
 	SemanticFingerprint   *string         `json:"semantic_fingerprint"`
@@ -1308,6 +1348,7 @@ func (q *Queries) InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnf
 		arg.ProjectID,
 		arg.CandidateID,
 		arg.ShadowRunID,
+		arg.Status,
 		arg.ExactSignatureHash,
 		arg.SignaturePayload,
 		arg.SemanticFingerprint,
@@ -1404,7 +1445,7 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 }
 
 const listActiveSEOOpportunitiesForDiscoveryShadow = `-- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from seo_opportunities
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from seo_opportunities
 where project_id = $1
   and status in ('open','accepted','converted','dismissed','snoozed','watching')
 order by created_at asc
@@ -1449,6 +1490,7 @@ func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Conte
 			&i.CanonicalReadOnly,
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
+			&i.CanonicalGrowth,
 		); err != nil {
 			return nil, err
 		}
@@ -1791,6 +1833,62 @@ func (q *Queries) ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshot
 	return items, nil
 }
 
+const listWorkSignaturesForRelationship = `-- name: ListWorkSignaturesForRelationship :many
+select id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint from work_signature_registry
+where project_id = $1
+  and id = any($2::uuid[])
+  and mode = 'enforced'
+  and active = true
+order by id
+`
+
+type ListWorkSignaturesForRelationshipParams struct {
+	ProjectID    uuid.UUID   `json:"project_id"`
+	SignatureIds []uuid.UUID `json:"signature_ids"`
+}
+
+func (q *Queries) ListWorkSignaturesForRelationship(ctx context.Context, arg ListWorkSignaturesForRelationshipParams) ([]WorkSignatureRegistry, error) {
+	rows, err := q.db.Query(ctx, listWorkSignaturesForRelationship, arg.ProjectID, arg.SignatureIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkSignatureRegistry
+	for rows.Next() {
+		var i WorkSignatureRegistry
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.CandidateID,
+			&i.ShadowRunID,
+			&i.Mode,
+			&i.Status,
+			&i.Active,
+			&i.ExactSignatureHash,
+			&i.SignaturePayload,
+			&i.SemanticFingerprint,
+			&i.ConflictBucketKeys,
+			&i.SignatureVersion,
+			&i.Owner,
+			&i.SourceObjectType,
+			&i.SourceObjectID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArbitrationDecisionID,
+			&i.ReservedWorkType,
+			&i.ReservedWorkID,
+			&i.EvidenceFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockArbitrationDecisionForReserve = `-- name: LockArbitrationDecisionForReserve :one
 select id, project_id, candidate_id, candidate_version, ai_call_id, disposition, decision, owner, overlap_work_ids, reason, confidence, semantic_fingerprint, compared_work_ids, expected_bucket_versions, snapshot_fingerprint, exact_signature_hash, signature_version, evidence_fingerprint, rules_version, prompt_version, provider, model, status, created_at, updated_at from discovery_arbitration_decisions
 where project_id = $1
@@ -1985,6 +2083,53 @@ type MarkArbitrationDecisionReservedParams struct {
 
 func (q *Queries) MarkArbitrationDecisionReserved(ctx context.Context, arg MarkArbitrationDecisionReservedParams) (DiscoveryArbitrationDecision, error) {
 	row := q.db.QueryRow(ctx, markArbitrationDecisionReserved, arg.ProjectID, arg.ID)
+	var i DiscoveryArbitrationDecision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.CandidateVersion,
+		&i.AiCallID,
+		&i.Disposition,
+		&i.Decision,
+		&i.Owner,
+		&i.OverlapWorkIds,
+		&i.Reason,
+		&i.Confidence,
+		&i.SemanticFingerprint,
+		&i.ComparedWorkIds,
+		&i.ExpectedBucketVersions,
+		&i.SnapshotFingerprint,
+		&i.ExactSignatureHash,
+		&i.SignatureVersion,
+		&i.EvidenceFingerprint,
+		&i.RulesVersion,
+		&i.PromptVersion,
+		&i.Provider,
+		&i.Model,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markArbitrationDecisionResolved = `-- name: MarkArbitrationDecisionResolved :one
+update discovery_arbitration_decisions
+set status = 'resolved', updated_at = now()
+where project_id = $1
+  and id = $2
+  and status = 'prepared'
+returning id, project_id, candidate_id, candidate_version, ai_call_id, disposition, decision, owner, overlap_work_ids, reason, confidence, semantic_fingerprint, compared_work_ids, expected_bucket_versions, snapshot_fingerprint, exact_signature_hash, signature_version, evidence_fingerprint, rules_version, prompt_version, provider, model, status, created_at, updated_at
+`
+
+type MarkArbitrationDecisionResolvedParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkArbitrationDecisionResolved(ctx context.Context, arg MarkArbitrationDecisionResolvedParams) (DiscoveryArbitrationDecision, error) {
+	row := q.db.QueryRow(ctx, markArbitrationDecisionResolved, arg.ProjectID, arg.ID)
 	var i DiscoveryArbitrationDecision
 	err := row.Scan(
 		&i.ID,
@@ -2647,6 +2792,80 @@ func (q *Queries) UpsertShadowWorkSignature(ctx context.Context, arg UpsertShado
 		&i.ReservedWorkType,
 		&i.ReservedWorkID,
 		&i.EvidenceFingerprint,
+	)
+	return i, err
+}
+
+const upsertWorkRelationship = `-- name: UpsertWorkRelationship :one
+insert into work_relationships
+  (project_id, dependent_candidate_id, dependent_work_signature_id,
+   dependent_work_type, dependent_work_id, blocking_work_signature_id,
+   relationship_type, dependency_class, reason,
+   overlapping_mutation_fields, reassessment_trigger, active)
+values
+  ($1, $2, $3,
+   $4, $5, $6,
+   $7, $8, $9,
+   $10::jsonb, $11, true)
+on conflict (project_id, dependent_work_signature_id, blocking_work_signature_id, relationship_type)
+do update set
+  dependency_class = excluded.dependency_class,
+  reason = excluded.reason,
+  overlapping_mutation_fields = excluded.overlapping_mutation_fields,
+  reassessment_trigger = excluded.reassessment_trigger,
+  active = true,
+  resolved_at = null,
+  updated_at = now()
+returning id, project_id, dependent_candidate_id, dependent_work_signature_id, dependent_work_type, dependent_work_id, blocking_work_signature_id, relationship_type, dependency_class, reason, overlapping_mutation_fields, reassessment_trigger, attribution_confounder, active, resolved_at, created_at, updated_at
+`
+
+type UpsertWorkRelationshipParams struct {
+	ProjectID                 uuid.UUID       `json:"project_id"`
+	DependentCandidateID      uuid.UUID       `json:"dependent_candidate_id"`
+	DependentWorkSignatureID  uuid.UUID       `json:"dependent_work_signature_id"`
+	DependentWorkType         string          `json:"dependent_work_type"`
+	DependentWorkID           uuid.UUID       `json:"dependent_work_id"`
+	BlockingWorkSignatureID   uuid.UUID       `json:"blocking_work_signature_id"`
+	RelationshipType          string          `json:"relationship_type"`
+	DependencyClass           string          `json:"dependency_class"`
+	Reason                    string          `json:"reason"`
+	OverlappingMutationFields json.RawMessage `json:"overlapping_mutation_fields"`
+	ReassessmentTrigger       string          `json:"reassessment_trigger"`
+}
+
+func (q *Queries) UpsertWorkRelationship(ctx context.Context, arg UpsertWorkRelationshipParams) (WorkRelationship, error) {
+	row := q.db.QueryRow(ctx, upsertWorkRelationship,
+		arg.ProjectID,
+		arg.DependentCandidateID,
+		arg.DependentWorkSignatureID,
+		arg.DependentWorkType,
+		arg.DependentWorkID,
+		arg.BlockingWorkSignatureID,
+		arg.RelationshipType,
+		arg.DependencyClass,
+		arg.Reason,
+		arg.OverlappingMutationFields,
+		arg.ReassessmentTrigger,
+	)
+	var i WorkRelationship
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DependentCandidateID,
+		&i.DependentWorkSignatureID,
+		&i.DependentWorkType,
+		&i.DependentWorkID,
+		&i.BlockingWorkSignatureID,
+		&i.RelationshipType,
+		&i.DependencyClass,
+		&i.Reason,
+		&i.OverlappingMutationFields,
+		&i.ReassessmentTrigger,
+		&i.AttributionConfounder,
+		&i.Active,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
