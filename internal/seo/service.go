@@ -642,7 +642,7 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -660,6 +660,9 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		generated++
 	}
@@ -708,7 +711,7 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -726,6 +729,9 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		generated++
 	}
@@ -974,7 +980,7 @@ func (s Service) generateColdStartOpportunities(ctx context.Context, projectID u
 		query := candidate.Query
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err = s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -992,6 +998,9 @@ func (s Service) generateColdStartOpportunities(ctx context.Context, projectID u
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		seen[candidate.Query] = true
 		generated++

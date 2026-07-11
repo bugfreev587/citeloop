@@ -2695,6 +2695,51 @@ func (q *Queries) GetCanonicalSiteFixByWorkSignature(ctx context.Context, arg Ge
 	return i, err
 }
 
+const getCanonicalSiteFixByWorkSignatureForUpdate = `-- name: GetCanonicalSiteFixByWorkSignatureForUpdate :one
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
+where project_id = $1
+  and work_signature_id = $2
+for update
+`
+
+type GetCanonicalSiteFixByWorkSignatureForUpdateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) GetCanonicalSiteFixByWorkSignatureForUpdate(ctx context.Context, arg GetCanonicalSiteFixByWorkSignatureForUpdateParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, getCanonicalSiteFixByWorkSignatureForUpdate, arg.ProjectID, arg.WorkSignatureID)
+	var i SiteFix
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getCanonicalSiteFixEvidenceMerge = `-- name: GetCanonicalSiteFixEvidenceMerge :one
 select evidence_merge.id, evidence_merge.project_id, evidence_merge.candidate_id, evidence_merge.arbitration_decision_id, evidence_merge.site_fix_id, evidence_merge.doctor_finding_id, evidence_merge.finding_kind, evidence_merge.evidence_fingerprint, evidence_merge.evidence_snapshot, evidence_merge.created_at
 from site_fix_evidence_merges evidence_merge
@@ -7355,6 +7400,122 @@ func (q *Queries) MarkLegacyOpportunityMigrationReviewReadOnly(ctx context.Conte
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+	)
+	return i, err
+}
+
+const mergeCanonicalDoctorSiteFixEvidence = `-- name: MergeCanonicalDoctorSiteFixEvidence :one
+with locked_signature as (
+  select signature.id
+  from work_signature_registry signature
+  where signature.project_id = $1
+    and signature.id = $2
+    and signature.mode = 'enforced' and signature.active = true
+    and signature.owner = 'doctor' and signature.reserved_work_type = 'site_fix'
+  for update
+), merged as (
+  update site_fixes fix set
+    evidence_snapshot = fix.evidence_snapshot || jsonb_build_object(
+      'merged_cross_source_evidence',
+      coalesce(fix.evidence_snapshot->'merged_cross_source_evidence', '[]'::jsonb)
+        || jsonb_build_array(jsonb_build_object(
+          'evidence', $3::jsonb,
+          'priority_score', $4::numeric,
+          'confidence', $5::numeric,
+          'source_opportunity_id', $6
+        ))
+    ),
+    updated_at = now()
+  from locked_signature signature
+  where fix.project_id = $1
+    and fix.work_signature_id = signature.id
+  returning fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at
+), updated_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = $7, updated_at = now()
+  from locked_signature
+  where signature.project_id = $1
+    and signature.id = locked_signature.id
+  returning signature.id
+)
+select merged.id, merged.project_id, merged.doctor_finding_id, merged.candidate_id, merged.work_signature_id, merged.supersedes_site_fix_id, merged.status, merged.finding_kind, merged.target_urls, merged.evidence_snapshot, merged.proposed_fix, merged.acceptance_tests, merged.verification_snapshot, merged.failure_reason, merged.retry_count, merged.max_retries, merged.legacy_opportunity_id, merged.legacy_content_action_id, merged.migration_batch_id, merged.approved_at, merged.applied_at, merged.deployed_at, merged.verified_at, merged.created_at, merged.updated_at from merged, updated_signature
+`
+
+type MergeCanonicalDoctorSiteFixEvidenceParams struct {
+	ProjectID             uuid.UUID       `json:"project_id"`
+	WorkSignatureID       uuid.UUID       `json:"work_signature_id"`
+	Evidence              json.RawMessage `json:"evidence"`
+	IncomingPriorityScore pgtype.Numeric  `json:"incoming_priority_score"`
+	IncomingConfidence    pgtype.Numeric  `json:"incoming_confidence"`
+	SourceOpportunityID   interface{}     `json:"source_opportunity_id"`
+	EvidenceFingerprint   string          `json:"evidence_fingerprint"`
+}
+
+type MergeCanonicalDoctorSiteFixEvidenceRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg MergeCanonicalDoctorSiteFixEvidenceParams) (MergeCanonicalDoctorSiteFixEvidenceRow, error) {
+	row := q.db.QueryRow(ctx, mergeCanonicalDoctorSiteFixEvidence,
+		arg.ProjectID,
+		arg.WorkSignatureID,
+		arg.Evidence,
+		arg.IncomingPriorityScore,
+		arg.IncomingConfidence,
+		arg.SourceOpportunityID,
+		arg.EvidenceFingerprint,
+	)
+	var i MergeCanonicalDoctorSiteFixEvidenceRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

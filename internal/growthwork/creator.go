@@ -51,7 +51,6 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		return discovery.WorkReference{}, ErrIncompleteGrowthWork
 	}
 	var opportunity db.SeoOpportunity
-	var beforeSnapshot json.RawMessage
 	if creator.Opportunity != nil {
 		params := *creator.Opportunity
 		if params.ID != opportunityID || params.ProjectID != work.ProjectID || params.ExactSignatureHash != *candidateRow.ExactSignatureHash || params.EvidenceFingerprint != candidateRow.EvidenceFingerprint {
@@ -67,10 +66,6 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		})
 		if err != nil {
 			return discovery.WorkReference{}, fmt.Errorf("lock Growth opportunity: %w", err)
-		}
-		beforeSnapshot, err = json.Marshal(opportunity)
-		if err != nil {
-			return discovery.WorkReference{}, err
 		}
 		opportunity, err = q.MarkLegacyGrowthOpportunityCanonical(ctx, db.MarkLegacyGrowthOpportunityCanonicalParams{
 			ProjectID: work.ProjectID, ID: opportunity.ID,
@@ -128,6 +123,11 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		return discovery.WorkReference{}, discovery.ErrSnapshotStale
 	}
 	if creator.CutoverBatchID != uuid.Nil {
+		if _, err := q.CreateCanonicalizedGrowthOpportunityAlias(ctx, db.CreateCanonicalizedGrowthOpportunityAliasParams{
+			ProjectID: work.ProjectID, OpportunityID: opportunity.ID, WorkSignatureID: work.WorkSignatureID,
+		}); err != nil {
+			return discovery.WorkReference{}, fmt.Errorf("create canonical Growth alias: %w", err)
+		}
 		afterSnapshot, err := json.Marshal(opportunity)
 		if err != nil {
 			return discovery.WorkReference{}, err
@@ -136,14 +136,13 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 			"operation": "rollback_growth_canonicalization", "opportunity_id": opportunity.ID,
 			"candidate_id": work.CandidateID, "work_signature_id": work.WorkSignatureID,
 		})
-		if _, err := q.AppendGrowthCutoverSessionEntry(ctx, db.AppendGrowthCutoverSessionEntryParams{
-			BatchID: creator.CutoverBatchID, ProjectID: work.ProjectID,
-			SequenceNumber: creator.CutoverSequence, OpportunityID: opportunity.ID,
-			CandidateID: work.CandidateID, WorkSignatureID: work.WorkSignatureID,
-			Disposition: "canonicalized", BeforeSnapshot: beforeSnapshot,
+		if _, err := q.UpdateGrowthCutoverSessionEntryDecision(ctx, db.UpdateGrowthCutoverSessionEntryDecisionParams{
+			BatchID: creator.CutoverBatchID, ProjectID: work.ProjectID, OpportunityID: opportunity.ID,
+			ArbitrationDecisionID: pgUUID(work.DecisionID), WorkSignatureID: pgUUID(work.WorkSignatureID),
+			Disposition: "canonicalized", EntryStatus: "applied",
 			AfterSnapshot: afterSnapshot, InverseOperation: inverse,
 		}); err != nil {
-			return discovery.WorkReference{}, fmt.Errorf("append Growth cutover entry: %w", err)
+			return discovery.WorkReference{}, fmt.Errorf("complete Growth cutover entry: %w", err)
 		}
 	}
 	return discovery.WorkReference{Type: "seo_opportunity", ID: opportunity.ID}, nil

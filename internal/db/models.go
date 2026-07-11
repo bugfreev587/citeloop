@@ -581,23 +581,29 @@ type GrowthCutoverSession struct {
 }
 
 type GrowthCutoverSessionEntry struct {
-	BatchID          uuid.UUID          `json:"batch_id"`
-	ProjectID        uuid.UUID          `json:"project_id"`
-	SequenceNumber   int32              `json:"sequence_number"`
-	OpportunityID    uuid.UUID          `json:"opportunity_id"`
-	CandidateID      uuid.UUID          `json:"candidate_id"`
-	WorkSignatureID  uuid.UUID          `json:"work_signature_id"`
-	Disposition      string             `json:"disposition"`
-	BeforeSnapshot   json.RawMessage    `json:"before_snapshot"`
-	AfterSnapshot    json.RawMessage    `json:"after_snapshot"`
-	InverseOperation json.RawMessage    `json:"inverse_operation"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	BatchID               uuid.UUID          `json:"batch_id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	SequenceNumber        int32              `json:"sequence_number"`
+	OpportunityID         uuid.UUID          `json:"opportunity_id"`
+	RunID                 uuid.UUID          `json:"run_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ArbitrationDecisionID pgtype.UUID        `json:"arbitration_decision_id"`
+	AiCallID              pgtype.UUID        `json:"ai_call_id"`
+	WorkSignatureID       pgtype.UUID        `json:"work_signature_id"`
+	Disposition           string             `json:"disposition"`
+	EntryStatus           string             `json:"entry_status"`
+	BeforeSnapshot        json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot         json.RawMessage    `json:"after_snapshot"`
+	InverseOperation      json.RawMessage    `json:"inverse_operation"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
 type GrowthOpportunityWorkAlias struct {
 	ProjectID              uuid.UUID          `json:"project_id"`
 	LegacyOpportunityID    uuid.UUID          `json:"legacy_opportunity_id"`
-	CanonicalOpportunityID uuid.UUID          `json:"canonical_opportunity_id"`
+	CanonicalObjectType    string             `json:"canonical_object_type"`
+	CanonicalOpportunityID pgtype.UUID        `json:"canonical_opportunity_id"`
+	CanonicalSiteFixID     pgtype.UUID        `json:"canonical_site_fix_id"`
 	WorkSignatureID        uuid.UUID          `json:"work_signature_id"`
 	Disposition            string             `json:"disposition"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`

@@ -100,6 +100,48 @@ select * from site_fixes
 where project_id = sqlc.arg(project_id)
   and work_signature_id = sqlc.arg(work_signature_id);
 
+-- name: GetCanonicalSiteFixByWorkSignatureForUpdate :one
+select * from site_fixes
+where project_id = sqlc.arg(project_id)
+  and work_signature_id = sqlc.arg(work_signature_id)
+for update;
+
+-- name: MergeCanonicalDoctorSiteFixEvidence :one
+with locked_signature as (
+  select signature.id
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = sqlc.arg(work_signature_id)
+    and signature.mode = 'enforced' and signature.active = true
+    and signature.owner = 'doctor' and signature.reserved_work_type = 'site_fix'
+  for update
+), merged as (
+  update site_fixes fix set
+    evidence_snapshot = fix.evidence_snapshot || jsonb_build_object(
+      'merged_cross_source_evidence',
+      coalesce(fix.evidence_snapshot->'merged_cross_source_evidence', '[]'::jsonb)
+        || jsonb_build_array(jsonb_build_object(
+          'evidence', sqlc.arg(evidence)::jsonb,
+          'priority_score', sqlc.arg(incoming_priority_score)::numeric,
+          'confidence', sqlc.arg(incoming_confidence)::numeric,
+          'source_opportunity_id', sqlc.arg(source_opportunity_id)
+        ))
+    ),
+    updated_at = now()
+  from locked_signature signature
+  where fix.project_id = sqlc.arg(project_id)
+    and fix.work_signature_id = signature.id
+  returning fix.*
+), updated_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = sqlc.arg(evidence_fingerprint), updated_at = now()
+  from locked_signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = locked_signature.id
+  returning signature.id
+)
+select merged.* from merged, updated_signature;
+
 -- name: ClaimDoctorSiteFixPreparationLease :one
 with claimed as (
   insert into doctor_site_fix_preparation_leases (

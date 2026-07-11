@@ -184,10 +184,16 @@ on conflict (project_id, bucket_key) do update set
 returning *;
 
 -- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select * from seo_opportunities
-where project_id = $1
-  and status in ('open','accepted','converted','dismissed','snoozed','watching')
-order by created_at asc;
+select seo_opportunities.* from seo_opportunities
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status in ('open','accepted','converted','dismissed','snoozed','watching')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+order by seo_opportunities.created_at asc;
 
 -- name: ListActiveDoctorFindingsForDiscoveryShadow :many
 select * from seo_doctor_findings
@@ -538,6 +544,12 @@ select case when exists (
     and signature.owner = 'opportunities'
     and signature.reserved_work_type = 'seo_opportunity'
     and signature.reserved_work_id = sqlc.arg(opportunity_id)
+    and not exists (
+      select 1 from growth_opportunity_work_aliases alias
+      where alias.project_id = signature.project_id
+        and alias.legacy_opportunity_id = sqlc.arg(opportunity_id)
+        and alias.disposition in ('duplicate','doctor_merge')
+    )
     and not exists (
       select 1
       from work_relationships relationship

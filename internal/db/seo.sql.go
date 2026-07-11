@@ -15,27 +15,32 @@ import (
 
 const appendGrowthCutoverSessionEntry = `-- name: AppendGrowthCutoverSessionEntry :one
 insert into growth_cutover_session_entries
-  (batch_id, project_id, sequence_number, opportunity_id, candidate_id,
-   work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation)
+  (batch_id, project_id, sequence_number, opportunity_id, run_id, candidate_id,
+   arbitration_decision_id, ai_call_id, work_signature_id, disposition,
+   before_snapshot, after_snapshot, inverse_operation)
 values
   ($1, $2, $3,
    $4, $5, $6,
-   $7, $8::jsonb,
-   $9::jsonb, $10::jsonb)
-returning batch_id, project_id, sequence_number, opportunity_id, candidate_id, work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation, created_at
+   $7, $8, $9,
+   $10, $11::jsonb,
+   $12::jsonb, $13::jsonb)
+returning batch_id, project_id, sequence_number, opportunity_id, run_id, candidate_id, arbitration_decision_id, ai_call_id, work_signature_id, disposition, entry_status, before_snapshot, after_snapshot, inverse_operation, created_at
 `
 
 type AppendGrowthCutoverSessionEntryParams struct {
-	BatchID          uuid.UUID       `json:"batch_id"`
-	ProjectID        uuid.UUID       `json:"project_id"`
-	SequenceNumber   int32           `json:"sequence_number"`
-	OpportunityID    uuid.UUID       `json:"opportunity_id"`
-	CandidateID      uuid.UUID       `json:"candidate_id"`
-	WorkSignatureID  uuid.UUID       `json:"work_signature_id"`
-	Disposition      string          `json:"disposition"`
-	BeforeSnapshot   json.RawMessage `json:"before_snapshot"`
-	AfterSnapshot    json.RawMessage `json:"after_snapshot"`
-	InverseOperation json.RawMessage `json:"inverse_operation"`
+	BatchID               uuid.UUID       `json:"batch_id"`
+	ProjectID             uuid.UUID       `json:"project_id"`
+	SequenceNumber        int32           `json:"sequence_number"`
+	OpportunityID         uuid.UUID       `json:"opportunity_id"`
+	RunID                 uuid.UUID       `json:"run_id"`
+	CandidateID           uuid.UUID       `json:"candidate_id"`
+	ArbitrationDecisionID pgtype.UUID     `json:"arbitration_decision_id"`
+	AiCallID              pgtype.UUID     `json:"ai_call_id"`
+	WorkSignatureID       pgtype.UUID     `json:"work_signature_id"`
+	Disposition           string          `json:"disposition"`
+	BeforeSnapshot        json.RawMessage `json:"before_snapshot"`
+	AfterSnapshot         json.RawMessage `json:"after_snapshot"`
+	InverseOperation      json.RawMessage `json:"inverse_operation"`
 }
 
 func (q *Queries) AppendGrowthCutoverSessionEntry(ctx context.Context, arg AppendGrowthCutoverSessionEntryParams) (GrowthCutoverSessionEntry, error) {
@@ -44,7 +49,10 @@ func (q *Queries) AppendGrowthCutoverSessionEntry(ctx context.Context, arg Appen
 		arg.ProjectID,
 		arg.SequenceNumber,
 		arg.OpportunityID,
+		arg.RunID,
 		arg.CandidateID,
+		arg.ArbitrationDecisionID,
+		arg.AiCallID,
 		arg.WorkSignatureID,
 		arg.Disposition,
 		arg.BeforeSnapshot,
@@ -57,9 +65,13 @@ func (q *Queries) AppendGrowthCutoverSessionEntry(ctx context.Context, arg Appen
 		&i.ProjectID,
 		&i.SequenceNumber,
 		&i.OpportunityID,
+		&i.RunID,
 		&i.CandidateID,
+		&i.ArbitrationDecisionID,
+		&i.AiCallID,
 		&i.WorkSignatureID,
 		&i.Disposition,
+		&i.EntryStatus,
 		&i.BeforeSnapshot,
 		&i.AfterSnapshot,
 		&i.InverseOperation,
@@ -323,8 +335,14 @@ func (q *Queries) CountNewestTechnicalCheckRun(ctx context.Context, scopedProjec
 
 const countOpenSEOOpportunities = `-- name: CountOpenSEOOpportunities :one
 select count(*)::bigint from seo_opportunities
-where project_id = $1
-  and status = 'open'
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status = 'open'
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 `
 
 func (q *Queries) CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error) {
@@ -461,6 +479,42 @@ func (q *Queries) CreateCanonicalGrowthOpportunity(ctx context.Context, arg Crea
 	return i, err
 }
 
+const createCanonicalizedGrowthOpportunityAlias = `-- name: CreateCanonicalizedGrowthOpportunityAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, work_signature_id, disposition)
+values ($1, $2, 'seo_opportunity', $2,
+        $3, 'canonicalized')
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_opportunity_id = excluded.canonical_opportunity_id,
+  canonical_site_fix_id = null,
+  work_signature_id = excluded.work_signature_id,
+  disposition = excluded.disposition
+returning project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at
+`
+
+type CreateCanonicalizedGrowthOpportunityAliasParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	OpportunityID   uuid.UUID `json:"opportunity_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) CreateCanonicalizedGrowthOpportunityAlias(ctx context.Context, arg CreateCanonicalizedGrowthOpportunityAliasParams) (GrowthOpportunityWorkAlias, error) {
+	row := q.db.QueryRow(ctx, createCanonicalizedGrowthOpportunityAlias, arg.ProjectID, arg.OpportunityID, arg.WorkSignatureID)
+	var i GrowthOpportunityWorkAlias
+	err := row.Scan(
+		&i.ProjectID,
+		&i.LegacyOpportunityID,
+		&i.CanonicalObjectType,
+		&i.CanonicalOpportunityID,
+		&i.CanonicalSiteFixID,
+		&i.WorkSignatureID,
+		&i.Disposition,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createContentAction = `-- name: CreateContentAction :one
 insert into content_actions
   (project_id, opportunity_id, action_type, status, target_article_id, target_url,
@@ -558,10 +612,52 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 	return i, err
 }
 
+const createDoctorGrowthEvidenceAlias = `-- name: CreateDoctorGrowthEvidenceAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_site_fix_id, work_signature_id, disposition)
+select $1, $2, 'site_fix', fix.id,
+       signature.id, 'doctor_merge'
+from work_signature_registry signature
+join site_fixes fix on fix.project_id = signature.project_id and fix.work_signature_id = signature.id
+where signature.project_id = $1
+  and signature.id = $3
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'doctor' and signature.reserved_work_type = 'site_fix'
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_opportunity_id = null,
+  canonical_site_fix_id = excluded.canonical_site_fix_id,
+  work_signature_id = excluded.work_signature_id,
+  disposition = excluded.disposition
+returning project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at
+`
+
+type CreateDoctorGrowthEvidenceAliasParams struct {
+	ProjectID           uuid.UUID `json:"project_id"`
+	LegacyOpportunityID uuid.UUID `json:"legacy_opportunity_id"`
+	WorkSignatureID     uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) CreateDoctorGrowthEvidenceAlias(ctx context.Context, arg CreateDoctorGrowthEvidenceAliasParams) (GrowthOpportunityWorkAlias, error) {
+	row := q.db.QueryRow(ctx, createDoctorGrowthEvidenceAlias, arg.ProjectID, arg.LegacyOpportunityID, arg.WorkSignatureID)
+	var i GrowthOpportunityWorkAlias
+	err := row.Scan(
+		&i.ProjectID,
+		&i.LegacyOpportunityID,
+		&i.CanonicalObjectType,
+		&i.CanonicalOpportunityID,
+		&i.CanonicalSiteFixID,
+		&i.WorkSignatureID,
+		&i.Disposition,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createDuplicateGrowthOpportunityAlias = `-- name: CreateDuplicateGrowthOpportunityAlias :one
 insert into growth_opportunity_work_aliases
-  (project_id, legacy_opportunity_id, canonical_opportunity_id, work_signature_id, disposition)
-select $1, $2, signature.reserved_work_id,
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, work_signature_id, disposition)
+select $1, $2, 'seo_opportunity', signature.reserved_work_id,
        signature.id, 'duplicate'
 from work_signature_registry signature
 where signature.project_id = $1
@@ -573,9 +669,11 @@ where signature.project_id = $1
   and signature.reserved_work_id <> $2
 on conflict (project_id, legacy_opportunity_id) do update set
   canonical_opportunity_id = excluded.canonical_opportunity_id,
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_site_fix_id = null,
   work_signature_id = excluded.work_signature_id,
   disposition = 'duplicate'
-returning project_id, legacy_opportunity_id, canonical_opportunity_id, work_signature_id, disposition, created_at
+returning project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at
 `
 
 type CreateDuplicateGrowthOpportunityAliasParams struct {
@@ -590,7 +688,9 @@ func (q *Queries) CreateDuplicateGrowthOpportunityAlias(ctx context.Context, arg
 	err := row.Scan(
 		&i.ProjectID,
 		&i.LegacyOpportunityID,
+		&i.CanonicalObjectType,
 		&i.CanonicalOpportunityID,
+		&i.CanonicalSiteFixID,
 		&i.WorkSignatureID,
 		&i.Disposition,
 		&i.CreatedAt,
@@ -1570,6 +1670,60 @@ func (q *Queries) GetActiveSiteChangeApplicationByOpportunityKey(ctx context.Con
 	return i, err
 }
 
+const getCanonicalGrowthOpportunityByWorkSignatureForUpdate = `-- name: GetCanonicalGrowthOpportunityByWorkSignatureForUpdate :one
+select opportunity.id, opportunity.project_id, opportunity.type, opportunity.status, opportunity.priority_score, opportunity.confidence, opportunity.page_url, opportunity.normalized_page_url, opportunity.article_id, opportunity.topic_id, opportunity.query, opportunity.evidence, opportunity.recommended_action, opportunity.expected_impact, opportunity.effort, opportunity.risk_level, opportunity.created_by_run_id, opportunity.created_at, opportunity.updated_at, opportunity.opportunity_key, opportunity.snoozed_until, opportunity.snooze_reason, opportunity.unsnoozed_at, opportunity.opportunity_identity_key, opportunity.evidence_fingerprint, opportunity.canonical_site_fix_id, opportunity.canonical_read_only, opportunity.legacy_migration_batch_id, opportunity.legacy_migration_disposition, opportunity.canonical_growth from work_signature_registry signature
+join seo_opportunities opportunity
+  on opportunity.project_id = signature.project_id and opportunity.id = signature.reserved_work_id
+where signature.project_id = $1
+  and signature.id = $2
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'opportunities' and signature.reserved_work_type = 'seo_opportunity'
+for update of opportunity
+`
+
+type GetCanonicalGrowthOpportunityByWorkSignatureForUpdateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) GetCanonicalGrowthOpportunityByWorkSignatureForUpdate(ctx context.Context, arg GetCanonicalGrowthOpportunityByWorkSignatureForUpdateParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, getCanonicalGrowthOpportunityByWorkSignatureForUpdate, arg.ProjectID, arg.WorkSignatureID)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+		&i.OpportunityIdentityKey,
+		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+		&i.CanonicalGrowth,
+	)
+	return i, err
+}
+
 const getContentAction = `-- name: GetContentAction :one
 select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from content_actions
 where id = $1 and project_id = $2
@@ -1626,7 +1780,7 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 }
 
 const getGrowthOpportunityWorkAlias = `-- name: GetGrowthOpportunityWorkAlias :one
-select project_id, legacy_opportunity_id, canonical_opportunity_id, work_signature_id, disposition, created_at from growth_opportunity_work_aliases
+select project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at from growth_opportunity_work_aliases
 where project_id = $1
   and legacy_opportunity_id = $2
 `
@@ -1642,7 +1796,9 @@ func (q *Queries) GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrow
 	err := row.Scan(
 		&i.ProjectID,
 		&i.LegacyOpportunityID,
+		&i.CanonicalObjectType,
 		&i.CanonicalOpportunityID,
+		&i.CanonicalSiteFixID,
 		&i.WorkSignatureID,
 		&i.Disposition,
 		&i.CreatedAt,
@@ -1973,8 +2129,14 @@ func (q *Queries) GetSEODoctorRun(ctx context.Context, arg GetSEODoctorRunParams
 }
 
 const getSEOOpportunity = `-- name: GetSEOOpportunity :one
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from seo_opportunities
-where id = $1 and project_id = $2
+select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth from seo_opportunities
+where seo_opportunities.id = $1 and seo_opportunities.project_id = $2
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 `
 
 type GetSEOOpportunityParams struct {
@@ -2103,6 +2265,47 @@ func (q *Queries) GetSiteChangeApplicationForProject(ctx context.Context, arg Ge
 		&i.PrClaimToken,
 		&i.PrClaimExpiresAt,
 		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const getWorkSignatureForGrowthEvidenceMergeForUpdate = `-- name: GetWorkSignatureForGrowthEvidenceMergeForUpdate :one
+select id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint from work_signature_registry
+where project_id = $1 and id = $2
+  and mode = 'enforced' and active = true
+for update
+`
+
+type GetWorkSignatureForGrowthEvidenceMergeForUpdateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) GetWorkSignatureForGrowthEvidenceMergeForUpdate(ctx context.Context, arg GetWorkSignatureForGrowthEvidenceMergeForUpdateParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, getWorkSignatureForGrowthEvidenceMergeForUpdate, arg.ProjectID, arg.WorkSignatureID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
 	)
 	return i, err
 }
@@ -2400,6 +2603,7 @@ where opportunity.project_id = $1
     select 1 from growth_opportunity_work_aliases alias
     where alias.project_id = opportunity.project_id
       and alias.legacy_opportunity_id = opportunity.id
+      and alias.disposition in ('canonicalized','duplicate','doctor_merge')
   )
   and opportunity.status in ('open','accepted','converted','snoozed','watching')
 order by opportunity.created_at, opportunity.id
@@ -2761,7 +2965,7 @@ func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDu
 }
 
 const listGrowthCutoverSessionEntries = `-- name: ListGrowthCutoverSessionEntries :many
-select batch_id, project_id, sequence_number, opportunity_id, candidate_id, work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation, created_at from growth_cutover_session_entries
+select batch_id, project_id, sequence_number, opportunity_id, run_id, candidate_id, arbitration_decision_id, ai_call_id, work_signature_id, disposition, entry_status, before_snapshot, after_snapshot, inverse_operation, created_at from growth_cutover_session_entries
 where project_id = $1 and batch_id = $2
 order by sequence_number desc
 `
@@ -2785,9 +2989,13 @@ func (q *Queries) ListGrowthCutoverSessionEntries(ctx context.Context, arg ListG
 			&i.ProjectID,
 			&i.SequenceNumber,
 			&i.OpportunityID,
+			&i.RunID,
 			&i.CandidateID,
+			&i.ArbitrationDecisionID,
+			&i.AiCallID,
 			&i.WorkSignatureID,
 			&i.Disposition,
+			&i.EntryStatus,
 			&i.BeforeSnapshot,
 			&i.AfterSnapshot,
 			&i.InverseOperation,
@@ -3591,12 +3799,18 @@ func (q *Queries) ListSEOIntegrations(ctx context.Context, projectID uuid.UUID) 
 }
 
 const listSEOOpportunities = `-- name: ListSEOOpportunities :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from seo_opportunities
-where project_id = $1
-  and ($2::text = '' or type = $2)
-  and ($3::text = '' or status = $3)
-  and ($4::timestamptz is null or created_at < $4)
-order by priority_score desc, created_at desc
+select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth from seo_opportunities
+where seo_opportunities.project_id = $1
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and ($2::text = '' or seo_opportunities.type = $2)
+  and ($3::text = '' or seo_opportunities.status = $3)
+  and ($4::timestamptz is null or seo_opportunities.created_at < $4)
+order by seo_opportunities.priority_score desc, seo_opportunities.created_at desc
 limit $5
 `
 
@@ -4641,6 +4855,25 @@ func (q *Queries) MarkDueSEOWatchlistItems(ctx context.Context, projectID uuid.U
 	return result.RowsAffected(), nil
 }
 
+const markGrowthCutoverSessionEntriesRolledBack = `-- name: MarkGrowthCutoverSessionEntriesRolledBack :execrows
+update growth_cutover_session_entries set entry_status = 'rolled_back'
+where project_id = $1 and batch_id = $2
+  and entry_status <> 'rolled_back'
+`
+
+type MarkGrowthCutoverSessionEntriesRolledBackParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	BatchID   uuid.UUID `json:"batch_id"`
+}
+
+func (q *Queries) MarkGrowthCutoverSessionEntriesRolledBack(ctx context.Context, arg MarkGrowthCutoverSessionEntriesRolledBackParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markGrowthCutoverSessionEntriesRolledBack, arg.ProjectID, arg.BatchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markLegacyGrowthOpportunityCanonical = `-- name: MarkLegacyGrowthOpportunityCanonical :one
 update seo_opportunities set canonical_growth = true, updated_at = now()
 where project_id = $1 and id = $2
@@ -5296,16 +5529,16 @@ with source_signature as materialized (
   where bucket.project_id = $1
   order by bucket.bucket_key
   for update of bucket
-), removed_relationships as (
-  delete from work_relationships relationship
-  using source_signature signature
+), tombstoned_relationships as (
+  update work_relationships relationship set active = false, resolved_at = now(), updated_at = now()
+  from source_signature signature
   where relationship.project_id = $1
     and (relationship.dependent_work_signature_id = signature.id
       or relationship.blocking_work_signature_id = signature.id)
   returning relationship.id
-), removed_aliases as (
-  delete from growth_opportunity_work_aliases alias
-  using source_signature signature
+), tombstoned_aliases as (
+  update growth_opportunity_work_aliases alias set disposition = 'rolled_back'
+  from source_signature signature
   where alias.project_id = $1
     and alias.work_signature_id = signature.id
   returning alias.legacy_opportunity_id
@@ -5318,27 +5551,46 @@ with source_signature as materialized (
     and opportunity.canonical_growth = true
     and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
   returning opportunity.id
-), removed_signature as (
-  delete from work_signature_registry signature
-  using source_signature source
+), tombstoned_signature as (
+  update work_signature_registry signature set active = false, status = 'migration_rolled_back', updated_at = now()
+  from source_signature source
   where signature.project_id = $1
     and signature.id = source.id
     and exists (select 1 from reverted_opportunity)
   returning signature.candidate_id
-), removed_candidate as (
-  delete from discovery_candidates candidate
-  using removed_signature signature
+), tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
+  from tombstoned_signature signature
   where candidate.project_id = $1
     and candidate.id = signature.candidate_id
   returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = $1 and decision.candidate_id = $3
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = $1
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = $3
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = $1 and run.id = $5
+  returning run.id
 ), bumped as (
   update work_conflict_buckets bucket
   set bucket_version = bucket_version + 1, updated_at = now()
   from locked_buckets locked
-  where bucket.id = locked.id and exists (select 1 from removed_signature)
+  where bucket.id = locked.id and exists (select 1 from tombstoned_signature)
   returning bucket.id
 )
-select count(*)::bigint as removed_count from removed_signature
+select count(*)::bigint as removed_count from tombstoned_signature
 `
 
 type RollbackGrowthCutoverCanonicalParams struct {
@@ -5346,6 +5598,7 @@ type RollbackGrowthCutoverCanonicalParams struct {
 	WorkSignatureID uuid.UUID   `json:"work_signature_id"`
 	CandidateID     uuid.UUID   `json:"candidate_id"`
 	OpportunityID   pgtype.UUID `json:"opportunity_id"`
+	RunID           uuid.UUID   `json:"run_id"`
 }
 
 func (q *Queries) RollbackGrowthCutoverCanonical(ctx context.Context, arg RollbackGrowthCutoverCanonicalParams) (int64, error) {
@@ -5354,6 +5607,7 @@ func (q *Queries) RollbackGrowthCutoverCanonical(ctx context.Context, arg Rollba
 		arg.WorkSignatureID,
 		arg.CandidateID,
 		arg.OpportunityID,
+		arg.RunID,
 	)
 	var removed_count int64
 	err := row.Scan(&removed_count)
@@ -5361,44 +5615,135 @@ func (q *Queries) RollbackGrowthCutoverCanonical(ctx context.Context, arg Rollba
 }
 
 const rollbackGrowthCutoverDuplicate = `-- name: RollbackGrowthCutoverDuplicate :one
-with removed_alias as (
-  delete from growth_opportunity_work_aliases alias
+with tombstoned_alias as (
+  update growth_opportunity_work_aliases alias set disposition = 'rolled_back'
   where alias.project_id = $1
     and alias.legacy_opportunity_id = $2
-    and alias.work_signature_id = $3
-  returning alias.legacy_opportunity_id
-), removed_candidate as (
-  delete from discovery_candidates candidate
+    and alias.disposition in ('duplicate','doctor_merge')
+  returning alias.legacy_opportunity_id, alias.work_signature_id
+), restored_growth as (
+  update seo_opportunities opportunity set
+    evidence = $3::jsonb,
+    priority_score = coalesce($4::numeric, opportunity.priority_score),
+    confidence = coalesce($5::numeric, opportunity.confidence),
+    evidence_fingerprint = coalesce($6::text, opportunity.evidence_fingerprint),
+    updated_at = now()
+  where opportunity.project_id = $1
+    and opportunity.id = $7
+    and exists (select 1 from tombstoned_alias)
+  returning opportunity.id
+), restored_doctor as (
+  update site_fixes fix set evidence_snapshot = $3::jsonb, updated_at = now()
+  where fix.project_id = $1
+    and fix.id = $8
+    and exists (select 1 from tombstoned_alias)
+  returning fix.id
+), restored_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = coalesce($6::text, signature.evidence_fingerprint),
+    updated_at = now()
+  from tombstoned_alias alias
+  where signature.project_id = $1 and signature.id = alias.work_signature_id
+  returning signature.id
+), tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
   where candidate.project_id = $1
-    and candidate.id = $4
-    and exists (select 1 from removed_alias)
-    and not exists (
-      select 1 from work_signature_registry signature
-      where signature.project_id = candidate.project_id
-        and signature.candidate_id = candidate.id
-    )
+    and candidate.id = $9
+    and exists (select 1 from tombstoned_alias)
   returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = $1 and decision.candidate_id = $9
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = $1
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = $9
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = $1 and run.id = $10
+  returning run.id
 )
-select count(*)::bigint as removed_count from removed_alias
+select count(*)::bigint as removed_count from tombstoned_alias
 `
 
 type RollbackGrowthCutoverDuplicateParams struct {
-	ProjectID       uuid.UUID `json:"project_id"`
-	OpportunityID   uuid.UUID `json:"opportunity_id"`
-	WorkSignatureID uuid.UUID `json:"work_signature_id"`
-	CandidateID     uuid.UUID `json:"candidate_id"`
+	ProjectID                    uuid.UUID      `json:"project_id"`
+	OpportunityID                uuid.UUID      `json:"opportunity_id"`
+	CanonicalEvidence            []byte         `json:"canonical_evidence"`
+	CanonicalPriorityScore       pgtype.Numeric `json:"canonical_priority_score"`
+	CanonicalConfidence          pgtype.Numeric `json:"canonical_confidence"`
+	CanonicalEvidenceFingerprint *string        `json:"canonical_evidence_fingerprint"`
+	CanonicalOpportunityID       pgtype.UUID    `json:"canonical_opportunity_id"`
+	CanonicalSiteFixID           pgtype.UUID    `json:"canonical_site_fix_id"`
+	CandidateID                  uuid.UUID      `json:"candidate_id"`
+	RunID                        uuid.UUID      `json:"run_id"`
 }
 
 func (q *Queries) RollbackGrowthCutoverDuplicate(ctx context.Context, arg RollbackGrowthCutoverDuplicateParams) (int64, error) {
 	row := q.db.QueryRow(ctx, rollbackGrowthCutoverDuplicate,
 		arg.ProjectID,
 		arg.OpportunityID,
-		arg.WorkSignatureID,
+		arg.CanonicalEvidence,
+		arg.CanonicalPriorityScore,
+		arg.CanonicalConfidence,
+		arg.CanonicalEvidenceFingerprint,
+		arg.CanonicalOpportunityID,
+		arg.CanonicalSiteFixID,
 		arg.CandidateID,
+		arg.RunID,
 	)
 	var removed_count int64
 	err := row.Scan(&removed_count)
 	return removed_count, err
+}
+
+const rollbackGrowthCutoverMaterialized = `-- name: RollbackGrowthCutoverMaterialized :one
+with tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
+  where candidate.project_id = $1 and candidate.id = $2
+  returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = $1 and decision.candidate_id = $2
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = $1
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = $2
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = $1 and run.id = $3
+  returning run.id
+)
+select count(*)::bigint as tombstoned_count from tombstoned_candidate
+`
+
+type RollbackGrowthCutoverMaterializedParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	CandidateID uuid.UUID `json:"candidate_id"`
+	RunID       uuid.UUID `json:"run_id"`
+}
+
+func (q *Queries) RollbackGrowthCutoverMaterialized(ctx context.Context, arg RollbackGrowthCutoverMaterializedParams) (int64, error) {
+	row := q.db.QueryRow(ctx, rollbackGrowthCutoverMaterialized, arg.ProjectID, arg.CandidateID, arg.RunID)
+	var tombstoned_count int64
+	err := row.Scan(&tombstoned_count)
+	return tombstoned_count, err
 }
 
 const sEODataDayCount = `-- name: SEODataDayCount :one
@@ -5422,11 +5767,17 @@ func (q *Queries) SEODataDayCount(ctx context.Context, arg SEODataDayCountParams
 }
 
 const sEOOpportunityCounts = `-- name: SEOOpportunityCounts :many
-select type, status, count(*)::bigint as count
+select seo_opportunities.type, seo_opportunities.status, count(*)::bigint as count
 from seo_opportunities
-where project_id = $1
-group by type, status
-order by type, status
+where seo_opportunities.project_id = $1
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+group by seo_opportunities.type, seo_opportunities.status
+order by seo_opportunities.type, seo_opportunities.status
 `
 
 type SEOOpportunityCountsRow struct {
@@ -5562,7 +5913,13 @@ update seo_opportunities set
   snoozed_until = $1,
   snooze_reason = $2,
   updated_at = now()
-where id = $3 and project_id = $4 and status in ('open','snoozed')
+where seo_opportunities.id = $3 and seo_opportunities.project_id = $4 and seo_opportunities.status in ('open','snoozed')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
 `
 
@@ -5687,7 +6044,13 @@ update seo_opportunities set
   snoozed_until = null,
   unsnoozed_at = now(),
   updated_at = now()
-where id = $1 and project_id = $2 and status = 'snoozed'
+where seo_opportunities.id = $1 and seo_opportunities.project_id = $2 and seo_opportunities.status = 'snoozed'
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
 `
 
@@ -5959,6 +6322,70 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 	return i, err
 }
 
+const updateGrowthCutoverSessionEntryDecision = `-- name: UpdateGrowthCutoverSessionEntryDecision :one
+update growth_cutover_session_entries set
+  arbitration_decision_id = coalesce($1, arbitration_decision_id),
+  ai_call_id = coalesce($2, ai_call_id),
+  work_signature_id = coalesce($3, work_signature_id),
+  disposition = $4,
+  entry_status = $5,
+  before_snapshot = coalesce($6::jsonb, before_snapshot),
+  after_snapshot = $7::jsonb,
+  inverse_operation = $8::jsonb
+where project_id = $9 and batch_id = $10
+  and opportunity_id = $11
+returning batch_id, project_id, sequence_number, opportunity_id, run_id, candidate_id, arbitration_decision_id, ai_call_id, work_signature_id, disposition, entry_status, before_snapshot, after_snapshot, inverse_operation, created_at
+`
+
+type UpdateGrowthCutoverSessionEntryDecisionParams struct {
+	ArbitrationDecisionID pgtype.UUID     `json:"arbitration_decision_id"`
+	AiCallID              pgtype.UUID     `json:"ai_call_id"`
+	WorkSignatureID       pgtype.UUID     `json:"work_signature_id"`
+	Disposition           string          `json:"disposition"`
+	EntryStatus           string          `json:"entry_status"`
+	BeforeSnapshot        []byte          `json:"before_snapshot"`
+	AfterSnapshot         json.RawMessage `json:"after_snapshot"`
+	InverseOperation      json.RawMessage `json:"inverse_operation"`
+	ProjectID             uuid.UUID       `json:"project_id"`
+	BatchID               uuid.UUID       `json:"batch_id"`
+	OpportunityID         uuid.UUID       `json:"opportunity_id"`
+}
+
+func (q *Queries) UpdateGrowthCutoverSessionEntryDecision(ctx context.Context, arg UpdateGrowthCutoverSessionEntryDecisionParams) (GrowthCutoverSessionEntry, error) {
+	row := q.db.QueryRow(ctx, updateGrowthCutoverSessionEntryDecision,
+		arg.ArbitrationDecisionID,
+		arg.AiCallID,
+		arg.WorkSignatureID,
+		arg.Disposition,
+		arg.EntryStatus,
+		arg.BeforeSnapshot,
+		arg.AfterSnapshot,
+		arg.InverseOperation,
+		arg.ProjectID,
+		arg.BatchID,
+		arg.OpportunityID,
+	)
+	var i GrowthCutoverSessionEntry
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.SequenceNumber,
+		&i.OpportunityID,
+		&i.RunID,
+		&i.CandidateID,
+		&i.ArbitrationDecisionID,
+		&i.AiCallID,
+		&i.WorkSignatureID,
+		&i.Disposition,
+		&i.EntryStatus,
+		&i.BeforeSnapshot,
+		&i.AfterSnapshot,
+		&i.InverseOperation,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updatePageUpdateDraftContent = `-- name: UpdatePageUpdateDraftContent :one
 update page_update_drafts set
   proposed_content_md = $1,
@@ -6183,7 +6610,13 @@ const updateSEOOpportunityStatus = `-- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set
   status = $3,
   updated_at = now()
-where id = $1 and project_id = $2
+where seo_opportunities.id = $1 and seo_opportunities.project_id = $2
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
 `
 
@@ -7237,10 +7670,16 @@ update seo_opportunities set
   status = 'open',
   unsnoozed_at = now(),
   updated_at = now()
-where project_id = $1
-  and status = 'snoozed'
-  and snoozed_until is not null
-  and snoozed_until <= now()
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status = 'snoozed'
+  and seo_opportunities.snoozed_until is not null
+  and seo_opportunities.snoozed_until <= now()
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 `
 
 func (q *Queries) WakeDueSnoozedSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error) {

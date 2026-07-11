@@ -215,7 +215,7 @@ func (s *Service) CreateOpportunity(ctx context.Context, params db.CreateCanonic
 			}
 			return s.q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: result.Work.ID, ProjectID: params.ProjectID})
 		case discovery.DecisionMergeEvidence:
-			result, err := s.mergeExactEvidence(ctx, prepared, params, false)
+			result, err := s.mergePreparedEvidence(ctx, prepared, params, false)
 			if errors.Is(err, discovery.ErrSnapshotStale) {
 				continue
 			}
@@ -248,7 +248,7 @@ func (s *Service) migrateLegacyGrowth(ctx context.Context, projectID uuid.UUID) 
 
 func (s *Service) migrateLegacyOpportunity(ctx context.Context, opportunity db.SeoOpportunity) error {
 	params := canonicalParamsFromOpportunity(opportunity)
-	candidate, _, err := s.materializeCandidate(ctx, params)
+	candidate, _, err := s.materializeCutoverCandidate(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -256,6 +256,9 @@ func (s *Service) migrateLegacyOpportunity(ctx context.Context, opportunity db.S
 	for attempt := 0; attempt < 3; attempt++ {
 		prepared, err := discovery.NewArbitrationService(store, s.comparator).Prepare(ctx, opportunity.ProjectID, candidate.ID)
 		if err != nil {
+			return err
+		}
+		if err := s.recordCutoverPrepared(ctx, opportunity.ID, prepared); err != nil {
 			return err
 		}
 		switch prepared.Decision {
@@ -268,7 +271,7 @@ func (s *Service) migrateLegacyOpportunity(ctx context.Context, opportunity db.S
 			}
 			return nil
 		case discovery.DecisionMergeEvidence:
-			if _, err := s.mergeExactEvidence(ctx, prepared, params, true); errors.Is(err, discovery.ErrSnapshotStale) {
+			if _, err := s.mergePreparedEvidence(ctx, prepared, params, true); errors.Is(err, discovery.ErrSnapshotStale) {
 				continue
 			} else if err != nil {
 				return err
@@ -294,6 +297,14 @@ func canonicalParamsFromOpportunity(opportunity db.SeoOpportunity) db.CreateCano
 }
 
 func (s *Service) materializeCandidate(ctx context.Context, params db.CreateCanonicalGrowthOpportunityParams) (discovery.ArbitrationCandidate, discovery.Identity, error) {
+	candidate, identity, runID, err := projectGrowthCandidate(params)
+	if err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	return persistGrowthCandidate(ctx, s.q, params.ProjectID, candidate, identity, runID)
+}
+
+func projectGrowthCandidate(params db.CreateCanonicalGrowthOpportunityParams) (discovery.Candidate, discovery.Identity, uuid.UUID, error) {
 	opportunity := db.SeoOpportunity{
 		ID: params.ID, ProjectID: params.ProjectID, Type: params.Type, Status: "open",
 		PriorityScore: params.PriorityScore, Confidence: params.Confidence, PageUrl: params.PageUrl,
@@ -304,32 +315,93 @@ func (s *Service) materializeCandidate(ctx context.Context, params db.CreateCano
 	}
 	candidate := discovery.ProjectSEOOpportunity(opportunity)
 	if candidate.Status != discovery.StatusIdentityReady || candidate.SuggestedOwner != discovery.OwnerOpportunities || candidate.VerificationMode != discovery.VerificationDelayed {
-		return discovery.ArbitrationCandidate{}, discovery.Identity{}, fmt.Errorf("%w: %s", ErrGrowthHeld, candidate.HoldReason)
+		return discovery.Candidate{}, discovery.Identity{}, uuid.Nil, fmt.Errorf("%w: %s", ErrGrowthHeld, candidate.HoldReason)
 	}
 	identity, err := discovery.BuildIdentity(candidate)
 	if err != nil {
-		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+		return discovery.Candidate{}, discovery.Identity{}, uuid.Nil, err
 	}
 	runID := canonicalGrowthRunID(params.ProjectID, params.ID, identity.ExactSignatureHash, candidate.EvidenceFingerprint)
-	if _, err := s.q.EnsureCanonicalDiscoveryRun(ctx, db.EnsureCanonicalDiscoveryRunParams{
-		ID: runID, ProjectID: params.ProjectID,
+	return candidate, identity, runID, nil
+}
+
+func persistGrowthCandidate(ctx context.Context, q *db.Queries, projectID uuid.UUID, candidate discovery.Candidate, identity discovery.Identity, runID uuid.UUID) (discovery.ArbitrationCandidate, discovery.Identity, error) {
+	if _, err := q.EnsureCanonicalDiscoveryRun(ctx, db.EnsureCanonicalDiscoveryRunParams{
+		ID: runID, ProjectID: projectID,
 		CandidateSchemaVersion: discovery.CandidateSchemaVersionV1, SignatureVersion: discovery.SignatureVersionV1,
 	}); err != nil {
 		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
 	}
 	for _, bucket := range identity.ConflictBucketKeys {
-		if _, err := s.q.EnsureWorkConflictBucket(ctx, db.EnsureWorkConflictBucketParams{ProjectID: params.ProjectID, BucketKey: bucket}); err != nil {
+		if _, err := q.EnsureWorkConflictBucket(ctx, db.EnsureWorkConflictBucketParams{ProjectID: projectID, BucketKey: bucket}); err != nil {
 			return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
 		}
 	}
-	candidateID, err := discovery.NewPostgresRepository(s.q).SaveCandidate(ctx, runID, candidate, &identity)
+	candidateID, err := discovery.NewPostgresRepository(q).SaveCandidate(ctx, runID, candidate, &identity)
 	if err != nil {
 		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
 	}
-	if _, err := s.q.CompleteCanonicalDiscoveryRun(ctx, db.CompleteCanonicalDiscoveryRunParams{ID: runID, ProjectID: params.ProjectID}); err != nil {
+	if _, err := q.CompleteCanonicalDiscoveryRun(ctx, db.CompleteCanonicalDiscoveryRunParams{ID: runID, ProjectID: projectID}); err != nil {
 		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
 	}
 	return discovery.ArbitrationCandidate{ID: candidateID, RunID: runID, Version: 1, Candidate: candidate, Identity: identity}, identity, nil
+}
+
+func (s *Service) materializeCutoverCandidate(ctx context.Context, params db.CreateCanonicalGrowthOpportunityParams) (result discovery.ArbitrationCandidate, identity discovery.Identity, resultErr error) {
+	candidate, identity, runID, err := projectGrowthCandidate(params)
+	if err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	q := db.New(tx)
+	result, identity, err = persistGrowthCandidate(ctx, q, params.ProjectID, candidate, identity, runID)
+	if err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	before, _ := json.Marshal(canonicalParamsFromOpportunity(db.SeoOpportunity{ID: params.ID, ProjectID: params.ProjectID, Evidence: params.Evidence, PriorityScore: params.PriorityScore, Confidence: params.Confidence}))
+	after, _ := json.Marshal(map[string]any{"run_id": runID, "candidate_id": result.ID, "status": "materialized"})
+	inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_growth_cutover_provenance", "run_id": runID, "candidate_id": result.ID})
+	if _, err := q.AppendGrowthCutoverSessionEntry(ctx, db.AppendGrowthCutoverSessionEntryParams{
+		BatchID: s.cutoverBatchID, ProjectID: params.ProjectID, SequenceNumber: s.cutoverSequence,
+		OpportunityID: params.ID, RunID: runID, CandidateID: result.ID,
+		Disposition: "materialized", BeforeSnapshot: before, AfterSnapshot: after, InverseOperation: inverse,
+	}); err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return discovery.ArbitrationCandidate{}, discovery.Identity{}, err
+	}
+	return result, identity, nil
+}
+
+func (s *Service) recordCutoverPrepared(ctx context.Context, opportunityID uuid.UUID, prepared discovery.PreparedDecision) error {
+	after, _ := json.Marshal(prepared)
+	inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_growth_cutover_provenance", "candidate_id": prepared.CandidateID, "arbitration_decision_id": prepared.ID, "ai_call_id": prepared.AICallID})
+	_, err := s.q.UpdateGrowthCutoverSessionEntryDecision(ctx, db.UpdateGrowthCutoverSessionEntryDecisionParams{
+		ArbitrationDecisionID: pgUUID(prepared.ID), AiCallID: pgUUID(prepared.AICallID),
+		Disposition: "materialized", EntryStatus: "applying", AfterSnapshot: after, InverseOperation: inverse,
+		ProjectID: prepared.ProjectID, BatchID: s.cutoverBatchID, OpportunityID: opportunityID,
+	})
+	return err
+}
+
+func (s *Service) mergePreparedEvidence(ctx context.Context, prepared discovery.PreparedDecision, params db.CreateCanonicalGrowthOpportunityParams, aliasLegacy bool) (db.SeoOpportunity, error) {
+	switch prepared.Owner {
+	case discovery.OwnerDoctor:
+		return s.mergeDoctorEvidence(ctx, prepared, params, aliasLegacy)
+	case discovery.OwnerOpportunities:
+		return s.mergeExactEvidence(ctx, prepared, params, aliasLegacy)
+	default:
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
 }
 
 func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.PreparedDecision, params db.CreateCanonicalGrowthOpportunityParams, aliasLegacy bool) (result db.SeoOpportunity, resultErr error) {
@@ -380,6 +452,26 @@ func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.Pre
 	}
 	mergedID := uuid.Nil
 	if aliasLegacy {
+		signatureBefore, err := q.GetWorkSignatureForGrowthEvidenceMergeForUpdate(ctx, db.GetWorkSignatureForGrowthEvidenceMergeForUpdateParams{
+			ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0],
+		})
+		if err != nil {
+			return db.SeoOpportunity{}, err
+		}
+		canonicalBefore, err := q.GetCanonicalGrowthOpportunityByWorkSignatureForUpdate(ctx, db.GetCanonicalGrowthOpportunityByWorkSignatureForUpdateParams{
+			ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0],
+		})
+		if err != nil {
+			return db.SeoOpportunity{}, err
+		}
+		merged, err := q.MergeCanonicalGrowthOpportunityEvidence(ctx, db.MergeCanonicalGrowthOpportunityEvidenceParams{
+			ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0], Evidence: params.Evidence,
+			IncomingPriorityScore: params.PriorityScore, IncomingConfidence: params.Confidence,
+			EvidenceFingerprint: prepared.EvidenceFingerprint,
+		})
+		if err != nil {
+			return db.SeoOpportunity{}, err
+		}
 		alias, err := q.CreateDuplicateGrowthOpportunityAlias(ctx, db.CreateDuplicateGrowthOpportunityAliasParams{
 			ProjectID: params.ProjectID, LegacyOpportunityID: params.ID,
 			WorkSignatureID: prepared.OverlapWorkIDs[0],
@@ -387,14 +479,17 @@ func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.Pre
 		if err != nil {
 			return db.SeoOpportunity{}, err
 		}
-		mergedID = alias.CanonicalOpportunityID
-		beforeSnapshot, _ := json.Marshal(map[string]any{"opportunity_id": params.ID, "canonical_growth": false, "evidence": params.Evidence})
-		afterSnapshot, _ := json.Marshal(alias)
-		inverse, _ := json.Marshal(map[string]any{"operation": "delete_growth_duplicate_alias", "legacy_opportunity_id": params.ID})
-		if _, err := q.AppendGrowthCutoverSessionEntry(ctx, db.AppendGrowthCutoverSessionEntryParams{
-			BatchID: s.cutoverBatchID, ProjectID: params.ProjectID, SequenceNumber: s.cutoverSequence,
-			OpportunityID: params.ID, CandidateID: prepared.CandidateID,
-			WorkSignatureID: prepared.OverlapWorkIDs[0], Disposition: "duplicate",
+		if !alias.CanonicalOpportunityID.Valid {
+			return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+		}
+		mergedID = alias.CanonicalOpportunityID.Bytes
+		beforeSnapshot, _ := json.Marshal(map[string]any{"duplicate": params, "canonical": canonicalBefore, "canonical_signature_evidence_fingerprint": signatureBefore.EvidenceFingerprint})
+		afterSnapshot, _ := json.Marshal(map[string]any{"alias": alias, "canonical": merged})
+		inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_duplicate_and_restore_canonical", "canonical": canonicalBefore})
+		if _, err := q.UpdateGrowthCutoverSessionEntryDecision(ctx, db.UpdateGrowthCutoverSessionEntryDecisionParams{
+			BatchID: s.cutoverBatchID, ProjectID: params.ProjectID, OpportunityID: params.ID,
+			ArbitrationDecisionID: pgUUID(prepared.ID), AiCallID: pgUUID(prepared.AICallID),
+			WorkSignatureID: pgUUID(prepared.OverlapWorkIDs[0]), Disposition: "duplicate", EntryStatus: "applied",
 			BeforeSnapshot: beforeSnapshot, AfterSnapshot: afterSnapshot, InverseOperation: inverse,
 		}); err != nil {
 			return db.SeoOpportunity{}, err
@@ -420,6 +515,103 @@ func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.Pre
 		return db.SeoOpportunity{}, err
 	}
 	return s.q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: mergedID, ProjectID: params.ProjectID})
+}
+
+func (s *Service) mergeDoctorEvidence(ctx context.Context, prepared discovery.PreparedDecision, params db.CreateCanonicalGrowthOpportunityParams, aliasLegacy bool) (result db.SeoOpportunity, resultErr error) {
+	if len(prepared.OverlapWorkIDs) != 1 {
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	if s.cutoverToken != uuid.Nil {
+		if _, err := tx.Exec(ctx, `select set_config('citeloop.growth_cutover_fence_token', $1, true)`, s.cutoverToken.String()); err != nil {
+			return db.SeoOpportunity{}, err
+		}
+	}
+	q := db.New(tx)
+	authority, err := q.LockProductWriterAuthority(ctx, db.LockProductWriterAuthorityParams{ProjectID: params.ProjectID, Product: "opportunities"})
+	fenceAuthorized := s.cutoverToken != uuid.Nil && authority.WriteFenced && authority.FenceToken.Valid && authority.FenceToken.Bytes == s.cutoverToken
+	if err != nil || authority.WriterAuthority != "canonical" || (authority.WriteFenced && !fenceAuthorized) {
+		return db.SeoOpportunity{}, discovery.ErrWriterUnavailable
+	}
+	doctorAuthority, err := q.LockProductWriterAuthority(ctx, db.LockProductWriterAuthorityParams{ProjectID: params.ProjectID, Product: "doctor"})
+	if err != nil || doctorAuthority.WriterAuthority != "canonical" || doctorAuthority.WriteFenced {
+		return db.SeoOpportunity{}, discovery.ErrWriterUnavailable
+	}
+	keys := make([]string, 0, len(prepared.ExpectedBucketVersions))
+	for key := range prepared.ExpectedBucketVersions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	buckets, err := q.LockConflictBucketsForReserve(ctx, db.LockConflictBucketsForReserveParams{ProjectID: params.ProjectID, BucketKeys: keys})
+	if err != nil || len(buckets) != len(keys) {
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
+	for _, bucket := range buckets {
+		if prepared.ExpectedBucketVersions[bucket.BucketKey] != bucket.BucketVersion {
+			return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+		}
+	}
+	decision, err := q.LockArbitrationDecisionForReserve(ctx, db.LockArbitrationDecisionForReserveParams{ProjectID: params.ProjectID, ID: prepared.ID})
+	if err != nil || decision.Status != string(discovery.ArbitrationStatusPrepared) || decision.CandidateVersion != prepared.CandidateVersion {
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
+	candidate, err := q.LockDiscoveryCandidateForReserve(ctx, db.LockDiscoveryCandidateForReserveParams{ProjectID: params.ProjectID, CandidateID: prepared.CandidateID})
+	if err != nil || candidate.CandidateVersion != prepared.CandidateVersion {
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
+	signatureBefore, err := q.GetWorkSignatureForGrowthEvidenceMergeForUpdate(ctx, db.GetWorkSignatureForGrowthEvidenceMergeForUpdateParams{ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0]})
+	if err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	before, err := q.GetCanonicalSiteFixByWorkSignatureForUpdate(ctx, db.GetCanonicalSiteFixByWorkSignatureForUpdateParams{ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0]})
+	if err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	merged, err := q.MergeCanonicalDoctorSiteFixEvidence(ctx, db.MergeCanonicalDoctorSiteFixEvidenceParams{
+		ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0], Evidence: params.Evidence,
+		IncomingPriorityScore: params.PriorityScore, IncomingConfidence: params.Confidence,
+		SourceOpportunityID: params.ID, EvidenceFingerprint: prepared.EvidenceFingerprint,
+	})
+	if err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	if aliasLegacy {
+		alias, err := q.CreateDoctorGrowthEvidenceAlias(ctx, db.CreateDoctorGrowthEvidenceAliasParams{
+			ProjectID: params.ProjectID, LegacyOpportunityID: params.ID, WorkSignatureID: prepared.OverlapWorkIDs[0],
+		})
+		if err != nil {
+			return db.SeoOpportunity{}, err
+		}
+		beforeSnapshot, _ := json.Marshal(map[string]any{"duplicate": params, "canonical_site_fix": before, "canonical_signature_evidence_fingerprint": signatureBefore.EvidenceFingerprint})
+		afterSnapshot, _ := json.Marshal(map[string]any{"alias": alias, "canonical_site_fix": merged})
+		inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_doctor_merge_and_restore_site_fix", "canonical_site_fix": before})
+		if _, err := q.UpdateGrowthCutoverSessionEntryDecision(ctx, db.UpdateGrowthCutoverSessionEntryDecisionParams{
+			BatchID: s.cutoverBatchID, ProjectID: params.ProjectID, OpportunityID: params.ID,
+			ArbitrationDecisionID: pgUUID(prepared.ID), AiCallID: pgUUID(prepared.AICallID),
+			WorkSignatureID: pgUUID(prepared.OverlapWorkIDs[0]), Disposition: "doctor_merge", EntryStatus: "applied",
+			BeforeSnapshot: beforeSnapshot, AfterSnapshot: afterSnapshot, InverseOperation: inverse,
+		}); err != nil {
+			return db.SeoOpportunity{}, err
+		}
+	}
+	if updated, err := q.IncrementConflictBucketVersions(ctx, db.IncrementConflictBucketVersionsParams{ProjectID: params.ProjectID, BucketKeys: keys}); err != nil || len(updated) != len(keys) {
+		return db.SeoOpportunity{}, discovery.ErrSnapshotStale
+	}
+	if _, err := q.MarkArbitrationDecisionResolved(ctx, db.MarkArbitrationDecisionResolvedParams{ProjectID: params.ProjectID, ID: prepared.ID}); err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.SeoOpportunity{}, err
+	}
+	return db.SeoOpportunity{}, nil
 }
 
 func (s *Service) completeGrowthCutover(ctx context.Context, session db.GrowthCutoverSession) (resultErr error) {
@@ -490,23 +682,57 @@ func (s *Service) rollbackGrowthCutover(ctx context.Context, session db.GrowthCu
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Disposition == "duplicate" {
+		if entry.Disposition == "materialized" {
+			tombstoned, err := q.RollbackGrowthCutoverMaterialized(ctx, db.RollbackGrowthCutoverMaterializedParams{
+				ProjectID: session.ProjectID, CandidateID: entry.CandidateID, RunID: entry.RunID,
+			})
+			if err != nil || tombstoned != 1 {
+				return fmt.Errorf("rollback materialized Growth %s: tombstoned=%d err=%w", entry.OpportunityID, tombstoned, err)
+			}
+			continue
+		}
+		if entry.Disposition == "duplicate" || entry.Disposition == "doctor_merge" {
+			var before struct {
+				Canonical                             db.SeoOpportunity `json:"canonical"`
+				CanonicalSiteFix                      db.SiteFix        `json:"canonical_site_fix"`
+				CanonicalSignatureEvidenceFingerprint string            `json:"canonical_signature_evidence_fingerprint"`
+			}
+			if err := json.Unmarshal(entry.BeforeSnapshot, &before); err != nil {
+				return fmt.Errorf("decode Growth rollback snapshot: %w", err)
+			}
+			canonicalEvidence := before.Canonical.Evidence
+			canonicalOpportunityID := pgUUID(before.Canonical.ID)
+			canonicalSiteFixID := pgUUID(before.CanonicalSiteFix.ID)
+			if entry.Disposition == "doctor_merge" {
+				canonicalEvidence = before.CanonicalSiteFix.EvidenceSnapshot
+			}
 			removed, err := q.RollbackGrowthCutoverDuplicate(ctx, db.RollbackGrowthCutoverDuplicateParams{
 				ProjectID: session.ProjectID, OpportunityID: entry.OpportunityID,
-				WorkSignatureID: entry.WorkSignatureID, CandidateID: entry.CandidateID,
+				CanonicalEvidence: canonicalEvidence, CanonicalPriorityScore: before.Canonical.PriorityScore,
+				CanonicalConfidence: before.Canonical.Confidence, CanonicalEvidenceFingerprint: &before.CanonicalSignatureEvidenceFingerprint,
+				CanonicalOpportunityID: canonicalOpportunityID, CanonicalSiteFixID: canonicalSiteFixID,
+				CandidateID: entry.CandidateID, RunID: entry.RunID,
 			})
 			if err != nil || removed != 1 {
 				return fmt.Errorf("rollback Growth duplicate %s: removed=%d err=%w", entry.OpportunityID, removed, err)
 			}
 			continue
 		}
+		if !entry.WorkSignatureID.Valid {
+			return fmt.Errorf("rollback canonical Growth %s: missing work signature", entry.OpportunityID)
+		}
 		removed, err := q.RollbackGrowthCutoverCanonical(ctx, db.RollbackGrowthCutoverCanonicalParams{
-			ProjectID: session.ProjectID, WorkSignatureID: entry.WorkSignatureID,
-			CandidateID: entry.CandidateID, OpportunityID: pgUUID(entry.OpportunityID),
+			ProjectID: session.ProjectID, WorkSignatureID: entry.WorkSignatureID.Bytes,
+			CandidateID: entry.CandidateID, OpportunityID: pgUUID(entry.OpportunityID), RunID: entry.RunID,
 		})
 		if err != nil || removed != 1 {
 			return fmt.Errorf("rollback canonical Growth %s: removed=%d err=%w", entry.OpportunityID, removed, err)
 		}
+	}
+	if _, err := q.MarkGrowthCutoverSessionEntriesRolledBack(ctx, db.MarkGrowthCutoverSessionEntriesRolledBackParams{
+		ProjectID: session.ProjectID, BatchID: session.BatchID,
+	}); err != nil {
+		return err
 	}
 	message := cause.Error()
 	if err := appendGrowthCutoverAudit(ctx, q, session, entries, "rolled_back", "legacy", message, failedOpportunityID); err != nil {
@@ -535,7 +761,7 @@ func (s *Service) rollbackGrowthCutover(ctx context.Context, session db.GrowthCu
 func appendGrowthCutoverAudit(ctx context.Context, q *db.Queries, session db.GrowthCutoverSession, entries []db.GrowthCutoverSessionEntry, status, authorityAfter, message string, reviewOpportunityID uuid.UUID) error {
 	migrated, duplicates := int32(0), int32(0)
 	for _, entry := range entries {
-		if entry.Disposition == "duplicate" {
+		if entry.Disposition == "duplicate" || entry.Disposition == "doctor_merge" {
 			duplicates++
 		} else {
 			migrated++
@@ -566,7 +792,7 @@ func appendGrowthCutoverAudit(ctx context.Context, q *db.Queries, session db.Gro
 	sort.Slice(entries, func(i, j int) bool { return entries[i].SequenceNumber < entries[j].SequenceNumber })
 	for _, entry := range entries {
 		operation := "create"
-		if entry.Disposition == "duplicate" {
+		if entry.Disposition == "duplicate" || entry.Disposition == "doctor_merge" {
 			operation = "archive_duplicate"
 		}
 		cutoverPoint := "canonical_authority"
@@ -578,7 +804,7 @@ func appendGrowthCutoverAudit(ctx context.Context, q *db.Queries, session db.Gro
 			ID: uuid.New(), ProjectID: session.ProjectID, MigrationBatchID: session.BatchID,
 			SequenceNumber: entry.SequenceNumber, SourceObjectType: "seo_opportunity",
 			SourceObjectID: entry.OpportunityID, CanonicalObjectType: "work_signature_registry",
-			CanonicalObjectID: pgUUID(entry.WorkSignatureID), Operation: operation,
+			CanonicalObjectID: entry.WorkSignatureID, Operation: operation,
 			OperationVersion: "growth-cutover-v1", CutoverPoint: cutoverPoint,
 			RollbackEligibility: "eligible", BeforeHash: hashJSON(entry.BeforeSnapshot),
 			AfterHash: hashJSON(entry.AfterSnapshot), BeforeSnapshot: entry.BeforeSnapshot,

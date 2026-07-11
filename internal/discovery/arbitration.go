@@ -270,23 +270,15 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 
 	deterministicSoftDependencies := []uuid.UUID(nil)
+	deterministicHardDependencies := []uuid.UUID(nil)
 	if decision, ok, classifyErr := deterministicCrossLineDecision(candidate, snapshot.ActiveWorks); classifyErr != nil {
 		base.Disposition = DispositionManualResolution
 		base.Decision = DecisionHold
 		base.Reason = "cross-line dependency classification failed closed: " + classifyErr.Error()
 		base.Status = ArbitrationStatusHeld
 		return s.persistHold(ctx, candidate, snapshot, base)
-	} else if ok && decision.Decision == DecisionBlockOnOtherLine && len(snapshot.ReviewMemory) == 0 && len(snapshot.ReviewAliases) == 0 {
-		base.Disposition = DispositionDeterministicSafe
-		base.Decision = decision.Decision
-		base.Owner = ownerForCandidate(candidate.Candidate)
-		base.OverlapWorkIDs = decision.OverlapWorkIDs
-		base.ComparedWorkIDs = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
-		base.Reason = decision.Reason
-		base.Confidence = 1
-		base.Status = ArbitrationStatusPrepared
-		base.SemanticFingerprint, _ = semanticFingerprint(candidate.Identity, "deterministic")
-		return s.store.SavePreparedDecision(ctx, base)
+	} else if ok && decision.Decision == DecisionBlockOnOtherLine {
+		deterministicHardDependencies = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
 	} else if ok && decision.Decision == DecisionCreate {
 		deterministicSoftDependencies = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
 	}
@@ -359,11 +351,18 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	base.Decision = decision.Decision
 	base.Owner = decision.Owner
 	base.OverlapWorkIDs = append([]uuid.UUID(nil), decision.Overlaps...)
-	if decision.Decision == DecisionCreate {
+	if decision.Decision == DecisionCreate && len(deterministicHardDependencies) > 0 {
+		base.Decision = DecisionBlockOnOtherLine
+		base.Owner = ownerForCandidate(candidate.Candidate)
+		base.OverlapWorkIDs = unionUUIDs(base.OverlapWorkIDs, deterministicHardDependencies)
+		base.Reason = "semantic comparison found distinct intent, but structured mutation overlap still requires Doctor verification first: " + decision.Reason
+	} else if decision.Decision == DecisionCreate {
 		base.OverlapWorkIDs = unionUUIDs(base.OverlapWorkIDs, deterministicSoftDependencies)
 	}
 	base.ComparedWorkIDs = semanticWorkIDs(possible)
-	base.Reason = decision.Reason
+	if base.Reason == "" {
+		base.Reason = decision.Reason
+	}
 	base.Confidence = decision.Confidence
 	base.SemanticFingerprint = decision.SemanticFingerprint
 	base.Provider = firstNonEmpty(usage.Provider, config.Provider)

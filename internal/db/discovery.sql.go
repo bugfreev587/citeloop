@@ -1241,6 +1241,12 @@ select case when exists (
     and signature.reserved_work_type = 'seo_opportunity'
     and signature.reserved_work_id = $2
     and not exists (
+      select 1 from growth_opportunity_work_aliases alias
+      where alias.project_id = signature.project_id
+        and alias.legacy_opportunity_id = $2
+        and alias.disposition in ('duplicate','doctor_merge')
+    )
+    and not exists (
       select 1
       from work_relationships relationship
       where relationship.project_id = signature.project_id
@@ -1445,10 +1451,16 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 }
 
 const listActiveSEOOpportunitiesForDiscoveryShadow = `-- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from seo_opportunities
-where project_id = $1
-  and status in ('open','accepted','converted','dismissed','snoozed','watching')
-order by created_at asc
+select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth from seo_opportunities
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status in ('open','accepted','converted','dismissed','snoozed','watching')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+order by seo_opportunities.created_at asc
 `
 
 func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Context, projectID uuid.UUID) ([]SeoOpportunity, error) {

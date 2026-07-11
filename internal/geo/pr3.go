@@ -118,6 +118,9 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 			if err != nil {
 				return finish("error", result, err)
 			}
+			if opp.ID == uuid.Nil {
+				continue
+			}
 			result.Opportunities = append(result.Opportunities, opp)
 			if s.GrowthWriter != nil {
 				canExecute, err := s.GrowthWriter.CanExecuteOpportunity(ctx, projectID, opp.ID)

@@ -61,7 +61,7 @@ func TestCanonicalGrowthCutoverConservesLegacyAndFencesNewBypass(t *testing.T) {
 		"legacy growth creation is disabled",
 		"legacy growth evidence/work identity is read-only",
 		"create table if not exists growth_opportunity_work_aliases",
-		"disposition in ('canonicalized','duplicate')",
+		"disposition in ('canonicalized','duplicate','doctor_merge','rolled_back')",
 		"before insert or update on seo_opportunities",
 	} {
 		if !strings.Contains(sql, want) {
