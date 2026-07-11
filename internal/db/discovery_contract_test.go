@@ -22,7 +22,7 @@ func TestDiscoveryWorkIdentitySchemaContract(t *testing.T) {
 		"mode text not null default 'shadow'",
 		"where mode = 'enforced' and active = true",
 		"unique (project_id, bucket_key)",
-			"unique (candidate_id, mode)",
+		"unique (candidate_id, mode)",
 	} {
 		if !strings.Contains(migration, want) {
 			t.Fatalf("discovery migration missing %q", want)
