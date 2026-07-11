@@ -432,9 +432,8 @@ values
    $24, $25::jsonb,
    $26::jsonb)
 on conflict
-  (project_id, source_kind, source_object_type, source_object_id, candidate_schema_version)
+  (shadow_run_id, project_id, source_kind, source_object_type, source_object_id, candidate_schema_version)
 do update set
-  shadow_run_id = excluded.shadow_run_id,
   target_kind = excluded.target_kind,
   normalized_target_set = excluded.normalized_target_set,
   issue_or_hypothesis_family = excluded.issue_or_hypothesis_family,
@@ -563,11 +562,9 @@ values
    $5::jsonb, $6::jsonb,
    $7, $8, $9,
    $10)
-on conflict (candidate_id) do update set
+on conflict (candidate_id, mode) do update set
   shadow_run_id = excluded.shadow_run_id,
-  mode = 'shadow',
   status = 'shadow_observed',
-  active = false,
   exact_signature_hash = excluded.exact_signature_hash,
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,

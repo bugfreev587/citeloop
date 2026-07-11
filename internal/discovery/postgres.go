@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -43,7 +44,7 @@ func (r *PostgresRepository) ListOpportunities(ctx context.Context, projectID uu
 }
 
 func (r *PostgresRepository) SaveCandidate(ctx context.Context, runID uuid.UUID, candidate Candidate, identity *Identity) (uuid.UUID, error) {
-	confidence, err := numericFromFloat(candidate.Confidence)
+	confidence, err := numericFromConfidence(candidate.Confidence)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -205,7 +206,10 @@ func reportFromDB(run db.DiscoveryShadowRun) Report {
 	return report
 }
 
-func numericFromFloat(value float64) (pgtype.Numeric, error) {
+func numericFromConfidence(value float64) (pgtype.Numeric, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
+		return pgtype.Numeric{}, fmt.Errorf("confidence must be finite and between 0 and 1, got %v", value)
+	}
 	var numeric pgtype.Numeric
 	if err := numeric.Scan(fmt.Sprintf("%.4f", value)); err != nil {
 		return pgtype.Numeric{}, fmt.Errorf("convert confidence: %w", err)

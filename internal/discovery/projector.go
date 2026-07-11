@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -12,13 +13,14 @@ import (
 )
 
 type legacyWorkSpec struct {
-	changeFamily     string
-	operation        string
-	field            string
-	artifactIntent   ArtifactIntent
-	owner            Owner
-	verificationMode VerificationMode
-	primaryMetric    string
+	changeFamily      string
+	operation         string
+	field             string
+	artifactIntent    ArtifactIntent
+	owner             Owner
+	verificationMode  VerificationMode
+	primaryMetric     string
+	usesQueryIdentity bool
 }
 
 func ProjectDoctorFinding(finding db.SeoDoctorFinding) Candidate {
@@ -57,6 +59,9 @@ func ProjectSEOOpportunity(opportunity db.SeoOpportunity) Candidate {
 		targets = normalizeTargetSet([]string{*opportunity.PageUrl})
 	}
 	spec, ok := opportunityWorkSpec(opportunity.Type)
+	if normalizeIssueType(opportunity.Type) == "technical_visibility_issue" {
+		spec, ok = technicalVisibilityWorkSpec(opportunity.Evidence)
+	}
 	candidate := Candidate{
 		ProjectID:               opportunity.ProjectID,
 		SourceKind:              opportunitySourceKind(opportunity),
@@ -69,17 +74,20 @@ func ProjectSEOOpportunity(opportunity db.SeoOpportunity) Candidate {
 		SuggestedOwner:          OwnerOpportunities,
 		VerificationMode:        VerificationDelayed,
 		EvidenceFingerprint:     firstNonEmpty(opportunity.EvidenceFingerprint, fingerprintJSON(opportunity.Evidence)),
-		Confidence:              numericFloat(opportunity.Confidence),
+		Confidence:              normalizeLegacyConfidence(numericFloat(opportunity.Confidence)),
 		CandidateSchemaVersion:  CandidateSchemaVersionV1,
 		SignatureVersion:        SignatureVersionV1,
 	}
-	if opportunity.Query != nil {
+	if ok && spec.usesQueryIdentity && opportunity.Query != nil {
 		candidate.TopicEntityIdentity = []string{*opportunity.Query}
 	}
 	if !ok {
 		return holdCandidate(candidate, "Opportunity type does not yet provide a deterministic mutation specification")
 	}
 	applyLegacySpec(&candidate, spec)
+	if normalizeIssueType(opportunity.Type) == "gsc_query_cannibalization" {
+		candidate.NormalizedTargetSet = normalizeTargetSet(append(candidate.NormalizedTargetSet, evidencePageTargets(opportunity.Evidence)...))
+	}
 	if spec.artifactIntent == ArtifactCreateNewAsset {
 		candidate.IntendedSlugOrCanonical = evidenceString(opportunity.Evidence, "intended_slug_or_canonical")
 	}
@@ -137,7 +145,7 @@ func doctorWorkSpec(issueType string) (legacyWorkSpec, bool) {
 		return immediateSpec("links.internal", "add", "internal_link"), true
 	case "ga4_missing", "tracking_missing", "measurement_readiness":
 		return immediateSpec("measurement.instrumentation", "update", "tracking"), true
-	case "thin_evidence_page", "citation_readiness_structure":
+	case "citation_readiness_structure":
 		return immediateSpec("content.evidence", "move", "answer_block"), true
 	default:
 		return legacyWorkSpec{}, false
@@ -150,20 +158,35 @@ func opportunityWorkSpec(opportunityType string) (legacyWorkSpec, bool) {
 	}
 	issue := normalizeIssueType(opportunityType)
 	switch issue {
-	case "technical_visibility_issue":
-		return immediateSpec("availability.http", "update", "http_response"), true
-	case "low_ctr", "low_ctr_snippet", "gsc_low_ctr":
-		return delayedSpec("metadata.title", "update", "title", ArtifactUpdateExistingContent, "ctr"), true
+	case "low_ctr", "low_ctr_snippet", "gsc_low_ctr", "gsc_low_ctr_query":
+		return delayedQuerySpec("metadata.title", "update", "title", ArtifactUpdateExistingContent, "ctr"), true
 	case "geo_project_mentioned_without_citation", "geo_competitor_cited_project_absent", "ai_citation_gap", "weak_citation_surface":
 		return delayedSpec("content.evidence", "update", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
-	case "gsc_query_gap", "query_gap", "striking_distance":
-		return delayedSpec("content.query", "update", "page_content", ArtifactUpdateExistingContent, "search_visibility"), true
-	case "content_decay", "content_decay_refresh":
+	case "thin_evidence_page":
+		return delayedSpec("content.evidence", "add", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
+	case "gsc_query_gap", "query_gap", "striking_distance", "gsc_striking_distance_query":
+		return delayedQuerySpec("content.query", "update", "page_content", ArtifactUpdateExistingContent, "search_visibility"), true
+	case "content_decay", "content_decay_refresh", "gsc_content_decay":
 		return delayedSpec("content.refresh", "update", "page_content", ArtifactUpdateExistingContent, "search_traffic"), true
+	case "gsc_query_cannibalization":
+		return delayedQuerySpec("content.consolidation", "consolidate", "pages", ArtifactConsolidateAssets, "search_visibility"), true
 	case "cold_start_competitive_gap", "comparison_page", "alternative_page", "missing_use_case":
 		return delayedSpec("content.new_asset", "create", "page", ArtifactCreateNewAsset, "search_and_citation"), true
 	case "ranking_cluster_opportunity", "internal_link_strategy":
 		return delayedSpec("links.strategy", "update", "internal_link_plan", ArtifactUpdateExistingContent, "rankings"), true
+	default:
+		return legacyWorkSpec{}, false
+	}
+}
+
+func technicalVisibilityWorkSpec(evidence json.RawMessage) (legacyWorkSpec, bool) {
+	switch normalizeIssueType(evidenceString(evidence, "issue")) {
+	case "http_status":
+		return immediateSpec("availability.http", "update", "http_response"), true
+	case "robots_noindex", "robots_disallowed", "robots_blocked":
+		return immediateSpec("indexability.robots", "update", "robots"), true
+	case "canonical_missing":
+		return immediateSpec("url.canonical", "add", "canonical"), true
 	default:
 		return legacyWorkSpec{}, false
 	}
@@ -191,6 +214,12 @@ func delayedSpec(changeFamily, operation, field string, intent ArtifactIntent, m
 		verificationMode: VerificationDelayed,
 		primaryMetric:    metric,
 	}
+}
+
+func delayedQuerySpec(changeFamily, operation, field string, intent ArtifactIntent, metric string) legacyWorkSpec {
+	spec := delayedSpec(changeFamily, operation, field, intent, metric)
+	spec.usesQueryIdentity = true
+	return spec
 }
 
 func opportunitySourceKind(opportunity db.SeoOpportunity) SourceKind {
@@ -237,6 +266,36 @@ func numericFloat(value pgtype.Numeric) float64 {
 		return 0
 	}
 	return converted.Float64
+}
+
+func normalizeLegacyConfidence(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0
+	}
+	if value <= 1 {
+		return value
+	}
+	if value <= 100 {
+		return value / 100
+	}
+	return 1
+}
+
+func evidencePageTargets(raw json.RawMessage) []string {
+	var value struct {
+		CompetingPages []struct {
+			NormalizedPageURL string `json:"normalized_page_url"`
+			PageURL           string `json:"page_url"`
+		} `json:"competing_pages"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	targets := make([]string, 0, len(value.CompetingPages))
+	for _, page := range value.CompetingPages {
+		targets = append(targets, firstNonEmpty(page.NormalizedPageURL, page.PageURL))
+	}
+	return normalizeTargetSet(targets)
 }
 
 func firstNonEmpty(values ...string) string {

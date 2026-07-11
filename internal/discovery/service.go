@@ -132,7 +132,7 @@ func (s *Service) RunProject(ctx context.Context, projectID uuid.UUID) (Report, 
 	report.ExactDuplicateGroups, report.PossibleConflictGroups = aggregateShadowConflicts(signatures)
 	completed, err := s.repo.CompleteRun(ctx, report)
 	if err != nil {
-		return Report{}, fmt.Errorf("complete discovery shadow run: %w", err)
+		return Report{}, s.fail(context.WithoutCancel(ctx), report, fmt.Errorf("complete discovery shadow run: %w", err))
 	}
 	return completed, nil
 }

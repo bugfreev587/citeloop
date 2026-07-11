@@ -20,6 +20,11 @@ func TestShadowServiceProjectsAndReportsWithoutEnforcement(t *testing.T) {
 		ProjectID:      projectID,
 		IssueType:      "structured_data_missing",
 		NormalizedUrls: json.RawMessage(`["https://example.com/pricing"]`),
+	}, {
+		ID:             uuid.New(),
+		ProjectID:      projectID,
+		IssueType:      "title_duplicate",
+		NormalizedUrls: json.RawMessage(`["https://example.com/pricing"]`),
 	}}
 	repo.opportunities = []db.SeoOpportunity{
 		{ID: uuid.New(), ProjectID: projectID, Type: "schema_gap", NormalizedPageUrl: target},
@@ -35,10 +40,10 @@ func TestShadowServiceProjectsAndReportsWithoutEnforcement(t *testing.T) {
 	if report.Mode != "shadow" || report.Status != "completed" {
 		t.Fatalf("run mode/status = %s/%s", report.Mode, report.Status)
 	}
-	if report.DoctorCandidates != 1 || report.OpportunityCandidates != 3 {
+	if report.DoctorCandidates != 2 || report.OpportunityCandidates != 3 {
 		t.Fatalf("source counts = %d/%d", report.DoctorCandidates, report.OpportunityCandidates)
 	}
-	if report.IdentityReady != 3 || report.NeedsSpecification != 1 {
+	if report.IdentityReady != 4 || report.NeedsSpecification != 1 {
 		t.Fatalf("identity counts = %d/%d", report.IdentityReady, report.NeedsSpecification)
 	}
 	if report.ExactDuplicateGroups != 1 {
@@ -47,7 +52,7 @@ func TestShadowServiceProjectsAndReportsWithoutEnforcement(t *testing.T) {
 	if report.PossibleConflictGroups != 1 {
 		t.Fatalf("possible conflict groups = %d, want 1", report.PossibleConflictGroups)
 	}
-	if len(repo.candidates) != 4 || len(repo.signatures) != 3 {
+	if len(repo.candidates) != 5 || len(repo.signatures) != 4 {
 		t.Fatalf("stored candidates/signatures = %d/%d", len(repo.candidates), len(repo.signatures))
 	}
 	for _, signature := range repo.signatures {
@@ -57,7 +62,7 @@ func TestShadowServiceProjectsAndReportsWithoutEnforcement(t *testing.T) {
 	}
 }
 
-func TestShadowServiceRerunUpsertsSourceVersion(t *testing.T) {
+func TestShadowServiceRerunPreservesPerRunProvenance(t *testing.T) {
 	projectID := uuid.New()
 	repo := newMemoryRepository()
 	repo.opportunities = []db.SeoOpportunity{{
@@ -73,8 +78,15 @@ func TestShadowServiceRerunUpsertsSourceVersion(t *testing.T) {
 	if _, err := service.RunProject(context.Background(), projectID); err != nil {
 		t.Fatal(err)
 	}
-	if len(repo.candidates) != 1 || len(repo.signatures) != 1 {
-		t.Fatalf("rerun duplicated candidates/signatures: %d/%d", len(repo.candidates), len(repo.signatures))
+	if len(repo.candidates) != 2 || len(repo.signatures) != 2 {
+		t.Fatalf("rerun did not preserve both snapshots: %d/%d", len(repo.candidates), len(repo.signatures))
+	}
+	runIDs := map[uuid.UUID]bool{}
+	for _, candidate := range repo.candidates {
+		runIDs[candidate.RunID] = true
+	}
+	if len(runIDs) != 2 {
+		t.Fatalf("candidate provenance run IDs = %v, want 2 distinct runs", runIDs)
 	}
 }
 
@@ -116,7 +128,7 @@ func (r *memoryRepository) ListOpportunities(_ context.Context, _ uuid.UUID) ([]
 }
 
 func (r *memoryRepository) SaveCandidate(_ context.Context, runID uuid.UUID, candidate Candidate, identity *Identity) (uuid.UUID, error) {
-	key := fmt.Sprintf("%s|%s|%s|%s", candidate.ProjectID, candidate.SourceKind, candidate.SourceObjectID, candidate.CandidateSchemaVersion)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s", runID, candidate.ProjectID, candidate.SourceKind, candidate.SourceObjectID, candidate.CandidateSchemaVersion)
 	id := uuid.New()
 	if existing, ok := r.candidates[key]; ok {
 		id = existing.ID
@@ -129,7 +141,7 @@ func (r *memoryRepository) SaveCandidate(_ context.Context, runID uuid.UUID, can
 }
 
 func (r *memoryRepository) SaveShadowSignature(_ context.Context, signature ShadowSignature) error {
-	key := fmt.Sprintf("%s|%s|%s|%s", signature.ProjectID, signature.SourceKind, signature.SourceObjectID, CandidateSchemaVersionV1)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s", signature.RunID, signature.ProjectID, signature.SourceKind, signature.SourceObjectID, CandidateSchemaVersionV1)
 	r.signatures[key] = signature
 	return nil
 }

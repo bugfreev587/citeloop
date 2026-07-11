@@ -93,13 +93,65 @@ func TestBuildIdentityReturnsStableConflictBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	wants := []string{
-		"project:00000000-0000-0000-0000-000000000123|change:metadata",
-		"project:00000000-0000-0000-0000-000000000123|slug:https://example.com/pricing",
-		"project:00000000-0000-0000-0000-000000000123|target:https://example.com/pricing",
-		"project:00000000-0000-0000-0000-000000000123|topic:pricing",
+		"project:00000000-0000-0000-0000-000000000123|slug:https://example.com/pricing|change:metadata",
+		"project:00000000-0000-0000-0000-000000000123|target:https://example.com/pricing|change:metadata",
+		"project:00000000-0000-0000-0000-000000000123|topic:pricing|change:metadata",
 	}
 	if !reflect.DeepEqual(identity.ConflictBucketKeys, wants) {
 		t.Fatalf("ConflictBucketKeys = %#v, want %#v", identity.ConflictBucketKeys, wants)
+	}
+}
+
+func TestBuildIdentityConflictBucketsDoNotJoinDisjointTargets(t *testing.T) {
+	base := Candidate{
+		ProjectID:           uuid.New(),
+		NormalizedTargetSet: []string{"https://example.com/pricing"},
+		ChangeFamily:        "metadata.title",
+		ProposedMutations:   []Mutation{{Operation: "update", Field: "title"}},
+		ArtifactIntent:      ArtifactUpdateExistingContent,
+		SignatureVersion:    SignatureVersionV1,
+	}
+	first, err := BuildIdentity(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.NormalizedTargetSet = []string{"https://example.com/about"}
+	second, err := BuildIdentity(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, left := range first.ConflictBucketKeys {
+		for _, right := range second.ConflictBucketKeys {
+			if left == right {
+				t.Fatalf("disjoint targets shared conflict bucket %q", left)
+			}
+		}
+	}
+}
+
+func TestBuildIdentityRejectsAnyMalformedOrUnsupportedMutation(t *testing.T) {
+	base := Candidate{
+		ProjectID:           uuid.New(),
+		NormalizedTargetSet: []string{"https://example.com/pricing"},
+		ChangeFamily:        "metadata.title",
+		ProposedMutations: []Mutation{
+			{Operation: "update", Field: "title"},
+			{Operation: "", Field: "description"},
+		},
+		ArtifactIntent:   ArtifactUpdateExistingContent,
+		SignatureVersion: SignatureVersionV1,
+	}
+	if _, err := BuildIdentity(base); !errors.Is(err, ErrNeedsSpecification) {
+		t.Fatalf("malformed mutation error = %v, want ErrNeedsSpecification", err)
+	}
+	base.ProposedMutations = []Mutation{{Operation: "invent", Field: "title"}}
+	if _, err := BuildIdentity(base); !errors.Is(err, ErrNeedsSpecification) {
+		t.Fatalf("unsupported mutation error = %v, want ErrNeedsSpecification", err)
+	}
+	base.ProposedMutations = []Mutation{{Operation: "update", Field: "title"}}
+	base.ArtifactIntent = ArtifactIntent("invented_intent")
+	if _, err := BuildIdentity(base); !errors.Is(err, ErrNeedsSpecification) {
+		t.Fatalf("unsupported artifact intent error = %v, want ErrNeedsSpecification", err)
 	}
 }
 

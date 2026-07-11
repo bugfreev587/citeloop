@@ -52,7 +52,7 @@ create table if not exists discovery_candidates (
 
 create unique index if not exists uniq_discovery_candidate_source_version
   on discovery_candidates
-    (project_id, source_kind, source_object_type, source_object_id, candidate_schema_version);
+    (shadow_run_id, project_id, source_kind, source_object_type, source_object_id, candidate_schema_version);
 
 create index if not exists idx_discovery_candidates_project_run_status
   on discovery_candidates (project_id, shadow_run_id, status, created_at desc);
@@ -89,7 +89,7 @@ create table if not exists work_signature_registry (
   source_object_id text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (candidate_id)
+  unique (candidate_id, mode)
 );
 
 create unique index if not exists uniq_enforced_active_work_signature

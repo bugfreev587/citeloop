@@ -120,6 +120,18 @@ func BuildIdentity(candidate Candidate) (Identity, error) {
 	if candidate.ProjectID == uuid.Nil {
 		return Identity{}, fmt.Errorf("%w: project_id is required", ErrNeedsSpecification)
 	}
+	if !supportedArtifactIntent(candidate.ArtifactIntent) {
+		return Identity{}, fmt.Errorf("%w: unsupported artifact intent %q", ErrNeedsSpecification, candidate.ArtifactIntent)
+	}
+	for _, mutation := range candidate.ProposedMutations {
+		operation := normalizeToken(mutation.Operation)
+		if operation == "" || normalizeToken(mutation.Field) == "" {
+			return Identity{}, fmt.Errorf("%w: every mutation requires operation and field", ErrNeedsSpecification)
+		}
+		if !supportedMutationOperation(operation) {
+			return Identity{}, fmt.Errorf("%w: unsupported mutation operation %q", ErrNeedsSpecification, mutation.Operation)
+		}
+	}
 	targets := normalizeTargetSet(candidate.NormalizedTargetSet)
 	mutations := normalizeMutations(candidate.ProposedMutations)
 	changeFamily := normalizeToken(candidate.ChangeFamily)
@@ -158,6 +170,24 @@ func BuildIdentity(candidate Candidate) (Identity, error) {
 	}, nil
 }
 
+func supportedArtifactIntent(intent ArtifactIntent) bool {
+	switch ArtifactIntent(normalizeToken(string(intent))) {
+	case ArtifactRepairExistingSurface, ArtifactUpdateExistingContent, ArtifactCreateNewAsset, ArtifactConsolidateAssets, ArtifactMeasurementOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedMutationOperation(operation string) bool {
+	switch operation {
+	case "add", "remove", "update", "move", "redirect", "link", "create", "consolidate":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeMutations(mutations []Mutation) []Mutation {
 	byKey := make(map[string]Mutation, len(mutations))
 	for _, mutation := range mutations {
@@ -192,15 +222,15 @@ func buildConflictBucketKeys(projectID uuid.UUID, payload signaturePayload) []st
 	if before, _, ok := strings.Cut(coarseFamily, "."); ok {
 		coarseFamily = before
 	}
-	keys := []string{prefix + "change:" + coarseFamily}
+	keys := make([]string, 0, len(payload.NormalizedTargetSet)+len(payload.TopicEntityIdentity)+1)
 	if payload.IntendedSlugOrCanonical != "" {
-		keys = append(keys, prefix+"slug:"+payload.IntendedSlugOrCanonical)
+		keys = append(keys, prefix+"slug:"+payload.IntendedSlugOrCanonical+"|change:"+coarseFamily)
 	}
 	for _, target := range payload.NormalizedTargetSet {
-		keys = append(keys, prefix+"target:"+target)
+		keys = append(keys, prefix+"target:"+target+"|change:"+coarseFamily)
 	}
 	for _, topic := range payload.TopicEntityIdentity {
-		keys = append(keys, prefix+"topic:"+topic)
+		keys = append(keys, prefix+"topic:"+topic+"|change:"+coarseFamily)
 	}
 	return normalizeExactSet(keys)
 }
