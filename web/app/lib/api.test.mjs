@@ -865,6 +865,41 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
   }
 });
 
+test("Doctor Site Fix create and apply use the bounded long mutation timeout", async () => {
+  const timeouts = [];
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+
+  globalThis.setTimeout = (handler, delay, ...args) => {
+    timeouts.push(delay);
+    return originalSetTimeout(handler, 0, ...args);
+  };
+  globalThis.clearTimeout = (id) => originalClearTimeout(id);
+  globalThis.fetch = async (url) => {
+    const fix = { id: "fix-1", project_id: "project-1", doctor_finding_id: "finding-1", status: "approved", finding_kind: "broken" };
+    return {
+      ok: true,
+      status: url.endsWith("/apply") ? 200 : 201,
+      json: async () => url.endsWith("/apply")
+        ? { site_fix: { ...fix, status: "awaiting_deploy" }, application: { id: "application-1", site_fix_id: "fix-1" } }
+        : fix,
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const api = createApi({ token: "session-token", timeoutMs: 1 });
+    await api.createDoctorSiteFix("project-1", "finding-1");
+    await api.applyDoctorSiteFix("project-1", "fix-1");
+    assert.deepEqual(timeouts, [120_000, 120_000]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

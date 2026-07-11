@@ -204,17 +204,18 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   async function applyFix(fix: SiteFix) {
+    const retrying = fix.status === "preparing";
     setBusy(`apply-${fix.id}`);
     try {
       const result = await api.applyDoctorSiteFix(projectId, fix.id);
       replaceFix(result.site_fix, result.application);
       notify({
         tone: "green",
-        title: "Application started",
+        title: retrying ? "Application retry started" : "Application started",
         detail: result.application.github_pr_url ? "A source change is ready for deploy review." : "Follow the application handoff shown here.",
       });
     } catch (err: any) {
-      notify({ tone: "red", title: "Could not apply fix", detail: err?.apiMessage || err?.message });
+      notify({ tone: "red", title: retrying ? "Could not retry apply" : "Could not apply fix", detail: err?.apiMessage || err?.message });
     } finally {
       setBusy(null);
     }
@@ -276,8 +277,9 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
 
   const drawerApplication = selected?.application ?? null;
   const requiresManualApplyConfirmation = selected?.status === "applying" && drawerApplication?.status === "manual_apply_required";
+  const retryingApply = selected?.status === "preparing";
   const canApprove = selected?.status === "proposed";
-  const canApply = Boolean(selected && ["approved", "ready_to_apply"].includes(selected.status));
+  const canApply = Boolean(selected && ["approved", "preparing", "ready_to_apply"].includes(selected.status));
   const canVerify = Boolean(selected && (["awaiting_deploy", "failed_retryable", "reopened"].includes(selected.status) || requiresManualApplyConfirmation));
 
   return (
@@ -366,7 +368,9 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               )}
               {canApply && (
                 <Button variant="primary" onClick={() => void applyFix(selected)} disabled={Boolean(busy)}>
-                  <ButtonProgress busy={busy === `apply-${selected.id}`} busyLabel="Applying" idleIcon={<Wrench aria-hidden="true" size={14} />}>Apply fix</ButtonProgress>
+                  <ButtonProgress busy={busy === `apply-${selected.id}`} busyLabel={retryingApply ? "Retrying" : "Applying"} idleIcon={<Wrench aria-hidden="true" size={14} />}>
+                    {selected.status === "preparing" ? "Retry apply" : "Apply fix"}
+                  </ButtonProgress>
                 </Button>
               )}
               {canVerify && (

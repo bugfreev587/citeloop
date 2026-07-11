@@ -57,6 +57,7 @@ export function canonicalSiteFixNextAction(fix: SiteFix) {
     case "ready_to_apply":
       return "Apply the approved change.";
     case "preparing":
+      return "Application preparation is incomplete. Retry apply to start a new audited generation attempt.";
     case "applying":
       return "Application is in progress; refresh for the deploy handoff.";
     case "awaiting_deploy":

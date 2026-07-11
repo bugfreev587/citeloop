@@ -102,7 +102,7 @@ test("Action cards expose why, contribution, output type, and execution result",
 
 test("Canonical site fix helpers describe the closed-loop lifecycle", () => {
   const lib = read("lib/site-fix.ts");
-  for (const snippet of ["canonicalSiteFixStatusLabel", "canonicalSiteFixNextAction", "Awaiting deploy", "Retry verification", "Verified"]) {
+  for (const snippet of ["canonicalSiteFixStatusLabel", "canonicalSiteFixNextAction", "Awaiting deploy", "Retry verification", "Retry apply", "Verified"]) {
     assert.match(lib, new RegExp(snippet));
   }
 });
@@ -132,6 +132,9 @@ test("Canonical Site Fixes visibly expose provenance, application, and verificat
   assert.match(siteFixes, /fix\.legacy_aliases\?\.some\(\(alias\) => alias\.object_id === requestedID\)/);
   assert.match(siteFixes, /Legacy provenance/);
   assert.match(siteFixes, /verifications: updated\.verifications \?\? existing\.verifications/);
+  assert.match(siteFixes, /\["approved", "preparing", "ready_to_apply"\]\.includes\(selected\.status\)/);
+  assert.match(siteFixes, /selected\.status === "preparing" \? "Retry apply" : "Apply fix"/);
+  assert.match(siteFixes, /busyLabel=\{retryingApply \? "Retrying" : "Applying"\}/);
 });
 
 test("Site Fix lifecycle never presents deploy or verification-in-progress as verified", () => {

@@ -44,6 +44,9 @@ export type AuthOptions = {
 
 const DEFAULT_API_TIMEOUT_MS = 8000;
 const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
+// Doctor create/apply can include bounded arbitration, generation, and PR I/O.
+// Use the existing two-minute mutation ceiling instead of an unbounded wait.
+const DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS = 120_000;
 // Live LLM probes: the backend allows up to 30s for the completions, so the
 // browser must wait longer than the default API timeout.
 const LLM_CONNECTION_TEST_TIMEOUT_MS = 45_000;
@@ -2410,7 +2413,11 @@ export function createApi(auth?: AuthOptions) {
     return arrayFrom(raw).map(normalizeSiteFix);
   },
   createDoctorSiteFix: async (id: string, findingID: string): Promise<SiteFix> => {
-    const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/site-fixes`, { method: "POST" }, auth);
+    const raw = await req<any>(
+      `/projects/${id}/doctor/findings/${findingID}/site-fixes`,
+      { method: "POST" },
+      withMinimumTimeout(auth, DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS),
+    );
     return normalizeSiteFix(raw);
   },
   approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFix> => {
@@ -2418,7 +2425,11 @@ export function createApi(auth?: AuthOptions) {
     return normalizeSiteFix(raw);
   },
   applyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
-    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/apply`, { method: "POST" }, auth);
+    const raw = await req<any>(
+      `/projects/${id}/doctor/site-fixes/${fixID}/apply`,
+      { method: "POST" },
+      withMinimumTimeout(auth, DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS),
+    );
     return normalizeSiteFixLifecycleResult(raw);
   },
   verifyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
