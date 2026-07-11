@@ -434,7 +434,7 @@ where project_id = sqlc.arg(project_id)
       issue_type = 'geo_crawler_access_blocked'
       and exists (
         select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
-        where scoped_url.value = any(sqlc.arg(assessed_geo_urls)::text[])
+        where scoped_url.value || chr(10) || lower(btrim(coalesce(evidence->>'target_user_agent', ''))) = any(sqlc.arg(assessed_geo_scopes)::text[])
       )
     )
   );
@@ -442,7 +442,7 @@ where project_id = sqlc.arg(project_id)
 -- name: ListSEODoctorFindingsForRun :many
 select * from seo_doctor_findings
 where project_id = $1
-  and run_id = $2
+  and (run_id = $2 or status = 'active')
 order by
   case severity
     when 'P0' then 0

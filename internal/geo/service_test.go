@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,12 +113,40 @@ func TestServiceDoesNotCreateBlockerForInferredWAFWarning(t *testing.T) {
 	}
 }
 
+func TestServicePersistsEffectiveDefaultTargetUserAgentsInRunInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			_, _ = w.Write([]byte("User-agent: *\nAllow: /\n"))
+			return
+		}
+		_, _ = w.Write([]byte("<html><body>visible</body></html>"))
+	}))
+	defer server.Close()
+
+	store := &geoStoreStub{property: db.SeoProperty{SiteUrl: server.URL}, runID: uuid.New()}
+	_, err := (Service{Q: store, HTTPClient: server.Client()}).RunCrawlerAudit(context.Background(), uuid.New(), CrawlerAuditRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input CrawlerAuditRequest
+	if err := json.Unmarshal(store.startedInput, &input); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(input.TargetUserAgents, ","), strings.Join(DefaultTargetUserAgents(), ","); got != want {
+		t.Fatalf("persisted effective target agents = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(effectiveTargetUserAgents([]string{" ", ""}), ","), strings.Join(DefaultTargetUserAgents(), ","); got != want {
+		t.Fatalf("blank-only effective target agents = %q, want defaults %q", got, want)
+	}
+}
+
 type geoStoreStub struct {
 	property         db.SeoProperty
 	articles         []db.Article
 	runID            uuid.UUID
 	promptSetID      uuid.UUID
 	started          bool
+	startedInput     json.RawMessage
 	finishedStatus   string
 	finishedOutput   json.RawMessage
 	snapshots        []db.AiCrawlerAccessSnapshot
@@ -149,6 +178,7 @@ func (s *geoStoreStub) ListPublishedCanonicalArticlesForSEO(context.Context, uui
 
 func (s *geoStoreStub) StartGEORun(_ context.Context, arg db.StartGEORunParams) (db.GeoRun, error) {
 	s.started = true
+	s.startedInput = append(json.RawMessage{}, arg.Input...)
 	return db.GeoRun{ID: s.runID, ProjectID: arg.ProjectID, Agent: arg.Agent, Status: "degraded", Provider: arg.Provider, StartedAt: arg.StartedAt, Input: arg.Input}, nil
 }
 

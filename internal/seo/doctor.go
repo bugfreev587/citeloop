@@ -303,24 +303,29 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		seenKeys = append(seenKeys, finding.FindingKey)
 	}
 	if crawlComplete {
-		assessedSitemapURLs, assessedGeoURLs := doctorAssessedResolutionURLs(checks, crawlerAccess, geoRunComplete)
+		assessedSitemapURLs, assessedGeoScopes := doctorAssessedResolutionScopes(checks, crawlerAccess, geoRunComplete)
 		if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
 			ProjectID:           run.ProjectID,
 			RunID:               run.ID,
 			ResolvedAt:          now,
 			ActiveKeys:          seenKeys,
 			AssessedSitemapUrls: assessedSitemapURLs,
-			AssessedGeoUrls:     assessedGeoURLs,
+			AssessedGeoScopes:   assessedGeoScopes,
 		}); err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
 		}
 	}
 
-	score := doctorHealthScore(candidates)
+	visibleFindings, err := s.Q.ListSEODoctorFindingsForRun(ctx, db.ListSEODoctorFindingsForRunParams{ProjectID: run.ProjectID, RunID: run.ID})
+	if err != nil {
+		return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not read active Doctor findings.", err)
+	}
+	reportCandidates := doctorCandidatesFromRows(visibleFindings)
+	score := doctorHealthScore(reportCandidates)
 	score32 := int32(score)
-	issuesFound := int32(nonInfoIssueCount(candidates))
-	human := buildDoctorHumanReport(score, candidates, len(checks))
-	human.Status = doctorDisplayStatus(score, candidates)
+	issuesFound := int32(nonInfoIssueCount(reportCandidates))
+	human := buildDoctorHumanReport(score, reportCandidates, len(checks))
+	human.Status = doctorDisplayStatus(score, reportCandidates)
 	coverage := appendGEOAuditCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), geoRunComplete)
 	coverage = appendCrawlCompletenessCoverage(coverage, crawlComplete)
 	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
@@ -350,7 +355,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	return s.DoctorReport(ctx, run.ProjectID, run.ID)
 }
 
-func doctorAssessedResolutionURLs(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
+func doctorAssessedResolutionScopes(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
 	sitemapURLs := []string{}
 	for _, check := range checks {
 		crawlState := strings.ToLower(normalizedEvidenceText(jsonObject(check.RawDetails)["crawl_status"]))
@@ -363,18 +368,30 @@ func doctorAssessedResolutionURLs(checks []db.TechnicalCheck, snapshots []db.AiC
 		}
 		sitemapURLs = append(sitemapURLs, firstNonEmpty(check.NormalizedPageUrl, check.PageUrl))
 	}
-	geoURLs := []string{}
+	geoScopes := []string{}
 	if !geoRunComplete {
-		return sortedUniqueStrings(sitemapURLs), geoURLs
+		return sortedUniqueStrings(sitemapURLs), geoScopes
 	}
 	for _, snapshot := range snapshots {
 		state := strings.ToLower(strings.TrimSpace(snapshot.RobotsState))
 		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.Confidence, "high") || (state != "allowed" && state != "disallowed") {
 			continue
 		}
-		geoURLs = append(geoURLs, firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl))
+		geoScopes = append(geoScopes, geoResolutionScope(firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl), snapshot.TargetUserAgent))
 	}
-	return sortedUniqueStrings(sitemapURLs), sortedUniqueStrings(geoURLs)
+	return sortedUniqueStrings(sitemapURLs), sortedUniqueStrings(geoScopes)
+}
+
+func normalizedTargetUserAgent(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func geoResolutionScope(normalizedURL, targetUserAgent string) string {
+	return strings.TrimSpace(normalizedURL) + "\n" + normalizedTargetUserAgent(targetUserAgent)
+}
+
+func geoCoverageIdentity(snapshot db.AiCrawlerAccessSnapshot) string {
+	return firstNonEmpty(snapshot.PageUrl, snapshot.NormalizedPageUrl) + " [target_user_agent=" + normalizedTargetUserAgent(snapshot.TargetUserAgent) + "]"
 }
 
 func (s Service) loadNewestTechnicalChecks(ctx context.Context, projectID uuid.UUID) ([]db.TechnicalCheck, bool, error) {
@@ -898,17 +915,19 @@ func doctorFindingCandidatesFromCrawlerAccess(projectID uuid.UUID, snapshots []d
 	out := make([]doctorFindingCandidate, 0)
 	seen := map[string]bool{}
 	for _, snapshot := range snapshots {
-		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.RobotsState, "disallowed") || !strings.EqualFold(snapshot.Confidence, "high") || seen[snapshot.NormalizedPageUrl] {
+		identity := geoResolutionScope(firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl), snapshot.TargetUserAgent)
+		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.RobotsState, "disallowed") || !strings.EqualFold(snapshot.Confidence, "high") || seen[identity] {
 			continue
 		}
-		seen[snapshot.NormalizedPageUrl] = true
+		seen[identity] = true
+		targetUserAgent := normalizedTargetUserAgent(snapshot.TargetUserAgent)
 		out = append(out, doctorFindingCandidate{
 			ProjectID: projectID.String(), Severity: "P0", Category: "geo", IssueType: "geo_crawler_access_blocked",
 			Status: "active", AffectedURLs: []string{snapshot.PageUrl}, NormalizedURLs: []string{snapshot.NormalizedPageUrl},
 			Evidence:          map[string]any{"source": "geo_crawler_access_snapshot", "finding_kind": "broken", "target_user_agent": snapshot.TargetUserAgent, "robots_state": snapshot.RobotsState, "confidence": snapshot.Confidence},
 			WhyItMatters:      "An authoritative robots rule blocks an AI/search crawler from the page.",
 			FixIntent:         "Review the robots policy and allow the crawler when that matches the project's indexing policy.",
-			StructuralLocator: "geo_crawler_access_blocked", FindingKind: "broken", Confidence: 90, ConfidenceLabel: "high", ImportanceLabel: "important", ImportanceMultiplier: 1,
+			StructuralLocator: "geo_crawler_access_blocked[target_user_agent=" + targetUserAgent + "]", FindingKind: "broken", Confidence: 90, ConfidenceLabel: "high", ImportanceLabel: "important", ImportanceMultiplier: 1,
 		}.withDefaults())
 	}
 	return out
@@ -1229,7 +1248,7 @@ func buildDoctorHealthyCoverage(checks []db.TechnicalCheck, crawlerAccess []db.A
 	if len(crawlerAccess) > 0 {
 		coverage := doctorCheckCoverage{Check: "geo_crawler_access", CheckedURLs: []string{}, PassedURLs: []string{}, FailedURLs: []string{}, SkippedURLs: []string{}}
 		for _, snapshot := range crawlerAccess {
-			url := snapshot.PageUrl
+			url := geoCoverageIdentity(snapshot)
 			authoritativeRobots := strings.EqualFold(snapshot.EvidenceType, "robots_static") && strings.EqualFold(snapshot.Confidence, "high")
 			if !authoritativeRobots && (!strings.EqualFold(snapshot.Confidence, "high") || snapshot.Inferred) {
 				coverage.SkippedURLs = append(coverage.SkippedURLs, url)

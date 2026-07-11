@@ -144,8 +144,8 @@ func TestDoctorConsumesAuthoritativeCrawlerAccessEvidence(t *testing.T) {
 	}
 	coverage := buildDoctorHealthyCoverage(nil, []db.AiCrawlerAccessSnapshot{snapshot})
 	geoCoverage := coverageByCheck(coverage)["geo_crawler_access"]
-	assertURLInCoverage(t, geoCoverage.CheckedURLs, snapshot.PageUrl, "checked")
-	assertURLInCoverage(t, geoCoverage.FailedURLs, snapshot.PageUrl, "failed")
+	assertURLInCoverage(t, geoCoverage.CheckedURLs, geoCoverageIdentity(snapshot), "checked")
+	assertURLInCoverage(t, geoCoverage.FailedURLs, geoCoverageIdentity(snapshot), "failed")
 
 	inferred := snapshot
 	inferred.PageUrl = "https://example.com/inferred"
@@ -158,7 +158,55 @@ func TestDoctorConsumesAuthoritativeCrawlerAccessEvidence(t *testing.T) {
 		t.Fatalf("inferred crawler warning must remain non-actionable evidence: %#v", got)
 	}
 	inferredCoverage := coverageByCheck(buildDoctorHealthyCoverage(nil, []db.AiCrawlerAccessSnapshot{inferred}))["geo_crawler_access"]
-	assertURLInCoverage(t, inferredCoverage.SkippedURLs, inferred.PageUrl, "skipped")
+	assertURLInCoverage(t, inferredCoverage.SkippedURLs, geoCoverageIdentity(inferred), "skipped")
+}
+
+func TestDoctorGEOIdentityAndResolutionAreTargetAgentScoped(t *testing.T) {
+	projectID := uuid.New()
+	pageURL := "https://example.com/shared"
+	oaiBlocked := db.AiCrawlerAccessSnapshot{PageUrl: pageURL, NormalizedPageUrl: pageURL, TargetUserAgent: "OAI-SearchBot", EvidenceType: "robots_static", RobotsState: "disallowed", AccessState: "blocked", Confidence: "high"}
+	googleBlocked := oaiBlocked
+	googleBlocked.TargetUserAgent = "Googlebot"
+
+	blockedFindings := doctorFindingCandidatesFromCrawlerAccess(projectID, []db.AiCrawlerAccessSnapshot{oaiBlocked, googleBlocked})
+	if len(blockedFindings) != 2 {
+		t.Fatalf("same-URL agent blockers = %#v, want two distinct findings", blockedFindings)
+	}
+	if blockedFindings[0].FindingKey == blockedFindings[1].FindingKey || blockedFindings[0].StructuralLocator == blockedFindings[1].StructuralLocator {
+		t.Fatalf("agent identities collapsed: %#v", blockedFindings)
+	}
+
+	googleAllowed := googleBlocked
+	googleAllowed.RobotsState = "allowed"
+	googleAllowed.AccessState = "allowed"
+	_, googleScopes := doctorAssessedResolutionScopes(nil, []db.AiCrawlerAccessSnapshot{googleAllowed}, true)
+	oaiScope := geoResolutionScope(pageURL, "OAI-SearchBot")
+	if containsCoverageURL(googleScopes, oaiScope) {
+		t.Fatalf("Google-only audit assessed OAI scope: %#v", googleScopes)
+	}
+	if !containsCoverageURL(googleScopes, geoResolutionScope(pageURL, "Googlebot")) {
+		t.Fatalf("Google-only audit omitted Google scope: %#v", googleScopes)
+	}
+
+	oaiAllowed := oaiBlocked
+	oaiAllowed.RobotsState = "allowed"
+	oaiAllowed.AccessState = "allowed"
+	_, oaiScopes := doctorAssessedResolutionScopes(nil, []db.AiCrawlerAccessSnapshot{oaiAllowed}, true)
+	if !containsCoverageURL(oaiScopes, oaiScope) {
+		t.Fatalf("complete OAI audit cannot resolve OAI scope: %#v", oaiScopes)
+	}
+
+	mixedCoverage := coverageByCheck(buildDoctorHealthyCoverage(nil, []db.AiCrawlerAccessSnapshot{oaiBlocked, googleAllowed}))["geo_crawler_access"]
+	assertURLInCoverage(t, mixedCoverage.FailedURLs, geoCoverageIdentity(oaiBlocked), "OAI failure")
+	assertURLInCoverage(t, mixedCoverage.PassedURLs, geoCoverageIdentity(googleAllowed), "Google pass")
+}
+
+func TestPreservedActiveP0FindingKeepsCurrentDoctorBlocked(t *testing.T) {
+	row := db.SeoDoctorFinding{Severity: "P0", Status: "active", IssueType: "geo_crawler_access_blocked", Evidence: json.RawMessage(`{"target_user_agent":"OAI-SearchBot","confidence":90}`)}
+	candidates := doctorCandidatesFromRows([]db.SeoDoctorFinding{row})
+	if score := doctorHealthScore(candidates); doctorDisplayStatus(score, candidates) != "blocked" {
+		t.Fatalf("preserved active P0 did not block current report: score=%d candidates=%#v", score, candidates)
+	}
 }
 
 func TestDoctorPersistenceContractsWriteFindingKindAndHealthyCoverage(t *testing.T) {
@@ -263,21 +311,21 @@ func TestDoctorResolutionScopesRequireConclusiveSourceEvidence(t *testing.T) {
 		{NormalizedPageUrl: "https://example.com/sitemap-partial", SitemapStatus: &missing, RawDetails: json.RawMessage(`{"crawl_status":"partial"}`)},
 	}
 	snapshots := []db.AiCrawlerAccessSnapshot{
-		{NormalizedPageUrl: "https://example.com/geo-allowed", EvidenceType: "robots_static", Confidence: "high", RobotsState: "allowed"},
-		{NormalizedPageUrl: "https://example.com/geo-disallowed", EvidenceType: "robots_static", Confidence: "high", RobotsState: "disallowed"},
+		{NormalizedPageUrl: "https://example.com/geo-allowed", TargetUserAgent: "Googlebot", EvidenceType: "robots_static", Confidence: "high", RobotsState: "allowed"},
+		{NormalizedPageUrl: "https://example.com/geo-disallowed", TargetUserAgent: "OAI-SearchBot", EvidenceType: "robots_static", Confidence: "high", RobotsState: "disallowed"},
 		{NormalizedPageUrl: "https://example.com/geo-low", EvidenceType: "robots_static", Confidence: "medium", RobotsState: "allowed"},
 		{NormalizedPageUrl: "https://example.com/geo-probe", EvidenceType: "honest_probe", Confidence: "high", RobotsState: "allowed"},
 	}
 
-	sitemapURLs, geoURLs := doctorAssessedResolutionURLs(checks, snapshots, false)
+	sitemapURLs, geoURLs := doctorAssessedResolutionScopes(checks, snapshots, false)
 	if got, want := strings.Join(sitemapURLs, ","), "https://example.com/sitemap-missing,https://example.com/sitemap-present"; got != want {
 		t.Fatalf("assessed sitemap URLs = %q, want %q", got, want)
 	}
 	if len(geoURLs) != 0 {
 		t.Fatalf("non-ok GEO run assessed URLs = %#v, want none", geoURLs)
 	}
-	_, geoURLs = doctorAssessedResolutionURLs(checks, snapshots, true)
-	if got, want := strings.Join(geoURLs, ","), "https://example.com/geo-allowed,https://example.com/geo-disallowed"; got != want {
+	_, geoURLs = doctorAssessedResolutionScopes(checks, snapshots, true)
+	if got, want := strings.Join(geoURLs, ","), geoResolutionScope("https://example.com/geo-allowed", "Googlebot")+","+geoResolutionScope("https://example.com/geo-disallowed", "OAI-SearchBot"); got != want {
 		t.Fatalf("assessed GEO URLs = %q, want %q", got, want)
 	}
 }

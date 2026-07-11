@@ -2894,7 +2894,7 @@ func (q *Queries) ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
 const listSEODoctorFindingsForRun = `-- name: ListSEODoctorFindingsForRun :many
 select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
-  and run_id = $2
+  and (run_id = $2 or status = 'active')
 order by
   case severity
     when 'P0' then 0
@@ -4432,7 +4432,7 @@ where project_id = $2
       issue_type = 'geo_crawler_access_blocked'
       and exists (
         select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
-        where scoped_url.value = any($6::text[])
+        where scoped_url.value || chr(10) || lower(btrim(coalesce(evidence->>'target_user_agent', ''))) = any($6::text[])
       )
     )
   )
@@ -4444,7 +4444,7 @@ type ResolveMissingSEODoctorFindingsParams struct {
 	RunID               uuid.UUID          `json:"run_id"`
 	ActiveKeys          []string           `json:"active_keys"`
 	AssessedSitemapUrls []string           `json:"assessed_sitemap_urls"`
-	AssessedGeoUrls     []string           `json:"assessed_geo_urls"`
+	AssessedGeoScopes   []string           `json:"assessed_geo_scopes"`
 }
 
 func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error {
@@ -4454,7 +4454,7 @@ func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg Resol
 		arg.RunID,
 		arg.ActiveKeys,
 		arg.AssessedSitemapUrls,
-		arg.AssessedGeoUrls,
+		arg.AssessedGeoScopes,
 	)
 	return err
 }

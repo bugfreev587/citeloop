@@ -79,6 +79,7 @@ type CrawlerAuditResult struct {
 }
 
 func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req CrawlerAuditRequest) (CrawlerAuditResult, error) {
+	req.TargetUserAgents = effectiveTargetUserAgents(req.TargetUserAgents)
 	now := s.now()
 	run, err := s.Q.StartGEORun(ctx, db.StartGEORunParams{
 		ProjectID: projectID,
@@ -179,6 +180,27 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 	}
 
 	return finish("ok", result, nil)
+}
+
+func effectiveTargetUserAgents(requested []string) []string {
+	if len(requested) == 0 {
+		return DefaultTargetUserAgents()
+	}
+	out := make([]string, 0, len(requested))
+	seen := map[string]bool{}
+	for _, value := range requested {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if value == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return DefaultTargetUserAgents()
+	}
+	return out
 }
 
 func (s Service) LatestCrawlerAudit(ctx context.Context, projectID uuid.UUID) ([]db.AiCrawlerAccessSnapshot, error) {

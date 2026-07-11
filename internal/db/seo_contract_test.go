@@ -219,10 +219,22 @@ func TestResolveMissingDoctorFindingsIsSourceAware(t *testing.T) {
 		"jsonb_array_elements_text(normalized_urls)",
 		"any($5::text[])",
 		"any($6::text[])",
+		"evidence->>'target_user_agent'",
+		"chr(10)",
 	} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("ResolveMissingSEODoctorFindings missing source-aware guard %q in %s", want, query)
 		}
+	}
+}
+
+func TestDoctorRunFindingsIncludePreservedActiveFindingsWithoutUnionDuplicates(t *testing.T) {
+	query := strings.ToLower(listSEODoctorFindingsForRun)
+	if !strings.Contains(query, "run_id = $2 or status = 'active'") {
+		t.Fatalf("current Doctor report must include preserved active older findings: %s", query)
+	}
+	if strings.Contains(query, " union ") {
+		t.Fatalf("current Doctor report should not duplicate current active findings through UNION: %s", query)
 	}
 }
 
