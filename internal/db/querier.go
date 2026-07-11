@@ -20,6 +20,7 @@ type Querier interface {
 	ClaimPendingWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	CloseSEOWatchlistItem(ctx context.Context, arg CloseSEOWatchlistItemParams) (SeoWatchlistItem, error)
+	CompleteDiscoveryShadowRun(ctx context.Context, arg CompleteDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
 	CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODoctorRunParams) (SeoDoctorRun, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
 	CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error)
@@ -33,6 +34,7 @@ type Querier interface {
 	CountStockedCanonical(ctx context.Context, projectID uuid.UUID) (int64, error)
 	CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error)
 	CreateContentAction(ctx context.Context, arg CreateContentActionParams) (ContentAction, error)
+	CreateDiscoveryShadowRun(ctx context.Context, arg CreateDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
 	CreateGEOAssetBrief(ctx context.Context, arg CreateGEOAssetBriefParams) (GeoAssetBrief, error)
 	CreateGEOObservation(ctx context.Context, arg CreateGEOObservationParams) (GeoObservation, error)
 	CreateGEOPrompt(ctx context.Context, arg CreateGEOPromptParams) (GeoPrompt, error)
@@ -59,15 +61,18 @@ type Querier interface {
 	// recovery loop can regenerate a fresh canonical/variant without colliding with
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
+	DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error
 	DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error)
 	DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoctorFindingParams) (SeoDoctorFinding, error)
 	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)
+	EnsureWorkConflictBucket(ctx context.Context, arg EnsureWorkConflictBucketParams) (WorkConflictBucket, error)
 	EnterSafeMode(ctx context.Context, arg EnterSafeModeParams) (SafeModeEvent, error)
 	// EscalateArticleToHumanForProject flips a draft into the genuine human-decision
 	// state after automated recovery is exhausted or QA returned a real unmapped
 	// claim a human must resolve.
 	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
+	FailDiscoveryShadowRun(ctx context.Context, arg FailDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
 	FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunParams) (SeoDoctorRun, error)
 	// FindReusableGitHubInstallation returns a GitHub App installation_id already
 	// linked by ANOTHER project of the SAME owner. A GitHub App installs once per
@@ -95,6 +100,7 @@ type Querier interface {
 	GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error)
 	GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error)
 	GetInventoryItem(ctx context.Context, id uuid.UUID) (ContentInventory, error)
+	GetLatestDiscoveryShadowRun(ctx context.Context, projectID uuid.UUID) (DiscoveryShadowRun, error)
 	GetLatestGEOVisibilityScore(ctx context.Context, projectID uuid.UUID) (GeoVisibilityScore, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOpenSafeModeEvent(ctx context.Context, projectID uuid.UUID) (SafeModeEvent, error)
@@ -131,7 +137,9 @@ type Querier interface {
 	LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEODoctorFindingToActionParams) (SeoDoctorFinding, error)
 	ListActionMeasurementsForAction(ctx context.Context, arg ListActionMeasurementsForActionParams) ([]ActionMeasurement, error)
 	ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error)
+	ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context, projectID uuid.UUID) ([]SeoDoctorFinding, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
+	ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Context, projectID uuid.UUID) ([]SeoOpportunity, error)
 	ListAdminProjects(ctx context.Context) ([]Project, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
@@ -143,6 +151,7 @@ type Querier interface {
 	ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsParams) ([]AutopilotRun, error)
 	ListContentActions(ctx context.Context, arg ListContentActionsParams) ([]ContentAction, error)
 	ListDeadWorkflowEventsForProject(ctx context.Context, arg ListDeadWorkflowEventsForProjectParams) ([]WorkflowEvent, error)
+	ListDiscoveryShadowSignaturesForRun(ctx context.Context, arg ListDiscoveryShadowSignaturesForRunParams) ([]ListDiscoveryShadowSignaturesForRunRow, error)
 	ListDueMeasuringContentActions(ctx context.Context, arg ListDueMeasuringContentActionsParams) ([]ContentAction, error)
 	ListEnabledNotificationSubscriptionsForEvent(ctx context.Context, arg ListEnabledNotificationSubscriptionsForEventParams) ([]NotificationSubscription, error)
 	ListGEOAssetBriefs(ctx context.Context, arg ListGEOAssetBriefsParams) ([]GeoAssetBrief, error)
@@ -300,6 +309,7 @@ type Querier interface {
 	UpsertActionMeasurement(ctx context.Context, arg UpsertActionMeasurementParams) (ActionMeasurement, error)
 	UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error)
 	UpsertDefaultPublisherConnection(ctx context.Context, arg UpsertDefaultPublisherConnectionParams) (PublisherConnection, error)
+	UpsertDiscoveryCandidate(ctx context.Context, arg UpsertDiscoveryCandidateParams) (DiscoveryCandidate, error)
 	UpsertGEOCompetitor(ctx context.Context, arg UpsertGEOCompetitorParams) (GeoCompetitor, error)
 	UpsertGEOExternalSurface(ctx context.Context, arg UpsertGEOExternalSurfaceParams) (GeoExternalSurface, error)
 	UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error)
@@ -317,6 +327,7 @@ type Querier interface {
 	UpsertSEOProperty(ctx context.Context, arg UpsertSEOPropertyParams) (SeoProperty, error)
 	UpsertSearchAppearanceDaily(ctx context.Context, arg UpsertSearchAppearanceDailyParams) (SearchAppearanceDaily, error)
 	UpsertSearchPerformanceDaily(ctx context.Context, arg UpsertSearchPerformanceDailyParams) (SearchPerformanceDaily, error)
+	UpsertShadowWorkSignature(ctx context.Context, arg UpsertShadowWorkSignatureParams) (WorkSignatureRegistry, error)
 	UpsertTechnicalCheck(ctx context.Context, arg UpsertTechnicalCheckParams) (TechnicalCheck, error)
 	WakeDueSnoozedSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 }
