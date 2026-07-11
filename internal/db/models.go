@@ -54,6 +54,30 @@ type AdminLlmCredential struct {
 	ModelRoutes json.RawMessage    `json:"model_routes"`
 }
 
+type AiCallRecord struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	RunID              pgtype.UUID        `json:"run_id"`
+	Stage              string             `json:"stage"`
+	LinkedObjectType   string             `json:"linked_object_type"`
+	LinkedObjectID     uuid.UUID          `json:"linked_object_id"`
+	Provider           string             `json:"provider"`
+	Model              string             `json:"model"`
+	PromptVersion      string             `json:"prompt_version"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	Status             string             `json:"status"`
+	ErrorCode          *string            `json:"error_code"`
+	PromptTokens       int32              `json:"prompt_tokens"`
+	CompletionTokens   int32              `json:"completion_tokens"`
+	TotalTokens        int32              `json:"total_tokens"`
+	CostUsd            pgtype.Numeric     `json:"cost_usd"`
+	ParentCallID       pgtype.UUID        `json:"parent_call_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AiCrawlerAccessSnapshot struct {
 	ID                uuid.UUID          `json:"id"`
 	ProjectID         uuid.UUID          `json:"project_id"`
@@ -198,6 +222,51 @@ type ContentInventory struct {
 	CapturedAt       pgtype.Timestamptz `json:"captured_at"`
 }
 
+type DiscoveryArbitrationConfig struct {
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	ConfidenceThreshold         pgtype.Numeric     `json:"confidence_threshold"`
+	DuplicateSafetyRecallTarget pgtype.Numeric     `json:"duplicate_safety_recall_target"`
+	FalseSuppressionRateTarget  pgtype.Numeric     `json:"false_suppression_rate_target"`
+	GoldDatasetVersion          string             `json:"gold_dataset_version"`
+	WeeklyOpsCapacity           int32              `json:"weekly_ops_capacity"`
+	LaunchReady                 bool               `json:"launch_ready"`
+	AutomaticSuppressionEnabled bool               `json:"automatic_suppression_enabled"`
+	RulesVersion                string             `json:"rules_version"`
+	PromptVersion               string             `json:"prompt_version"`
+	SemanticFingerprintVersion  string             `json:"semantic_fingerprint_version"`
+	EvaluatedAt                 pgtype.Timestamptz `json:"evaluated_at"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DiscoveryArbitrationDecision struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	CandidateID            uuid.UUID          `json:"candidate_id"`
+	CandidateVersion       int64              `json:"candidate_version"`
+	AiCallID               pgtype.UUID        `json:"ai_call_id"`
+	Disposition            string             `json:"disposition"`
+	Decision               string             `json:"decision"`
+	Owner                  *string            `json:"owner"`
+	OverlapWorkIds         json.RawMessage    `json:"overlap_work_ids"`
+	Reason                 string             `json:"reason"`
+	Confidence             pgtype.Numeric     `json:"confidence"`
+	SemanticFingerprint    string             `json:"semantic_fingerprint"`
+	ComparedWorkIds        json.RawMessage    `json:"compared_work_ids"`
+	ExpectedBucketVersions json.RawMessage    `json:"expected_bucket_versions"`
+	SnapshotFingerprint    string             `json:"snapshot_fingerprint"`
+	ExactSignatureHash     string             `json:"exact_signature_hash"`
+	SignatureVersion       string             `json:"signature_version"`
+	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+	RulesVersion           string             `json:"rules_version"`
+	PromptVersion          string             `json:"prompt_version"`
+	Provider               string             `json:"provider"`
+	Model                  string             `json:"model"`
+	Status                 string             `json:"status"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type DiscoveryCandidate struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`
@@ -228,21 +297,67 @@ type DiscoveryCandidate struct {
 	ConflictBucketKeys      json.RawMessage    `json:"conflict_bucket_keys"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	CandidateVersion        int64              `json:"candidate_version"`
 }
 
 type DiscoveryReviewItem struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	CandidateID            uuid.UUID          `json:"candidate_id"`
-	State                  string             `json:"state"`
-	Reason                 string             `json:"reason"`
-	Assignee               *string            `json:"assignee"`
-	ExpectedBucketVersions json.RawMessage    `json:"expected_bucket_versions"`
-	Resolution             []byte             `json:"resolution"`
-	ResolvedBy             *string            `json:"resolved_by"`
-	ResolvedAt             pgtype.Timestamptz `json:"resolved_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	CandidateID              uuid.UUID          `json:"candidate_id"`
+	State                    string             `json:"state"`
+	Reason                   string             `json:"reason"`
+	Assignee                 *string            `json:"assignee"`
+	ExpectedBucketVersions   json.RawMessage    `json:"expected_bucket_versions"`
+	Resolution               []byte             `json:"resolution"`
+	ResolvedBy               *string            `json:"resolved_by"`
+	ResolvedAt               pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	ExpectedCandidateVersion int64              `json:"expected_candidate_version"`
+	InternalOwner            string             `json:"internal_owner"`
+	DueAt                    pgtype.Timestamptz `json:"due_at"`
+	ArbitrationDecisionID    pgtype.UUID        `json:"arbitration_decision_id"`
+}
+
+type DiscoverySemanticEvaluation struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	DatasetVersion               string             `json:"dataset_version"`
+	ConfidenceThreshold          pgtype.Numeric     `json:"confidence_threshold"`
+	DuplicateSafetyRecallTarget  pgtype.Numeric     `json:"duplicate_safety_recall_target"`
+	FalseSuppressionRateTarget   pgtype.Numeric     `json:"false_suppression_rate_target"`
+	TotalCases                   int32              `json:"total_cases"`
+	DuplicateSafetyCases         int32              `json:"duplicate_safety_cases"`
+	DistinctCases                int32              `json:"distinct_cases"`
+	DuplicateSafetyRecall        pgtype.Numeric     `json:"duplicate_safety_recall"`
+	FalseSuppressionRate         pgtype.Numeric     `json:"false_suppression_rate"`
+	ComparatorCoverage           pgtype.Numeric     `json:"comparator_coverage"`
+	AutomatedDispositionCoverage pgtype.Numeric     `json:"automated_disposition_coverage"`
+	HoldRate                     pgtype.Numeric     `json:"hold_rate"`
+	ThresholdBacklog             int32              `json:"threshold_backlog"`
+	WeeklyOpsCapacity            int32              `json:"weekly_ops_capacity"`
+	LaunchReady                  bool               `json:"launch_ready"`
+	AutomaticSuppressionEnabled  bool               `json:"automatic_suppression_enabled"`
+	Blockers                     json.RawMessage    `json:"blockers"`
+	EvaluatedBy                  string             `json:"evaluated_by"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+}
+
+type DiscoverySemanticGoldCase struct {
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	LeftCandidateID  uuid.UUID          `json:"left_candidate_id"`
+	RightCandidateID uuid.UUID          `json:"right_candidate_id"`
+	DatasetVersion   string             `json:"dataset_version"`
+	Label            string             `json:"label"`
+	ExpectedDecision string             `json:"expected_decision"`
+	ActualDecision   *string            `json:"actual_decision"`
+	ActualConfidence pgtype.Numeric     `json:"actual_confidence"`
+	ReviewedBy       string             `json:"reviewed_by"`
+	ReviewedAt       pgtype.Timestamptz `json:"reviewed_at"`
+	Notes            string             `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DiscoveryShadowRun struct {
@@ -1024,24 +1139,60 @@ type WorkConflictBucket struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkReviewMemory struct {
+	ID                            uuid.UUID          `json:"id"`
+	ProjectID                     uuid.UUID          `json:"project_id"`
+	CandidateID                   pgtype.UUID        `json:"candidate_id"`
+	WorkSignatureID               pgtype.UUID        `json:"work_signature_id"`
+	ExactSignatureHashAtDecision  string             `json:"exact_signature_hash_at_decision"`
+	SemanticFingerprintAtDecision string             `json:"semantic_fingerprint_at_decision"`
+	SignaturePayload              json.RawMessage    `json:"signature_payload"`
+	ConflictBucketKeys            json.RawMessage    `json:"conflict_bucket_keys"`
+	SignatureVersion              string             `json:"signature_version"`
+	Decision                      string             `json:"decision"`
+	DecisionScope                 json.RawMessage    `json:"decision_scope"`
+	EvidenceFingerprintAtDecision string             `json:"evidence_fingerprint_at_decision"`
+	SnoozedUntil                  pgtype.Timestamptz `json:"snoozed_until"`
+	MaterialChangePolicyVersion   string             `json:"material_change_policy_version"`
+	DecidedBy                     string             `json:"decided_by"`
+	DecidedAt                     pgtype.Timestamptz `json:"decided_at"`
+	Active                        bool               `json:"active"`
+	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkSignatureAlias struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	ReviewMemoryID           uuid.UUID          `json:"review_memory_id"`
+	AliasExactSignatureHash  string             `json:"alias_exact_signature_hash"`
+	AliasSemanticFingerprint string             `json:"alias_semantic_fingerprint"`
+	AliasSignatureVersion    string             `json:"alias_signature_version"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkSignatureRegistry struct {
-	ID                  uuid.UUID          `json:"id"`
-	ProjectID           uuid.UUID          `json:"project_id"`
-	CandidateID         uuid.UUID          `json:"candidate_id"`
-	ShadowRunID         uuid.UUID          `json:"shadow_run_id"`
-	Mode                string             `json:"mode"`
-	Status              string             `json:"status"`
-	Active              bool               `json:"active"`
-	ExactSignatureHash  string             `json:"exact_signature_hash"`
-	SignaturePayload    json.RawMessage    `json:"signature_payload"`
-	SemanticFingerprint *string            `json:"semantic_fingerprint"`
-	ConflictBucketKeys  json.RawMessage    `json:"conflict_bucket_keys"`
-	SignatureVersion    string             `json:"signature_version"`
-	Owner               *string            `json:"owner"`
-	SourceObjectType    string             `json:"source_object_type"`
-	SourceObjectID      string             `json:"source_object_id"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ShadowRunID           uuid.UUID          `json:"shadow_run_id"`
+	Mode                  string             `json:"mode"`
+	Status                string             `json:"status"`
+	Active                bool               `json:"active"`
+	ExactSignatureHash    string             `json:"exact_signature_hash"`
+	SignaturePayload      json.RawMessage    `json:"signature_payload"`
+	SemanticFingerprint   *string            `json:"semantic_fingerprint"`
+	ConflictBucketKeys    json.RawMessage    `json:"conflict_bucket_keys"`
+	SignatureVersion      string             `json:"signature_version"`
+	Owner                 *string            `json:"owner"`
+	SourceObjectType      string             `json:"source_object_type"`
+	SourceObjectID        string             `json:"source_object_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ArbitrationDecisionID pgtype.UUID        `json:"arbitration_decision_id"`
+	ReservedWorkType      *string            `json:"reserved_work_type"`
+	ReservedWorkID        pgtype.UUID        `json:"reserved_work_id"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
 }
 
 type WorkflowEvent struct {
