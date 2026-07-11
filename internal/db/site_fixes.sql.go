@@ -1037,6 +1037,68 @@ func (q *Queries) ConsumeDoctorAIOnDemandProcessing(ctx context.Context, arg Con
 	return i, err
 }
 
+const countMigrationRollbackRelationBlockers = `-- name: CountMigrationRollbackRelationBlockers :one
+with batch as materialized (
+  select migration_batch.id, migration_batch.project_id, migration_batch.product, migration_batch.batch_kind, migration_batch.status, migration_batch.schema_version, migration_batch.source_count, migration_batch.migrated_count, migration_batch.archived_duplicate_count, migration_batch.review_count, migration_batch.writer_authority_before, migration_batch.writer_authority_after, migration_batch.source_snapshot, migration_batch.result_snapshot, migration_batch.initiated_by, migration_batch.started_at, migration_batch.finished_at, migration_batch.created_at from migration_batches migration_batch
+  where migration_batch.project_id = $1 and migration_batch.id = $2
+), migrated_fixes as materialized (
+  select migrated.id, migrated.work_signature_id from site_fixes migrated
+  where migrated.project_id = $1 and migrated.migration_batch_id = $2
+), blockers as (
+  select revision.id from site_fixes revision join migrated_fixes original on revision.supersedes_site_fix_id = original.id
+  where revision.migration_batch_id is distinct from $2
+  union all
+  select verification.id from site_fix_verifications verification join migrated_fixes fix on fix.id = verification.site_fix_id
+  union all
+  select application.id from site_change_applications application join migrated_fixes fix on fix.id = application.site_fix_id
+  where not exists (select 1 from migration_ledger ledger where ledger.project_id = application.project_id and ledger.migration_batch_id = $2 and ledger.source_object_type = 'site_change_application' and ledger.source_object_id = application.id and ledger.operation = 'repoint')
+  union all
+  select memory.id from work_review_memory memory join migrated_fixes fix on fix.work_signature_id = memory.work_signature_id
+  where memory.migration_batch_id is distinct from $2
+  union all
+  select call.id from ai_call_records call join migrated_fixes fix on call.linked_object_type = 'site_fix' and call.linked_object_id = fix.id
+  union all
+  select rollback.id from rollback_records rollback join migrated_fixes fix on rollback.site_fix_id = fix.id
+  union all
+  select alias.id from work_signature_aliases alias
+  join work_signature_registry signature on signature.project_id = alias.project_id and signature.exact_signature_hash = alias.alias_exact_signature_hash
+  join migrated_fixes fix on fix.work_signature_id = signature.id
+  cross join batch where alias.created_at > batch.finished_at
+  union all
+  select decision.id from discovery_arbitration_decisions decision
+  join site_fixes fix on fix.candidate_id = decision.candidate_id and fix.project_id = decision.project_id
+  join migrated_fixes migrated on migrated.id = fix.id
+  cross join batch where decision.created_at > batch.finished_at
+  union all
+  select review.id from discovery_review_items review
+  join site_fixes fix on fix.candidate_id = review.candidate_id and fix.project_id = review.project_id
+  join migrated_fixes migrated on migrated.id = fix.id
+  cross join batch where review.created_at > batch.finished_at
+  union all
+  select fix.id from site_fixes fix cross join batch
+  where fix.project_id = $1 and fix.created_at > batch.finished_at
+    and fix.migration_batch_id is distinct from $2
+  union all
+  select application.id from site_change_applications application cross join batch
+  where application.project_id = $1 and application.site_fix_id is not null
+    and application.created_at > batch.finished_at
+    and not exists (select 1 from migration_ledger ledger where ledger.project_id = application.project_id and ledger.migration_batch_id = $2 and ledger.source_object_type = 'site_change_application' and ledger.source_object_id = application.id)
+)
+select count(*)::int from blockers
+`
+
+type CountMigrationRollbackRelationBlockersParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) CountMigrationRollbackRelationBlockers(ctx context.Context, arg CountMigrationRollbackRelationBlockersParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countMigrationRollbackRelationBlockers, arg.ProjectID, arg.MigrationBatchID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createCanonicalSiteFix = `-- name: CreateCanonicalSiteFix :one
 
 insert into site_fixes (
@@ -1637,6 +1699,285 @@ func (q *Queries) CreateMigrationBatch(ctx context.Context, arg CreateMigrationB
 	return i, err
 }
 
+const createMigrationDoctorArtifacts = `-- name: CreateMigrationDoctorArtifacts :one
+with locked_authority as materialized (
+  select pwa.project_id
+  from product_writer_authority pwa
+  where pwa.project_id = $2
+    and pwa.product = 'doctor'
+    and pwa.writer_authority = 'legacy'
+    and pwa.write_fenced = true
+    and pwa.fence_token = $3
+  for update
+), batch as materialized (
+  select b.id
+  from migration_batches b
+  join locked_authority authority on authority.project_id = b.project_id
+  where b.project_id = $2 and b.id = $4
+), migration_run as (
+  insert into seo_doctor_runs (
+    id, project_id, trigger, status, stage, progress_percent, message,
+    input_snapshot, output_summary, created_by_user_id, started_at, finished_at
+  )
+  select $5, $2, 'migration', 'completed',
+         'completed', 100, 'Legacy technical work migration',
+         $6::jsonb, '{}'::jsonb, $7,
+         $8, $8
+  from batch
+  where $9::uuid is null
+  returning id
+), migration_finding as (
+  insert into seo_doctor_findings (
+    id, project_id, run_id, finding_key, severity, category, issue_type, status,
+    affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
+    developer_instructions, likely_files_or_surfaces, acceptance_tests,
+    risk_level, review_required, autofix_eligible, linked_opportunity_id,
+    linked_content_action_id, first_seen_at, last_seen_at, finding_kind
+  )
+  select $10, $2, migration_run.id,
+         'migration:' || $11::text, 'P2', 'legacy_migration',
+         $12, 'active', $13::jsonb,
+         $13::jsonb, $6::jsonb,
+         'Conserved legacy technical work', $12,
+         'Review the conserved legacy technical change and its original evidence.',
+         '[]'::jsonb, $14::jsonb, 'medium', true, false,
+         $15, $1,
+         $16, $17, 'broken'
+  from migration_run
+  returning id, finding_kind
+), chosen_finding as materialized (
+  select f.id, f.finding_kind
+  from seo_doctor_findings f
+  join locked_authority authority on authority.project_id = f.project_id
+  where f.project_id = $2
+    and f.id = $9::uuid
+    and f.status = 'active' and f.finding_kind in ('broken','optimization')
+  union all
+  select id, finding_kind from migration_finding
+), migration_shadow_run as (
+  insert into discovery_shadow_runs (
+    id, project_id, mode, status, candidate_schema_version, signature_version,
+    doctor_candidates, identity_ready, started_at, finished_at
+  )
+  select $18, $2, 'migration', 'completed',
+         'discovery-candidate/v1', 'work-signature/v1', 1, 1,
+         $8, $8
+  from chosen_finding
+  returning id
+), candidate as (
+  insert into discovery_candidates (
+    id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id,
+    target_kind, normalized_target_set, issue_or_hypothesis_family, change_family,
+    proposed_mutations, artifact_intent, topic_entity_identity, audience_identity,
+    primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint,
+    suggested_owner, confidence, candidate_schema_version, status,
+    exact_signature_hash, signature_payload, conflict_bucket_keys, candidate_version
+  )
+  select $19, $2, migration_shadow_run.id,
+         'migration', 'seo_doctor_finding', chosen_finding.id::text, 'page',
+         $13::jsonb, $12, $12,
+         $20::jsonb, 'repair_existing_surface', '[]'::jsonb,
+         '[]'::jsonb, 'acceptance_test_pass', 'immediate',
+         jsonb_build_array($21 || ':' || $11::text),
+         $22, 'doctor', 1.0, 'discovery-candidate/v1',
+         'identity_ready', $23, $24::jsonb,
+         $25::jsonb, 1
+  from migration_shadow_run cross join chosen_finding
+  returning id, shadow_run_id
+), bumped_buckets as (
+  insert into work_conflict_buckets (project_id, bucket_key, bucket_version)
+  select $2, keys.bucket_key, 1
+  from jsonb_array_elements_text($25::jsonb) keys(bucket_key)
+  on conflict (project_id, bucket_key) do update
+    set bucket_version = work_conflict_buckets.bucket_version + 1, updated_at = now()
+  returning id
+), signature as (
+  insert into work_signature_registry (
+    id, project_id, candidate_id, shadow_run_id, mode, status, active,
+    exact_signature_hash, signature_payload, conflict_bucket_keys, signature_version,
+    owner, source_object_type, source_object_id, reserved_work_type, reserved_work_id,
+    evidence_fingerprint
+  )
+  select $26, $2, candidate.id,
+         candidate.shadow_run_id, 'enforced', $27, $28,
+         $23, $24::jsonb,
+         $25::jsonb, 'work-signature/v1', 'doctor',
+         'site_fix', $29::text, 'site_fix', $29,
+         $22
+  from candidate
+  where (select count(*) from bumped_buckets) =
+        jsonb_array_length($25::jsonb)
+  returning id, candidate_id
+), fix as (
+  insert into site_fixes (
+    id, project_id, doctor_finding_id, candidate_id, work_signature_id, status,
+    finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests,
+    verification_snapshot, retry_count, max_retries, legacy_opportunity_id,
+    legacy_content_action_id, migration_batch_id, approved_at, created_at, updated_at
+  )
+  select $29, $2, chosen_finding.id,
+         signature.candidate_id, signature.id, $30,
+         chosen_finding.finding_kind, $13::jsonb, $6::jsonb,
+         $31::jsonb, $14::jsonb,
+         '{}'::jsonb, 0, 3, $15, $1,
+         batch.id, $32, $16,
+         $17
+  from signature cross join chosen_finding cross join batch
+  returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at
+), archived_action as (
+  update content_actions a
+  set canonical_site_fix_id = fix.id, canonical_read_only = true,
+      legacy_migration_batch_id = $4,
+      legacy_migration_disposition = 'migrated', updated_at = now()
+  from fix
+  where a.project_id = $2 and a.id = $1
+    and a.canonical_read_only = false and a.canonical_site_fix_id is null
+  returning a.id
+), archived_opportunity as (
+  update seo_opportunities o
+  set canonical_site_fix_id = fix.id, canonical_read_only = true,
+      legacy_migration_batch_id = $4,
+      legacy_migration_disposition = 'migrated', updated_at = now()
+  from fix
+  where o.project_id = $2 and o.id = $15
+    and o.canonical_read_only = false
+  returning o.id
+)
+select fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at from fix
+where ((select count(*) from archived_action) = 1
+   or ($1::uuid is null and (select count(*) from archived_action) = 0))
+  and (select count(*) from archived_opportunity) = 1
+`
+
+type CreateMigrationDoctorArtifactsParams struct {
+	LegacyActionID          pgtype.UUID        `json:"legacy_action_id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	FenceToken              pgtype.UUID        `json:"fence_token"`
+	MigrationBatchID        uuid.UUID          `json:"migration_batch_id"`
+	DoctorRunID             uuid.UUID          `json:"doctor_run_id"`
+	FindingEvidence         json.RawMessage    `json:"finding_evidence"`
+	InitiatedBy             *string            `json:"initiated_by"`
+	MigratedAt              pgtype.Timestamptz `json:"migrated_at"`
+	ExistingDoctorFindingID pgtype.UUID        `json:"existing_doctor_finding_id"`
+	DoctorFindingID         uuid.UUID          `json:"doctor_finding_id"`
+	SourceObjectID          string             `json:"source_object_id"`
+	ChangeFamily            string             `json:"change_family"`
+	TargetUrls              json.RawMessage    `json:"target_urls"`
+	AcceptanceTests         json.RawMessage    `json:"acceptance_tests"`
+	LegacyOpportunityID     pgtype.UUID        `json:"legacy_opportunity_id"`
+	OriginalCreatedAt       pgtype.Timestamptz `json:"original_created_at"`
+	OriginalUpdatedAt       pgtype.Timestamptz `json:"original_updated_at"`
+	ShadowRunID             uuid.UUID          `json:"shadow_run_id"`
+	CandidateID             uuid.UUID          `json:"candidate_id"`
+	ProposedMutations       json.RawMessage    `json:"proposed_mutations"`
+	SourceObjectType        *string            `json:"source_object_type"`
+	EvidenceFingerprint     string             `json:"evidence_fingerprint"`
+	ExactSignatureHash      *string            `json:"exact_signature_hash"`
+	SignaturePayload        json.RawMessage    `json:"signature_payload"`
+	ConflictBucketKeys      json.RawMessage    `json:"conflict_bucket_keys"`
+	WorkSignatureID         uuid.UUID          `json:"work_signature_id"`
+	RegistryStatus          string             `json:"registry_status"`
+	RegistryActive          bool               `json:"registry_active"`
+	SiteFixID               pgtype.UUID        `json:"site_fix_id"`
+	SiteFixStatus           string             `json:"site_fix_status"`
+	ProposedFix             json.RawMessage    `json:"proposed_fix"`
+	ApprovedAt              pgtype.Timestamptz `json:"approved_at"`
+}
+
+type CreateMigrationDoctorArtifactsRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateMigrationDoctorArtifacts(ctx context.Context, arg CreateMigrationDoctorArtifactsParams) (CreateMigrationDoctorArtifactsRow, error) {
+	row := q.db.QueryRow(ctx, createMigrationDoctorArtifacts,
+		arg.LegacyActionID,
+		arg.ProjectID,
+		arg.FenceToken,
+		arg.MigrationBatchID,
+		arg.DoctorRunID,
+		arg.FindingEvidence,
+		arg.InitiatedBy,
+		arg.MigratedAt,
+		arg.ExistingDoctorFindingID,
+		arg.DoctorFindingID,
+		arg.SourceObjectID,
+		arg.ChangeFamily,
+		arg.TargetUrls,
+		arg.AcceptanceTests,
+		arg.LegacyOpportunityID,
+		arg.OriginalCreatedAt,
+		arg.OriginalUpdatedAt,
+		arg.ShadowRunID,
+		arg.CandidateID,
+		arg.ProposedMutations,
+		arg.SourceObjectType,
+		arg.EvidenceFingerprint,
+		arg.ExactSignatureHash,
+		arg.SignaturePayload,
+		arg.ConflictBucketKeys,
+		arg.WorkSignatureID,
+		arg.RegistryStatus,
+		arg.RegistryActive,
+		arg.SiteFixID,
+		arg.SiteFixStatus,
+		arg.ProposedFix,
+		arg.ApprovedAt,
+	)
+	var i CreateMigrationDoctorArtifactsRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createMigrationReviewItem = `-- name: CreateMigrationReviewItem :one
 insert into migration_review_items (
   id, project_id, migration_batch_id, source_object_type, source_object_id,
@@ -1673,6 +2014,239 @@ func (q *Queries) CreateMigrationReviewItem(ctx context.Context, arg CreateMigra
 		arg.Reason,
 		arg.SourceSnapshot,
 		arg.ProposedResolution,
+	)
+	var i MigrationReviewItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MigrationBatchID,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.ReasonCode,
+		&i.Reason,
+		&i.SourceSnapshot,
+		&i.ProposedResolution,
+		&i.Status,
+		&i.ResolutionSnapshot,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createMigrationWorkReviewMemory = `-- name: CreateMigrationWorkReviewMemory :one
+insert into work_review_memory (
+  id, project_id, candidate_id, work_signature_id,
+  exact_signature_hash_at_decision, semantic_fingerprint_at_decision,
+  signature_payload, conflict_bucket_keys, signature_version, decision,
+  decision_scope, evidence_fingerprint_at_decision, snoozed_until,
+  material_change_policy_version, decided_by, decided_at, active,
+  migration_batch_id, legacy_review_state_id
+) values (
+  $1, $2, $3, $4,
+  $5, $6,
+  $7::jsonb, $8::jsonb,
+  'work-signature/v1', $9, $10::jsonb,
+  $11, $12,
+  'legacy-review-memory/v1', $13, $14, true,
+  $15, $16
+)
+on conflict (project_id, exact_signature_hash_at_decision) where active = true do nothing
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
+`
+
+type CreateMigrationWorkReviewMemoryParams struct {
+	ID                            uuid.UUID          `json:"id"`
+	ProjectID                     uuid.UUID          `json:"project_id"`
+	CandidateID                   pgtype.UUID        `json:"candidate_id"`
+	WorkSignatureID               pgtype.UUID        `json:"work_signature_id"`
+	ExactSignatureHashAtDecision  string             `json:"exact_signature_hash_at_decision"`
+	SemanticFingerprintAtDecision string             `json:"semantic_fingerprint_at_decision"`
+	SignaturePayload              json.RawMessage    `json:"signature_payload"`
+	ConflictBucketKeys            json.RawMessage    `json:"conflict_bucket_keys"`
+	Decision                      string             `json:"decision"`
+	DecisionScope                 json.RawMessage    `json:"decision_scope"`
+	EvidenceFingerprintAtDecision string             `json:"evidence_fingerprint_at_decision"`
+	SnoozedUntil                  pgtype.Timestamptz `json:"snoozed_until"`
+	DecidedBy                     string             `json:"decided_by"`
+	DecidedAt                     pgtype.Timestamptz `json:"decided_at"`
+	MigrationBatchID              pgtype.UUID        `json:"migration_batch_id"`
+	LegacyReviewStateID           pgtype.UUID        `json:"legacy_review_state_id"`
+}
+
+func (q *Queries) CreateMigrationWorkReviewMemory(ctx context.Context, arg CreateMigrationWorkReviewMemoryParams) (WorkReviewMemory, error) {
+	row := q.db.QueryRow(ctx, createMigrationWorkReviewMemory,
+		arg.ID,
+		arg.ProjectID,
+		arg.CandidateID,
+		arg.WorkSignatureID,
+		arg.ExactSignatureHashAtDecision,
+		arg.SemanticFingerprintAtDecision,
+		arg.SignaturePayload,
+		arg.ConflictBucketKeys,
+		arg.Decision,
+		arg.DecisionScope,
+		arg.EvidenceFingerprintAtDecision,
+		arg.SnoozedUntil,
+		arg.DecidedBy,
+		arg.DecidedAt,
+		arg.MigrationBatchID,
+		arg.LegacyReviewStateID,
+	)
+	var i WorkReviewMemory
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.ExactSignatureHashAtDecision,
+		&i.SemanticFingerprintAtDecision,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Decision,
+		&i.DecisionScope,
+		&i.EvidenceFingerprintAtDecision,
+		&i.SnoozedUntil,
+		&i.MaterialChangePolicyVersion,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
+	)
+	return i, err
+}
+
+const deactivateMigrationReviewMemory = `-- name: DeactivateMigrationReviewMemory :one
+update work_review_memory set active = false, updated_at = now()
+where project_id = $1 and id = $2
+  and migration_batch_id = $3 and active
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
+`
+
+type DeactivateMigrationReviewMemoryParams struct {
+	ProjectID        uuid.UUID   `json:"project_id"`
+	ObjectID         uuid.UUID   `json:"object_id"`
+	MigrationBatchID pgtype.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) DeactivateMigrationReviewMemory(ctx context.Context, arg DeactivateMigrationReviewMemoryParams) (WorkReviewMemory, error) {
+	row := q.db.QueryRow(ctx, deactivateMigrationReviewMemory, arg.ProjectID, arg.ObjectID, arg.MigrationBatchID)
+	var i WorkReviewMemory
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.ExactSignatureHashAtDecision,
+		&i.SemanticFingerprintAtDecision,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Decision,
+		&i.DecisionScope,
+		&i.EvidenceFingerprintAtDecision,
+		&i.SnoozedUntil,
+		&i.MaterialChangePolicyVersion,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
+	)
+	return i, err
+}
+
+const deactivateMigrationSignature = `-- name: DeactivateMigrationSignature :one
+update work_signature_registry set active = false, status = 'cancelled', updated_at = now()
+where project_id = $1 and id = $2
+returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint
+`
+
+type DeactivateMigrationSignatureParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ObjectID  uuid.UUID `json:"object_id"`
+}
+
+func (q *Queries) DeactivateMigrationSignature(ctx context.Context, arg DeactivateMigrationSignatureParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, deactivateMigrationSignature, arg.ProjectID, arg.ObjectID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
+	)
+	return i, err
+}
+
+const deleteCreatedMigrationBucket = `-- name: DeleteCreatedMigrationBucket :execrows
+delete from work_conflict_buckets
+where project_id = $1 and id = $2
+  and bucket_version = $3
+`
+
+type DeleteCreatedMigrationBucketParams struct {
+	ProjectID             uuid.UUID `json:"project_id"`
+	ObjectID              uuid.UUID `json:"object_id"`
+	ExpectedBucketVersion int64     `json:"expected_bucket_version"`
+}
+
+func (q *Queries) DeleteCreatedMigrationBucket(ctx context.Context, arg DeleteCreatedMigrationBucketParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCreatedMigrationBucket, arg.ProjectID, arg.ObjectID, arg.ExpectedBucketVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const dismissMigrationReviewItem = `-- name: DismissMigrationReviewItem :one
+update migration_review_items
+set status = 'dismissed', resolution_snapshot = $1::jsonb,
+    resolved_by = $2, resolved_at = $3, updated_at = now()
+where project_id = $4 and id = $5 and status = 'pending'
+returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at
+`
+
+type DismissMigrationReviewItemParams struct {
+	ResolutionSnapshot json.RawMessage    `json:"resolution_snapshot"`
+	ResolvedBy         *string            `json:"resolved_by"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	ObjectID           uuid.UUID          `json:"object_id"`
+}
+
+func (q *Queries) DismissMigrationReviewItem(ctx context.Context, arg DismissMigrationReviewItemParams) (MigrationReviewItem, error) {
+	row := q.db.QueryRow(ctx, dismissMigrationReviewItem,
+		arg.ResolutionSnapshot,
+		arg.ResolvedBy,
+		arg.ResolvedAt,
+		arg.ProjectID,
+		arg.ObjectID,
 	)
 	var i MigrationReviewItem
 	err := row.Scan(
@@ -1921,6 +2495,47 @@ func (q *Queries) GetActiveCanonicalSiteFixForFindingForUpdate(ctx context.Conte
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getActiveWorkReviewMemoryByExactSignature = `-- name: GetActiveWorkReviewMemoryByExactSignature :one
+select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id from work_review_memory
+where project_id = $1
+  and exact_signature_hash_at_decision = $2
+  and active = true
+`
+
+type GetActiveWorkReviewMemoryByExactSignatureParams struct {
+	ProjectID                    uuid.UUID `json:"project_id"`
+	ExactSignatureHashAtDecision string    `json:"exact_signature_hash_at_decision"`
+}
+
+func (q *Queries) GetActiveWorkReviewMemoryByExactSignature(ctx context.Context, arg GetActiveWorkReviewMemoryByExactSignatureParams) (WorkReviewMemory, error) {
+	row := q.db.QueryRow(ctx, getActiveWorkReviewMemoryByExactSignature, arg.ProjectID, arg.ExactSignatureHashAtDecision)
+	var i WorkReviewMemory
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.ExactSignatureHashAtDecision,
+		&i.SemanticFingerprintAtDecision,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Decision,
+		&i.DecisionScope,
+		&i.EvidenceFingerprintAtDecision,
+		&i.SnoozedUntil,
+		&i.MaterialChangePolicyVersion,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
 	)
 	return i, err
 }
@@ -2466,6 +3081,153 @@ func (q *Queries) GetLatestCanonicalSiteFixForFindingForUpdate(ctx context.Conte
 	return i, err
 }
 
+const getMigrationBatch = `-- name: GetMigrationBatch :one
+select id, project_id, product, batch_kind, status, schema_version, source_count, migrated_count, archived_duplicate_count, review_count, writer_authority_before, writer_authority_after, source_snapshot, result_snapshot, initiated_by, started_at, finished_at, created_at from migration_batches
+where project_id = $1 and id = $2
+`
+
+type GetMigrationBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) GetMigrationBatch(ctx context.Context, arg GetMigrationBatchParams) (MigrationBatch, error) {
+	row := q.db.QueryRow(ctx, getMigrationBatch, arg.ProjectID, arg.MigrationBatchID)
+	var i MigrationBatch
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Product,
+		&i.BatchKind,
+		&i.Status,
+		&i.SchemaVersion,
+		&i.SourceCount,
+		&i.MigratedCount,
+		&i.ArchivedDuplicateCount,
+		&i.ReviewCount,
+		&i.WriterAuthorityBefore,
+		&i.WriterAuthorityAfter,
+		&i.SourceSnapshot,
+		&i.ResultSnapshot,
+		&i.InitiatedBy,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMigrationConservation = `-- name: GetMigrationConservation :one
+with batch_fixes as materialized (
+  select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes where project_id = $1 and migration_batch_id = $2
+), unledgered as (
+  select fix.id from batch_fixes fix where not exists (select 1 from migration_ledger ledger where ledger.project_id=$1 and ledger.migration_batch_id=$2 and ledger.canonical_object_type='site_fix' and ledger.canonical_object_id=fix.id)
+  union all select alias.id from legacy_object_aliases alias where alias.project_id=$1 and alias.migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=alias.project_id and ledger.migration_batch_id=alias.migration_batch_id and ledger.canonical_object_type='legacy_object_alias' and ledger.canonical_object_id=alias.id)
+  union all select item.id from migration_review_items item where item.project_id=$1 and item.migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=item.project_id and ledger.migration_batch_id=item.migration_batch_id and ledger.canonical_object_type='migration_review_item' and ledger.canonical_object_id=item.id)
+  union all select memory.id from work_review_memory memory where memory.project_id=$1 and memory.migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=memory.project_id and ledger.migration_batch_id=memory.migration_batch_id and ledger.canonical_object_type='work_review_memory' and ledger.canonical_object_id=memory.id)
+  union all select action.id from content_actions action where action.project_id=$1 and action.legacy_migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=action.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='content_action' and ledger.canonical_object_id=action.id)
+  union all select opportunity.id from seo_opportunities opportunity where opportunity.project_id=$1 and opportunity.legacy_migration_batch_id=$2 and not exists (select 1 from migration_ledger ledger where ledger.project_id=opportunity.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='seo_opportunity' and ledger.canonical_object_id=opportunity.id)
+  union all select fix.candidate_id from batch_fixes fix where not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='discovery_candidate' and ledger.canonical_object_id=fix.candidate_id)
+  union all select fix.work_signature_id from batch_fixes fix where not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='work_signature_registry' and ledger.canonical_object_id=fix.work_signature_id)
+  union all select candidate.shadow_run_id from batch_fixes fix join discovery_candidates candidate on candidate.id=fix.candidate_id and candidate.project_id=fix.project_id where not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='discovery_shadow_run' and ledger.canonical_object_id=candidate.shadow_run_id)
+  union all select finding.id from batch_fixes fix join seo_doctor_findings finding on finding.id=fix.doctor_finding_id and finding.project_id=fix.project_id join seo_doctor_runs run on run.id=finding.run_id and run.project_id=finding.project_id where run.trigger='migration' and not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='seo_doctor_finding' and ledger.canonical_object_id=finding.id)
+  union all select run.id from batch_fixes fix join seo_doctor_findings finding on finding.id=fix.doctor_finding_id and finding.project_id=fix.project_id join seo_doctor_runs run on run.id=finding.run_id and run.project_id=finding.project_id where run.trigger='migration' and not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='seo_doctor_run' and ledger.canonical_object_id=run.id)
+  union all select bucket.id from batch_fixes fix join work_signature_registry signature on signature.id=fix.work_signature_id and signature.project_id=fix.project_id cross join lateral jsonb_array_elements_text(signature.conflict_bucket_keys) keys(bucket_key) join work_conflict_buckets bucket on bucket.project_id=fix.project_id and bucket.bucket_key=keys.bucket_key where not exists (select 1 from migration_ledger ledger where ledger.project_id=fix.project_id and ledger.migration_batch_id=$2 and ledger.canonical_object_type='work_conflict_bucket' and ledger.canonical_object_id=bucket.id)
+)
+select
+  (select count(*)::int from legacy_object_aliases alias_count where alias_count.project_id=$1 and alias_count.migration_batch_id=$2 and alias_count.alias_state='active') as active_alias_count,
+  (select count(*)::int from migration_ledger application_ledger where application_ledger.project_id=$1 and application_ledger.migration_batch_id=$2 and application_ledger.source_object_type='site_change_application' and application_ledger.operation='repoint') as repointed_application_count,
+  (select count(*)::int from migration_ledger source_ledger where source_ledger.project_id=$1 and source_ledger.migration_batch_id=$2 and source_ledger.canonical_object_type in ('content_action','seo_opportunity')) as source_ledger_count,
+  (select count(*)::int from batch_fixes) as site_fix_count,
+  (select count(*)::int from migration_review_items review_count where review_count.project_id=$1 and review_count.migration_batch_id=$2) as review_item_count,
+  (select count(*)::int from work_review_memory memory_count where memory_count.project_id=$1 and memory_count.migration_batch_id=$2) as review_memory_count,
+  (select count(*)::int from site_change_applications invalid_application where invalid_application.project_id=$1 and num_nonnulls(invalid_application.content_action_id,invalid_application.site_fix_id) <> 1) as invalid_application_source_count,
+  (select count(*)::int from unledgered) as unledgered_object_count
+`
+
+type GetMigrationConservationParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+type GetMigrationConservationRow struct {
+	ActiveAliasCount              int32 `json:"active_alias_count"`
+	RepointedApplicationCount     int32 `json:"repointed_application_count"`
+	SourceLedgerCount             int32 `json:"source_ledger_count"`
+	SiteFixCount                  int32 `json:"site_fix_count"`
+	ReviewItemCount               int32 `json:"review_item_count"`
+	ReviewMemoryCount             int32 `json:"review_memory_count"`
+	InvalidApplicationSourceCount int32 `json:"invalid_application_source_count"`
+	UnledgeredObjectCount         int32 `json:"unledgered_object_count"`
+}
+
+func (q *Queries) GetMigrationConservation(ctx context.Context, arg GetMigrationConservationParams) (GetMigrationConservationRow, error) {
+	row := q.db.QueryRow(ctx, getMigrationConservation, arg.ProjectID, arg.MigrationBatchID)
+	var i GetMigrationConservationRow
+	err := row.Scan(
+		&i.ActiveAliasCount,
+		&i.RepointedApplicationCount,
+		&i.SourceLedgerCount,
+		&i.SiteFixCount,
+		&i.ReviewItemCount,
+		&i.ReviewMemoryCount,
+		&i.InvalidApplicationSourceCount,
+		&i.UnledgeredObjectCount,
+	)
+	return i, err
+}
+
+const getMigrationCurrentSnapshot = `-- name: GetMigrationCurrentSnapshot :one
+select coalesce(case $1::text
+  when 'migration_batch' then (select to_jsonb(b) from migration_batches b where b.project_id = $2 and b.id = $3)
+  when 'seo_doctor_run' then (select to_jsonb(r) - 'updated_at' from seo_doctor_runs r where r.project_id = $2 and r.id = $3)
+  when 'seo_doctor_finding' then (select to_jsonb(f) - 'updated_at' - 'last_seen_at' from seo_doctor_findings f where f.project_id = $2 and f.id = $3)
+  when 'discovery_shadow_run' then (select to_jsonb(r) - 'updated_at' from discovery_shadow_runs r where r.project_id = $2 and r.id = $3)
+  when 'discovery_candidate' then (select to_jsonb(c) - 'updated_at' from discovery_candidates c where c.project_id = $2 and c.id = $3)
+  when 'work_conflict_bucket' then (select to_jsonb(b) - 'updated_at' from work_conflict_buckets b where b.project_id = $2 and b.id = $3)
+  when 'work_signature_registry' then (select to_jsonb(w) - 'updated_at' from work_signature_registry w where w.project_id = $2 and w.id = $3)
+  when 'site_fix' then (select to_jsonb(f) - 'updated_at' from site_fixes f where f.project_id = $2 and f.id = $3)
+  when 'content_action' then (select to_jsonb(a) - 'updated_at' from content_actions a where a.project_id = $2 and a.id = $3)
+  when 'seo_opportunity' then (select to_jsonb(o) - 'updated_at' from seo_opportunities o where o.project_id = $2 and o.id = $3)
+  when 'site_change_application' then (select to_jsonb(a) - 'updated_at' from site_change_applications a where a.project_id = $2 and a.id = $3)
+  when 'legacy_object_alias' then (select to_jsonb(a) - 'updated_at' from legacy_object_aliases a where a.project_id = $2 and a.id = $3)
+  when 'migration_review_item' then (select to_jsonb(i) - 'updated_at' from migration_review_items i where i.project_id = $2 and i.id = $3)
+  when 'work_review_memory' then (select to_jsonb(m) - 'updated_at' from work_review_memory m where m.project_id = $2 and m.id = $3)
+  when 'product_writer_authority' then (select jsonb_build_object('project_id', p.project_id, 'product', p.product, 'writer_authority', p.writer_authority) from product_writer_authority p where p.project_id = $2 and p.product = 'doctor')
+end, '{"missing":true}'::jsonb)::jsonb as snapshot
+`
+
+type GetMigrationCurrentSnapshotParams struct {
+	ObjectType string    `json:"object_type"`
+	ProjectID  uuid.UUID `json:"project_id"`
+	ObjectID   uuid.UUID `json:"object_id"`
+}
+
+func (q *Queries) GetMigrationCurrentSnapshot(ctx context.Context, arg GetMigrationCurrentSnapshotParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, getMigrationCurrentSnapshot, arg.ObjectType, arg.ProjectID, arg.ObjectID)
+	var snapshot json.RawMessage
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const getNextMigrationRollbackEventSequence = `-- name: GetNextMigrationRollbackEventSequence :one
+select (coalesce(max(event_sequence), 0) + 1)::int
+from migration_rollback_events
+where project_id = $1 and migration_batch_id = $2
+`
+
+type GetNextMigrationRollbackEventSequenceParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) GetNextMigrationRollbackEventSequence(ctx context.Context, arg GetNextMigrationRollbackEventSequenceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextMigrationRollbackEventSequence, arg.ProjectID, arg.MigrationBatchID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getProductWriterAuthority = `-- name: GetProductWriterAuthority :one
 select project_id, product, writer_authority, write_fenced, fence_token, fenced_by, fenced_at, authority_changed_at, created_at, updated_at from product_writer_authority
 where project_id = $1
@@ -2534,6 +3296,118 @@ func (q *Queries) InvalidateDoctorSiteFixPreparationLease(ctx context.Context, a
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const listActiveReviewMemoryForLegacyMigration = `-- name: ListActiveReviewMemoryForLegacyMigration :many
+select memory.id, memory.exact_signature_hash_at_decision as match_signature_hash,
+       memory.semantic_fingerprint_at_decision as match_semantic_fingerprint,
+       memory.conflict_bucket_keys, memory.decision,
+       memory.evidence_fingerprint_at_decision, memory.snoozed_until, false as via_alias
+from work_review_memory memory
+where memory.project_id = $1 and memory.active = true
+union all
+select memory.id, alias.alias_exact_signature_hash as match_signature_hash,
+       alias.alias_semantic_fingerprint as match_semantic_fingerprint,
+       memory.conflict_bucket_keys, memory.decision,
+       memory.evidence_fingerprint_at_decision, memory.snoozed_until, true as via_alias
+from work_review_memory memory
+join work_signature_aliases alias on alias.project_id = memory.project_id and alias.review_memory_id = memory.id
+where memory.project_id = $1 and memory.active = true
+order by match_signature_hash, id
+`
+
+type ListActiveReviewMemoryForLegacyMigrationRow struct {
+	ID                            uuid.UUID          `json:"id"`
+	MatchSignatureHash            string             `json:"match_signature_hash"`
+	MatchSemanticFingerprint      string             `json:"match_semantic_fingerprint"`
+	ConflictBucketKeys            json.RawMessage    `json:"conflict_bucket_keys"`
+	Decision                      string             `json:"decision"`
+	EvidenceFingerprintAtDecision string             `json:"evidence_fingerprint_at_decision"`
+	SnoozedUntil                  pgtype.Timestamptz `json:"snoozed_until"`
+	ViaAlias                      bool               `json:"via_alias"`
+}
+
+func (q *Queries) ListActiveReviewMemoryForLegacyMigration(ctx context.Context, projectID uuid.UUID) ([]ListActiveReviewMemoryForLegacyMigrationRow, error) {
+	rows, err := q.db.Query(ctx, listActiveReviewMemoryForLegacyMigration, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveReviewMemoryForLegacyMigrationRow
+	for rows.Next() {
+		var i ListActiveReviewMemoryForLegacyMigrationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MatchSignatureHash,
+			&i.MatchSemanticFingerprint,
+			&i.ConflictBucketKeys,
+			&i.Decision,
+			&i.EvidenceFingerprintAtDecision,
+			&i.SnoozedUntil,
+			&i.ViaAlias,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveWorkForLegacyMigration = `-- name: ListActiveWorkForLegacyMigration :many
+select registry.id as work_signature_id, registry.exact_signature_hash,
+       registry.conflict_bucket_keys, coalesce(registry.owner, '')::text as owner,
+       coalesce(registry.reserved_work_type, '')::text as work_type,
+       registry.reserved_work_id as work_id, registry.active,
+       (select count(*)::int from site_change_applications app
+        where app.project_id = registry.project_id and app.site_fix_id = registry.reserved_work_id
+          and app.status in ('draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open','github_pr_closed','github_pr_merged','deployment_pending','verification_pending','needs_follow_up','conflict','manual_apply_required'))::int as active_application_count
+from work_signature_registry registry
+where registry.project_id = $1
+  and registry.mode = 'enforced' and registry.active = true
+order by registry.exact_signature_hash, registry.id
+`
+
+type ListActiveWorkForLegacyMigrationRow struct {
+	WorkSignatureID        uuid.UUID       `json:"work_signature_id"`
+	ExactSignatureHash     string          `json:"exact_signature_hash"`
+	ConflictBucketKeys     json.RawMessage `json:"conflict_bucket_keys"`
+	Owner                  string          `json:"owner"`
+	WorkType               string          `json:"work_type"`
+	WorkID                 pgtype.UUID     `json:"work_id"`
+	Active                 bool            `json:"active"`
+	ActiveApplicationCount int32           `json:"active_application_count"`
+}
+
+func (q *Queries) ListActiveWorkForLegacyMigration(ctx context.Context, projectID uuid.UUID) ([]ListActiveWorkForLegacyMigrationRow, error) {
+	rows, err := q.db.Query(ctx, listActiveWorkForLegacyMigration, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveWorkForLegacyMigrationRow
+	for rows.Next() {
+		var i ListActiveWorkForLegacyMigrationRow
+		if err := rows.Scan(
+			&i.WorkSignatureID,
+			&i.ExactSignatureHash,
+			&i.ConflictBucketKeys,
+			&i.Owner,
+			&i.WorkType,
+			&i.WorkID,
+			&i.Active,
+			&i.ActiveApplicationCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCanonicalSiteFixPRsForReconciliation = `-- name: ListCanonicalSiteFixPRsForReconciliation :many
@@ -2871,6 +3745,645 @@ func (q *Queries) ListDoctorAIOnDemandConsumedUnapplied(ctx context.Context, pro
 	return items, nil
 }
 
+const listLegacyApplicationsForMigrationUpdate = `-- name: ListLegacyApplicationsForMigrationUpdate :many
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
+where project_id = $1
+  and content_action_id = $2
+  and site_fix_id is null
+order by id
+for update
+`
+
+type ListLegacyApplicationsForMigrationUpdateParams struct {
+	ProjectID      uuid.UUID   `json:"project_id"`
+	LegacyActionID pgtype.UUID `json:"legacy_action_id"`
+}
+
+func (q *Queries) ListLegacyApplicationsForMigrationUpdate(ctx context.Context, arg ListLegacyApplicationsForMigrationUpdateParams) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listLegacyApplicationsForMigrationUpdate, arg.ProjectID, arg.LegacyActionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLegacyTechnicalActionsForMigration = `-- name: ListLegacyTechnicalActionsForMigration :many
+select
+  a.project_id,
+  o.id as opportunity_id,
+  a.id as action_id,
+  coalesce(a.normalized_target_url, a.target_url, o.normalized_page_url, o.page_url, '')::text as target_url,
+  coalesce(nullif(a.asset_type, ''), nullif(a.action_type, ''), o.type)::text as change_family,
+  o.type::text as opportunity_type,
+  o.evidence::jsonb as opportunity_evidence,
+  o.query,
+  o.recommended_action,
+  a.status,
+  (case when a.evidence_snapshot <> '{}'::jsonb then a.evidence_snapshot else o.evidence end)::jsonb as evidence,
+  coalesce(array_agg(app.id order by app.id) filter (where app.id is not null and app.status in (
+    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
+    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
+    'needs_follow_up','conflict','manual_apply_required'
+  )), '{}'::uuid[])::uuid[] as application_ids,
+  coalesce(finding.id::text, '')::text as doctor_finding_id,
+  coalesce(review.review_status, '')::text as review_decision,
+  coalesce(review.id::text, '')::text as review_state_id,
+  review.snoozed_until as review_snoozed_until,
+  coalesce(review.reviewed_by, '')::text as review_decided_by,
+  review.reviewed_at as review_decided_at,
+  coalesce(review.evidence_fingerprint, '')::text as review_evidence_fingerprint,
+  coalesce(review.material_change_metadata, '{}'::jsonb)::jsonb as review_material_change_metadata,
+  coalesce((select jsonb_agg(jsonb_build_object('id', rs.id, 'decision', rs.review_status, 'decided_by', rs.reviewed_by, 'decided_at', rs.reviewed_at, 'snoozed_until', rs.snoozed_until, 'evidence_fingerprint', rs.evidence_fingerprint, 'material_change_metadata', rs.material_change_metadata) order by rs.created_at, rs.id)
+    from seo_opportunity_review_states rs where rs.project_id = a.project_id and (rs.content_action_id = a.id or rs.source_opportunity_id = o.id)), '[]'::jsonb)::jsonb as review_history,
+  a.canonical_site_fix_id,
+  a.legacy_migration_disposition::text as action_legacy_disposition,
+  o.legacy_migration_disposition::text as opportunity_legacy_disposition,
+  a.created_at as original_created_at,
+  a.updated_at as original_updated_at,
+  a.approved_at
+  ,coalesce(a.approved_by, '')::text as approved_by
+  ,a.approval_source::text as approval_source
+  ,a.input_snapshot::jsonb as input_snapshot
+  ,a.output_snapshot::jsonb as output_snapshot
+  ,a.diff_snapshot::jsonb as diff_snapshot
+  ,coalesce(latest_app.status, '')::text as application_status
+  ,(latest_app.github_pr_number is not null or latest_app.github_pr_url is not null)::boolean as has_pull_request
+  ,(latest_app.deployed_at is not null or latest_app.status in ('verification_pending','verified'))::boolean as deployment_observed
+  ,(latest_app.verified_at is not null or latest_app.status = 'verified')::boolean as verification_passed
+from content_actions a
+join seo_opportunities o on o.id = a.opportunity_id and o.project_id = a.project_id
+left join site_change_applications app
+  on app.project_id = a.project_id and app.content_action_id = a.id
+left join lateral (
+  select latest.id, latest.project_id, latest.source_opportunity_id, latest.content_action_id, latest.page_update_draft_id, latest.application_kind, latest.target_url, latest.normalized_target_url, latest.opportunity_key, latest.publisher_connection_id, latest.repo_full_name, latest.base_branch, latest.working_branch, latest.base_commit_sha, latest.head_commit_sha, latest.source_file_path, latest.source_file_paths, latest.source_mapping_confidence, latest.source_mapping_reason, latest.base_file_sha, latest.base_content_hash, latest.proposed_content_hash, latest.patch_snapshot, latest.diff_snapshot, latest.resolution_criteria, latest.github_pr_number, latest.github_pr_url, latest.github_pr_state, latest.deployment_snapshot, latest.verification_snapshot, latest.failure_reason, latest.status, latest.created_at, latest.updated_at, latest.pr_created_at, latest.merged_at, latest.deployed_at, latest.verified_at, latest.next_poll_at, latest.next_notify_at, latest.site_fix_id, latest.pr_claim_token, latest.pr_claim_expires_at, latest.pr_claim_authority_fingerprint from site_change_applications latest
+  where latest.project_id = a.project_id and latest.content_action_id = a.id
+  order by (latest.status in (
+    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
+    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
+    'needs_follow_up','conflict','manual_apply_required'
+  )) desc, latest.updated_at desc, latest.id limit 1
+) latest_app on true
+left join lateral (
+  select f.id
+  from seo_doctor_findings f
+  where f.project_id = a.project_id
+    and (f.linked_content_action_id = a.id or f.linked_opportunity_id = o.id)
+    and f.status <> 'migration_rolled_back'
+  order by (f.linked_content_action_id = a.id) desc, f.created_at, f.id
+  limit 1
+) finding on true
+left join lateral (
+  select rs.id, rs.review_status, rs.snoozed_until, rs.reviewed_by, rs.reviewed_at,
+         rs.evidence_fingerprint, rs.material_change_metadata
+  from seo_opportunity_review_states rs
+  where rs.project_id = a.project_id
+    and (rs.content_action_id = a.id or rs.source_opportunity_id = o.id)
+  order by rs.updated_at desc, rs.id
+  limit 1
+) review on true
+where a.project_id = $1
+  and a.canonical_read_only = false
+  and a.legacy_migration_batch_id is null
+  and a.legacy_migration_disposition in ('none','rolled_back')
+  and (
+    lower(coalesce(a.asset_type, '')) in ('technical_fix','sitemap_update','schema_patch')
+    or lower(coalesce(a.action_type, '')) in ('technical_fix','sitemap_update','schema_patch','technical seo fix task')
+    or ((lower(coalesce(a.asset_type, '')) in ('internal_link_patch','metadata_rewrite') or lower(coalesce(a.action_type, '')) in ('internal_link_patch','metadata_rewrite'))
+      and coalesce(a.work_type, 'fix_site_issue') = 'fix_site_issue')
+    or lower(coalesce(a.output_snapshot->>'output_type', '')) = 'technical_task'
+    or lower(coalesce(a.diff_snapshot->>'output_type', '')) = 'technical_task'
+    or (lower(coalesce(a.output_snapshot->>'output_type', a.diff_snapshot->>'output_type', '')) = 'direct_patch'
+      and coalesce(a.work_type, '') in ('','fix_site_issue')
+      and case when jsonb_typeof(coalesce(a.output_snapshot->'added_propositions', a.diff_snapshot->'added_propositions', '[]'::jsonb)) = 'array'
+        then jsonb_array_length(coalesce(a.output_snapshot->'added_propositions', a.diff_snapshot->'added_propositions', '[]'::jsonb)) = 0 else false end)
+    or is_legacy_doctor_technical_opportunity(o.type, o.evidence)
+  )
+group by a.project_id, o.id, a.id, finding.id, review.id, review.review_status,
+         review.snoozed_until, review.reviewed_by, review.reviewed_at,
+         review.evidence_fingerprint, review.material_change_metadata,
+         latest_app.status, latest_app.github_pr_number, latest_app.github_pr_url,
+         latest_app.deployed_at, latest_app.verified_at
+order by a.created_at, a.id
+`
+
+type ListLegacyTechnicalActionsForMigrationRow struct {
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	OpportunityID                uuid.UUID          `json:"opportunity_id"`
+	ActionID                     uuid.UUID          `json:"action_id"`
+	TargetUrl                    string             `json:"target_url"`
+	ChangeFamily                 string             `json:"change_family"`
+	OpportunityType              string             `json:"opportunity_type"`
+	OpportunityEvidence          json.RawMessage    `json:"opportunity_evidence"`
+	Query                        *string            `json:"query"`
+	RecommendedAction            *string            `json:"recommended_action"`
+	Status                       string             `json:"status"`
+	Evidence                     json.RawMessage    `json:"evidence"`
+	ApplicationIds               []uuid.UUID        `json:"application_ids"`
+	DoctorFindingID              string             `json:"doctor_finding_id"`
+	ReviewDecision               string             `json:"review_decision"`
+	ReviewStateID                string             `json:"review_state_id"`
+	ReviewSnoozedUntil           pgtype.Timestamptz `json:"review_snoozed_until"`
+	ReviewDecidedBy              string             `json:"review_decided_by"`
+	ReviewDecidedAt              pgtype.Timestamptz `json:"review_decided_at"`
+	ReviewEvidenceFingerprint    string             `json:"review_evidence_fingerprint"`
+	ReviewMaterialChangeMetadata json.RawMessage    `json:"review_material_change_metadata"`
+	ReviewHistory                json.RawMessage    `json:"review_history"`
+	CanonicalSiteFixID           pgtype.UUID        `json:"canonical_site_fix_id"`
+	ActionLegacyDisposition      string             `json:"action_legacy_disposition"`
+	OpportunityLegacyDisposition string             `json:"opportunity_legacy_disposition"`
+	OriginalCreatedAt            pgtype.Timestamptz `json:"original_created_at"`
+	OriginalUpdatedAt            pgtype.Timestamptz `json:"original_updated_at"`
+	ApprovedAt                   pgtype.Timestamptz `json:"approved_at"`
+	ApprovedBy                   string             `json:"approved_by"`
+	ApprovalSource               string             `json:"approval_source"`
+	InputSnapshot                json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot               json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot                 json.RawMessage    `json:"diff_snapshot"`
+	ApplicationStatus            string             `json:"application_status"`
+	HasPullRequest               bool               `json:"has_pull_request"`
+	DeploymentObserved           bool               `json:"deployment_observed"`
+	VerificationPassed           bool               `json:"verification_passed"`
+}
+
+func (q *Queries) ListLegacyTechnicalActionsForMigration(ctx context.Context, projectID uuid.UUID) ([]ListLegacyTechnicalActionsForMigrationRow, error) {
+	rows, err := q.db.Query(ctx, listLegacyTechnicalActionsForMigration, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLegacyTechnicalActionsForMigrationRow
+	for rows.Next() {
+		var i ListLegacyTechnicalActionsForMigrationRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.OpportunityID,
+			&i.ActionID,
+			&i.TargetUrl,
+			&i.ChangeFamily,
+			&i.OpportunityType,
+			&i.OpportunityEvidence,
+			&i.Query,
+			&i.RecommendedAction,
+			&i.Status,
+			&i.Evidence,
+			&i.ApplicationIds,
+			&i.DoctorFindingID,
+			&i.ReviewDecision,
+			&i.ReviewStateID,
+			&i.ReviewSnoozedUntil,
+			&i.ReviewDecidedBy,
+			&i.ReviewDecidedAt,
+			&i.ReviewEvidenceFingerprint,
+			&i.ReviewMaterialChangeMetadata,
+			&i.ReviewHistory,
+			&i.CanonicalSiteFixID,
+			&i.ActionLegacyDisposition,
+			&i.OpportunityLegacyDisposition,
+			&i.OriginalCreatedAt,
+			&i.OriginalUpdatedAt,
+			&i.ApprovedAt,
+			&i.ApprovedBy,
+			&i.ApprovalSource,
+			&i.InputSnapshot,
+			&i.OutputSnapshot,
+			&i.DiffSnapshot,
+			&i.ApplicationStatus,
+			&i.HasPullRequest,
+			&i.DeploymentObserved,
+			&i.VerificationPassed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLegacyTechnicalOpportunitiesWithoutActions = `-- name: ListLegacyTechnicalOpportunitiesWithoutActions :many
+select o.id, o.project_id, o.type, o.status, o.priority_score, o.confidence, o.page_url, o.normalized_page_url, o.article_id, o.topic_id, o.query, o.evidence, o.recommended_action, o.expected_impact, o.effort, o.risk_level, o.created_by_run_id, o.created_at, o.updated_at, o.opportunity_key, o.snoozed_until, o.snooze_reason, o.unsnoozed_at, o.opportunity_identity_key, o.evidence_fingerprint, o.canonical_site_fix_id, o.canonical_read_only, o.legacy_migration_batch_id, o.legacy_migration_disposition, coalesce(review.review_status, '')::text as review_decision,
+       coalesce(review.id::text, '')::text as review_state_id,
+       review.snoozed_until as review_snoozed_until,
+       coalesce(review.reviewed_by, '')::text as review_decided_by,
+       review.reviewed_at as review_decided_at,
+       coalesce(review.evidence_fingerprint, '')::text as review_evidence_fingerprint,
+       coalesce(review.material_change_metadata, '{}'::jsonb)::jsonb as review_material_change_metadata,
+       coalesce(finding.id::text, '')::text as doctor_finding_id,
+       coalesce((select jsonb_agg(jsonb_build_object('id', rs.id, 'decision', rs.review_status, 'decided_by', rs.reviewed_by, 'decided_at', rs.reviewed_at, 'snoozed_until', rs.snoozed_until, 'evidence_fingerprint', rs.evidence_fingerprint, 'material_change_metadata', rs.material_change_metadata) order by rs.created_at, rs.id)
+         from seo_opportunity_review_states rs where rs.project_id = o.project_id and rs.source_opportunity_id = o.id), '[]'::jsonb)::jsonb as review_history
+from seo_opportunities o
+left join lateral (
+  select rs.id, rs.project_id, rs.opportunity_identity_key, rs.source_opportunity_id, rs.content_action_id, rs.review_status, rs.evidence_fingerprint, rs.reviewed_by, rs.reviewed_at, rs.snoozed_until, rs.material_change_metadata, rs.reopened_at, rs.reopened_reason, rs.created_at, rs.updated_at from seo_opportunity_review_states rs
+  where rs.project_id = o.project_id and rs.source_opportunity_id = o.id
+  order by rs.updated_at desc, rs.id limit 1
+) review on true
+left join lateral (
+  select f.id from seo_doctor_findings f
+  where f.project_id = o.project_id and f.linked_opportunity_id = o.id
+    and f.status <> 'migration_rolled_back'
+  order by f.created_at, f.id limit 1
+) finding on true
+where o.project_id = $1
+  and o.canonical_read_only = false and o.legacy_migration_batch_id is null
+  and o.legacy_migration_disposition in ('none','rolled_back')
+  and not exists (select 1 from content_actions a where a.project_id = o.project_id and a.opportunity_id = o.id)
+  and is_legacy_doctor_technical_opportunity(o.type, o.evidence)
+order by o.created_at, o.id
+`
+
+type ListLegacyTechnicalOpportunitiesWithoutActionsRow struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	Type                         string             `json:"type"`
+	Status                       string             `json:"status"`
+	PriorityScore                pgtype.Numeric     `json:"priority_score"`
+	Confidence                   pgtype.Numeric     `json:"confidence"`
+	PageUrl                      *string            `json:"page_url"`
+	NormalizedPageUrl            string             `json:"normalized_page_url"`
+	ArticleID                    pgtype.UUID        `json:"article_id"`
+	TopicID                      pgtype.UUID        `json:"topic_id"`
+	Query                        *string            `json:"query"`
+	Evidence                     json.RawMessage    `json:"evidence"`
+	RecommendedAction            *string            `json:"recommended_action"`
+	ExpectedImpact               *string            `json:"expected_impact"`
+	Effort                       int32              `json:"effort"`
+	RiskLevel                    string             `json:"risk_level"`
+	CreatedByRunID               pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey               string             `json:"opportunity_key"`
+	SnoozedUntil                 pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason                 *string            `json:"snooze_reason"`
+	UnsnoozedAt                  pgtype.Timestamptz `json:"unsnoozed_at"`
+	OpportunityIdentityKey       string             `json:"opportunity_identity_key"`
+	EvidenceFingerprint          string             `json:"evidence_fingerprint"`
+	CanonicalSiteFixID           pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly            bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID       pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition   string             `json:"legacy_migration_disposition"`
+	ReviewDecision               string             `json:"review_decision"`
+	ReviewStateID                string             `json:"review_state_id"`
+	ReviewSnoozedUntil           pgtype.Timestamptz `json:"review_snoozed_until"`
+	ReviewDecidedBy              string             `json:"review_decided_by"`
+	ReviewDecidedAt              pgtype.Timestamptz `json:"review_decided_at"`
+	ReviewEvidenceFingerprint    string             `json:"review_evidence_fingerprint"`
+	ReviewMaterialChangeMetadata json.RawMessage    `json:"review_material_change_metadata"`
+	DoctorFindingID              string             `json:"doctor_finding_id"`
+	ReviewHistory                json.RawMessage    `json:"review_history"`
+}
+
+func (q *Queries) ListLegacyTechnicalOpportunitiesWithoutActions(ctx context.Context, projectID uuid.UUID) ([]ListLegacyTechnicalOpportunitiesWithoutActionsRow, error) {
+	rows, err := q.db.Query(ctx, listLegacyTechnicalOpportunitiesWithoutActions, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLegacyTechnicalOpportunitiesWithoutActionsRow
+	for rows.Next() {
+		var i ListLegacyTechnicalOpportunitiesWithoutActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Type,
+			&i.Status,
+			&i.PriorityScore,
+			&i.Confidence,
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.ArticleID,
+			&i.TopicID,
+			&i.Query,
+			&i.Evidence,
+			&i.RecommendedAction,
+			&i.ExpectedImpact,
+			&i.Effort,
+			&i.RiskLevel,
+			&i.CreatedByRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OpportunityKey,
+			&i.SnoozedUntil,
+			&i.SnoozeReason,
+			&i.UnsnoozedAt,
+			&i.OpportunityIdentityKey,
+			&i.EvidenceFingerprint,
+			&i.CanonicalSiteFixID,
+			&i.CanonicalReadOnly,
+			&i.LegacyMigrationBatchID,
+			&i.LegacyMigrationDisposition,
+			&i.ReviewDecision,
+			&i.ReviewStateID,
+			&i.ReviewSnoozedUntil,
+			&i.ReviewDecidedBy,
+			&i.ReviewDecidedAt,
+			&i.ReviewEvidenceFingerprint,
+			&i.ReviewMaterialChangeMetadata,
+			&i.DoctorFindingID,
+			&i.ReviewHistory,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMigrationBucketsForUpdate = `-- name: ListMigrationBucketsForUpdate :many
+select bucket.id, bucket.project_id, bucket.bucket_key, bucket.bucket_version, bucket.created_at, bucket.updated_at
+from work_conflict_buckets bucket
+where bucket.project_id = $1
+  and bucket.bucket_key in (
+    select jsonb_array_elements_text($2::jsonb)
+  )
+order by bucket.bucket_key
+for update
+`
+
+type ListMigrationBucketsForUpdateParams struct {
+	ProjectID          uuid.UUID       `json:"project_id"`
+	ConflictBucketKeys json.RawMessage `json:"conflict_bucket_keys"`
+}
+
+func (q *Queries) ListMigrationBucketsForUpdate(ctx context.Context, arg ListMigrationBucketsForUpdateParams) ([]WorkConflictBucket, error) {
+	rows, err := q.db.Query(ctx, listMigrationBucketsForUpdate, arg.ProjectID, arg.ConflictBucketKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkConflictBucket
+	for rows.Next() {
+		var i WorkConflictBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BucketKey,
+			&i.BucketVersion,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMigrationLedgerForBatch = `-- name: ListMigrationLedgerForBatch :many
+select id, project_id, migration_batch_id, sequence_number, source_object_type, source_object_id, canonical_object_type, canonical_object_id, operation, operation_version, cutover_point, rollback_eligibility, before_hash, after_hash, before_snapshot, after_snapshot, inverse_operation_version, inverse_operation, applied_by, applied_at, created_at from migration_ledger
+where project_id = $1 and migration_batch_id = $2
+order by sequence_number
+`
+
+type ListMigrationLedgerForBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) ListMigrationLedgerForBatch(ctx context.Context, arg ListMigrationLedgerForBatchParams) ([]MigrationLedger, error) {
+	rows, err := q.db.Query(ctx, listMigrationLedgerForBatch, arg.ProjectID, arg.MigrationBatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MigrationLedger
+	for rows.Next() {
+		var i MigrationLedger
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.SequenceNumber,
+			&i.SourceObjectType,
+			&i.SourceObjectID,
+			&i.CanonicalObjectType,
+			&i.CanonicalObjectID,
+			&i.Operation,
+			&i.OperationVersion,
+			&i.CutoverPoint,
+			&i.RollbackEligibility,
+			&i.BeforeHash,
+			&i.AfterHash,
+			&i.BeforeSnapshot,
+			&i.AfterSnapshot,
+			&i.InverseOperationVersion,
+			&i.InverseOperation,
+			&i.AppliedBy,
+			&i.AppliedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMigrationReviewItemsForBatch = `-- name: ListMigrationReviewItemsForBatch :many
+select id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at from migration_review_items
+where project_id = $1 and migration_batch_id = $2
+order by created_at, id
+`
+
+type ListMigrationReviewItemsForBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) ListMigrationReviewItemsForBatch(ctx context.Context, arg ListMigrationReviewItemsForBatchParams) ([]MigrationReviewItem, error) {
+	rows, err := q.db.Query(ctx, listMigrationReviewItemsForBatch, arg.ProjectID, arg.MigrationBatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MigrationReviewItem
+	for rows.Next() {
+		var i MigrationReviewItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.SourceObjectType,
+			&i.SourceObjectID,
+			&i.ReasonCode,
+			&i.Reason,
+			&i.SourceSnapshot,
+			&i.ProposedResolution,
+			&i.Status,
+			&i.ResolutionSnapshot,
+			&i.ResolvedBy,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMigrationRollbackEventsForBatch = `-- name: ListMigrationRollbackEventsForBatch :many
+select id, project_id, migration_batch_id, migration_ledger_id, event_sequence, event_type, rollback_eligibility, cutover_point, reason, forward_fix_reference, event_snapshot, event_version, occurred_at, rolled_back_at, created_at from migration_rollback_events
+where project_id = $1 and migration_batch_id = $2
+order by event_sequence
+`
+
+type ListMigrationRollbackEventsForBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) ListMigrationRollbackEventsForBatch(ctx context.Context, arg ListMigrationRollbackEventsForBatchParams) ([]MigrationRollbackEvent, error) {
+	rows, err := q.db.Query(ctx, listMigrationRollbackEventsForBatch, arg.ProjectID, arg.MigrationBatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MigrationRollbackEvent
+	for rows.Next() {
+		var i MigrationRollbackEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.MigrationLedgerID,
+			&i.EventSequence,
+			&i.EventType,
+			&i.RollbackEligibility,
+			&i.CutoverPoint,
+			&i.Reason,
+			&i.ForwardFixReference,
+			&i.EventSnapshot,
+			&i.EventVersion,
+			&i.OccurredAt,
+			&i.RolledBackAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPlannedWorkForLegacyMigration = `-- name: ListPlannedWorkForLegacyMigration :many
+select candidate.id, coalesce(candidate.exact_signature_hash, '')::text as exact_signature_hash,
+       candidate.conflict_bucket_keys, candidate.suggested_owner::text as owner
+from discovery_candidates candidate
+join discovery_shadow_runs run on run.id = candidate.shadow_run_id and run.project_id = candidate.project_id
+where candidate.project_id = $1
+  and candidate.status in ('identity_ready','needs_arbitration_review')
+  and candidate.exact_signature_hash is not null
+  and not exists (select 1 from work_signature_registry registry where registry.project_id = candidate.project_id and registry.candidate_id = candidate.id)
+order by candidate.exact_signature_hash, candidate.id
+`
+
+type ListPlannedWorkForLegacyMigrationRow struct {
+	ID                 uuid.UUID       `json:"id"`
+	ExactSignatureHash string          `json:"exact_signature_hash"`
+	ConflictBucketKeys json.RawMessage `json:"conflict_bucket_keys"`
+	Owner              string          `json:"owner"`
+}
+
+func (q *Queries) ListPlannedWorkForLegacyMigration(ctx context.Context, projectID uuid.UUID) ([]ListPlannedWorkForLegacyMigrationRow, error) {
+	rows, err := q.db.Query(ctx, listPlannedWorkForLegacyMigration, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPlannedWorkForLegacyMigrationRow
+	for rows.Next() {
+		var i ListPlannedWorkForLegacyMigrationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExactSignatureHash,
+			&i.ConflictBucketKeys,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRejectedDoctorAIRunningCalls = `-- name: ListRejectedDoctorAIRunningCalls :many
 select marker.ai_call_id
 from doctor_ai_on_demand_triggers marker
@@ -2999,6 +4512,51 @@ func (q *Queries) LockDoctorSiteFixPreparationLeaseForReserve(ctx context.Contex
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const lockMigrationBucketsForBatch = `-- name: LockMigrationBucketsForBatch :many
+select bucket.id, bucket.project_id, bucket.bucket_key, bucket.bucket_version, bucket.created_at, bucket.updated_at
+from work_conflict_buckets bucket
+join migration_ledger ledger
+  on ledger.project_id = bucket.project_id
+ and ledger.canonical_object_type = 'work_conflict_bucket'
+ and ledger.canonical_object_id = bucket.id
+where ledger.project_id = $1
+  and ledger.migration_batch_id = $2
+order by bucket.bucket_key
+for update of bucket
+`
+
+type LockMigrationBucketsForBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) LockMigrationBucketsForBatch(ctx context.Context, arg LockMigrationBucketsForBatchParams) ([]WorkConflictBucket, error) {
+	rows, err := q.db.Query(ctx, lockMigrationBucketsForBatch, arg.ProjectID, arg.MigrationBatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkConflictBucket
+	for rows.Next() {
+		var i WorkConflictBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BucketKey,
+			&i.BucketVersion,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockProductWriterAuthority = `-- name: LockProductWriterAuthority :one
@@ -5179,6 +6737,349 @@ func (q *Queries) MarkDoctorAIOnDemandLifecycleApplied(ctx context.Context, arg 
 	return i, err
 }
 
+const markLegacyDuplicateCanonicalReadOnly = `-- name: MarkLegacyDuplicateCanonicalReadOnly :one
+with marked_action as (
+  update content_actions a
+  set canonical_site_fix_id = $1, canonical_read_only = true,
+      legacy_migration_batch_id = $2,
+      legacy_migration_disposition = 'duplicate', updated_at = now()
+  where a.project_id = $3 and a.id = $4
+    and a.canonical_read_only = false and a.canonical_site_fix_id is null
+  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition
+), marked_opportunity as (
+  update seo_opportunities o
+  set canonical_site_fix_id = $1, canonical_read_only = true,
+      legacy_migration_batch_id = $2,
+      legacy_migration_disposition = 'duplicate', updated_at = now()
+  from marked_action a
+  where o.project_id = a.project_id and o.id = a.opportunity_id
+    and o.canonical_read_only = false
+  returning o.id
+)
+select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition from marked_action
+`
+
+type MarkLegacyDuplicateCanonicalReadOnlyParams struct {
+	SiteFixID        pgtype.UUID `json:"site_fix_id"`
+	MigrationBatchID pgtype.UUID `json:"migration_batch_id"`
+	ProjectID        uuid.UUID   `json:"project_id"`
+	LegacyActionID   uuid.UUID   `json:"legacy_action_id"`
+}
+
+type MarkLegacyDuplicateCanonicalReadOnlyRow struct {
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	OpportunityID              uuid.UUID          `json:"opportunity_id"`
+	ActionType                 string             `json:"action_type"`
+	Status                     string             `json:"status"`
+	TargetArticleID            pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                  *string            `json:"target_url"`
+	NormalizedTargetUrl        *string            `json:"normalized_target_url"`
+	TargetContentHashBefore    *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter     *string            `json:"target_content_hash_after"`
+	DraftArticleID             pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow             json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow          json.RawMessage    `json:"measurement_window"`
+	PublishedAt                pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary             json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	AssetType                  *string            `json:"asset_type"`
+	TargetSurfaceID            pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons                json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot           json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot              json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot             json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot               json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired             bool               `json:"review_required"`
+	ApprovedBy                 *string            `json:"approved_by"`
+	ApprovedAt                 pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt                 pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot       json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource             string             `json:"approval_source"`
+	RoutingSource              string             `json:"routing_source"`
+	WorkType                   *string            `json:"work_type"`
+	StatusReason               *string            `json:"status_reason"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+}
+
+func (q *Queries) MarkLegacyDuplicateCanonicalReadOnly(ctx context.Context, arg MarkLegacyDuplicateCanonicalReadOnlyParams) (MarkLegacyDuplicateCanonicalReadOnlyRow, error) {
+	row := q.db.QueryRow(ctx, markLegacyDuplicateCanonicalReadOnly,
+		arg.SiteFixID,
+		arg.MigrationBatchID,
+		arg.ProjectID,
+		arg.LegacyActionID,
+	)
+	var i MarkLegacyDuplicateCanonicalReadOnlyRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
+const markLegacyMigrationReviewReadOnly = `-- name: MarkLegacyMigrationReviewReadOnly :one
+with marked_action as (
+  update content_actions a
+  set canonical_read_only = true, legacy_migration_batch_id = $1,
+      legacy_migration_disposition = 'review', updated_at = now()
+  where a.project_id = $2 and a.id = $3
+    and a.canonical_read_only = false and a.canonical_site_fix_id is null
+  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition
+), marked_opportunity as (
+  update seo_opportunities o
+  set canonical_read_only = true, legacy_migration_batch_id = $1,
+      legacy_migration_disposition = 'review', updated_at = now()
+  from marked_action a
+  where o.project_id = a.project_id and o.id = a.opportunity_id
+    and o.canonical_read_only = false
+  returning o.id
+)
+select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition from marked_action
+`
+
+type MarkLegacyMigrationReviewReadOnlyParams struct {
+	MigrationBatchID pgtype.UUID `json:"migration_batch_id"`
+	ProjectID        uuid.UUID   `json:"project_id"`
+	LegacyActionID   uuid.UUID   `json:"legacy_action_id"`
+}
+
+type MarkLegacyMigrationReviewReadOnlyRow struct {
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	OpportunityID              uuid.UUID          `json:"opportunity_id"`
+	ActionType                 string             `json:"action_type"`
+	Status                     string             `json:"status"`
+	TargetArticleID            pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                  *string            `json:"target_url"`
+	NormalizedTargetUrl        *string            `json:"normalized_target_url"`
+	TargetContentHashBefore    *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter     *string            `json:"target_content_hash_after"`
+	DraftArticleID             pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow             json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow          json.RawMessage    `json:"measurement_window"`
+	PublishedAt                pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary             json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	AssetType                  *string            `json:"asset_type"`
+	TargetSurfaceID            pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons                json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot           json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot              json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot             json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot               json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired             bool               `json:"review_required"`
+	ApprovedBy                 *string            `json:"approved_by"`
+	ApprovedAt                 pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt                 pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot       json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource             string             `json:"approval_source"`
+	RoutingSource              string             `json:"routing_source"`
+	WorkType                   *string            `json:"work_type"`
+	StatusReason               *string            `json:"status_reason"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+}
+
+func (q *Queries) MarkLegacyMigrationReviewReadOnly(ctx context.Context, arg MarkLegacyMigrationReviewReadOnlyParams) (MarkLegacyMigrationReviewReadOnlyRow, error) {
+	row := q.db.QueryRow(ctx, markLegacyMigrationReviewReadOnly, arg.MigrationBatchID, arg.ProjectID, arg.LegacyActionID)
+	var i MarkLegacyMigrationReviewReadOnlyRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
+const markLegacyOpportunityDuplicateReadOnly = `-- name: MarkLegacyOpportunityDuplicateReadOnly :one
+update seo_opportunities opportunity
+set canonical_site_fix_id = $1, canonical_read_only = true,
+    legacy_migration_batch_id = $2,
+    legacy_migration_disposition = 'duplicate', updated_at = now()
+where opportunity.project_id = $3
+  and opportunity.id = $4
+  and opportunity.canonical_read_only = false
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+`
+
+type MarkLegacyOpportunityDuplicateReadOnlyParams struct {
+	SiteFixID           pgtype.UUID `json:"site_fix_id"`
+	MigrationBatchID    pgtype.UUID `json:"migration_batch_id"`
+	ProjectID           uuid.UUID   `json:"project_id"`
+	LegacyOpportunityID uuid.UUID   `json:"legacy_opportunity_id"`
+}
+
+func (q *Queries) MarkLegacyOpportunityDuplicateReadOnly(ctx context.Context, arg MarkLegacyOpportunityDuplicateReadOnlyParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, markLegacyOpportunityDuplicateReadOnly,
+		arg.SiteFixID,
+		arg.MigrationBatchID,
+		arg.ProjectID,
+		arg.LegacyOpportunityID,
+	)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+		&i.OpportunityIdentityKey,
+		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
+const markLegacyOpportunityMigrationReviewReadOnly = `-- name: MarkLegacyOpportunityMigrationReviewReadOnly :one
+update seo_opportunities opportunity
+set canonical_read_only = true, legacy_migration_batch_id = $1,
+    legacy_migration_disposition = 'review', updated_at = now()
+where opportunity.project_id = $2
+  and opportunity.id = $3
+  and opportunity.canonical_read_only = false
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+`
+
+type MarkLegacyOpportunityMigrationReviewReadOnlyParams struct {
+	MigrationBatchID    pgtype.UUID `json:"migration_batch_id"`
+	ProjectID           uuid.UUID   `json:"project_id"`
+	LegacyOpportunityID uuid.UUID   `json:"legacy_opportunity_id"`
+}
+
+func (q *Queries) MarkLegacyOpportunityMigrationReviewReadOnly(ctx context.Context, arg MarkLegacyOpportunityMigrationReviewReadOnlyParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, markLegacyOpportunityMigrationReviewReadOnly, arg.MigrationBatchID, arg.ProjectID, arg.LegacyOpportunityID)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+		&i.OpportunityIdentityKey,
+		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
 const rejectDoctorAIOnDemandConsumedWithoutLifecycleReference = `-- name: RejectDoctorAIOnDemandConsumedWithoutLifecycleReference :one
 update doctor_ai_on_demand_triggers marker
 set status = 'rejected', rejection_reason = 'lifecycle_completed_without_this_ai_result',
@@ -5928,6 +7829,132 @@ func (q *Queries) RepointApplicationToCanonicalSiteFix(ctx context.Context, arg 
 	return i, err
 }
 
+const repointLegacyApplicationsToCanonicalSiteFix = `-- name: RepointLegacyApplicationsToCanonicalSiteFix :many
+with locked_fix as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join product_writer_authority pwa
+    on pwa.project_id = sf.project_id and pwa.product = 'doctor'
+  where sf.project_id = $2 and sf.id = $1
+    and (sf.migration_batch_id = $3
+      or (w.mode = 'enforced' and w.owner = 'doctor' and w.reserved_work_type = 'site_fix'
+        and w.reserved_work_id = sf.id and w.active))
+    and pwa.writer_authority = 'legacy' and pwa.write_fenced = true
+    and pwa.fence_token = $4
+  for update of sf
+), expected_keys as materialized (
+  select keys.bucket_key
+  from locked_fix f
+  join work_signature_registry w on w.id = f.work_signature_id and w.project_id = f.project_id
+  cross join lateral jsonb_array_elements_text(w.conflict_bucket_keys) keys(bucket_key)
+), locked_buckets as materialized (
+  select b.id
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $2
+  order by b.bucket_key for update
+), eligible_apps as materialized (
+  select a.id from site_change_applications a
+  where a.project_id = $2
+    and a.content_action_id = $5
+    and a.site_fix_id is null
+    and num_nonnulls(a.content_action_id, a.site_fix_id) = 1
+), bumped_buckets as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket.bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id and exists (select 1 from eligible_apps)
+  returning bucket.id
+)
+update site_change_applications a
+set content_action_id = null, site_fix_id = $1,
+    application_kind = 'site_fix', updated_at = now()
+where a.project_id = $2
+  and a.id in (select id from eligible_apps)
+  and (select count(*) from bumped_buckets) = (select count(*) from expected_keys)
+returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint
+`
+
+type RepointLegacyApplicationsToCanonicalSiteFixParams struct {
+	SiteFixID        pgtype.UUID `json:"site_fix_id"`
+	ProjectID        uuid.UUID   `json:"project_id"`
+	MigrationBatchID pgtype.UUID `json:"migration_batch_id"`
+	FenceToken       pgtype.UUID `json:"fence_token"`
+	LegacyActionID   pgtype.UUID `json:"legacy_action_id"`
+}
+
+func (q *Queries) RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Context, arg RepointLegacyApplicationsToCanonicalSiteFixParams) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, repointLegacyApplicationsToCanonicalSiteFix,
+		arg.SiteFixID,
+		arg.ProjectID,
+		arg.MigrationBatchID,
+		arg.FenceToken,
+		arg.LegacyActionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveLegacyObjectAlias = `-- name: ResolveLegacyObjectAlias :one
 select id, project_id, migration_batch_id, legacy_object_type, legacy_object_id, canonical_object_type, canonical_object_id, alias_state, provenance_snapshot, created_at, updated_at from legacy_object_aliases
 where project_id = $1
@@ -6181,6 +8208,382 @@ func (q *Queries) RestoreApplicationToLegacyContentAction(ctx context.Context, a
 		&i.PrClaimToken,
 		&i.PrClaimExpiresAt,
 		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const restoreLegacyApplicationFromLedger = `-- name: RestoreLegacyApplicationFromLedger :one
+update site_change_applications
+set content_action_id = $1, site_fix_id = null,
+    application_kind = $2, updated_at = now()
+where project_id = $3 and id = $4
+  and site_fix_id = $5
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
+`
+
+type RestoreLegacyApplicationFromLedgerParams struct {
+	ContentActionID pgtype.UUID `json:"content_action_id"`
+	ApplicationKind string      `json:"application_kind"`
+	ProjectID       uuid.UUID   `json:"project_id"`
+	ObjectID        uuid.UUID   `json:"object_id"`
+	SiteFixID       pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) RestoreLegacyApplicationFromLedger(ctx context.Context, arg RestoreLegacyApplicationFromLedgerParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, restoreLegacyApplicationFromLedger,
+		arg.ContentActionID,
+		arg.ApplicationKind,
+		arg.ProjectID,
+		arg.ObjectID,
+		arg.SiteFixID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const restoreLegacyContentActionFromLedger = `-- name: RestoreLegacyContentActionFromLedger :one
+update content_actions
+set canonical_site_fix_id = null, canonical_read_only = false,
+    legacy_migration_batch_id = null,
+    legacy_migration_disposition = coalesce(nullif($1::text, ''), 'rolled_back'),
+    updated_at = now()
+where project_id = $2 and id = $3
+  and legacy_migration_batch_id = $4
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+`
+
+type RestoreLegacyContentActionFromLedgerParams struct {
+	LegacyDisposition string      `json:"legacy_disposition"`
+	ProjectID         uuid.UUID   `json:"project_id"`
+	ObjectID          uuid.UUID   `json:"object_id"`
+	MigrationBatchID  pgtype.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) RestoreLegacyContentActionFromLedger(ctx context.Context, arg RestoreLegacyContentActionFromLedgerParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, restoreLegacyContentActionFromLedger,
+		arg.LegacyDisposition,
+		arg.ProjectID,
+		arg.ObjectID,
+		arg.MigrationBatchID,
+	)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
+const restoreLegacyOpportunityFromLedger = `-- name: RestoreLegacyOpportunityFromLedger :one
+update seo_opportunities
+set canonical_site_fix_id = null, canonical_read_only = false,
+    legacy_migration_batch_id = null,
+    legacy_migration_disposition = coalesce(nullif($1::text, ''), 'rolled_back'),
+    updated_at = now()
+where project_id = $2 and id = $3
+  and legacy_migration_batch_id = $4
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+`
+
+type RestoreLegacyOpportunityFromLedgerParams struct {
+	LegacyDisposition string      `json:"legacy_disposition"`
+	ProjectID         uuid.UUID   `json:"project_id"`
+	ObjectID          uuid.UUID   `json:"object_id"`
+	MigrationBatchID  pgtype.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) RestoreLegacyOpportunityFromLedger(ctx context.Context, arg RestoreLegacyOpportunityFromLedgerParams) (SeoOpportunity, error) {
+	row := q.db.QueryRow(ctx, restoreLegacyOpportunityFromLedger,
+		arg.LegacyDisposition,
+		arg.ProjectID,
+		arg.ObjectID,
+		arg.MigrationBatchID,
+	)
+	var i SeoOpportunity
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Type,
+		&i.Status,
+		&i.PriorityScore,
+		&i.Confidence,
+		&i.PageUrl,
+		&i.NormalizedPageUrl,
+		&i.ArticleID,
+		&i.TopicID,
+		&i.Query,
+		&i.Evidence,
+		&i.RecommendedAction,
+		&i.ExpectedImpact,
+		&i.Effort,
+		&i.RiskLevel,
+		&i.CreatedByRunID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpportunityKey,
+		&i.SnoozedUntil,
+		&i.SnoozeReason,
+		&i.UnsnoozedAt,
+		&i.OpportunityIdentityKey,
+		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+	)
+	return i, err
+}
+
+const restoreMigrationBucketVersion = `-- name: RestoreMigrationBucketVersion :one
+update work_conflict_buckets set bucket_version = $1, updated_at = now()
+where project_id = $2 and id = $3
+returning id, project_id, bucket_key, bucket_version, created_at, updated_at
+`
+
+type RestoreMigrationBucketVersionParams struct {
+	BucketVersion int64     `json:"bucket_version"`
+	ProjectID     uuid.UUID `json:"project_id"`
+	ObjectID      uuid.UUID `json:"object_id"`
+}
+
+func (q *Queries) RestoreMigrationBucketVersion(ctx context.Context, arg RestoreMigrationBucketVersionParams) (WorkConflictBucket, error) {
+	row := q.db.QueryRow(ctx, restoreMigrationBucketVersion, arg.BucketVersion, arg.ProjectID, arg.ObjectID)
+	var i WorkConflictBucket
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BucketKey,
+		&i.BucketVersion,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const rollbackLegacySiteFixMigration = `-- name: RollbackLegacySiteFixMigration :one
+with authority as materialized (
+  select pwa.project_id, pwa.product, pwa.writer_authority, pwa.write_fenced, pwa.fence_token, pwa.fenced_by, pwa.fenced_at, pwa.authority_changed_at, pwa.created_at, pwa.updated_at
+  from product_writer_authority pwa
+  where pwa.project_id = $1 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = true
+    and pwa.fence_token = $2
+  for update
+), migrated_fixes as materialized (
+  select sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at from site_fixes sf join authority on authority.project_id = sf.project_id
+  where sf.project_id = $1
+    and sf.migration_batch_id = $3
+  for update of sf
+), eligibility as materialized (
+  select not exists (
+    select 1 from site_fixes revision join migrated_fixes original
+      on revision.supersedes_site_fix_id = original.id
+    where revision.migration_batch_id is distinct from $3
+  ) and not exists (
+    select 1 from site_change_applications app join migrated_fixes fix on fix.id = app.site_fix_id
+    where not exists (
+      select 1 from migration_ledger ledger
+      where ledger.project_id = app.project_id
+        and ledger.migration_batch_id = $3
+        and ledger.source_object_type = 'site_change_application'
+        and ledger.source_object_id = app.id and ledger.operation = 'repoint'
+    )
+  ) and not exists (
+    select 1 from work_review_memory memory join migrated_fixes fix
+      on fix.work_signature_id = memory.work_signature_id
+    where memory.migration_batch_id is distinct from $3
+      and memory.created_at > fix.created_at
+  ) as eligible
+), restored_applications as (
+  update site_change_applications app
+  set content_action_id = (ledger.before_snapshot->>'content_action_id')::uuid,
+      site_fix_id = null, application_kind = 'site_fix', updated_at = now()
+  from migration_ledger ledger, eligibility
+  where eligibility.eligible
+    and ledger.project_id = $1
+    and ledger.migration_batch_id = $3
+    and ledger.source_object_type = 'site_change_application'
+    and ledger.operation = 'repoint' and app.id = ledger.source_object_id
+    and app.site_fix_id = ledger.canonical_object_id
+    and num_nonnulls(app.content_action_id, app.site_fix_id) = 1
+  returning app.id
+), restored_actions as (
+  update content_actions action
+  set canonical_site_fix_id = null, canonical_read_only = false,
+      legacy_migration_batch_id = null, legacy_migration_disposition = 'rolled_back', updated_at = now()
+  from eligibility
+  where eligibility.eligible and action.project_id = $1
+    and action.legacy_migration_batch_id = $3
+  returning action.id
+), restored_opportunities as (
+  update seo_opportunities opportunity
+  set canonical_site_fix_id = null, canonical_read_only = false,
+      legacy_migration_batch_id = null, legacy_migration_disposition = 'rolled_back', updated_at = now()
+  from eligibility
+  where eligibility.eligible and opportunity.project_id = $1
+    and opportunity.legacy_migration_batch_id = $3
+  returning opportunity.id
+), tombstoned_fixes as (
+  update site_fixes fix
+  set status = 'migration_rolled_back', updated_at = now()
+  from eligibility
+  where eligibility.eligible and fix.id in (select id from migrated_fixes)
+  returning fix.id, fix.work_signature_id, fix.doctor_finding_id
+), tombstoned_signatures as (
+  update work_signature_registry registry
+  set active = false, status = 'cancelled', updated_at = now()
+  from tombstoned_fixes fix
+  where registry.id = fix.work_signature_id
+  returning registry.id, registry.conflict_bucket_keys
+), bumped_buckets as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket.bucket_version + 1, updated_at = now()
+  where bucket.project_id = $1
+    and bucket.bucket_key in (
+      select distinct keys.bucket_key from tombstoned_signatures signature
+      cross join lateral jsonb_array_elements_text(signature.conflict_bucket_keys) keys(bucket_key)
+    )
+  returning bucket.id
+), tombstoned_findings as (
+  update seo_doctor_findings finding
+  set status = 'migration_rolled_back', updated_at = now()
+  from eligibility
+  where eligibility.eligible and finding.id in (
+    select ledger.canonical_object_id from migration_ledger ledger
+    where ledger.project_id = $1
+      and ledger.migration_batch_id = $3
+      and ledger.canonical_object_type = 'seo_doctor_finding' and ledger.operation = 'create'
+  )
+  returning finding.id
+), disabled_memory as (
+  update work_review_memory memory set active = false, updated_at = now()
+  from eligibility
+  where eligibility.eligible and memory.project_id = $1
+    and memory.migration_batch_id = $3 and memory.active
+  returning memory.id
+), switched as (
+  update product_writer_authority pwa
+  set writer_authority = 'legacy', authority_changed_at = $4, updated_at = now()
+  from eligibility
+  where eligibility.eligible and pwa.project_id = $1
+    and pwa.product = 'doctor' and pwa.writer_authority = 'canonical'
+    and pwa.write_fenced = true and pwa.fence_token = $2
+  returning pwa.writer_authority
+)
+select eligibility.eligible,
+       coalesce((select count(*) from tombstoned_fixes), 0)::int as tombstoned_fixes,
+       coalesce((select count(*) from restored_applications), 0)::int as restored_applications,
+       coalesce((select writer_authority from switched), 'canonical')::text as writer_authority
+from eligibility
+`
+
+type RollbackLegacySiteFixMigrationParams struct {
+	ProjectID        uuid.UUID          `json:"project_id"`
+	FenceToken       pgtype.UUID        `json:"fence_token"`
+	MigrationBatchID pgtype.UUID        `json:"migration_batch_id"`
+	RolledBackAt     pgtype.Timestamptz `json:"rolled_back_at"`
+}
+
+type RollbackLegacySiteFixMigrationRow struct {
+	Eligible             *bool  `json:"eligible"`
+	TombstonedFixes      int32  `json:"tombstoned_fixes"`
+	RestoredApplications int32  `json:"restored_applications"`
+	WriterAuthority      string `json:"writer_authority"`
+}
+
+func (q *Queries) RollbackLegacySiteFixMigration(ctx context.Context, arg RollbackLegacySiteFixMigrationParams) (RollbackLegacySiteFixMigrationRow, error) {
+	row := q.db.QueryRow(ctx, rollbackLegacySiteFixMigration,
+		arg.ProjectID,
+		arg.FenceToken,
+		arg.MigrationBatchID,
+		arg.RolledBackAt,
+	)
+	var i RollbackLegacySiteFixMigrationRow
+	err := row.Scan(
+		&i.Eligible,
+		&i.TombstonedFixes,
+		&i.RestoredApplications,
+		&i.WriterAuthority,
 	)
 	return i, err
 }
@@ -6939,6 +9342,152 @@ func (q *Queries) TerminateCanonicalSiteFixByUser(ctx context.Context, arg Termi
 		arg.VerificationSnapshot,
 	)
 	var i TerminateCanonicalSiteFixByUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const tombstoneLegacyMigrationAlias = `-- name: TombstoneLegacyMigrationAlias :one
+update legacy_object_aliases
+set alias_state = 'rolled_back_tombstone', updated_at = now()
+where project_id = $1 and id = $2
+  and migration_batch_id = $3 and alias_state = 'active'
+returning id, project_id, migration_batch_id, legacy_object_type, legacy_object_id, canonical_object_type, canonical_object_id, alias_state, provenance_snapshot, created_at, updated_at
+`
+
+type TombstoneLegacyMigrationAliasParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	ObjectID         uuid.UUID `json:"object_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) TombstoneLegacyMigrationAlias(ctx context.Context, arg TombstoneLegacyMigrationAliasParams) (LegacyObjectAlias, error) {
+	row := q.db.QueryRow(ctx, tombstoneLegacyMigrationAlias, arg.ProjectID, arg.ObjectID, arg.MigrationBatchID)
+	var i LegacyObjectAlias
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MigrationBatchID,
+		&i.LegacyObjectType,
+		&i.LegacyObjectID,
+		&i.CanonicalObjectType,
+		&i.CanonicalObjectID,
+		&i.AliasState,
+		&i.ProvenanceSnapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const tombstoneLegacyObjectAliasesForBatch = `-- name: TombstoneLegacyObjectAliasesForBatch :execrows
+update legacy_object_aliases
+set alias_state = 'rolled_back_tombstone', updated_at = now()
+where project_id = $1
+  and migration_batch_id = $2
+  and alias_state = 'active'
+`
+
+type TombstoneLegacyObjectAliasesForBatchParams struct {
+	ProjectID        uuid.UUID `json:"project_id"`
+	MigrationBatchID uuid.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) TombstoneLegacyObjectAliasesForBatch(ctx context.Context, arg TombstoneLegacyObjectAliasesForBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, tombstoneLegacyObjectAliasesForBatch, arg.ProjectID, arg.MigrationBatchID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const tombstoneMigrationFinding = `-- name: TombstoneMigrationFinding :one
+update seo_doctor_findings set status = 'migration_rolled_back', updated_at = now()
+where project_id = $1 and id = $2
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind
+`
+
+type TombstoneMigrationFindingParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ObjectID  uuid.UUID `json:"object_id"`
+}
+
+func (q *Queries) TombstoneMigrationFinding(ctx context.Context, arg TombstoneMigrationFindingParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, tombstoneMigrationFinding, arg.ProjectID, arg.ObjectID)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FindingKind,
+	)
+	return i, err
+}
+
+const tombstoneMigrationSiteFix = `-- name: TombstoneMigrationSiteFix :one
+update site_fixes set status = 'migration_rolled_back', updated_at = now()
+where project_id = $1 and id = $2
+  and migration_batch_id = $3
+returning id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at
+`
+
+type TombstoneMigrationSiteFixParams struct {
+	ProjectID        uuid.UUID   `json:"project_id"`
+	ObjectID         uuid.UUID   `json:"object_id"`
+	MigrationBatchID pgtype.UUID `json:"migration_batch_id"`
+}
+
+func (q *Queries) TombstoneMigrationSiteFix(ctx context.Context, arg TombstoneMigrationSiteFixParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, tombstoneMigrationSiteFix, arg.ProjectID, arg.ObjectID, arg.MigrationBatchID)
+	var i SiteFix
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,

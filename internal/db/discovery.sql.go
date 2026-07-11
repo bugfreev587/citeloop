@@ -421,7 +421,7 @@ update work_review_memory set
 where project_id = $1
   and id = $2
   and active = true
-returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
 `
 
 type DeactivateWorkReviewMemoryParams struct {
@@ -452,6 +452,8 @@ func (q *Queries) DeactivateWorkReviewMemory(ctx context.Context, arg Deactivate
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
 	)
 	return i, err
 }
@@ -1402,7 +1404,7 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 }
 
 const listActiveSEOOpportunitiesForDiscoveryShadow = `-- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from seo_opportunities
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from seo_opportunities
 where project_id = $1
   and status in ('open','accepted','converted','dismissed','snoozed','watching')
 order by created_at asc
@@ -1443,6 +1445,10 @@ func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Conte
 			&i.UnsnoozedAt,
 			&i.OpportunityIdentityKey,
 			&i.EvidenceFingerprint,
+			&i.CanonicalSiteFixID,
+			&i.CanonicalReadOnly,
+			&i.LegacyMigrationBatchID,
+			&i.LegacyMigrationDisposition,
 		); err != nil {
 			return nil, err
 		}
@@ -1731,7 +1737,7 @@ func (q *Queries) ListSnapshotReviewAliases(ctx context.Context, arg ListSnapsho
 }
 
 const listSnapshotReviewMemory = `-- name: ListSnapshotReviewMemory :many
-select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at from work_review_memory
+select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id from work_review_memory
 where project_id = $1
   and active = true
   and conflict_bucket_keys ?| $2::text[]
@@ -1772,6 +1778,8 @@ func (q *Queries) ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshot
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationBatchID,
+			&i.LegacyReviewStateID,
 		); err != nil {
 			return nil, err
 		}
@@ -2675,7 +2683,7 @@ do update set
   decided_by = excluded.decided_by,
   decided_at = excluded.decided_at,
   updated_at = now()
-returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
 `
 
 type UpsertWorkReviewMemoryParams struct {
@@ -2737,6 +2745,8 @@ func (q *Queries) UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkRevi
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
 	)
 	return i, err
 }

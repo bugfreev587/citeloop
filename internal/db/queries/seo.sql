@@ -930,6 +930,9 @@ with verified_application as (
     updated_at = now()
   where site_change_applications.id = sqlc.arg(application_id)
     and site_change_applications.project_id = sqlc.arg(project_id)
+    and site_change_applications.content_action_id is not null
+    and site_change_applications.site_fix_id is null
+    and exists (select 1 from content_actions action where action.project_id=site_change_applications.project_id and action.id=site_change_applications.content_action_id and action.canonical_read_only=false)
   returning content_action_id
 )
 update content_actions set
@@ -1153,19 +1156,20 @@ select * from site_change_applications
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: ListOpenSiteChangePRApplications :many
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and status = 'github_pr_open'
-  and github_pr_number is not null
-  and content_action_id is not null
-  and site_fix_id is null
-order by updated_at asc;
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.status = 'github_pr_open'
+  and application.github_pr_number is not null
+  and application.content_action_id is not null
+  and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.updated_at asc;
 
 -- name: GetActiveSiteChangeApplicationByOpportunityKey :one
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and opportunity_key = sqlc.arg(opportunity_key)
-  and status in (
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.opportunity_key = sqlc.arg(opportunity_key)
+  and application.status in (
     'draft_ready',
     'source_mapping_required',
     'ready_for_pr',
@@ -1179,11 +1183,13 @@ where project_id = sqlc.arg(project_id)
     'conflict',
     'manual_apply_required'
   )
-order by updated_at desc
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.updated_at desc
 limit 1;
 
 -- name: MarkSiteChangeApplicationGitHubPR :one
-update site_change_applications set
+update site_change_applications application set
   status = 'github_pr_open',
   working_branch = sqlc.arg(working_branch),
   head_commit_sha = sqlc.narg(head_commit_sha),
@@ -1195,31 +1201,38 @@ update site_change_applications set
   next_poll_at = now() + interval '5 minutes',
   next_notify_at = now() + interval '12 hours',
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
 returning *;
 
 -- name: ListMergedSiteChangeApplicationsForVerification :many
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and status = 'github_pr_merged'
-  and content_action_id is not null
-  and site_fix_id is null
-order by merged_at asc nulls first;
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.status = 'github_pr_merged'
+  and application.content_action_id is not null
+  and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.merged_at asc nulls first;
 
 -- name: SetSiteChangePRNextPollAt :exec
-update site_change_applications set
+update site_change_applications application set
   next_poll_at = sqlc.arg(next_poll_at),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false);
 
 -- name: SetSiteChangePRNextNotifyAt :exec
-update site_change_applications set
+update site_change_applications application set
   next_notify_at = sqlc.arg(next_notify_at),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false);
 
 -- name: MarkSiteChangeApplicationStatus :one
-update site_change_applications set
+update site_change_applications application set
   status = sqlc.arg(status),
   github_pr_state = coalesce(sqlc.narg(github_pr_state), github_pr_state),
   deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
@@ -1229,7 +1242,9 @@ update site_change_applications set
   deployed_at = case when sqlc.arg(status) in ('verification_pending','verified') then coalesce(deployed_at, now()) else deployed_at end,
   verified_at = case when sqlc.arg(status) = 'verified' then coalesce(verified_at, now()) else verified_at end,
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
 returning *;
 
 -- name: MarkContentActionMeasuringForDraftArticle :one

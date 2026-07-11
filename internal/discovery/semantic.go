@@ -281,3 +281,9 @@ func semanticFingerprint(identity Identity, model string) (string, error) {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
 }
+
+// DeterministicSemanticFingerprint returns the exact fingerprint used by the
+// canonical arbitration path when no provider comparison is required.
+func DeterministicSemanticFingerprint(identity Identity) (string, error) {
+	return semanticFingerprint(identity, "deterministic")
+}

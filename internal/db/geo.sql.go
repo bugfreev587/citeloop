@@ -1562,18 +1562,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = ''
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, null, $8, $9, $10, $11, $12, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from inserted
 `
 
 type UpsertCrawlerAccessOpportunityParams struct {
@@ -1592,31 +1592,35 @@ type UpsertCrawlerAccessOpportunityParams struct {
 }
 
 type UpsertCrawlerAccessOpportunityRow struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	Type                   string             `json:"type"`
-	Status                 string             `json:"status"`
-	PriorityScore          pgtype.Numeric     `json:"priority_score"`
-	Confidence             pgtype.Numeric     `json:"confidence"`
-	PageUrl                *string            `json:"page_url"`
-	NormalizedPageUrl      string             `json:"normalized_page_url"`
-	ArticleID              pgtype.UUID        `json:"article_id"`
-	TopicID                pgtype.UUID        `json:"topic_id"`
-	Query                  *string            `json:"query"`
-	Evidence               json.RawMessage    `json:"evidence"`
-	RecommendedAction      *string            `json:"recommended_action"`
-	ExpectedImpact         *string            `json:"expected_impact"`
-	Effort                 int32              `json:"effort"`
-	RiskLevel              string             `json:"risk_level"`
-	CreatedByRunID         pgtype.UUID        `json:"created_by_run_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	OpportunityKey         string             `json:"opportunity_key"`
-	SnoozedUntil           pgtype.Timestamptz `json:"snoozed_until"`
-	SnoozeReason           *string            `json:"snooze_reason"`
-	UnsnoozedAt            pgtype.Timestamptz `json:"unsnoozed_at"`
-	OpportunityIdentityKey string             `json:"opportunity_identity_key"`
-	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	Type                       string             `json:"type"`
+	Status                     string             `json:"status"`
+	PriorityScore              pgtype.Numeric     `json:"priority_score"`
+	Confidence                 pgtype.Numeric     `json:"confidence"`
+	PageUrl                    *string            `json:"page_url"`
+	NormalizedPageUrl          string             `json:"normalized_page_url"`
+	ArticleID                  pgtype.UUID        `json:"article_id"`
+	TopicID                    pgtype.UUID        `json:"topic_id"`
+	Query                      *string            `json:"query"`
+	Evidence                   json.RawMessage    `json:"evidence"`
+	RecommendedAction          *string            `json:"recommended_action"`
+	ExpectedImpact             *string            `json:"expected_impact"`
+	Effort                     int32              `json:"effort"`
+	RiskLevel                  string             `json:"risk_level"`
+	CreatedByRunID             pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey             string             `json:"opportunity_key"`
+	SnoozedUntil               pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason               *string            `json:"snooze_reason"`
+	UnsnoozedAt                pgtype.Timestamptz `json:"unsnoozed_at"`
+	OpportunityIdentityKey     string             `json:"opportunity_identity_key"`
+	EvidenceFingerprint        string             `json:"evidence_fingerprint"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 }
 
 func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error) {
@@ -1661,6 +1665,10 @@ func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg Upsert
 		&i.UnsnoozedAt,
 		&i.OpportunityIdentityKey,
 		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
 	)
 	return i, err
 }
@@ -1800,18 +1808,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = coalesce($8, '')
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from inserted
 `
 
 type UpsertGEOObservationOpportunityParams struct {
@@ -1831,31 +1839,35 @@ type UpsertGEOObservationOpportunityParams struct {
 }
 
 type UpsertGEOObservationOpportunityRow struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	Type                   string             `json:"type"`
-	Status                 string             `json:"status"`
-	PriorityScore          pgtype.Numeric     `json:"priority_score"`
-	Confidence             pgtype.Numeric     `json:"confidence"`
-	PageUrl                *string            `json:"page_url"`
-	NormalizedPageUrl      string             `json:"normalized_page_url"`
-	ArticleID              pgtype.UUID        `json:"article_id"`
-	TopicID                pgtype.UUID        `json:"topic_id"`
-	Query                  *string            `json:"query"`
-	Evidence               json.RawMessage    `json:"evidence"`
-	RecommendedAction      *string            `json:"recommended_action"`
-	ExpectedImpact         *string            `json:"expected_impact"`
-	Effort                 int32              `json:"effort"`
-	RiskLevel              string             `json:"risk_level"`
-	CreatedByRunID         pgtype.UUID        `json:"created_by_run_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	OpportunityKey         string             `json:"opportunity_key"`
-	SnoozedUntil           pgtype.Timestamptz `json:"snoozed_until"`
-	SnoozeReason           *string            `json:"snooze_reason"`
-	UnsnoozedAt            pgtype.Timestamptz `json:"unsnoozed_at"`
-	OpportunityIdentityKey string             `json:"opportunity_identity_key"`
-	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	Type                       string             `json:"type"`
+	Status                     string             `json:"status"`
+	PriorityScore              pgtype.Numeric     `json:"priority_score"`
+	Confidence                 pgtype.Numeric     `json:"confidence"`
+	PageUrl                    *string            `json:"page_url"`
+	NormalizedPageUrl          string             `json:"normalized_page_url"`
+	ArticleID                  pgtype.UUID        `json:"article_id"`
+	TopicID                    pgtype.UUID        `json:"topic_id"`
+	Query                      *string            `json:"query"`
+	Evidence                   json.RawMessage    `json:"evidence"`
+	RecommendedAction          *string            `json:"recommended_action"`
+	ExpectedImpact             *string            `json:"expected_impact"`
+	Effort                     int32              `json:"effort"`
+	RiskLevel                  string             `json:"risk_level"`
+	CreatedByRunID             pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey             string             `json:"opportunity_key"`
+	SnoozedUntil               pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason               *string            `json:"snooze_reason"`
+	UnsnoozedAt                pgtype.Timestamptz `json:"unsnoozed_at"`
+	OpportunityIdentityKey     string             `json:"opportunity_identity_key"`
+	EvidenceFingerprint        string             `json:"evidence_fingerprint"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 }
 
 func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error) {
@@ -1901,6 +1913,10 @@ func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg Upser
 		&i.UnsnoozedAt,
 		&i.OpportunityIdentityKey,
 		&i.EvidenceFingerprint,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
 	)
 	return i, err
 }
