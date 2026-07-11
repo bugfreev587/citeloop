@@ -34,7 +34,40 @@ where id = sqlc.arg(id)
 select * from site_fixes
 where project_id = sqlc.arg(project_id)
   and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
-order by updated_at desc, id asc;
+order by updated_at desc, id asc
+limit 250;
+
+-- name: ListLatestCanonicalSiteFixApplications :many
+with listed_site_fixes as (
+  select id
+  from site_fixes
+  where project_id = sqlc.arg(project_id)
+    and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select distinct on (application.site_fix_id) application.*
+from site_change_applications application
+join listed_site_fixes listed on listed.id = application.site_fix_id
+where application.project_id = sqlc.arg(project_id)
+  and application.site_fix_id is not null
+  and application.content_action_id is null
+order by application.site_fix_id, application.updated_at desc, application.id asc;
+
+-- name: ListCanonicalSiteFixVerificationsForList :many
+with listed_site_fixes as (
+  select id
+  from site_fixes
+  where project_id = sqlc.arg(project_id)
+    and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select verification.*
+from site_fix_verifications verification
+join listed_site_fixes listed on listed.id = verification.site_fix_id
+where verification.project_id = sqlc.arg(project_id)
+order by verification.site_fix_id, verification.attempt_number asc, verification.id asc;
 
 -- name: GetCanonicalSiteFixByWorkSignature :one
 select * from site_fixes

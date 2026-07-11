@@ -1505,6 +1505,7 @@ function normalizeSiteFixVerification(raw: any): SiteFixVerification {
     attempt_number: Number(data.attempt_number ?? 0),
     evidence_read: data.evidence_read ?? {},
     acceptance_results: data.acceptance_results ?? [],
+    ai_call_id: data.ai_call_id ?? null,
     result: String(data.result ?? ""),
     retry_classification: String(data.retry_classification ?? ""),
     failure_reason: data.failure_reason ?? null,
@@ -1563,6 +1564,9 @@ function normalizeSiteFix(raw: any): SiteFix {
     failure_reason: data.failure_reason ?? null,
     retry_count: Number(data.retry_count ?? 0),
     max_retries: Number(data.max_retries ?? 0),
+    legacy_opportunity_id: data.legacy_opportunity_id ?? null,
+    legacy_content_action_id: data.legacy_content_action_id ?? null,
+    migration_batch_id: data.migration_batch_id ?? null,
     approved_at: data.approved_at ?? null,
     applied_at: data.applied_at ?? null,
     deployed_at: data.deployed_at ?? null,
@@ -1570,7 +1574,7 @@ function normalizeSiteFix(raw: any): SiteFix {
     created_at: data.created_at ?? null,
     updated_at: data.updated_at ?? null,
     application: data.application ? normalizeSiteChangeApplication(data.application) : null,
-    verifications: arrayFrom(data.verifications).map(normalizeSiteFixVerification),
+    verifications: data.verifications == null ? undefined : arrayFrom(data.verifications).map(normalizeSiteFixVerification),
   };
 }
 

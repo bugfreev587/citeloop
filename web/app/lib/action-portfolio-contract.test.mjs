@@ -124,6 +124,22 @@ test("Canonical Site Fixes visibly expose provenance, application, and verificat
   ]) {
     assert.match(siteFixes, new RegExp(snippet));
   }
+  assert.match(siteFixes, /I applied this manually/);
+  assert.match(siteFixes, /drawerApplication\?\.status === "manual_apply_required"/);
+  assert.match(siteFixes, /href=\{`\/projects\/\$\{projectId\}\/doctor\?finding=\$\{selected\.doctor_finding_id\}`\}/);
+  assert.match(siteFixes, /legacy_opportunity_id/);
+  assert.match(siteFixes, /legacy_content_action_id/);
+  assert.match(siteFixes, /Legacy provenance/);
+  assert.match(siteFixes, /verifications: updated\.verifications \?\? existing\.verifications/);
+});
+
+test("Site Fix lifecycle never presents deploy or verification-in-progress as verified", () => {
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const lifecycle = siteFixes.slice(siteFixes.indexOf("function LifecycleStrip"), siteFixes.indexOf("function DetailBlock"));
+  assert.match(lifecycle, /fix\.status === "verified"/);
+  assert.match(lifecycle, /isComplete/);
+  assert.match(lifecycle, /isCurrent/);
+  assert.doesNotMatch(lifecycle, /index <= current/);
 });
 
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {

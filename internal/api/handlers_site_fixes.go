@@ -68,10 +68,20 @@ func (e *DoctorSiteFixArbitrationHoldError) publicReason() string {
 // Doctor Site Fixes. No legacy Opportunity or Content Action dependency is
 // available through this interface.
 type DoctorSiteFixService interface {
-	CreateFromFinding(context.Context, uuid.UUID, uuid.UUID) (db.SiteFix, bool, error)
-	List(context.Context, uuid.UUID, *string) ([]db.SiteFix, error)
-	Get(context.Context, uuid.UUID, uuid.UUID) (db.SiteFix, error)
-	Approve(context.Context, uuid.UUID, uuid.UUID, time.Time) (db.SiteFix, error)
+	CreateFromFinding(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixResponse, bool, error)
+	List(context.Context, uuid.UUID, *string) ([]DoctorSiteFixResponse, error)
+	Get(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixResponse, error)
+	Approve(context.Context, uuid.UUID, uuid.UUID, time.Time) (DoctorSiteFixResponse, error)
+}
+
+// DoctorSiteFixResponse is the persistent read model used by every canonical
+// Doctor Site Fix endpoint. Embedding keeps the canonical row shape stable
+// while application and verification history remain explicit, append-only
+// lifecycle evidence.
+type DoctorSiteFixResponse struct {
+	db.SiteFix
+	Application   *db.SiteChangeApplication `json:"application"`
+	Verifications []db.SiteFixVerification  `json:"verifications"`
 }
 
 type DoctorSiteFixVerificationRequest struct {
@@ -574,11 +584,16 @@ func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Pro
 	}
 }
 
-func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, projectID, findingID uuid.UUID) (db.SiteFix, bool, error) {
+func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, projectID, findingID uuid.UUID) (DoctorSiteFixResponse, bool, error) {
 	if s == nil || s.q == nil {
-		return db.SiteFix{}, false, errors.New("canonical Site Fix database unavailable")
+		return DoctorSiteFixResponse{}, false, errors.New("canonical Site Fix database unavailable")
 	}
-	return s.creation.CreateFromFinding(ctx, projectID, findingID)
+	fix, created, err := s.creation.CreateFromFinding(ctx, projectID, findingID)
+	if err != nil {
+		return DoctorSiteFixResponse{}, false, err
+	}
+	response, err := s.loadResponse(ctx, fix)
+	return response, created, err
 }
 
 type postgresDoctorSiteFixBackend struct {
@@ -878,37 +893,94 @@ func preparationDecisionFromDB(row db.DiscoveryArbitrationDecision) (discovery.P
 	}, nil
 }
 
-func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.UUID, status *string) ([]db.SiteFix, error) {
+func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.UUID, status *string) ([]DoctorSiteFixResponse, error) {
 	if s == nil || s.q == nil {
 		return nil, errors.New("canonical Site Fix database unavailable")
 	}
-	return s.q.ListCanonicalSiteFixes(ctx, db.ListCanonicalSiteFixesParams{ProjectID: projectID, Status: status})
-}
-
-func (s *postgresDoctorSiteFixService) Get(ctx context.Context, projectID, fixID uuid.UUID) (db.SiteFix, error) {
-	if s == nil || s.q == nil {
-		return db.SiteFix{}, errors.New("canonical Site Fix database unavailable")
+	params := db.ListCanonicalSiteFixesParams{ProjectID: projectID, Status: status}
+	fixes, err := s.q.ListCanonicalSiteFixes(ctx, params)
+	if err != nil {
+		return nil, err
 	}
-	return s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	applications, err := s.q.ListLatestCanonicalSiteFixApplications(ctx, db.ListLatestCanonicalSiteFixApplicationsParams{ProjectID: projectID, Status: status})
+	if err != nil {
+		return nil, err
+	}
+	verifications, err := s.q.ListCanonicalSiteFixVerificationsForList(ctx, db.ListCanonicalSiteFixVerificationsForListParams{ProjectID: projectID, Status: status})
+	if err != nil {
+		return nil, err
+	}
+	applicationsByFix := make(map[uuid.UUID]db.SiteChangeApplication, len(applications))
+	for _, application := range applications {
+		if application.SiteFixID.Valid {
+			applicationsByFix[application.SiteFixID.Bytes] = application
+		}
+	}
+	verificationsByFix := make(map[uuid.UUID][]db.SiteFixVerification)
+	for _, verification := range verifications {
+		verificationsByFix[verification.SiteFixID] = append(verificationsByFix[verification.SiteFixID], verification)
+	}
+	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
+	for _, fix := range fixes {
+		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: verificationsByFix[fix.ID]}
+		if response.Verifications == nil {
+			response.Verifications = []db.SiteFixVerification{}
+		}
+		if application, ok := applicationsByFix[fix.ID]; ok {
+			applicationCopy := application
+			response.Application = &applicationCopy
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
 }
 
-func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, fixID uuid.UUID, approvedAt time.Time) (db.SiteFix, error) {
+func (s *postgresDoctorSiteFixService) Get(ctx context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixResponse, error) {
 	if s == nil || s.q == nil {
-		return db.SiteFix{}, errors.New("canonical Site Fix database unavailable")
+		return DoctorSiteFixResponse{}, errors.New("canonical Site Fix database unavailable")
+	}
+	fix, err := s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return DoctorSiteFixResponse{}, err
+	}
+	return s.loadResponse(ctx, fix)
+}
+
+func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, fixID uuid.UUID, approvedAt time.Time) (DoctorSiteFixResponse, error) {
+	if s == nil || s.q == nil {
+		return DoctorSiteFixResponse{}, errors.New("canonical Site Fix database unavailable")
 	}
 	if _, err := s.Get(ctx, projectID, fixID); err != nil {
-		return db.SiteFix{}, err
+		return DoctorSiteFixResponse{}, err
 	}
 	if _, err := s.q.ApproveCanonicalSiteFix(ctx, db.ApproveCanonicalSiteFixParams{
 		SiteFixID: fixID, ProjectID: projectID,
 		ApprovedAt: pgtype.Timestamptz{Time: approvedAt.UTC(), Valid: true},
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.SiteFix{}, ErrDoctorSiteFixTransitionConflict
+			return DoctorSiteFixResponse{}, ErrDoctorSiteFixTransitionConflict
 		}
-		return db.SiteFix{}, err
+		return DoctorSiteFixResponse{}, err
 	}
 	return s.Get(ctx, projectID, fixID)
+}
+
+func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.SiteFix) (DoctorSiteFixResponse, error) {
+	response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}}
+	application, err := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{
+		ProjectID: fix.ProjectID, SiteFixID: pgtype.UUID{Bytes: fix.ID, Valid: true},
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return DoctorSiteFixResponse{}, err
+	}
+	if err == nil {
+		response.Application = &application
+	}
+	response.Verifications, err = s.q.ListCanonicalSiteFixVerifications(ctx, db.ListCanonicalSiteFixVerificationsParams{ProjectID: fix.ProjectID, SiteFixID: fix.ID})
+	if err != nil {
+		return DoctorSiteFixResponse{}, err
+	}
+	return response, nil
 }
 
 func (s *Server) doctorSiteFixService() DoctorSiteFixService {

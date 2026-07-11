@@ -375,11 +375,12 @@ async function writeClipboardText(text: string) {
   }
 }
 
-export function DoctorClient({ projectId }: { projectId: string }) {
+export function DoctorClient({ projectId, initialFindingId }: { projectId: string; initialFindingId?: string }) {
   const api = useApi();
   const router = useRouter();
   const { notify } = useToast();
   const pendingRunNoticeID = useRef<string | null>(null);
+  const initialSelectionHandled = useRef(false);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -444,6 +445,15 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const selectedRepairJSON = useMemo(() => {
     return selectedFinding ? JSON.stringify(buildAIRepairPayload(selectedFinding), null, 2) : "";
   }, [selectedFinding]);
+
+  useEffect(() => {
+    if (loading || initialSelectionHandled.current) return;
+    initialSelectionHandled.current = true;
+    if (initialFindingId && (report?.findings ?? []).some((finding) => finding.id === initialFindingId && finding.finding_kind !== "healthy")) {
+      setFilter("all");
+      setSelectedFindingID(initialFindingId);
+    }
+  }, [initialFindingId, loading, report?.findings]);
 
   useEffect(() => {
     if (selectedFindingID && !selectedFinding) setSelectedFindingID(null);

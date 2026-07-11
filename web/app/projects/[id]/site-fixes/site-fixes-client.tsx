@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Check,
   CheckCircle2,
@@ -69,32 +70,56 @@ async function writeClipboardText(text: string) {
 
 function lifecycleStep(fix: SiteFix) {
   if (fix.status === "verified") return 3;
-  if (["awaiting_deploy", "verifying", "failed_retryable", "reopened"].includes(fix.status)) return 3;
-  if (["preparing", "ready_to_apply", "applying"].includes(fix.status) || fix.applied_at || fix.application) return 2;
+  if (["preparing", "ready_to_apply", "applying", "awaiting_deploy", "verifying", "failed_retryable", "reopened"].includes(fix.status) || fix.applied_at || fix.application) return 2;
   if (fix.status === "approved" || fix.approved_at) return 1;
   return 0;
 }
 
 function LifecycleStrip({ fix }: { fix: SiteFix }) {
   const current = lifecycleStep(fix);
+  const applicationStep = fix.status === "awaiting_deploy"
+    ? "Awaiting deploy"
+    : fix.status === "verifying"
+      ? "Verifying"
+      : fix.status === "failed_retryable" || fix.status === "reopened"
+        ? "Verification retry"
+        : "Applied / deploy";
   const steps = ["Finding", "Approved", "Applied / deploy", "Verified"];
   return (
     <ol aria-label="Site fix lifecycle" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {steps.map((step, index) => (
-        <li
-          key={step}
-          className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-            index <= current ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"
-          }`}
-        >
-          <span className="flex items-center gap-1.5">
-            {index < current ? <Check aria-hidden="true" size={13} /> : <span aria-hidden="true">{index + 1}</span>}
-            {step}
-          </span>
-        </li>
-      ))}
+      {steps.map((step, index) => {
+        const isCurrent = index === current;
+        const isComplete = index < current || (index === 3 && fix.status === "verified");
+        return (
+          <li
+            key={`${index}-${step}`}
+            aria-current={isCurrent ? "step" : undefined}
+            className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+              isComplete
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : isCurrent
+                  ? "border-sky-200 bg-sky-50 text-sky-800"
+                  : "border-slate-200 bg-slate-50 text-slate-500"
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              {isComplete ? <Check aria-hidden="true" size={13} /> : <span aria-hidden="true">{index + 1}</span>}
+              {index === 2 ? applicationStep : step}
+            </span>
+          </li>
+        );
+      })}
     </ol>
   );
+}
+
+function canonicalFixIDForAlias(fixes: SiteFix[], requestedID?: string) {
+  if (!requestedID) return null;
+  return fixes.find((fix) =>
+    fix.id === requestedID ||
+    fix.legacy_opportunity_id === requestedID ||
+    fix.legacy_content_action_id === requestedID,
+  )?.id ?? null;
 }
 
 function DetailBlock({ title, value }: { title: string; value: unknown }) {
@@ -123,7 +148,8 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
     try {
       const rows = await api.listDoctorSiteFixes(projectId);
       setSiteFixes(rows);
-      if (initialFixId && rows.some((fix) => fix.id === initialFixId)) setSelectedID(initialFixId);
+      const canonicalInitialFixID = canonicalFixIDForAlias(rows, initialFixId);
+      if (canonicalInitialFixID) setSelectedID(canonicalInitialFixID);
     } catch (err: any) {
       setError(err?.apiMessage || err?.message || "Could not load Site Fixes.");
     } finally {
@@ -151,7 +177,12 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
     setSiteFixes((current) =>
       current.map((existing) =>
         existing.id === updated.id
-          ? { ...existing, ...updated, application: application ?? updated.application ?? existing.application }
+          ? {
+              ...existing,
+              ...updated,
+              application: application ?? updated.application ?? existing.application,
+              verifications: updated.verifications ?? existing.verifications,
+            }
           : existing,
       ),
     );
@@ -242,9 +273,10 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   const drawerApplication = selected?.application ?? null;
+  const requiresManualApplyConfirmation = selected?.status === "applying" && drawerApplication?.status === "manual_apply_required";
   const canApprove = selected?.status === "proposed";
   const canApply = Boolean(selected && ["approved", "ready_to_apply"].includes(selected.status));
-  const canVerify = Boolean(selected && ["awaiting_deploy", "failed_retryable", "reopened"].includes(selected.status));
+  const canVerify = Boolean(selected && (["awaiting_deploy", "failed_retryable", "reopened"].includes(selected.status) || requiresManualApplyConfirmation));
 
   return (
     <>
@@ -337,7 +369,9 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               )}
               {canVerify && (
                 <Button variant="primary" onClick={() => void verifyFix(selected)} disabled={Boolean(busy)}>
-                  <ButtonProgress busy={busy === `verify-${selected.id}`} busyLabel="Starting" idleIcon={<ShieldCheck aria-hidden="true" size={14} />}>Verify fix</ButtonProgress>
+                  <ButtonProgress busy={busy === `verify-${selected.id}`} busyLabel="Starting" idleIcon={<ShieldCheck aria-hidden="true" size={14} />}>
+                    {requiresManualApplyConfirmation ? "I applied this manually — start verification" : "Verify fix"}
+                  </ButtonProgress>
                 </Button>
               )}
             </>
@@ -352,11 +386,23 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               title={canonicalSiteFixNextAction(selected)}
               detail={selected.failure_reason || undefined}
             />
+            {requiresManualApplyConfirmation && (
+              <Notice
+                tone="amber"
+                title="Manual application required"
+                detail="Apply the proposed change to the target site first. Then confirm below to record it as applied and start evidence verification. Confirmation alone does not mark the fix verified."
+              />
+            )}
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-xs font-semibold text-slate-500">Finding</div>
-                <div className="mt-1 break-all text-xs text-slate-700">{selected.doctor_finding_id}</div>
+                <Link
+                  className="mt-1 inline-flex break-all text-xs font-semibold text-sky-700 hover:text-sky-900"
+                  href={`/projects/${projectId}/doctor?finding=${selected.doctor_finding_id}`}
+                >
+                  {selected.doctor_finding_id}
+                </Link>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
                 <div className="text-xs font-semibold text-slate-500">Retries</div>
@@ -379,6 +425,16 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
             <DetailBlock title="Evidence" value={selected.evidence_snapshot} />
             <DetailBlock title="Proposed fix" value={selected.proposed_fix} />
             <DetailBlock title="Acceptance checks" value={selected.acceptance_tests} />
+            {(selected.legacy_opportunity_id || selected.legacy_content_action_id || selected.migration_batch_id) && (
+              <DetailBlock
+                title="Legacy provenance"
+                value={{
+                  legacy_opportunity_id: selected.legacy_opportunity_id,
+                  legacy_content_action_id: selected.legacy_content_action_id,
+                  migration_batch_id: selected.migration_batch_id,
+                }}
+              />
+            )}
 
             <section className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-center gap-2">

@@ -21,6 +21,7 @@ import (
 	"github.com/citeloop/citeloop/internal/sitefix"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestDoctorSiteFixCreationHasSingleWriter(t *testing.T) {
@@ -649,7 +650,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 	}
 
 	t.Run("create returns canonical provenance and created status", func(t *testing.T) {
-		service := &doctorSiteFixServiceStub{createFix: fix, created: true}
+		service := &doctorSiteFixServiceStub{createFix: DoctorSiteFixResponse{SiteFix: fix}, created: true}
 		response := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/findings/"+findingID.String()+"/site-fixes")
 		if response.Code != http.StatusCreated {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
@@ -667,7 +668,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 	})
 
 	t.Run("repeat create returns existing canonical fix", func(t *testing.T) {
-		service := &doctorSiteFixServiceStub{createFix: fix, created: false}
+		service := &doctorSiteFixServiceStub{createFix: DoctorSiteFixResponse{SiteFix: fix}, created: false}
 		response := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/findings/"+findingID.String()+"/site-fixes")
 		if response.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
@@ -675,7 +676,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 	})
 
 	t.Run("legacy convert is a deprecated alias to canonical creation", func(t *testing.T) {
-		service := &doctorSiteFixServiceStub{createFix: fix, created: false}
+		service := &doctorSiteFixServiceStub{createFix: DoctorSiteFixResponse{SiteFix: fix}, created: false}
 		response := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/findings/"+findingID.String()+"/convert")
 		if response.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
@@ -747,7 +748,23 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 	})
 
 	t.Run("list get and approve stay project scoped", func(t *testing.T) {
-		service := &doctorSiteFixServiceStub{listFixes: []db.SiteFix{fix}, getFix: fix, approveFix: func() db.SiteFix { approved := fix; approved.Status = "approved"; return approved }()}
+		verificationID := uuid.New()
+		aiCallID := uuid.New()
+		applicationID := uuid.New()
+		legacyOpportunityID := uuid.New()
+		legacyActionID := uuid.New()
+		migrationBatchID := uuid.New()
+		fix.LegacyOpportunityID = pgtype.UUID{Bytes: legacyOpportunityID, Valid: true}
+		fix.LegacyContentActionID = pgtype.UUID{Bytes: legacyActionID, Valid: true}
+		fix.MigrationBatchID = pgtype.UUID{Bytes: migrationBatchID, Valid: true}
+		detail := DoctorSiteFixResponse{
+			SiteFix:       fix,
+			Application:   &db.SiteChangeApplication{ID: applicationID, ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}, Status: "manual_apply_required"},
+			Verifications: []db.SiteFixVerification{{ID: verificationID, ProjectID: projectID, SiteFixID: fixID, AttemptNumber: 1, AiCallID: pgtype.UUID{Bytes: aiCallID, Valid: true}, Result: "failed"}},
+		}
+		approvedDetail := detail
+		approvedDetail.Status = "approved"
+		service := &doctorSiteFixServiceStub{listFixes: []DoctorSiteFixResponse{detail}, getFix: detail, approveFix: approvedDetail}
 		for _, request := range []struct {
 			method     string
 			path       string
@@ -767,6 +784,21 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		}
 		if service.listStatus == nil || *service.listStatus != "proposed" {
 			t.Fatalf("list status = %v", service.listStatus)
+		}
+		for _, request := range []struct {
+			method string
+			path   string
+		}{
+			{http.MethodGet, "/api/projects/" + projectID.String() + "/doctor/site-fixes"},
+			{http.MethodGet, "/api/projects/" + projectID.String() + "/doctor/site-fixes/" + fixID.String()},
+		} {
+			response := serveSiteFixRequest(t, service, request.method, request.path)
+			body := response.Body.String()
+			for _, expected := range []string{applicationID.String(), verificationID.String(), aiCallID.String(), legacyOpportunityID.String(), legacyActionID.String(), migrationBatchID.String()} {
+				if !strings.Contains(body, expected) {
+					t.Fatalf("%s %s omitted canonical detail %s: %s", request.method, request.path, expected, body)
+				}
+			}
 		}
 	})
 
@@ -909,21 +941,21 @@ func serveSiteFixLifecycleRequest(t *testing.T, service DoctorSiteFixService, li
 }
 
 type doctorSiteFixServiceStub struct {
-	createFix      db.SiteFix
+	createFix      DoctorSiteFixResponse
 	created        bool
 	createErr      error
 	createCalls    int
 	createProject  uuid.UUID
 	createFinding  uuid.UUID
-	listFixes      []db.SiteFix
+	listFixes      []DoctorSiteFixResponse
 	listErr        error
 	listProject    uuid.UUID
 	listStatus     *string
-	getFix         db.SiteFix
+	getFix         DoctorSiteFixResponse
 	getErr         error
 	getProject     uuid.UUID
 	getFixID       uuid.UUID
-	approveFix     db.SiteFix
+	approveFix     DoctorSiteFixResponse
 	approveErr     error
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
@@ -1198,23 +1230,23 @@ func (b *doctorSiteFixCreationBackendStub) LoadSiteFix(context.Context, uuid.UUI
 	return b.fix, nil
 }
 
-func (s *doctorSiteFixServiceStub) CreateFromFinding(_ context.Context, projectID, findingID uuid.UUID) (db.SiteFix, bool, error) {
+func (s *doctorSiteFixServiceStub) CreateFromFinding(_ context.Context, projectID, findingID uuid.UUID) (DoctorSiteFixResponse, bool, error) {
 	s.createCalls++
 	s.createProject, s.createFinding = projectID, findingID
 	return s.createFix, s.created, s.createErr
 }
 
-func (s *doctorSiteFixServiceStub) List(_ context.Context, projectID uuid.UUID, status *string) ([]db.SiteFix, error) {
+func (s *doctorSiteFixServiceStub) List(_ context.Context, projectID uuid.UUID, status *string) ([]DoctorSiteFixResponse, error) {
 	s.listProject, s.listStatus = projectID, status
 	return s.listFixes, s.listErr
 }
 
-func (s *doctorSiteFixServiceStub) Get(_ context.Context, projectID, fixID uuid.UUID) (db.SiteFix, error) {
+func (s *doctorSiteFixServiceStub) Get(_ context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixResponse, error) {
 	s.getProject, s.getFixID = projectID, fixID
 	return s.getFix, s.getErr
 }
 
-func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID uuid.UUID, _ time.Time) (db.SiteFix, error) {
+func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID uuid.UUID, _ time.Time) (DoctorSiteFixResponse, error) {
 	s.approveProject, s.approveFixID = projectID, fixID
 	return s.approveFix, s.approveErr
 }

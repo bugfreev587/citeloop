@@ -288,6 +288,16 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 	}
 }
 
+func TestCanonicalSiteFixListDetailsAreBoundedAndBatchReadable(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	list := namedSQL(t, siteFixes, "ListCanonicalSiteFixes")
+	requireQuerySQL(t, list, "limit 250")
+	for _, name := range []string{"ListLatestCanonicalSiteFixApplications", "ListCanonicalSiteFixVerificationsForList"} {
+		query := namedSQL(t, siteFixes, name)
+		requireQuerySQL(t, query, "project_id", "site_fix_id")
+	}
+}
+
 func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	claim := namedSQL(t, siteFixes, "ClaimCanonicalSiteFixGitHubPR")

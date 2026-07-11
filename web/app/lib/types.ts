@@ -30,6 +30,7 @@ export type SiteFixVerification = {
   attempt_number: number;
   evidence_read: unknown;
   acceptance_results: unknown;
+  ai_call_id?: string | null;
   result: string;
   retry_classification: string;
   failure_reason?: string | null;
@@ -82,6 +83,9 @@ export type SiteFix = {
   failure_reason?: string | null;
   retry_count: number;
   max_retries: number;
+  legacy_opportunity_id?: string | null;
+  legacy_content_action_id?: string | null;
+  migration_batch_id?: string | null;
   approved_at?: string | null;
   applied_at?: string | null;
   deployed_at?: string | null;

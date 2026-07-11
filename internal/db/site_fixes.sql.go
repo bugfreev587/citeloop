@@ -3532,11 +3532,66 @@ func (q *Queries) ListCanonicalSiteFixVerifications(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const listCanonicalSiteFixVerificationsForList = `-- name: ListCanonicalSiteFixVerificationsForList :many
+with listed_site_fixes as (
+  select id
+  from site_fixes
+  where project_id = $1
+    and ($2::text is null or status = $2::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select verification.id, verification.project_id, verification.site_fix_id, verification.attempt_number, verification.evidence_read, verification.acceptance_results, verification.ai_call_id, verification.result, verification.retry_classification, verification.failure_reason, verification.attempted_at, verification.created_at
+from site_fix_verifications verification
+join listed_site_fixes listed on listed.id = verification.site_fix_id
+where verification.project_id = $1
+order by verification.site_fix_id, verification.attempt_number asc, verification.id asc
+`
+
+type ListCanonicalSiteFixVerificationsForListParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    *string   `json:"status"`
+}
+
+func (q *Queries) ListCanonicalSiteFixVerificationsForList(ctx context.Context, arg ListCanonicalSiteFixVerificationsForListParams) ([]SiteFixVerification, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixVerificationsForList, arg.ProjectID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFixVerification
+	for rows.Next() {
+		var i SiteFixVerification
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.AttemptNumber,
+			&i.EvidenceRead,
+			&i.AcceptanceResults,
+			&i.AiCallID,
+			&i.Result,
+			&i.RetryClassification,
+			&i.FailureReason,
+			&i.AttemptedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCanonicalSiteFixes = `-- name: ListCanonicalSiteFixes :many
 select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
 where project_id = $1
   and ($2::text is null or status = $2::text)
 order by updated_at desc, id asc
+limit 250
 `
 
 type ListCanonicalSiteFixesParams struct {
@@ -3734,6 +3789,94 @@ func (q *Queries) ListDoctorAIOnDemandConsumedUnapplied(ctx context.Context, pro
 			&i.SiteFixID,
 			&i.AiCallID,
 			&i.HasLifecycleReference,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestCanonicalSiteFixApplications = `-- name: ListLatestCanonicalSiteFixApplications :many
+with listed_site_fixes as (
+  select id
+  from site_fixes
+  where project_id = $1
+    and ($2::text is null or status = $2::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select distinct on (application.site_fix_id) application.id, application.project_id, application.source_opportunity_id, application.content_action_id, application.page_update_draft_id, application.application_kind, application.target_url, application.normalized_target_url, application.opportunity_key, application.publisher_connection_id, application.repo_full_name, application.base_branch, application.working_branch, application.base_commit_sha, application.head_commit_sha, application.source_file_path, application.source_file_paths, application.source_mapping_confidence, application.source_mapping_reason, application.base_file_sha, application.base_content_hash, application.proposed_content_hash, application.patch_snapshot, application.diff_snapshot, application.resolution_criteria, application.github_pr_number, application.github_pr_url, application.github_pr_state, application.deployment_snapshot, application.verification_snapshot, application.failure_reason, application.status, application.created_at, application.updated_at, application.pr_created_at, application.merged_at, application.deployed_at, application.verified_at, application.next_poll_at, application.next_notify_at, application.site_fix_id, application.pr_claim_token, application.pr_claim_expires_at, application.pr_claim_authority_fingerprint
+from site_change_applications application
+join listed_site_fixes listed on listed.id = application.site_fix_id
+where application.project_id = $1
+  and application.site_fix_id is not null
+  and application.content_action_id is null
+order by application.site_fix_id, application.updated_at desc, application.id asc
+`
+
+type ListLatestCanonicalSiteFixApplicationsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    *string   `json:"status"`
+}
+
+func (q *Queries) ListLatestCanonicalSiteFixApplications(ctx context.Context, arg ListLatestCanonicalSiteFixApplicationsParams) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listLatestCanonicalSiteFixApplications, arg.ProjectID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
 		); err != nil {
 			return nil, err
 		}

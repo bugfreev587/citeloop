@@ -791,6 +791,11 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       evidence_snapshot: { check: "canonical" },
       proposed_fix: { mutations: [{ field: "canonical", operation: "replace" }] },
       acceptance_tests: [{ type: "canonical_present" }],
+      legacy_opportunity_id: "opportunity-legacy",
+      legacy_content_action_id: "action-legacy",
+      migration_batch_id: "batch-legacy",
+      application: { id: "latest-application", site_fix_id: "fix-1", status: "manual_apply_required" },
+      verifications: [{ id: "verification-1", site_fix_id: "fix-1", ai_call_id: "ai-call-1", result: "failed" }],
     };
     if (url.endsWith("/apply") || url.endsWith("/verify")) {
       const verifying = url.endsWith("/verify");
@@ -827,6 +832,11 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
 
     assert.equal(listed[0].finding_kind, "broken");
     assert.deepEqual(listed[0].target_urls, ["https://example.test/page"]);
+    assert.equal(listed[0].legacy_opportunity_id, "opportunity-legacy");
+    assert.equal(listed[0].legacy_content_action_id, "action-legacy");
+    assert.equal(listed[0].migration_batch_id, "batch-legacy");
+    assert.equal(listed[0].application.status, "manual_apply_required");
+    assert.equal(listed[0].verifications[0].ai_call_id, "ai-call-1");
     assert.equal(created.doctor_finding_id, "finding-1");
     assert.equal(approved.status, "approved");
     assert.equal(applied.site_fix.status, "awaiting_deploy");
