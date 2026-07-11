@@ -102,7 +102,7 @@ begin
       add constraint site_fixes_supersedes_project_fk
       foreign key (project_id, candidate_id, supersedes_site_fix_id)
       references site_fixes(project_id, candidate_id, id)
-      on delete cascade deferrable initially deferred not valid;
+      on delete no action deferrable initially deferred not valid;
   end if;
 end;
 $$;

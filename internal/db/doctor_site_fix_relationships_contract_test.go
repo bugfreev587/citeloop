@@ -105,6 +105,16 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			"foreign key (project_id, candidate_id, supersedes_site_fix_id)",
 			"references site_fixes(project_id, candidate_id, id)",
 		)
+		for _, constraint := range []string{
+			"site_fixes_doctor_finding_project_fk",
+			"site_fixes_candidate_project_fk",
+			"site_fixes_work_signature_project_fk",
+		} {
+			pattern := regexp.MustCompile(`(?s)constraint ` + constraint + `\s+foreign key [^;]*on delete no action deferrable initially deferred not valid`)
+			if !pattern.MatchString(add) {
+				t.Errorf("%s must preserve provenance while deferring project erasure checks", constraint)
+			}
+		}
 	})
 
 	t.Run("revision graph cannot branch or self reference", func(t *testing.T) {
@@ -117,6 +127,10 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			"on site_fixes (project_id, supersedes_site_fix_id)",
 			"where supersedes_site_fix_id is not null",
 		)
+		revisionFK := regexp.MustCompile(`(?s)constraint site_fixes_supersedes_project_fk\s+foreign key \(project_id, candidate_id, supersedes_site_fix_id\)\s+references site_fixes\(project_id, candidate_id, id\)\s+on delete no action deferrable initially deferred not valid`).MatchString(add)
+		if !revisionFK {
+			t.Error("revision provenance must block direct predecessor deletion while deferring project erasure checks")
+		}
 		if strings.Contains(base, "unique (project_id, candidate_id, supersedes_site_fix_id)") {
 			t.Error("nullable table UNIQUE does not enforce a single revision root")
 		}
