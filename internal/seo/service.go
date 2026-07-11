@@ -18,6 +18,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/googledata"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
@@ -43,11 +44,13 @@ type GoogleDataProvider interface {
 
 // Service coordinates the Operations Loop backend workflow.
 type Service struct {
-	Q           *db.Queries
-	HTTPClient  *http.Client
-	BlogBaseURL string
-	GoogleData  GoogleDataProvider
-	Now         func() time.Time
+	Q             *db.Queries
+	HTTPClient    *http.Client
+	BlogBaseURL   string
+	GoogleData    GoogleDataProvider
+	LLM           llm.Provider
+	DoctorAIModel string
+	Now           func() time.Time
 }
 
 type SyncResult struct {

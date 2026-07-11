@@ -240,6 +240,7 @@ type Querier interface {
 	ListDiscoveryShadowSignaturesForRun(ctx context.Context, arg ListDiscoveryShadowSignaturesForRunParams) ([]ListDiscoveryShadowSignaturesForRunRow, error)
 	ListDoctorAIOnDemandActiveSiteFixes(ctx context.Context, projectID uuid.UUID) ([]uuid.UUID, error)
 	ListDoctorAIOnDemandConsumedUnapplied(ctx context.Context, projectID uuid.UUID) ([]ListDoctorAIOnDemandConsumedUnappliedRow, error)
+	ListDoctorPagePriorityInputs(ctx context.Context, arg ListDoctorPagePriorityInputsParams) ([]ListDoctorPagePriorityInputsRow, error)
 	ListDueMeasuringContentActions(ctx context.Context, arg ListDueMeasuringContentActionsParams) ([]ContentAction, error)
 	ListEnabledNotificationSubscriptionsForEvent(ctx context.Context, arg ListEnabledNotificationSubscriptionsForEventParams) ([]NotificationSubscription, error)
 	ListGEOAssetBriefs(ctx context.Context, arg ListGEOAssetBriefsParams) ([]GeoAssetBrief, error)

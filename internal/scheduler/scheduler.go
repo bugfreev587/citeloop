@@ -955,6 +955,7 @@ func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
 		HTTPClient:  s.httpClient,
 		BlogBaseURL: s.BlogBaseURL,
 		GoogleData:  s.SEOData,
+		LLM:         s.LLM,
 		Now:         s.now,
 	}
 }

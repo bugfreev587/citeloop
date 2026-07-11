@@ -266,6 +266,24 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 
 	candidates, growthCandidates := doctorFindingCandidatesAndGrowthFromChecks(run.ProjectID, checks)
 	candidates = append(candidates, doctorFindingCandidatesFromCrawlerAccess(run.ProjectID, crawlerAccess)...)
+	intelligence := s.loadDoctorIntelligenceInputs(ctx, run.ProjectID)
+	candidates = applyDoctorPagePriorityInputs(candidates, intelligence.Priority)
+	candidates = attachDoctorContextSnapshot(candidates, intelligence.ProductContext)
+	for i := range candidates {
+		candidates[i] = candidates[i].withDefaults()
+	}
+	authorized, authorityDegraded := s.doctorDiagnosisAuthority(ctx, run.ProjectID, DoctorTrigger(run.Trigger))
+	aiState := doctorDiagnosisAIState{Status: doctorAIStatusDisabled}
+	if authorityDegraded {
+		aiState = doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}
+	} else {
+		candidates, aiState = runDoctorDiagnosisAI(ctx, doctorDiagnosisAIRequest{
+			ProjectID: run.ProjectID, RunID: run.ID, Authorized: authorized, Candidates: candidates,
+			Context: mustJSON(intelligence.ProductContext), Provider: s.LLM, Model: s.DoctorAIModel,
+			Ledger: doctorPostgresAILedger{q: s.Q},
+		})
+	}
+	intelligence.Coverage = append(intelligence.Coverage, doctorAIReviewCoverage(aiState))
 	for _, candidate := range growthCandidates {
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
@@ -328,6 +346,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	human.Status = doctorDisplayStatus(score, reportCandidates)
 	coverage := appendGEOAuditCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), geoRunComplete)
 	coverage = appendCrawlCompletenessCoverage(coverage, crawlComplete)
+	coverage = append(coverage, intelligence.Coverage...)
 	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
 		human.Status = "needs_attention"
 	}
@@ -345,6 +364,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 			"status":           human.Status,
 			"healthy_coverage": coverage,
 			"growth_rerouted":  len(growthCandidates),
+			"doctor_ai_review": aiState,
 		}),
 		HealthyCoverage: mustJSON(coverage),
 		FinishedAt:      pgtype.Timestamptz{Time: s.now(), Valid: true},
@@ -1300,11 +1320,23 @@ func doctorCoverageComplete(coverage []doctorCheckCoverage) bool {
 		return false
 	}
 	for _, check := range coverage {
+		if doctorOptionalIntelligenceCoverage(check.Check) {
+			continue
+		}
 		if len(check.SkippedURLs) > 0 || len(check.FailedURLs) > 0 || len(check.CheckedURLs) == 0 {
 			return false
 		}
 	}
 	return true
+}
+
+func doctorOptionalIntelligenceCoverage(check string) bool {
+	switch check {
+	case "gsc_priority_context", "ga4_priority_context", "doctor_ai_review", "product_context":
+		return true
+	default:
+		return false
+	}
 }
 
 func sortedUniqueStrings(values []string) []string {

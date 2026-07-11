@@ -176,6 +176,29 @@ where project_id = $1
   and property_id = $2
   and (clicks is not null or impressions is not null);
 
+-- name: ListDoctorPagePriorityInputs :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks), 0)::numeric as gsc_clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as gsc_impressions_28d,
+  coalesce(sum(ga4_sessions), 0)::numeric as ga4_sessions_28d,
+  coalesce(sum(ga4_engaged_sessions), 0)::numeric as ga4_engaged_sessions_28d,
+  coalesce(sum(ga4_conversions), 0)::numeric as ga4_key_events_28d,
+  max(date)::date as evidence_fresh_through
+from page_performance_daily
+where project_id = sqlc.arg(project_id)
+  and date >= current_date - 28
+  and (
+    clicks is not null or impressions is not null or ga4_sessions is not null
+    or ga4_engaged_sessions is not null or ga4_conversions is not null
+  )
+group by normalized_page_url
+order by
+  coalesce(sum(impressions), 0) + coalesce(sum(ga4_sessions), 0) desc,
+  normalized_page_url asc
+limit least(greatest(sqlc.arg(limit_rows)::int, 1), 50);
+
 -- name: ListSearchQueryOpportunityRollups :many
 select
   max(page_url)::text as page_url,

@@ -2232,6 +2232,75 @@ func (q *Queries) ListCurrentSEODoctorFindings(ctx context.Context, arg ListCurr
 	return items, nil
 }
 
+const listDoctorPagePriorityInputs = `-- name: ListDoctorPagePriorityInputs :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks), 0)::numeric as gsc_clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as gsc_impressions_28d,
+  coalesce(sum(ga4_sessions), 0)::numeric as ga4_sessions_28d,
+  coalesce(sum(ga4_engaged_sessions), 0)::numeric as ga4_engaged_sessions_28d,
+  coalesce(sum(ga4_conversions), 0)::numeric as ga4_key_events_28d,
+  max(date)::date as evidence_fresh_through
+from page_performance_daily
+where project_id = $1
+  and date >= current_date - 28
+  and (
+    clicks is not null or impressions is not null or ga4_sessions is not null
+    or ga4_engaged_sessions is not null or ga4_conversions is not null
+  )
+group by normalized_page_url
+order by
+  coalesce(sum(impressions), 0) + coalesce(sum(ga4_sessions), 0) desc,
+  normalized_page_url asc
+limit least(greatest($2::int, 1), 50)
+`
+
+type ListDoctorPagePriorityInputsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	LimitRows int32     `json:"limit_rows"`
+}
+
+type ListDoctorPagePriorityInputsRow struct {
+	PageUrl               string         `json:"page_url"`
+	NormalizedPageUrl     string         `json:"normalized_page_url"`
+	GscClicks28d          pgtype.Numeric `json:"gsc_clicks_28d"`
+	GscImpressions28d     pgtype.Numeric `json:"gsc_impressions_28d"`
+	Ga4Sessions28d        pgtype.Numeric `json:"ga4_sessions_28d"`
+	Ga4EngagedSessions28d pgtype.Numeric `json:"ga4_engaged_sessions_28d"`
+	Ga4KeyEvents28d       pgtype.Numeric `json:"ga4_key_events_28d"`
+	EvidenceFreshThrough  pgtype.Date    `json:"evidence_fresh_through"`
+}
+
+func (q *Queries) ListDoctorPagePriorityInputs(ctx context.Context, arg ListDoctorPagePriorityInputsParams) ([]ListDoctorPagePriorityInputsRow, error) {
+	rows, err := q.db.Query(ctx, listDoctorPagePriorityInputs, arg.ProjectID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDoctorPagePriorityInputsRow
+	for rows.Next() {
+		var i ListDoctorPagePriorityInputsRow
+		if err := rows.Scan(
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.GscClicks28d,
+			&i.GscImpressions28d,
+			&i.Ga4Sessions28d,
+			&i.Ga4EngagedSessions28d,
+			&i.Ga4KeyEvents28d,
+			&i.EvidenceFreshThrough,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions :many
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition from content_actions ca
 where ca.project_id = $1
