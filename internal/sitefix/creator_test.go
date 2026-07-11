@@ -129,16 +129,21 @@ func TestCreatorRejectsInvalidDoctorWork(t *testing.T) {
 }
 
 func TestCreatorLinksInactivePredecessorAsRevision(t *testing.T) {
-	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	projectID, findingID, predecessorCandidateID, revisionCandidateID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	predecessorID := uuid.New()
-	finding := canonicalFinding(projectID, findingID)
+	oldSnapshot := canonicalFinding(projectID, findingID)
+	finding := oldSnapshot
+	finding.FixIntent += " with immutable revision snapshot"
 	storage := &creatorDBStub{
-		candidate:   canonicalDiscoveryCandidateForFinding(finding, candidateID),
-		finding:     finding,
-		predecessor: &db.SiteFix{ID: predecessorID, ProjectID: projectID, DoctorFindingID: findingID, Status: "failed_terminal"},
+		candidate: canonicalDiscoveryCandidateForFinding(finding, revisionCandidateID),
+		finding:   finding,
+		predecessor: &db.SiteFix{
+			ID: predecessorID, ProjectID: projectID, DoctorFindingID: findingID,
+			CandidateID: predecessorCandidateID, Status: "failed_terminal",
+		},
 	}
 	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
-		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(),
+		ProjectID: projectID, CandidateID: revisionCandidateID, DecisionID: uuid.New(),
 		WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
 	})
 	if err != nil {
@@ -146,6 +151,9 @@ func TestCreatorLinksInactivePredecessorAsRevision(t *testing.T) {
 	}
 	if !storage.created.SupersedesSiteFixID.Valid || storage.created.SupersedesSiteFixID.Bytes != predecessorID {
 		t.Fatalf("supersedes = %+v, want %s", storage.created.SupersedesSiteFixID, predecessorID)
+	}
+	if storage.created.CandidateID != revisionCandidateID || storage.created.CandidateID == predecessorCandidateID {
+		t.Fatalf("revision candidate = %s, predecessor candidate = %s", storage.created.CandidateID, predecessorCandidateID)
 	}
 }
 
