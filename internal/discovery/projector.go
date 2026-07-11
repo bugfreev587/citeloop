@@ -159,7 +159,7 @@ func opportunityWorkSpec(opportunityType string) (legacyWorkSpec, bool) {
 	issue := normalizeIssueType(opportunityType)
 	switch issue {
 	case "low_ctr", "low_ctr_snippet", "gsc_low_ctr", "gsc_low_ctr_query":
-		return delayedQuerySpec("metadata.title", "update", "title", ArtifactUpdateExistingContent, "ctr"), true
+		return delayedSpec("metadata.title", "update", "title", ArtifactUpdateExistingContent, "ctr"), true
 	case "geo_project_mentioned_without_citation", "geo_competitor_cited_project_absent", "ai_citation_gap", "weak_citation_surface":
 		return delayedSpec("content.evidence", "update", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
 	case "thin_evidence_page":

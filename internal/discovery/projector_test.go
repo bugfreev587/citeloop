@@ -114,6 +114,34 @@ func TestProjectContentQueryMateriallyScopesIdentity(t *testing.T) {
 	}
 }
 
+func TestProjectLowCTRQueryDoesNotDuplicateSameTitleMutation(t *testing.T) {
+	projectID := uuid.New()
+	firstQuery := "pricing software"
+	secondQuery := "enterprise pricing software"
+	base := db.SeoOpportunity{
+		ID:                uuid.New(),
+		ProjectID:         projectID,
+		Type:              "gsc_low_ctr_query",
+		NormalizedPageUrl: "https://example.com/pricing",
+		Query:             &firstQuery,
+	}
+	first := ProjectSEOOpportunity(base)
+	base.ID = uuid.New()
+	base.Query = &secondQuery
+	second := ProjectSEOOpportunity(base)
+	left, err := BuildIdentity(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := BuildIdentity(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.ExactSignatureHash != right.ExactSignatureHash {
+		t.Fatal("GSC query split the same page title mutation into duplicate exact identities")
+	}
+}
+
 func TestProjectTechnicalVisibilityUsesStructuredSubtype(t *testing.T) {
 	projectID := uuid.New()
 	target := "https://example.com/pricing"
