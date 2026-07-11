@@ -95,6 +95,7 @@ create table if not exists work_review_memory (
   work_signature_id uuid references work_signature_registry(id) on delete set null,
   exact_signature_hash_at_decision text not null,
   semantic_fingerprint_at_decision text not null,
+  signature_payload jsonb not null check (jsonb_typeof(signature_payload) = 'object'),
   conflict_bucket_keys jsonb not null default '[]'::jsonb check (jsonb_typeof(conflict_bucket_keys) = 'array'),
   signature_version text not null,
   decision text not null check (decision in ('dismissed','snoozed','watching')),

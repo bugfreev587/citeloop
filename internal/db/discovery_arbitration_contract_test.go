@@ -47,6 +47,10 @@ func TestDiscoverySemanticArbitrationSchemaContract(t *testing.T) {
 			t.Fatalf("arbitration schema invariant missing %q", want)
 		}
 	}
+	memorySection := strings.SplitN(migration, "create table if not exists work_review_memory", 2)
+	if len(memorySection) != 2 || !strings.Contains(strings.SplitN(memorySection[1], ");", 2)[0], "signature_payload jsonb not null") {
+		t.Fatal("review memory must retain canonical signature material for semantic alias comparison")
+	}
 }
 
 func TestDiscoveryArbitrationQueries(t *testing.T) {

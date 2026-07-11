@@ -1122,6 +1122,7 @@ type WorkReviewMemory struct {
 	WorkSignatureID               pgtype.UUID        `json:"work_signature_id"`
 	ExactSignatureHashAtDecision  string             `json:"exact_signature_hash_at_decision"`
 	SemanticFingerprintAtDecision string             `json:"semantic_fingerprint_at_decision"`
+	SignaturePayload              json.RawMessage    `json:"signature_payload"`
 	ConflictBucketKeys            json.RawMessage    `json:"conflict_bucket_keys"`
 	SignatureVersion              string             `json:"signature_version"`
 	Decision                      string             `json:"decision"`

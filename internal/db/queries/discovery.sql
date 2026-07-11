@@ -281,14 +281,14 @@ where project_id = sqlc.arg(project_id)
 insert into work_review_memory
   (project_id, candidate_id, work_signature_id,
    exact_signature_hash_at_decision, semantic_fingerprint_at_decision,
-   conflict_bucket_keys, signature_version, decision, decision_scope,
+   signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope,
    evidence_fingerprint_at_decision, snoozed_until,
    material_change_policy_version, decided_by, decided_at, active)
 values
   (sqlc.arg(project_id), sqlc.narg(candidate_id), sqlc.narg(work_signature_id),
    sqlc.arg(exact_signature_hash_at_decision),
    sqlc.arg(semantic_fingerprint_at_decision),
-   sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),
+   sqlc.arg(signature_payload)::jsonb, sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),
    sqlc.arg(decision), sqlc.arg(decision_scope)::jsonb,
    sqlc.arg(evidence_fingerprint_at_decision), sqlc.narg(snoozed_until),
    sqlc.arg(material_change_policy_version), sqlc.arg(decided_by),
@@ -298,6 +298,7 @@ do update set
   candidate_id = excluded.candidate_id,
   work_signature_id = excluded.work_signature_id,
   semantic_fingerprint_at_decision = excluded.semantic_fingerprint_at_decision,
+  signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
   signature_version = excluded.signature_version,
   decision = excluded.decision,

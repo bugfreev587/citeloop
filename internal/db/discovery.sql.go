@@ -879,7 +879,7 @@ func (q *Queries) ListSnapshotActiveSignatures(ctx context.Context, arg ListSnap
 }
 
 const listSnapshotReviewMemory = `-- name: ListSnapshotReviewMemory :many
-select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at from work_review_memory
+select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at from work_review_memory
 where project_id = $1
   and active = true
   and conflict_bucket_keys ?| $2::text[]
@@ -907,6 +907,7 @@ func (q *Queries) ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshot
 			&i.WorkSignatureID,
 			&i.ExactSignatureHashAtDecision,
 			&i.SemanticFingerprintAtDecision,
+			&i.SignaturePayload,
 			&i.ConflictBucketKeys,
 			&i.SignatureVersion,
 			&i.Decision,
@@ -1319,23 +1320,24 @@ const upsertWorkReviewMemory = `-- name: UpsertWorkReviewMemory :one
 insert into work_review_memory
   (project_id, candidate_id, work_signature_id,
    exact_signature_hash_at_decision, semantic_fingerprint_at_decision,
-   conflict_bucket_keys, signature_version, decision, decision_scope,
+   signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope,
    evidence_fingerprint_at_decision, snoozed_until,
    material_change_policy_version, decided_by, decided_at, active)
 values
   ($1, $2, $3,
    $4,
    $5,
-   $6::jsonb, $7,
-   $8, $9::jsonb,
-   $10, $11,
-   $12, $13,
-   $14, $15)
+   $6::jsonb, $7::jsonb, $8,
+   $9, $10::jsonb,
+   $11, $12,
+   $13, $14,
+   $15, $16)
 on conflict (project_id, exact_signature_hash_at_decision) where active = true
 do update set
   candidate_id = excluded.candidate_id,
   work_signature_id = excluded.work_signature_id,
   semantic_fingerprint_at_decision = excluded.semantic_fingerprint_at_decision,
+  signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
   signature_version = excluded.signature_version,
   decision = excluded.decision,
@@ -1346,7 +1348,7 @@ do update set
   decided_by = excluded.decided_by,
   decided_at = excluded.decided_at,
   updated_at = now()
-returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
 `
 
 type UpsertWorkReviewMemoryParams struct {
@@ -1355,6 +1357,7 @@ type UpsertWorkReviewMemoryParams struct {
 	WorkSignatureID               pgtype.UUID        `json:"work_signature_id"`
 	ExactSignatureHashAtDecision  string             `json:"exact_signature_hash_at_decision"`
 	SemanticFingerprintAtDecision string             `json:"semantic_fingerprint_at_decision"`
+	SignaturePayload              json.RawMessage    `json:"signature_payload"`
 	ConflictBucketKeys            json.RawMessage    `json:"conflict_bucket_keys"`
 	SignatureVersion              string             `json:"signature_version"`
 	Decision                      string             `json:"decision"`
@@ -1374,6 +1377,7 @@ func (q *Queries) UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkRevi
 		arg.WorkSignatureID,
 		arg.ExactSignatureHashAtDecision,
 		arg.SemanticFingerprintAtDecision,
+		arg.SignaturePayload,
 		arg.ConflictBucketKeys,
 		arg.SignatureVersion,
 		arg.Decision,
@@ -1393,6 +1397,7 @@ func (q *Queries) UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkRevi
 		&i.WorkSignatureID,
 		&i.ExactSignatureHashAtDecision,
 		&i.SemanticFingerprintAtDecision,
+		&i.SignaturePayload,
 		&i.ConflictBucketKeys,
 		&i.SignatureVersion,
 		&i.Decision,
