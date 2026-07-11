@@ -25,6 +25,7 @@ var legacyDoctorTechnicalOpportunityTypes = map[string]bool{
 	"noindex": true, "noindex_conflict": true, "canonical_missing": true, "canonical_mismatch": true,
 	"canonical_invalid": true, "canonical_multiple": true, "broken_url": true, "soft_404": true,
 	"redirect_loop": true, "redirect_chain": true, "title_missing": true, "missing_title": true,
+	"title_duplicate": true, "duplicate_title": true, "title_too_long": true, "title_invalid": true,
 	"metadata_title": true, "meta_description_missing": true, "metadata_description": true, "h1_missing": true,
 	"internal_link_gap": true, "zero_internal_links": true, "broken_internal_link": true,
 	"orphan_page": true, "important_page_missing_from_sitemap": true, "sitemap_update": true,

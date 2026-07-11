@@ -137,10 +137,11 @@ func TestPostgresExpandedTechnicalPredicateSelectsAndFencesEveryDoctorType(t *te
 		"geo_crawler_access_blocked", "meta_description_missing", "metadata_description", "h1_missing",
 		"important_page_missing_from_sitemap", "unsafe_mdx_detected", "metadata_readability",
 		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+		"title_duplicate", "duplicate_title", "title_too_long", "title_invalid",
 	}
 	for i, opportunityType := range types {
 		page := fmt.Sprintf("https://example.com/%d", i)
-		evidence := fmt.Sprintf(`{"issue":%q}`, opportunityType)
+		evidence := fmt.Sprintf(`{"issue":%q,"expected_title":"Corrected unique title"}`, opportunityType)
 		if _, err := pool.Exec(ctx, `insert into seo_opportunities(project_id,type,status,page_url,normalized_page_url,evidence) values($1,$2,'open',$3,$3,$4)`, projectID, opportunityType, page, evidence); err != nil {
 			t.Fatalf("legacy insert %s: %v", opportunityType, err)
 		}
@@ -160,7 +161,7 @@ func TestPostgresExpandedTechnicalPredicateSelectsAndFencesEveryDoctorType(t *te
 	}
 	for i, opportunityType := range types {
 		page := fmt.Sprintf("https://example.com/new-%d", i)
-		evidence := fmt.Sprintf(`{"issue":%q}`, opportunityType)
+		evidence := fmt.Sprintf(`{"issue":%q,"expected_title":"Corrected unique title"}`, opportunityType)
 		if _, err := pool.Exec(ctx, `insert into seo_opportunities(project_id,type,status,page_url,normalized_page_url,evidence) values($1,$2,'open',$3,$3,$4)`, projectID, opportunityType, page, evidence); err == nil {
 			t.Fatalf("canonical writer fence allowed %s", opportunityType)
 		}

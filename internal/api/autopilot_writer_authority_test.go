@@ -39,6 +39,7 @@ func TestCanonicalAuthorityRejectsEveryEmittedDoctorTechnicalType(t *testing.T) 
 		"geo_crawler_access_blocked", "meta_description_missing", "h1_missing", "important_page_missing_from_sitemap",
 		"unsafe_mdx_detected", "metadata_readability", "duplicate_metadata_template", "supported_fact_extractability",
 		"source_association", "entity_naming_consistency",
+		"title_duplicate", "duplicate_title", "title_too_long", "title_invalid",
 	} {
 		if legacyTechnicalAutopilotAllowed(canonical, db.SeoOpportunity{Type: opportunityType}, AutopilotPlanAction{}) {
 			t.Fatalf("canonical authority allowed legacy technical type %q", opportunityType)

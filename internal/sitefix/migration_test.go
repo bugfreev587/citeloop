@@ -437,6 +437,7 @@ func TestForwardMigrationExpandsLegacyDoctorTechnicalPredicate(t *testing.T) {
 		"geo_crawler_access_blocked", "meta_description_missing", "metadata_description", "h1_missing",
 		"important_page_missing_from_sitemap", "unsafe_mdx_detected", "metadata_readability",
 		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+		"title_duplicate", "duplicate_title", "title_too_long", "title_invalid",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("forward predicate migration missing %q", want)
@@ -461,6 +462,26 @@ func TestExpandedLegacyDoctorTypesAreMigratable(t *testing.T) {
 		row := fixtureLegacyOpportunity(projectID, opportunityType, "https://example.com/page", `{"issue":"`+opportunityType+`"}`)
 		if _, _, reason := canonicalLegacyMigrationIdentity(row); reason != "" {
 			t.Fatalf("%s not migratable: %s", opportunityType, reason)
+		}
+	}
+	for _, opportunityType := range []string{"title_duplicate", "duplicate_title", "title_too_long", "title_invalid"} {
+		row := fixtureLegacyOpportunity(projectID, opportunityType, "https://example.com/page", `{"issue":"`+opportunityType+`","expected_title":"Corrected unique title"}`)
+		if _, _, reason := canonicalLegacyMigrationIdentity(row); reason != "" {
+			t.Fatalf("%s with an explicit expected title not migratable: %s", opportunityType, reason)
+		}
+	}
+}
+
+func TestUpdateTitleMigrationRequiresExplicitExpectedTitle(t *testing.T) {
+	projectID := uuid.New()
+	for _, opportunityType := range []string{"title_duplicate", "duplicate_title", "title_too_long", "title_invalid"} {
+		row := fixtureLegacyOpportunity(projectID, opportunityType, "https://example.com/page", `{"issue":"`+opportunityType+`"}`)
+		report, err := ClassifyLegacyTechnicalActions(projectID, "legacy", []LegacyTechnicalAction{row})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.ReviewCount != 1 || report.Items[0].ReasonCode != "acceptance_criterion_incomplete" {
+			t.Fatalf("%s must fail closed to migration review: %+v", opportunityType, report)
 		}
 	}
 }
