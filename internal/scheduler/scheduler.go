@@ -847,12 +847,13 @@ func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Q
 	stages := cfg.OpportunityFindingStages(true)
 	var firstErr error
 	if stages.SignalScan {
-		if err := s.runSEOForProject(ctx, q, p); err != nil {
+		if err := s.runSEOForProject(ctx, q, p, cfg); err != nil {
 			firstErr = fmt.Errorf("signal scan: %w", err)
 		}
 	}
 	if stages.AIDiscovery {
-		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q), opportunityfinding.AIDiscoveryOptions{
+		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q, comparator), opportunityfinding.AIDiscoveryOptions{
 			ObserveRequest: s.geoObserveRequest(),
 		})
 		if err != nil && firstErr == nil {
@@ -875,8 +876,9 @@ func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Q
 	return firstErr
 }
 
-func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	runner := s.newSEORunner(q)
+func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project, cfg config.ProjectConfig) error {
+	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+	runner := s.newSEORunner(q, comparator)
 	syncResult, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
 	if err != nil {
 		return fmt.Errorf("seo sync: %w", err)
@@ -917,7 +919,7 @@ func (s *Scheduler) TickSEODoctor(ctx context.Context) {
 }
 
 func (s *Scheduler) runSEODoctorForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	runner := s.newSEORunner(q)
+	runner := s.newSEORunner(q, nil)
 	siteURL := s.BlogBaseURL
 	if cfg, err := config.Parse(p.Config); err == nil && strings.TrimSpace(cfg.SiteURL) != "" {
 		siteURL = cfg.SiteURL
@@ -948,18 +950,19 @@ func (s *Scheduler) runSEODoctorForProject(ctx context.Context, q *db.Queries, p
 	return nil
 }
 
-func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
+func (s *Scheduler) newSEORunner(q *db.Queries, growthComparator discovery.SemanticComparator) seoRunner {
 	if s.seoRunnerFactory != nil {
 		return s.seoRunnerFactory(q)
 	}
 	return seopkg.Service{
-		Q:           q,
-		Pool:        s.Pool,
-		HTTPClient:  s.httpClient,
-		BlogBaseURL: s.BlogBaseURL,
-		GoogleData:  s.SEOData,
-		LLM:         s.LLM,
-		Now:         s.now,
+		Q:                q,
+		Pool:             s.Pool,
+		HTTPClient:       s.httpClient,
+		BlogBaseURL:      s.BlogBaseURL,
+		GoogleData:       s.SEOData,
+		LLM:              s.LLM,
+		GrowthComparator: growthComparator,
+		Now:              s.now,
 	}
 }
 
@@ -1333,7 +1336,15 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 }
 
 func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID)
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AllowsGrowthAI(config.GrowthAITriggerScheduled) {
+		return nil
+	}
+	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID, comparator)
 	s.logger().Info(
 		"geo tick complete",
 		"project", p.ID,
@@ -1347,19 +1358,15 @@ func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Proje
 	return err
 }
 
-func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID) (opportunityfinding.AIDiscoveryResult, error) {
-	svc := s.geoService(ctx, q)
+func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID, comparator discovery.SemanticComparator) (opportunityfinding.AIDiscoveryResult, error) {
+	svc := s.geoService(ctx, q, comparator)
 	result, err := opportunityfinding.RunAIDiscovery(ctx, projectID, q, svc, opportunityfinding.AIDiscoveryOptions{
 		ObserveRequest: s.geoObserveRequest(),
 	})
 	return result, err
 }
 
-func (s *Scheduler) geoService(ctx context.Context, q *db.Queries) geo.Service {
-	var comparator discovery.SemanticComparator
-	if s.LLM != nil {
-		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", "")
-	}
+func (s *Scheduler) geoService(ctx context.Context, q *db.Queries, comparator discovery.SemanticComparator) geo.Service {
 	return geo.Service{
 		Q:              q,
 		GrowthWriter:   growthwork.NewService(s.Pool, q, comparator),

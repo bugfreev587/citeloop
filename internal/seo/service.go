@@ -47,22 +47,19 @@ type GoogleDataProvider interface {
 
 // Service coordinates the Operations Loop backend workflow.
 type Service struct {
-	Q             *db.Queries
-	Pool          *pgxpool.Pool
-	HTTPClient    *http.Client
-	BlogBaseURL   string
-	GoogleData    GoogleDataProvider
-	LLM           llm.Provider
-	DoctorAIModel string
-	Now           func() time.Time
+	Q                *db.Queries
+	Pool             *pgxpool.Pool
+	HTTPClient       *http.Client
+	BlogBaseURL      string
+	GoogleData       GoogleDataProvider
+	LLM              llm.Provider
+	DoctorAIModel    string
+	GrowthComparator discovery.SemanticComparator
+	Now              func() time.Time
 }
 
 func (s Service) createGrowthOpportunity(ctx context.Context, in db.UpsertSEOOpportunityParams) (db.SeoOpportunity, error) {
-	var comparator discovery.SemanticComparator
-	if s.LLM != nil {
-		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
-	}
-	return growthwork.NewService(s.Pool, s.Q, comparator).CreateOpportunity(ctx, db.CreateCanonicalGrowthOpportunityParams{
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).CreateOpportunity(ctx, db.CreateCanonicalGrowthOpportunityParams{
 		ID: uuid.New(), ProjectID: in.ProjectID, Type: in.Type,
 		PriorityScore: in.PriorityScore, Confidence: in.Confidence, PageUrl: in.PageUrl,
 		NormalizedPageUrl: in.NormalizedPageUrl, ArticleID: in.ArticleID, TopicID: in.TopicID,
@@ -73,19 +70,11 @@ func (s Service) createGrowthOpportunity(ctx context.Context, in db.UpsertSEOOpp
 }
 
 func (s Service) EnsureGrowthOpportunityReservations(ctx context.Context, projectID uuid.UUID) error {
-	var comparator discovery.SemanticComparator
-	if s.LLM != nil {
-		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
-	}
-	return growthwork.NewService(s.Pool, s.Q, comparator).EnsureLegacyReservations(ctx, projectID)
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).EnsureLegacyReservations(ctx, projectID)
 }
 
 func (s Service) EnsureGrowthOpportunityReserved(ctx context.Context, projectID, opportunityID uuid.UUID) error {
-	var comparator discovery.SemanticComparator
-	if s.LLM != nil {
-		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.DoctorAIModel)
-	}
-	return growthwork.NewService(s.Pool, s.Q, comparator).EnsureOpportunityReserved(ctx, projectID, opportunityID)
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).EnsureOpportunityReserved(ctx, projectID, opportunityID)
 }
 
 type SyncResult struct {

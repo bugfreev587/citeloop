@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/google/uuid"
@@ -65,7 +66,7 @@ func TestRunSEOForProjectRunsSyncAnalyzeBrief(t *testing.T) {
 		},
 	}
 
-	err := s.runSEOForProject(context.Background(), nil, db.Project{ID: uuid.New()})
+	err := s.runSEOForProject(context.Background(), nil, db.Project{ID: uuid.New()}, config.Default())
 	if err != nil {
 		t.Fatalf("runSEOForProject returned error: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestRunSEOForProjectStopsOnSyncError(t *testing.T) {
 		},
 	}
 
-	err := s.runSEOForProject(context.Background(), nil, db.Project{ID: uuid.New()})
+	err := s.runSEOForProject(context.Background(), nil, db.Project{ID: uuid.New()}, config.Default())
 	if err == nil {
 		t.Fatal("runSEOForProject returned nil, want sync error")
 	}

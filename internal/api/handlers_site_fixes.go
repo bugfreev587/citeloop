@@ -589,13 +589,6 @@ type growthProjectCutover interface {
 	EnsureProjectCutover(context.Context, uuid.UUID) error
 }
 
-func authorizedGrowthComparator(projectConfig config.ProjectConfig, provider llm.Provider, model string) discovery.SemanticComparator {
-	if provider == nil || !projectConfig.AllowsGrowthAI(config.GrowthAITriggerManual) {
-		return nil
-	}
-	return discovery.NewLLMSemanticComparator(provider, "tokengate", model).WithPurpose(llm.PurposeDefault)
-}
-
 func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Provider, model string) DoctorSiteFixService {
 	var comparator discovery.SemanticComparator
 	if provider != nil {
@@ -638,7 +631,8 @@ func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, pr
 	if err != nil {
 		return DoctorSiteFixResponse{}, false, fmt.Errorf("load Growth AI authority: %w", err)
 	}
-	growthCutover := s.newGrowthCutover(authorizedGrowthComparator(projectConfig, s.growthProvider, s.growthModel))
+	growthComparator := (growthwork.ComparatorAuthority{Provider: s.growthProvider, Model: s.growthModel}).ForConfig(projectConfig, config.GrowthAITriggerManual)
+	growthCutover := s.newGrowthCutover(growthComparator)
 	if growthCutover == nil {
 		return DoctorSiteFixResponse{}, false, errors.New("Growth visibility gate unavailable")
 	}

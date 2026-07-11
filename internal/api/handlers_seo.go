@@ -17,6 +17,8 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -39,6 +41,28 @@ func (s *Server) seoServiceForProject(ctx context.Context, projectID uuid.UUID) 
 		svc.GoogleData = provider
 	}
 	return svc
+}
+
+func (s *Server) growthComparatorForProject(ctx context.Context, projectID uuid.UUID, trigger config.GrowthAITrigger) (discovery.SemanticComparator, error) {
+	project, err := s.Q.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	projectConfig, err := config.Parse(project.Config)
+	if err != nil {
+		return nil, err
+	}
+	return (growthwork.ComparatorAuthority{Provider: s.LLM, Model: s.Env.TokenGateModel}).ForConfig(projectConfig, trigger), nil
+}
+
+func (s *Server) seoServiceWithGrowthAuthority(ctx context.Context, projectID uuid.UUID, trigger config.GrowthAITrigger) (seopkg.Service, error) {
+	svc := s.seoServiceForProject(ctx, projectID)
+	comparator, err := s.growthComparatorForProject(ctx, projectID, trigger)
+	if err != nil {
+		return seopkg.Service{}, err
+	}
+	svc.GrowthComparator = comparator
+	return svc, nil
 }
 
 func (s *Server) getSEOOverview(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +324,11 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 	stages := cfg.OpportunityFindingStages(false)
 	response := map[string]any{}
 	if stages.SignalScan {
-		svc := s.seoServiceForProject(r.Context(), projectID)
+		svc, err := s.seoServiceWithGrowthAuthority(r.Context(), projectID, config.GrowthAITriggerManual)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		syncResult, err := svc.Sync(r.Context(), projectID, "")
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
@@ -315,7 +343,12 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 		response["analyze"] = analyzeResult
 	}
 	if stages.AIDiscovery {
-		aiResult, err := opportunityfinding.RunAIDiscovery(r.Context(), projectID, s.Q, s.geoService(r.Context()), opportunityfinding.AIDiscoveryOptions{
+		geoService, err := s.geoServiceForProject(r.Context(), projectID, config.GrowthAITriggerManual)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		aiResult, err := opportunityfinding.RunAIDiscovery(r.Context(), projectID, s.Q, geoService, opportunityfinding.AIDiscoveryOptions{
 			ObserveRequest: s.aiDiscoveryObserveRequest(),
 		})
 		if err != nil {
@@ -529,7 +562,11 @@ func (s *Server) syncSEO(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 	}
-	svc := s.seoServiceForProject(r.Context(), projectID)
+	svc, err := s.seoServiceWithGrowthAuthority(r.Context(), projectID, config.GrowthAITriggerManual)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	syncResult, err := svc.Sync(r.Context(), projectID, in.SiteURL)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -549,7 +586,12 @@ func (s *Server) analyzeSEO(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad project id")
 		return
 	}
-	result, err := s.seoService().Analyze(r.Context(), projectID)
+	svc, err := s.seoServiceWithGrowthAuthority(r.Context(), projectID, config.GrowthAITriggerManual)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result, err := svc.Analyze(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -806,7 +848,11 @@ var errGrowthOpportunityHardBlocked = errors.New("Growth opportunity is blocked 
 
 func (s *Server) requireGrowthOpportunityExecutable(ctx context.Context, projectID, opportunityID uuid.UUID) error {
 	if s.Pool != nil {
-		if err := s.seoService().EnsureGrowthOpportunityReserved(ctx, projectID, opportunityID); err != nil {
+		svc, err := s.seoServiceWithGrowthAuthority(ctx, projectID, config.GrowthAITriggerManual)
+		if err != nil {
+			return fmt.Errorf("load Growth AI authority: %w", err)
+		}
+		if err := svc.EnsureGrowthOpportunityReserved(ctx, projectID, opportunityID); err != nil {
 			return fmt.Errorf("canonicalize Growth opportunity reservations: %w", err)
 		}
 	}
