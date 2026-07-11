@@ -92,6 +92,32 @@ func TestCheckURLExtractsRepairMetadataFacts(t *testing.T) {
 	}
 }
 
+func TestCheckURLProducesCitationReadinessEvidenceForDoctor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<!doctype html><html><head>
+<meta name="application-name" content="Cite Loop"><meta property="og:site_name" content="CiteLoop">
+</head><body><article><h1>Explain the existing Doctor product</h1><p>Doctor checks the existing live site for technical problems.</p>
+<p>Each finding keeps the source evidence needed for verification.</p>
+<a href="https://docs.example.org/evidence">Evidence source</a></article></body></html>`))
+	}))
+	defer server.Close()
+
+	result := Service{}.checkURL(context.Background(), server.URL, server.URL)
+	citation, ok := result.RawDetails["citation_readiness"].(map[string]any)
+	if !ok {
+		t.Fatalf("citation_readiness evidence = %#v", result.RawDetails["citation_readiness"])
+	}
+	if citation["supported_fact_extractability"] != "needs_optimization" || citation["source_association_status"] != "missing_visible_association" {
+		t.Fatalf("citation readiness = %#v", citation)
+	}
+	if citation["entity_name"] != "Cite Loop" || citation["canonical_entity_name"] != "CiteLoop" {
+		t.Fatalf("entity evidence = %#v", citation)
+	}
+	if propositions, ok := citation["preserved_propositions"].([]string); !ok || len(propositions) != 2 {
+		t.Fatalf("preserved propositions = %#v", citation["preserved_propositions"])
+	}
+}
+
 func TestGA4IntegrationFailureRequiresReconnectForInsufficientScope(t *testing.T) {
 	err := errors.New(`google api status 403: { "error": { "code": 403, "message": "Request had insufficient authentication scopes.", "status": "PERMISSION_DENIED", "details": [ { "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT" } ] } }`)
 

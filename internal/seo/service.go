@@ -497,51 +497,7 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		}
 		return result, err
 	}
-	articles, err := s.Q.ListPublishedCanonicalArticlesForSEO(ctx, projectID)
-	if err != nil {
-		return finish("error", result, err)
-	}
 	prop, _ := s.ensureProperty(ctx, projectID, "")
-	for _, article := range articles {
-		if article.CanonicalUrl == nil {
-			continue
-		}
-		normalized, err := NormalizeURL(*article.CanonicalUrl, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig))
-		if err != nil {
-			return finish("error", result, err)
-		}
-		if article.CanonicalUrlVerifiedAt.Valid && article.Status == "published" {
-			continue
-		}
-		evidence := map[string]any{
-			"status":                    article.Status,
-			"canonical_url_verified_at": article.CanonicalUrlVerifiedAt.Valid,
-			"source":                    "articles_state",
-		}
-		action := "technical SEO fix task"
-		impact := "Confirm canonical URL availability and indexing health before generating more query-level recommendations."
-		_, err = s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
-			ProjectID:         projectID,
-			Type:              "indexing_anomaly",
-			Status:            "open",
-			PriorityScore:     pgutil.Numeric(80),
-			Confidence:        pgutil.Numeric(70),
-			PageUrl:           article.CanonicalUrl,
-			NormalizedPageUrl: normalized,
-			ArticleID:         uuidToPG(article.ID),
-			TopicID:           uuidToPG(article.TopicID),
-			Evidence:          mustJSON(evidence),
-			RecommendedAction: &action,
-			ExpectedImpact:    &impact,
-			Effort:            2,
-			RiskLevel:         "low",
-			CreatedByRunID:    uuidToPG(run.ID),
-		})
-		if err != nil {
-			return finish("error", result, err)
-		}
-		result.GeneratedAnomalies++
-	}
 	metricGenerated, err := s.generateSearchMetricOpportunities(ctx, projectID, run.ID, prop)
 	if err != nil {
 		return finish("error", result, err)
@@ -1384,9 +1340,38 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 		return out
 	}
 	logoCandidates := []string{}
+	articlePropositions := []string{}
+	articleSources := []string{}
+	hasCitationAssociation := false
+	hasExtractableStructure := false
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
+			inArticle := insideElement(n, "article")
+			if inArticle {
+				switch n.Data {
+				case "p", "li", "dd":
+					if proposition := strings.Join(strings.Fields(nodeText(n)), " "); len([]rune(proposition)) >= 20 {
+						articlePropositions = append(articlePropositions, proposition)
+					}
+				case "dl", "table":
+					hasExtractableStructure = true
+				case "cite":
+					hasCitationAssociation = true
+				case "a":
+					if relHas(strings.ToLower(attr(n, "rel")), "cite") {
+						hasCitationAssociation = true
+					}
+					if source := resolveURL(attr(n, "href"), baseURL); source != "" {
+						if parsed, parseErr := url.Parse(source); parseErr == nil && baseURL != nil && !strings.EqualFold(parsed.Hostname(), baseURL.Hostname()) {
+							articleSources = append(articleSources, source)
+						}
+					}
+				}
+				if strings.TrimSpace(attr(n, "itemprop")) != "" {
+					hasExtractableStructure = true
+				}
+			}
 			switch n.Data {
 			case "html":
 				if lang := strings.TrimSpace(attr(n, "lang")); lang != "" {
@@ -1396,6 +1381,12 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 				if _, ok := out["page_title"]; !ok {
 					if title := strings.TrimSpace(nodeText(n)); title != "" {
 						out["page_title"] = title
+					}
+				}
+			case "h1":
+				if _, ok := out["primary_intent"]; !ok {
+					if heading := strings.Join(strings.Fields(nodeText(n)), " "); heading != "" {
+						out["primary_intent"] = heading
 					}
 				}
 			case "link":
@@ -1462,7 +1453,46 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 	if logos := uniqueNonEmptyStrings(logoCandidates); len(logos) > 0 {
 		out["logo_candidates"] = logos
 	}
+	citation := map[string]any{}
+	propositions := uniqueNonEmptyStrings(articlePropositions)
+	sources := uniqueNonEmptyStrings(articleSources)
+	if len(propositions) >= 2 && len(sources) > 0 {
+		citation["preserved_propositions"] = propositions
+		citation["added_propositions"] = []string{}
+		citation["removed_propositions"] = []string{}
+		citation["source_association_changes"] = []any{}
+		if !hasExtractableStructure {
+			citation["supported_fact_extractability"] = "needs_optimization"
+		}
+		if !hasCitationAssociation {
+			citation["source_association_status"] = "missing_visible_association"
+		}
+	}
+	entityName := normalizedEvidenceText(out["application_name"])
+	canonicalEntityName := normalizedEvidenceText(out["og_site_name"])
+	if entityName != "" && canonicalEntityName != "" && !strings.EqualFold(entityName, canonicalEntityName) {
+		citation["entity_name"] = entityName
+		citation["canonical_entity_name"] = canonicalEntityName
+		if _, ok := citation["preserved_propositions"]; !ok {
+			citation["preserved_propositions"] = []string{}
+			citation["added_propositions"] = []string{}
+			citation["removed_propositions"] = []string{}
+			citation["source_association_changes"] = []any{}
+		}
+	}
+	if len(citation) > 0 {
+		out["citation_readiness"] = citation
+	}
 	return out
+}
+
+func insideElement(node *html.Node, name string) bool {
+	for current := node; current != nil; current = current.Parent {
+		if current.Type == html.ElementNode && strings.EqualFold(current.Data, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func attr(n *html.Node, name string) string {

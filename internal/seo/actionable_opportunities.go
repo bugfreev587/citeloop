@@ -56,19 +56,7 @@ func actionableSEOOpportunityCandidates(
 	queryRows []searchQueryRollup,
 ) []actionableSEOOpportunityCandidate {
 	candidates := make([]actionableSEOOpportunityCandidate, 0)
-	for _, check := range checks {
-		if normalized := strings.TrimSpace(check.NormalizedPageURL); normalized != "" {
-			if check.InternalLinkCount != nil && *check.InternalLinkCount <= 1 {
-				candidates = append(candidates, internalLinkGapCandidate(check))
-			}
-			if strings.EqualFold(strings.TrimSpace(check.StructuredDataStatus), "missing") {
-				candidates = append(candidates, schemaGapCandidate(check))
-			}
-			if issue := technicalVisibilityIssue(check); issue != "" {
-				candidates = append(candidates, technicalVisibilityCandidate(check, issue))
-			}
-		}
-	}
+	_ = checks // Technical checks are Doctor evidence, never direct Growth work.
 	for _, item := range inventory {
 		if strings.TrimSpace(item.NormalizedURL) == "" && strings.TrimSpace(item.URL) == "" {
 			continue
@@ -79,85 +67,6 @@ func actionableSEOOpportunityCandidates(
 	}
 	candidates = append(candidates, cannibalizationCandidates(queryRows)...)
 	return dedupeAndSortActionableCandidates(candidates)
-}
-
-func internalLinkGapCandidate(check technicalCheckRollup) actionableSEOOpportunityCandidate {
-	count := int32(0)
-	if check.InternalLinkCount != nil {
-		count = *check.InternalLinkCount
-	}
-	return actionableSEOOpportunityCandidate{
-		Type:              "internal_link_gap",
-		PageURL:           check.PageURL,
-		NormalizedPageURL: check.NormalizedPageURL,
-		PriorityScore:     clampScore(72 - float64(count)*4),
-		Confidence:        76,
-		RecommendedAction: "Add contextual internal links to this existing page",
-		ExpectedImpact:    "Improves crawl paths, topical authority flow, and answer-engine context without publishing a new page.",
-		Effort:            2,
-		RiskLevel:         "low",
-		Evidence: actionableEvidence("technical_checks", "internal_link_gap", check.NormalizedPageURL, "",
-			"internal_link_gap = latest crawl internal_link_count<=1",
-			"low",
-			"The latest crawl found too few internal links pointing through this page, so crawlers and answer engines may not understand its cluster role.",
-			[]string{"technical_checks", "public_crawl"},
-			map[string]any{
-				"internal_link_count": count,
-				"page_url":            check.PageURL,
-			},
-		),
-	}
-}
-
-func schemaGapCandidate(check technicalCheckRollup) actionableSEOOpportunityCandidate {
-	return actionableSEOOpportunityCandidate{
-		Type:              "schema_gap",
-		PageURL:           check.PageURL,
-		NormalizedPageURL: check.NormalizedPageURL,
-		PriorityScore:     68,
-		Confidence:        72,
-		RecommendedAction: "Add structured data to the existing page",
-		ExpectedImpact:    "Makes page entities, facts, and answers easier for search engines and answer engines to parse.",
-		Effort:            2,
-		RiskLevel:         "medium",
-		Evidence: actionableEvidence("technical_checks", "schema_gap", check.NormalizedPageURL, "",
-			"schema_gap = latest crawl structured_data_status=missing",
-			"medium",
-			"The latest crawl did not find JSON-LD or structured data on a page that can benefit from extractable facts.",
-			[]string{"technical_checks", "structured_data_status"},
-			map[string]any{
-				"structured_data_status": check.StructuredDataStatus,
-				"page_url":               check.PageURL,
-			},
-		),
-	}
-}
-
-func technicalVisibilityCandidate(check technicalCheckRollup, issue string) actionableSEOOpportunityCandidate {
-	return actionableSEOOpportunityCandidate{
-		Type:              "technical_visibility_issue",
-		PageURL:           check.PageURL,
-		NormalizedPageURL: check.NormalizedPageURL,
-		PriorityScore:     84,
-		Confidence:        82,
-		RecommendedAction: "Fix the technical visibility blocker before creating more content",
-		ExpectedImpact:    "Restores crawl/index reliability so SEO and GEO improvements can be measured on the affected page.",
-		Effort:            2,
-		RiskLevel:         "medium",
-		Evidence: actionableEvidence("technical_checks", "technical_visibility_issue:"+issue, check.NormalizedPageURL, "",
-			"technical_visibility_issue = latest crawl shows http, robots, or canonical blocker",
-			"medium",
-			"The latest crawl found a technical state that can block indexing or make visibility measurement unreliable.",
-			[]string{"technical_checks", "crawl_blocker"},
-			map[string]any{
-				"issue":            issue,
-				"http_status":      check.HTTPStatus,
-				"robots_status":    check.RobotsStatus,
-				"canonical_status": check.CanonicalStatus,
-				"page_url":         check.PageURL,
-			},
-		),
-	}
 }
 
 func thinEvidenceCandidate(item inventoryEvidenceRollup) actionableSEOOpportunityCandidate {
@@ -242,7 +151,7 @@ func cannibalizationCandidates(rows []searchQueryRollup) []actionableSEOOpportun
 			NormalizedPageURL: top.NormalizedPageURL,
 			PriorityScore:     clampScore(70 + totalImpressions/180),
 			Confidence:        70,
-			RecommendedAction: "Consolidate competing pages for the same query",
+			RecommendedAction: "Test an internal-link and consolidation strategy across competing pages for the same query",
 			ExpectedImpact:    "Clarifies the preferred page for a query where Search Console shows multiple URLs splitting the same demand.",
 			Effort:            3,
 			RiskLevel:         "medium",
@@ -262,20 +171,6 @@ func cannibalizationCandidates(rows []searchQueryRollup) []actionableSEOOpportun
 		})
 	}
 	return out
-}
-
-func technicalVisibilityIssue(check technicalCheckRollup) string {
-	if check.HTTPStatus != nil && (*check.HTTPStatus < 200 || *check.HTTPStatus >= 300) {
-		return "http_status"
-	}
-	robots := strings.ToLower(strings.TrimSpace(check.RobotsStatus))
-	if robots == "noindex" || robots == "disallowed" || robots == "blocked" {
-		return "robots_" + robots
-	}
-	if strings.EqualFold(strings.TrimSpace(check.CanonicalStatus), "missing") {
-		return "canonical_missing"
-	}
-	return ""
 }
 
 func actionableEvidence(source, reason, normalizedPageURL, query, method, impactRange, whyNow string, notes []string, extra map[string]any) map[string]any {

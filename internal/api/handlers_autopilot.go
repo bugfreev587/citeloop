@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,19 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var errCanonicalDoctorOwnsTechnicalRepair = errors.New("canonical Doctor authority owns technical repair")
+
+var legacyDoctorTechnicalOpportunityTypes = map[string]bool{
+	"schema_gap": true, "structured_data_missing": true, "json_ld_missing": true, "schema_missing": true,
+	"indexing_anomaly": true, "technical_visibility_issue": true, "robots_blocked": true, "robots_conflict": true,
+	"noindex": true, "noindex_conflict": true, "canonical_missing": true, "canonical_mismatch": true,
+	"canonical_invalid": true, "canonical_multiple": true, "broken_url": true, "soft_404": true,
+	"redirect_loop": true, "redirect_chain": true, "title_missing": true, "missing_title": true,
+	"metadata_title": true, "meta_description_missing": true, "metadata_description": true, "h1_missing": true,
+	"internal_link_gap": true, "zero_internal_links": true, "broken_internal_link": true,
+	"orphan_page": true, "important_page_missing_from_sitemap": true, "sitemap_update": true,
+}
 
 type AutopilotReadinessGate struct {
 	Key        string `json:"key"`
@@ -785,6 +799,18 @@ func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uu
 	if err != nil {
 		return db.ContentAction{}, err
 	}
+	if isLegacyDoctorTechnicalOpportunity(opp) {
+		authority, authorityErr := s.Q.GetProductWriterAuthority(r.Context(), db.GetProductWriterAuthorityParams{
+			ProjectID: projectID,
+			Product:   "doctor",
+		})
+		if authorityErr != nil {
+			return db.ContentAction{}, authorityErr
+		}
+		if !legacyTechnicalAutopilotAllowed(authority, opp, candidate) {
+			return db.ContentAction{}, errCanonicalDoctorOwnsTechnicalRepair
+		}
+	}
 	actionType := strings.TrimSpace(valueOr(candidate.RecommendedAction, candidate.Type))
 	if actionType == "" {
 		actionType = candidate.ActionBucket
@@ -856,6 +882,45 @@ func (s *Server) executeAutopilotCandidate(r *http.Request, projectID, planID uu
 	}
 	_, _ = s.Q.UpdateSEOOpportunityStatus(r.Context(), db.UpdateSEOOpportunityStatusParams{ID: opp.ID, ProjectID: projectID, Status: "converted"})
 	return action, nil
+}
+
+func legacyTechnicalAutopilotAllowed(authority db.ProductWriterAuthority, opportunity db.SeoOpportunity, _ AutopilotPlanAction) bool {
+	if !isLegacyDoctorTechnicalOpportunity(opportunity) {
+		return true
+	}
+	return authority.Product == "doctor" && authority.WriterAuthority == "legacy" && !authority.WriteFenced
+}
+
+func isLegacyDoctorTechnicalOpportunity(opportunity db.SeoOpportunity) bool {
+	opportunityType := strings.ToLower(strings.TrimSpace(opportunity.Type))
+	if legacyDoctorTechnicalOpportunityTypes[opportunityType] {
+		return true
+	}
+	if opportunityType != "direct_patch" && opportunityType != "metadata_rewrite" {
+		return false
+	}
+	var evidence map[string]any
+	if json.Unmarshal(opportunity.Evidence, &evidence) != nil {
+		return false
+	}
+	owner := strings.ToLower(strings.TrimSpace(valueOrString(evidence["work_type"], evidence["owner"])))
+	if owner != WorkTypeFixSiteIssue && owner != "doctor" {
+		return false
+	}
+	added, exists := evidence["added_propositions"]
+	if !exists {
+		return true
+	}
+	values, ok := added.([]any)
+	return ok && len(values) == 0
+}
+
+func valueOrString(primary, fallback any) string {
+	if value, ok := primary.(string); ok && strings.TrimSpace(value) != "" {
+		return value
+	}
+	value, _ := fallback.(string)
+	return value
 }
 
 func manualRecoveryPlan(candidate AutopilotPlanAction) []string {

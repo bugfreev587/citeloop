@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestServicePersistsRobotsDisallowedBlocker(t *testing.T) {
+func TestServicePersistsRobotsDisallowedEvidenceWithoutGrowthOpportunity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/robots.txt" {
 			w.WriteHeader(http.StatusOK)
@@ -51,8 +51,8 @@ func TestServicePersistsRobotsDisallowedBlocker(t *testing.T) {
 	if !store.started || store.finishedStatus != "ok" {
 		t.Fatalf("run started=%v finished=%q, want started and ok", store.started, store.finishedStatus)
 	}
-	if result.CreatedBlockers != 1 || store.opportunityCount != 1 {
-		t.Fatalf("blockers result=%d store=%d, want 1", result.CreatedBlockers, store.opportunityCount)
+	if result.CreatedBlockers != 0 || store.opportunityCount != 0 {
+		t.Fatalf("growth blockers result=%d store=%d, want 0; crawler repair belongs to Doctor", result.CreatedBlockers, store.opportunityCount)
 	}
 	if len(store.snapshots) == 0 {
 		t.Fatal("no snapshots persisted")

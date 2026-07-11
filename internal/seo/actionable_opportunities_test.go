@@ -1,21 +1,26 @@
 package seo
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestActionableSEOOpportunityCandidatesUseTechnicalInventoryAndQuerySignals(t *testing.T) {
+func TestOpportunityFindingExcludesImmediateRepairsAndKeepsDelayedGrowth(t *testing.T) {
 	windowStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	windowEnd := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
 	checks := []technicalCheckRollup{
 		{
-			PageURL:              "https://example.com/product",
-			NormalizedPageURL:    "/product",
-			HTTPStatus:           int32PtrSEO(200),
-			StructuredDataStatus: "missing",
-			InternalLinkCount:    int32PtrSEO(0),
-			RawDetails:           map[string]any{"body_bytes": 12000},
+			PageURL:               "https://example.com/product",
+			NormalizedPageURL:     "/product",
+			HTTPStatus:            int32PtrSEO(200),
+			CanonicalStatus:       "missing",
+			TitleStatus:           "missing",
+			MetaDescriptionStatus: "missing",
+			StructuredDataStatus:  "missing",
+			InternalLinkCount:     int32PtrSEO(0),
+			RawDetails:            map[string]any{"body_bytes": 12000},
 		},
 		{
 			PageURL:           "https://example.com/docs/api",
@@ -66,12 +71,17 @@ func TestActionableSEOOpportunityCandidatesUseTechnicalInventoryAndQuerySignals(
 	candidates := actionableSEOOpportunityCandidates(checks, inventory, queryRows)
 
 	requireCandidateTypes(t, candidates,
-		"internal_link_gap",
-		"schema_gap",
 		"thin_evidence_page",
-		"technical_visibility_issue",
 		"gsc_query_cannibalization",
 	)
+	for _, repairType := range []string{
+		"internal_link_gap", "schema_gap", "technical_visibility_issue", "robots_blocked",
+		"canonical_missing", "indexing_anomaly", "geo_crawler_access_blocked", "title_missing", "meta_description_missing",
+	} {
+		if hasCandidateType(candidates, repairType) {
+			t.Fatalf("immediate repair %q must be owned by Doctor, got %#v", repairType, candidates)
+		}
+	}
 	for _, candidate := range candidates {
 		if candidate.RecommendedAction == "" || candidate.ExpectedImpact == "" {
 			t.Fatalf("%s should carry user-facing action and impact copy: %#v", candidate.Type, candidate)
@@ -85,8 +95,26 @@ func TestActionableSEOOpportunityCandidatesUseTechnicalInventoryAndQuerySignals(
 			}
 		}
 	}
-	if byType := candidatesByType(candidates); byType["internal_link_gap"].NormalizedPageURL != "/product" {
-		t.Fatalf("internal link gap page = %q, want /product", byType["internal_link_gap"].NormalizedPageURL)
+	strategy := candidatesByType(candidates)["gsc_query_cannibalization"]
+	if !strings.Contains(strings.ToLower(strategy.RecommendedAction), "strategy") {
+		t.Fatalf("query cannibalization must remain a delayed internal-link strategy, got %q", strategy.RecommendedAction)
+	}
+	lowCTR := searchMetricOpportunityCandidates([]searchQueryRollup{{
+		PageURL: "https://example.com/product", NormalizedPageURL: "/product", Query: "citation readiness",
+		Impressions: 500, Position: 4, CTR: 0.01,
+	}}, nil)
+	if len(lowCTR) != 1 || lowCTR[0].Type != "gsc_low_ctr_query" || !strings.Contains(strings.ToLower(lowCTR[0].RecommendedAction), "title") {
+		t.Fatalf("delayed CTR title experiment must remain in Opportunities, got %#v", lowCTR)
+	}
+}
+
+func TestOpportunityWriterDoesNotCreateDirectIndexingAnomalies(t *testing.T) {
+	raw, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatalf("read service.go: %v", err)
+	}
+	if strings.Contains(string(raw), `"indexing_anomaly"`) {
+		t.Fatal("Analyze must not write immediate indexing repairs to seo_opportunities")
 	}
 }
 

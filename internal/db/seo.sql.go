@@ -110,10 +110,11 @@ update seo_doctor_runs set
   issues_found = $5,
   health_score = $6,
   output_summary = $7::jsonb,
+  healthy_coverage = $8::jsonb,
   error = null,
   updated_at = now(),
-  finished_at = $8
-where id = $9 and project_id = $10
+  finished_at = $9
+where id = $10 and project_id = $11
 returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage
 `
 
@@ -125,6 +126,7 @@ type CompleteSEODoctorRunParams struct {
 	IssuesFound     int32              `json:"issues_found"`
 	HealthScore     *int32             `json:"health_score"`
 	OutputSummary   json.RawMessage    `json:"output_summary"`
+	HealthyCoverage json.RawMessage    `json:"healthy_coverage"`
 	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 	ID              uuid.UUID          `json:"id"`
 	ProjectID       uuid.UUID          `json:"project_id"`
@@ -139,6 +141,7 @@ func (q *Queries) CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODocto
 		arg.IssuesFound,
 		arg.HealthScore,
 		arg.OutputSummary,
+		arg.HealthyCoverage,
 		arg.FinishedAt,
 		arg.ID,
 		arg.ProjectID,
@@ -5423,7 +5426,7 @@ insert into seo_doctor_findings
    affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
    developer_instructions, likely_files_or_surfaces, acceptance_tests,
    risk_level, review_required, autofix_eligible, linked_opportunity_id,
-   linked_content_action_id, first_seen_at, last_seen_at)
+   linked_content_action_id, first_seen_at, last_seen_at, finding_kind)
 values (
   $1,
   $2,
@@ -5446,13 +5449,15 @@ values (
   $18,
   $19,
   $20,
-  $20
+  $20,
+  $21
 )
 on conflict (project_id, finding_key) where status = 'active' do update set
   run_id = excluded.run_id,
   severity = excluded.severity,
   category = excluded.category,
   issue_type = excluded.issue_type,
+  finding_kind = excluded.finding_kind,
   affected_urls = excluded.affected_urls,
   normalized_urls = excluded.normalized_urls,
   evidence = excluded.evidence,
@@ -5493,6 +5498,7 @@ type UpsertSEODoctorFindingParams struct {
 	LinkedOpportunityID   pgtype.UUID        `json:"linked_opportunity_id"`
 	LinkedContentActionID pgtype.UUID        `json:"linked_content_action_id"`
 	SeenAt                pgtype.Timestamptz `json:"seen_at"`
+	FindingKind           string             `json:"finding_kind"`
 }
 
 func (q *Queries) UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODoctorFindingParams) (SeoDoctorFinding, error) {
@@ -5517,6 +5523,7 @@ func (q *Queries) UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODocto
 		arg.LinkedOpportunityID,
 		arg.LinkedContentActionID,
 		arg.SeenAt,
+		arg.FindingKind,
 	)
 	var i SeoDoctorFinding
 	err := row.Scan(

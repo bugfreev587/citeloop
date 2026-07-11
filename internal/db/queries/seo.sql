@@ -304,6 +304,7 @@ update seo_doctor_runs set
   issues_found = sqlc.arg(issues_found),
   health_score = sqlc.arg(health_score),
   output_summary = sqlc.arg(output_summary)::jsonb,
+  healthy_coverage = sqlc.arg(healthy_coverage)::jsonb,
   error = null,
   updated_at = now(),
   finished_at = sqlc.arg(finished_at)
@@ -361,7 +362,7 @@ insert into seo_doctor_findings
    affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
    developer_instructions, likely_files_or_surfaces, acceptance_tests,
    risk_level, review_required, autofix_eligible, linked_opportunity_id,
-   linked_content_action_id, first_seen_at, last_seen_at)
+   linked_content_action_id, first_seen_at, last_seen_at, finding_kind)
 values (
   sqlc.arg(project_id),
   sqlc.arg(run_id),
@@ -384,13 +385,15 @@ values (
   sqlc.narg(linked_opportunity_id),
   sqlc.narg(linked_content_action_id),
   sqlc.arg(seen_at),
-  sqlc.arg(seen_at)
+  sqlc.arg(seen_at),
+  sqlc.arg(finding_kind)
 )
 on conflict (project_id, finding_key) where status = 'active' do update set
   run_id = excluded.run_id,
   severity = excluded.severity,
   category = excluded.category,
   issue_type = excluded.issue_type,
+  finding_kind = excluded.finding_kind,
   affected_urls = excluded.affected_urls,
   normalized_urls = excluded.normalized_urls,
   evidence = excluded.evidence,
