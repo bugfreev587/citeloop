@@ -42,6 +42,26 @@ where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id)
 for update;
 
+-- name: GetLatestCanonicalSiteFixForFindingForUpdate :one
+select * from site_fixes
+where project_id = sqlc.arg(project_id)
+  and doctor_finding_id = sqlc.arg(doctor_finding_id)
+order by created_at desc, id desc
+limit 1
+for update;
+
+-- name: GetActiveCanonicalSiteFixForFindingForUpdate :one
+select * from site_fixes
+where project_id = sqlc.arg(project_id)
+  and doctor_finding_id = sqlc.arg(doctor_finding_id)
+  and status in (
+    'proposed','approved','preparing','ready_to_apply','applying',
+    'awaiting_deploy','verifying','failed_retryable','reopened'
+  )
+order by created_at desc, id desc
+limit 1
+for update;
+
 -- name: AppendCanonicalSiteFixVerification :one
 insert into site_fix_verifications (
   id, project_id, site_fix_id, attempt_number, evidence_read,

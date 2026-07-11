@@ -1068,6 +1068,57 @@ func (q *Queries) FenceProductWriterAuthority(ctx context.Context, arg FenceProd
 	return i, err
 }
 
+const getActiveCanonicalSiteFixForFindingForUpdate = `-- name: GetActiveCanonicalSiteFixForFindingForUpdate :one
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
+where project_id = $1
+  and doctor_finding_id = $2
+  and status in (
+    'proposed','approved','preparing','ready_to_apply','applying',
+    'awaiting_deploy','verifying','failed_retryable','reopened'
+  )
+order by created_at desc, id desc
+limit 1
+for update
+`
+
+type GetActiveCanonicalSiteFixForFindingForUpdateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	DoctorFindingID uuid.UUID `json:"doctor_finding_id"`
+}
+
+func (q *Queries) GetActiveCanonicalSiteFixForFindingForUpdate(ctx context.Context, arg GetActiveCanonicalSiteFixForFindingForUpdateParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, getActiveCanonicalSiteFixForFindingForUpdate, arg.ProjectID, arg.DoctorFindingID)
+	var i SiteFix
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getCanonicalSiteFix = `-- name: GetCanonicalSiteFix :one
 select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
 where id = $1
@@ -1081,6 +1132,53 @@ type GetCanonicalSiteFixParams struct {
 
 func (q *Queries) GetCanonicalSiteFix(ctx context.Context, arg GetCanonicalSiteFixParams) (SiteFix, error) {
 	row := q.db.QueryRow(ctx, getCanonicalSiteFix, arg.ID, arg.ProjectID)
+	var i SiteFix
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestCanonicalSiteFixForFindingForUpdate = `-- name: GetLatestCanonicalSiteFixForFindingForUpdate :one
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
+where project_id = $1
+  and doctor_finding_id = $2
+order by created_at desc, id desc
+limit 1
+for update
+`
+
+type GetLatestCanonicalSiteFixForFindingForUpdateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	DoctorFindingID uuid.UUID `json:"doctor_finding_id"`
+}
+
+func (q *Queries) GetLatestCanonicalSiteFixForFindingForUpdate(ctx context.Context, arg GetLatestCanonicalSiteFixForFindingForUpdateParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, getLatestCanonicalSiteFixForFindingForUpdate, arg.ProjectID, arg.DoctorFindingID)
 	var i SiteFix
 	err := row.Scan(
 		&i.ID,

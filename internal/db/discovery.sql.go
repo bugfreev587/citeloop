@@ -13,6 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeCanonicalDiscoveryRun = `-- name: CompleteCanonicalDiscoveryRun :one
+update discovery_shadow_runs
+set status = 'completed',
+    error = null,
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+where id = $1
+  and project_id = $2
+  and mode = 'canonical'
+returning id, project_id, mode, status, candidate_schema_version, signature_version, doctor_candidates, opportunity_candidates, identity_ready, needs_specification, exact_duplicate_groups, possible_conflict_groups, error, started_at, finished_at, created_at, updated_at
+`
+
+type CompleteCanonicalDiscoveryRunParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) CompleteCanonicalDiscoveryRun(ctx context.Context, arg CompleteCanonicalDiscoveryRunParams) (DiscoveryShadowRun, error) {
+	row := q.db.QueryRow(ctx, completeCanonicalDiscoveryRun, arg.ID, arg.ProjectID)
+	var i DiscoveryShadowRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Mode,
+		&i.Status,
+		&i.CandidateSchemaVersion,
+		&i.SignatureVersion,
+		&i.DoctorCandidates,
+		&i.OpportunityCandidates,
+		&i.IdentityReady,
+		&i.NeedsSpecification,
+		&i.ExactDuplicateGroups,
+		&i.PossibleConflictGroups,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const completeDiscoveryShadowRun = `-- name: CompleteDiscoveryShadowRun :one
 update discovery_shadow_runs set
   status = 'completed',
@@ -431,6 +473,59 @@ func (q *Queries) DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg
 	return err
 }
 
+const ensureCanonicalDiscoveryRun = `-- name: EnsureCanonicalDiscoveryRun :one
+insert into discovery_shadow_runs
+  (id, project_id, mode, status, candidate_schema_version, signature_version,
+   doctor_candidates, identity_ready)
+values
+  ($1, $2, 'canonical', 'running',
+   $3, $4, 1, 1)
+on conflict (id) do update set
+  updated_at = now()
+where discovery_shadow_runs.project_id = excluded.project_id
+  and discovery_shadow_runs.mode = 'canonical'
+  and discovery_shadow_runs.candidate_schema_version = excluded.candidate_schema_version
+  and discovery_shadow_runs.signature_version = excluded.signature_version
+returning id, project_id, mode, status, candidate_schema_version, signature_version, doctor_candidates, opportunity_candidates, identity_ready, needs_specification, exact_duplicate_groups, possible_conflict_groups, error, started_at, finished_at, created_at, updated_at
+`
+
+type EnsureCanonicalDiscoveryRunParams struct {
+	ID                     uuid.UUID `json:"id"`
+	ProjectID              uuid.UUID `json:"project_id"`
+	CandidateSchemaVersion string    `json:"candidate_schema_version"`
+	SignatureVersion       string    `json:"signature_version"`
+}
+
+func (q *Queries) EnsureCanonicalDiscoveryRun(ctx context.Context, arg EnsureCanonicalDiscoveryRunParams) (DiscoveryShadowRun, error) {
+	row := q.db.QueryRow(ctx, ensureCanonicalDiscoveryRun,
+		arg.ID,
+		arg.ProjectID,
+		arg.CandidateSchemaVersion,
+		arg.SignatureVersion,
+	)
+	var i DiscoveryShadowRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Mode,
+		&i.Status,
+		&i.CandidateSchemaVersion,
+		&i.SignatureVersion,
+		&i.DoctorCandidates,
+		&i.OpportunityCandidates,
+		&i.IdentityReady,
+		&i.NeedsSpecification,
+		&i.ExactDuplicateGroups,
+		&i.PossibleConflictGroups,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const ensureWorkConflictBucket = `-- name: EnsureWorkConflictBucket :one
 insert into work_conflict_buckets (project_id, bucket_key, bucket_version)
 values ($1, $2, 0)
@@ -673,6 +768,60 @@ func (q *Queries) GetDiscoveryArbitrationConfig(ctx context.Context, projectID u
 	return i, err
 }
 
+const getDiscoveryCandidateForArbitration = `-- name: GetDiscoveryCandidateForArbitration :one
+select candidate.id, candidate.project_id, candidate.shadow_run_id, candidate.source_kind, candidate.source_object_type, candidate.source_object_id, candidate.target_kind, candidate.normalized_target_set, candidate.issue_or_hypothesis_family, candidate.change_family, candidate.proposed_mutations, candidate.artifact_intent, candidate.intended_slug_or_canonical, candidate.topic_entity_identity, candidate.audience_identity, candidate.primary_success_metric, candidate.verification_mode, candidate.evidence_ids, candidate.evidence_fingerprint, candidate.suggested_owner, candidate.confidence, candidate.candidate_schema_version, candidate.status, candidate.hold_reason, candidate.exact_signature_hash, candidate.signature_payload, candidate.conflict_bucket_keys, candidate.created_at, candidate.updated_at, candidate.candidate_version
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = $1
+  and candidate.id = $2
+  and run.status = 'completed'
+`
+
+type GetDiscoveryCandidateForArbitrationParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	CandidateID uuid.UUID `json:"candidate_id"`
+}
+
+func (q *Queries) GetDiscoveryCandidateForArbitration(ctx context.Context, arg GetDiscoveryCandidateForArbitrationParams) (DiscoveryCandidate, error) {
+	row := q.db.QueryRow(ctx, getDiscoveryCandidateForArbitration, arg.ProjectID, arg.CandidateID)
+	var i DiscoveryCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ShadowRunID,
+		&i.SourceKind,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.TargetKind,
+		&i.NormalizedTargetSet,
+		&i.IssueOrHypothesisFamily,
+		&i.ChangeFamily,
+		&i.ProposedMutations,
+		&i.ArtifactIntent,
+		&i.IntendedSlugOrCanonical,
+		&i.TopicEntityIdentity,
+		&i.AudienceIdentity,
+		&i.PrimarySuccessMetric,
+		&i.VerificationMode,
+		&i.EvidenceIds,
+		&i.EvidenceFingerprint,
+		&i.SuggestedOwner,
+		&i.Confidence,
+		&i.CandidateSchemaVersion,
+		&i.Status,
+		&i.HoldReason,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CandidateVersion,
+	)
+	return i, err
+}
+
 const getDiscoveryCandidateForReview = `-- name: GetDiscoveryCandidateForReview :one
 select id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version from discovery_candidates
 where project_id = $1
@@ -870,6 +1019,53 @@ func (q *Queries) GetLatestDiscoveryShadowRun(ctx context.Context, projectID uui
 	return i, err
 }
 
+const getSEODoctorFindingForSiteFixForUpdate = `-- name: GetSEODoctorFindingForSiteFixForUpdate :one
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
+where project_id = $1
+  and id = $2
+for update
+`
+
+type GetSEODoctorFindingForSiteFixForUpdateParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	FindingID uuid.UUID `json:"finding_id"`
+}
+
+func (q *Queries) GetSEODoctorFindingForSiteFixForUpdate(ctx context.Context, arg GetSEODoctorFindingForSiteFixForUpdateParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, getSEODoctorFindingForSiteFixForUpdate, arg.ProjectID, arg.FindingID)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FindingKind,
+	)
+	return i, err
+}
+
 const incrementConflictBucketVersions = `-- name: IncrementConflictBucketVersions :many
 update work_conflict_buckets
 set bucket_version = bucket_version + 1,
@@ -913,23 +1109,24 @@ func (q *Queries) IncrementConflictBucketVersions(ctx context.Context, arg Incre
 
 const insertEnforcedWorkSignature = `-- name: InsertEnforcedWorkSignature :one
 insert into work_signature_registry
-  (project_id, candidate_id, shadow_run_id, mode, status, active,
+  (id, project_id, candidate_id, shadow_run_id, mode, status, active,
    exact_signature_hash, signature_payload, semantic_fingerprint,
    conflict_bucket_keys, signature_version, owner,
    source_object_type, source_object_id, arbitration_decision_id,
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
-  ($1, $2, $3,
-   'enforced', 'reserved', true, $4,
-   $5::jsonb, $6,
-   $7::jsonb, $8,
-   $9, $10, $11,
-   $12, $13,
-   $14, $15)
+  ($1, $2, $3, $4,
+   'enforced', 'reserved', true, $5,
+   $6::jsonb, $7,
+   $8::jsonb, $9,
+   $10, $11, $12,
+   $13, $14,
+   $15, $16)
 returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint
 `
 
 type InsertEnforcedWorkSignatureParams struct {
+	ID                    uuid.UUID       `json:"id"`
 	ProjectID             uuid.UUID       `json:"project_id"`
 	CandidateID           uuid.UUID       `json:"candidate_id"`
 	ShadowRunID           uuid.UUID       `json:"shadow_run_id"`
@@ -949,6 +1146,7 @@ type InsertEnforcedWorkSignatureParams struct {
 
 func (q *Queries) InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnforcedWorkSignatureParams) (WorkSignatureRegistry, error) {
 	row := q.db.QueryRow(ctx, insertEnforcedWorkSignature,
+		arg.ID,
 		arg.ProjectID,
 		arg.CandidateID,
 		arg.ShadowRunID,

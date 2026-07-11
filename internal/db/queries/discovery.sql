@@ -5,6 +5,32 @@ values
   (sqlc.arg(project_id), sqlc.arg(candidate_schema_version), sqlc.arg(signature_version))
 returning *;
 
+-- name: EnsureCanonicalDiscoveryRun :one
+insert into discovery_shadow_runs
+  (id, project_id, mode, status, candidate_schema_version, signature_version,
+   doctor_candidates, identity_ready)
+values
+  (sqlc.arg(id), sqlc.arg(project_id), 'canonical', 'running',
+   sqlc.arg(candidate_schema_version), sqlc.arg(signature_version), 1, 1)
+on conflict (id) do update set
+  updated_at = now()
+where discovery_shadow_runs.project_id = excluded.project_id
+  and discovery_shadow_runs.mode = 'canonical'
+  and discovery_shadow_runs.candidate_schema_version = excluded.candidate_schema_version
+  and discovery_shadow_runs.signature_version = excluded.signature_version
+returning *;
+
+-- name: CompleteCanonicalDiscoveryRun :one
+update discovery_shadow_runs
+set status = 'completed',
+    error = null,
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+where id = sqlc.arg(id)
+  and project_id = sqlc.arg(project_id)
+  and mode = 'canonical'
+returning *;
+
 -- name: CompleteDiscoveryShadowRun :one
 update discovery_shadow_runs set
   status = 'completed',
@@ -351,6 +377,22 @@ where project_id = sqlc.arg(project_id)
   and id = sqlc.arg(candidate_id)
 for update;
 
+-- name: GetSEODoctorFindingForSiteFixForUpdate :one
+select * from seo_doctor_findings
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(finding_id)
+for update;
+
+-- name: GetDiscoveryCandidateForArbitration :one
+select candidate.*
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = sqlc.arg(project_id)
+  and candidate.id = sqlc.arg(candidate_id)
+  and run.status = 'completed';
+
 -- name: LockConflictBucketsForReserve :many
 select * from work_conflict_buckets
 where project_id = sqlc.arg(project_id)
@@ -360,13 +402,13 @@ for update;
 
 -- name: InsertEnforcedWorkSignature :one
 insert into work_signature_registry
-  (project_id, candidate_id, shadow_run_id, mode, status, active,
+  (id, project_id, candidate_id, shadow_run_id, mode, status, active,
    exact_signature_hash, signature_payload, semantic_fingerprint,
    conflict_bucket_keys, signature_version, owner,
    source_object_type, source_object_id, arbitration_decision_id,
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
-  (sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
+  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
    'enforced', 'reserved', true, sqlc.arg(exact_signature_hash),
    sqlc.arg(signature_payload)::jsonb, sqlc.arg(semantic_fingerprint),
    sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),

@@ -56,7 +56,7 @@ func (s *PostgresArbitrationStore) LoadCandidate(ctx context.Context, projectID,
 	if err := s.requireQueries(); err != nil {
 		return ArbitrationCandidate{}, err
 	}
-	row, err := s.q.GetDiscoveryCandidateForReview(ctx, db.GetDiscoveryCandidateForReviewParams{
+	row, err := s.q.GetDiscoveryCandidateForArbitration(ctx, db.GetDiscoveryCandidateForArbitrationParams{
 		ProjectID: projectID, CandidateID: candidateID,
 	})
 	if err != nil {
@@ -228,6 +228,23 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		}
 	}()
 	tq := db.New(tx)
+	product, err := productForOwner(prepared.Owner)
+	if err != nil {
+		return ReservationResult{}, err
+	}
+	// Writer authority is the first Phase B lock. Migration and rollback use
+	// the same authority -> buckets order, avoiding a cutover deadlock while
+	// guaranteeing that legacy and canonical writers are never both active.
+	authority, err := tq.LockProductWriterAuthority(ctx, db.LockProductWriterAuthorityParams{
+		ProjectID: prepared.ProjectID,
+		Product:   product,
+	})
+	if err != nil {
+		return ReservationResult{}, staleOnNoRows(err)
+	}
+	if authority.WriterAuthority != "canonical" || authority.WriteFenced {
+		return ReservationResult{}, ErrWriterUnavailable
+	}
 
 	lockedBuckets, err := tq.LockConflictBucketsForReserve(ctx, db.LockConflictBucketsForReserveParams{
 		ProjectID: prepared.ProjectID, BucketKeys: keys,
@@ -285,9 +302,10 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		return ReservationResult{}, ErrSnapshotStale
 	}
 
+	signatureID := uuid.New()
 	work, err := creator.CreateInTransaction(ctx, tq, ReservedWork{
 		ProjectID: prepared.ProjectID, CandidateID: prepared.CandidateID,
-		DecisionID: prepared.ID, Owner: prepared.Owner,
+		DecisionID: prepared.ID, WorkSignatureID: signatureID, Owner: prepared.Owner,
 	})
 	if err != nil {
 		return ReservationResult{}, fmt.Errorf("create reserved work: %w", err)
@@ -303,6 +321,7 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		return ReservationResult{}, err
 	}
 	signature, err := tq.InsertEnforcedWorkSignature(ctx, db.InsertEnforcedWorkSignatureParams{
+		ID:        signatureID,
 		ProjectID: prepared.ProjectID, CandidateID: prepared.CandidateID,
 		ShadowRunID:         lockedCandidate.ShadowRunID,
 		ExactSignatureHash:  prepared.ExactSignatureHash,
@@ -334,6 +353,19 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 		return ReservationResult{}, staleOnConflict(err)
 	}
 	return ReservationResult{SignatureID: signature.ID, Work: work}, nil
+}
+
+var ErrWriterUnavailable = errors.New("canonical product writer is unavailable")
+
+func productForOwner(owner Owner) (string, error) {
+	switch owner {
+	case OwnerDoctor:
+		return "doctor", nil
+	case OwnerOpportunities:
+		return "opportunities", nil
+	default:
+		return "", fmt.Errorf("unsupported reservation owner %q", owner)
+	}
 }
 
 func (s *PostgresArbitrationStore) ResolveReviewAtomically(ctx context.Context, request ReviewResolutionRequest) (result ReviewResolutionResult, resultErr error) {

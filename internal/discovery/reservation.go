@@ -13,10 +13,11 @@ import (
 var ErrSnapshotStale = errors.New("arbitration snapshot stale")
 
 type ReservedWork struct {
-	ProjectID   uuid.UUID
-	CandidateID uuid.UUID
-	DecisionID  uuid.UUID
-	Owner       Owner
+	ProjectID       uuid.UUID
+	CandidateID     uuid.UUID
+	DecisionID      uuid.UUID
+	WorkSignatureID uuid.UUID
+	Owner           Owner
 }
 
 type WorkReference struct {
