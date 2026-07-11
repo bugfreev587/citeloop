@@ -810,11 +810,19 @@ func createDecisionParams(prepared PreparedDecision) (db.CreateArbitrationDecisi
 	if err != nil {
 		return db.CreateArbitrationDecisionParams{}, err
 	}
-	overlaps, err := json.Marshal(prepared.OverlapWorkIDs)
+	overlapWorkIDs := prepared.OverlapWorkIDs
+	if overlapWorkIDs == nil {
+		overlapWorkIDs = []uuid.UUID{}
+	}
+	overlaps, err := json.Marshal(overlapWorkIDs)
 	if err != nil {
 		return db.CreateArbitrationDecisionParams{}, err
 	}
-	compared, err := json.Marshal(prepared.ComparedWorkIDs)
+	comparedWorkIDs := prepared.ComparedWorkIDs
+	if comparedWorkIDs == nil {
+		comparedWorkIDs = []uuid.UUID{}
+	}
+	compared, err := json.Marshal(comparedWorkIDs)
 	if err != nil {
 		return db.CreateArbitrationDecisionParams{}, err
 	}

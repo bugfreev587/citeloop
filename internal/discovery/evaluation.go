@@ -103,6 +103,7 @@ func EvaluateSemanticGoldSet(cases []SemanticGoldCase, policy SemanticEvaluation
 		DuplicateSafetyRecallTarget: policy.DuplicateSafetyRecallTarget,
 		FalseSuppressionRateTarget:  policy.FalseSuppressionRateTarget,
 		TotalCases:                  len(cases), WeeklyOpsCapacity: policy.WeeklyOpsCapacity,
+		Blockers: []string{},
 	}
 	duplicateDetected := 0
 	falseSuppressed := 0
