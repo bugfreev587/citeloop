@@ -38,6 +38,15 @@ type GenerationResult struct {
 	CostUSD          float64
 }
 
+// GenerationContext is the bounded, persisted product Context plus the exact
+// observed evidence snapshot approved for this Site Fix. It is loaded before
+// provider work and never while a lifecycle transaction is open.
+type GenerationContext struct {
+	ProductProfile   json.RawMessage `json:"product_profile"`
+	ProfileVersion   int32           `json:"profile_version"`
+	ObservedEvidence json.RawMessage `json:"observed_evidence"`
+}
+
 type ApplicationPlan struct {
 	TargetURL               string
 	NormalizedTargetURL     string
@@ -48,6 +57,7 @@ type ApplicationPlan struct {
 	PatchSnapshot           json.RawMessage
 	DiffSnapshot            json.RawMessage
 	ResolutionCriteria      json.RawMessage
+	GroundingSnapshot       json.RawMessage
 	Status                  string
 }
 
@@ -57,12 +67,13 @@ type ApplyResult struct {
 }
 
 type FixGenerator interface {
-	Describe(db.SiteFix) GenerationCall
-	Generate(context.Context, db.SiteFix) (ApplicationPlan, GenerationResult, error)
+	Describe(db.SiteFix, GenerationContext) GenerationCall
+	Generate(context.Context, db.SiteFix, GenerationContext) (ApplicationPlan, GenerationResult, error)
 }
 
 type ApplyStore interface {
 	Load(context.Context, uuid.UUID, uuid.UUID) (db.SiteFix, error)
+	LoadGenerationContext(context.Context, db.SiteFix) (GenerationContext, error)
 	FindApplication(context.Context, db.SiteFix) (db.SiteChangeApplication, bool, error)
 	MarkPreparing(context.Context, db.SiteFix) (db.SiteFix, error)
 	StartGeneration(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, error)
@@ -94,6 +105,10 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		}
 		return ApplyResult{SiteFix: fix, Application: app}, nil
 	}
+	generationContext, err := s.Store.LoadGenerationContext(ctx, fix)
+	if err != nil {
+		return ApplyResult{}, err
+	}
 	switch fix.Status {
 	case "approved":
 		fix, err = s.Store.MarkPreparing(ctx, fix)
@@ -107,7 +122,7 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		return ApplyResult{}, fmt.Errorf("%w: cannot apply from %s", ErrLifecycleConflict, fix.Status)
 	}
 
-	descriptor := s.Generator.Describe(fix)
+	descriptor := s.Generator.Describe(fix, generationContext)
 	if strings.TrimSpace(descriptor.Provider) == "" || strings.TrimSpace(descriptor.Model) == "" ||
 		strings.TrimSpace(descriptor.PromptVersion) == "" || strings.TrimSpace(descriptor.RequestFingerprint) == "" {
 		return ApplyResult{}, errors.New("fix generation descriptor is incomplete")
@@ -116,15 +131,21 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	plan, generation, generateErr := s.Generator.Generate(ctx, fix)
+	plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext)
 	if generateErr != nil && generation.Status == "" {
 		generation.Status = "failed"
 	}
 	if generateErr == nil {
-		if planErr := validateApplicationPlan(plan); planErr != nil {
+		if planErr := validateApplicationPlan(fix, generationContext, plan); planErr != nil {
 			generation.Status = "failed"
 			generation.ErrorCode = "invalid_output"
 			generateErr = planErr
+		} else if groundedCriteria, criteriaErr := persistGroundingCriteria(plan.ResolutionCriteria, plan.GroundingSnapshot); criteriaErr != nil {
+			generation.Status = "failed"
+			generation.ErrorCode = "invalid_output"
+			generateErr = criteriaErr
+		} else {
+			plan.ResolutionCriteria = groundedCriteria
 		}
 	}
 	finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -151,7 +172,7 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 	return ApplyResult{SiteFix: fix, Application: app}, nil
 }
 
-func validateApplicationPlan(plan ApplicationPlan) error {
+func validateApplicationPlan(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) error {
 	if strings.TrimSpace(plan.TargetURL) == "" || strings.TrimSpace(plan.NormalizedTargetURL) == "" || strings.TrimSpace(plan.OpportunityKey) == "" {
 		return errors.New("generated canonical application is missing target identity")
 	}
@@ -165,7 +186,195 @@ func validateApplicationPlan(plan ApplicationPlan) error {
 			return errors.New("generated canonical application contains invalid JSON")
 		}
 	}
+	return validateGroundingSnapshot(fix, generationContext, plan)
+}
+
+func validateGroundingSnapshot(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) error {
+	if !sameJSON(fix.EvidenceSnapshot, json.RawMessage(generationContext.ObservedEvidence)) {
+		return errors.New("generated canonical application used stale observed evidence")
+	}
+	if len(plan.GroundingSnapshot) == 0 || !json.Valid(plan.GroundingSnapshot) {
+		return errors.New("generated canonical application is missing its grounding validation")
+	}
+	var grounding struct {
+		ContextProfileVersion    *int32          `json:"context_profile_version"`
+		PrimaryIntentBefore      *string         `json:"primary_intent_before"`
+		PrimaryIntentAfter       *string         `json:"primary_intent_after"`
+		PreservedPropositions    *[]string       `json:"preserved_propositions"`
+		AddedPropositions        *[]string       `json:"added_propositions"`
+		RemovedPropositions      *[]string       `json:"removed_propositions"`
+		UnsupportedClaims        *[]string       `json:"unsupported_claims"`
+		SourceAssociationChanges json.RawMessage `json:"source_association_changes"`
+	}
+	if err := json.Unmarshal(plan.GroundingSnapshot, &grounding); err != nil {
+		return errors.New("generated canonical application contains invalid grounding validation")
+	}
+	if grounding.ContextProfileVersion == nil || *grounding.ContextProfileVersion != generationContext.ProfileVersion {
+		return errors.New("generated canonical application used a stale or missing Context version")
+	}
+	if grounding.PreservedPropositions == nil || grounding.AddedPropositions == nil || grounding.RemovedPropositions == nil || grounding.UnsupportedClaims == nil || grounding.SourceAssociationChanges == nil {
+		return errors.New("generated canonical application omitted proposition-preservation evidence")
+	}
+	var associationChanges []any
+	if json.Unmarshal(grounding.SourceAssociationChanges, &associationChanges) != nil {
+		return errors.New("generated canonical application contains invalid source-association evidence")
+	}
+	if len(*grounding.AddedPropositions) > 0 || len(*grounding.RemovedPropositions) > 0 || len(*grounding.UnsupportedClaims) > 0 {
+		return errors.New("Doctor fix generation cannot add, remove, or rely on unsupported propositions")
+	}
+	expectedIntent, expectedPropositions, err := approvedPropositionContract(fix.EvidenceSnapshot)
+	if err != nil {
+		return err
+	}
+	if !sameNormalizedStrings(*grounding.PreservedPropositions, expectedPropositions) {
+		return errors.New("generated canonical application did not preserve the approved proposition set")
+	}
+	if expectedIntent != "" {
+		if grounding.PrimaryIntentBefore == nil || grounding.PrimaryIntentAfter == nil ||
+			normalizeGroundingText(*grounding.PrimaryIntentBefore) != expectedIntent ||
+			normalizeGroundingText(*grounding.PrimaryIntentAfter) != expectedIntent {
+			return errors.New("generated canonical application changed the approved primary intent")
+		}
+	}
+	for _, raw := range []json.RawMessage{plan.PatchSnapshot, plan.DiffSnapshot, plan.ResolutionCriteria} {
+		if containsUnsupportedPropositionMutation(raw) {
+			return errors.New("generated canonical application contains an unsupported proposition mutation")
+		}
+	}
 	return nil
+}
+
+func approvedPropositionContract(evidence json.RawMessage) (string, []string, error) {
+	finding, err := approvedFindingEvidence(evidence)
+	if err != nil {
+		return "", nil, errors.New("canonical Site Fix evidence is missing the approved finding snapshot")
+	}
+	intent := normalizeGroundingText(firstNonEmpty(
+		stringValue(finding["primary_intent_before"]),
+		stringValue(finding["primary_intent_after"]),
+		stringValue(finding["primary_intent"]),
+	))
+	return intent, normalizedStringList(finding["preserved_propositions"]), nil
+}
+
+func approvedFindingEvidence(evidence json.RawMessage) (map[string]any, error) {
+	var root map[string]any
+	if json.Unmarshal(evidence, &root) != nil || root == nil {
+		return nil, errors.New("invalid finding evidence")
+	}
+	if nested, ok := root["finding"].(map[string]any); ok && nested != nil {
+		return nested, nil
+	}
+	// Migration-derived canonical fixes predate the envelope but persist the
+	// provenance-complete Doctor finding evidence directly.
+	return root, nil
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func normalizedStringList(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		if strings, ok := value.([]string); ok {
+			out := make([]string, 0, len(strings))
+			for _, item := range strings {
+				if normalized := normalizeGroundingText(item); normalized != "" {
+					out = append(out, normalized)
+				}
+			}
+			return out
+		}
+		return []string{}
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok {
+			if normalized := normalizeGroundingText(text); normalized != "" {
+				out = append(out, normalized)
+			}
+		}
+	}
+	return out
+}
+
+func normalizeGroundingText(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+func sameNormalizedStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, item := range left {
+		counts[normalizeGroundingText(item)]++
+	}
+	for _, item := range right {
+		normalized := normalizeGroundingText(item)
+		if counts[normalized] == 0 {
+			return false
+		}
+		counts[normalized]--
+	}
+	return true
+}
+
+func containsUnsupportedPropositionMutation(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return true
+	}
+	var walk func(any) bool
+	walk = func(current any) bool {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, nested := range typed {
+				normalizedKey := strings.ToLower(strings.TrimSpace(key))
+				if normalizedKey == "added_propositions" || normalizedKey == "new_claims" || normalizedKey == "unsupported_claims" {
+					switch candidate := nested.(type) {
+					case []any:
+						if len(candidate) > 0 {
+							return true
+						}
+					case string:
+						if strings.TrimSpace(candidate) != "" {
+							return true
+						}
+					case nil:
+					default:
+						return true
+					}
+				}
+				if walk(nested) {
+					return true
+				}
+			}
+		case []any:
+			for _, nested := range typed {
+				if walk(nested) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(value)
+}
+
+func persistGroundingCriteria(criteria, grounding json.RawMessage) (json.RawMessage, error) {
+	var object map[string]any
+	if json.Unmarshal(criteria, &object) != nil || object == nil {
+		return nil, errors.New("generated canonical application contains invalid resolution criteria")
+	}
+	var groundingObject map[string]any
+	if json.Unmarshal(grounding, &groundingObject) != nil || groundingObject == nil {
+		return nil, errors.New("generated canonical application contains invalid grounding criteria")
+	}
+	object["grounding_validation"] = groundingObject
+	return json.Marshal(object)
 }
 
 type PostgresApplyStore struct {
@@ -175,6 +384,20 @@ type PostgresApplyStore struct {
 
 func (s PostgresApplyStore) Load(ctx context.Context, projectID, fixID uuid.UUID) (db.SiteFix, error) {
 	return s.Q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+}
+
+func (s PostgresApplyStore) LoadGenerationContext(ctx context.Context, fix db.SiteFix) (GenerationContext, error) {
+	result := GenerationContext{ProductProfile: json.RawMessage(`{}`), ObservedEvidence: fix.EvidenceSnapshot}
+	profile, err := s.Q.GetActiveProfile(ctx, fix.ProjectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return GenerationContext{}, err
+	}
+	result.ProductProfile = rawJSONObject(profile.Profile)
+	result.ProfileVersion = profile.Version
+	return result, nil
 }
 
 func (s PostgresApplyStore) MarkPreparing(ctx context.Context, fix db.SiteFix) (db.SiteFix, error) {
@@ -288,13 +511,13 @@ type LLMApplicationGenerator struct {
 // generation attempt as skipped rather than calling an AI provider.
 type DeterministicApplicationGenerator struct{}
 
-func (DeterministicApplicationGenerator) Describe(fix db.SiteFix) GenerationCall {
-	payload := append(append([]byte{}, fix.ProposedFix...), fix.AcceptanceTests...)
+func (DeterministicApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext) GenerationCall {
+	payload := append(append(append([]byte{}, fix.ProposedFix...), fix.AcceptanceTests...), generationContext.ProductProfile...)
 	sum := sha256.Sum256(payload)
 	return GenerationCall{Provider: "none", Model: "none", PromptVersion: "doctor-fix-deterministic-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
 }
 
-func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix) (ApplicationPlan, GenerationResult, error) {
+func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext) (ApplicationPlan, GenerationResult, error) {
 	target, err := firstTargetURL(fix.TargetUrls)
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_target"}, err
@@ -303,12 +526,16 @@ func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.Site
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
 	}
+	grounding, err := approvedGroundingSnapshot(fix, generationContext)
+	if err != nil {
+		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
+	}
 	return ApplicationPlan{
 		TargetURL: target, NormalizedTargetURL: target, OpportunityKey: "doctor:" + fix.ID.String(),
 		SourceFilePaths: json.RawMessage(`[]`), SourceMappingConfidence: "low",
 		SourceMappingReason: "Doctor AI assistance is not authorized; use the approved deterministic manual handoff.",
 		PatchSnapshot:       rawJSONObject(fix.ProposedFix), DiffSnapshot: rawJSONObject(fix.ProposedFix),
-		ResolutionCriteria: criteria, Status: "manual_apply_required",
+		ResolutionCriteria: criteria, GroundingSnapshot: grounding, Status: "manual_apply_required",
 	}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "doctor_ai_not_authorized"}, nil
 }
 
@@ -319,13 +546,38 @@ func rawJSONObject(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
-func (g LLMApplicationGenerator) Describe(fix db.SiteFix) GenerationCall {
-	payload := append(append(append([]byte{}, fix.ProposedFix...), fix.EvidenceSnapshot...), fix.AcceptanceTests...)
-	sum := sha256.Sum256(payload)
-	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-fix-generation-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
+func approvedGroundingSnapshot(fix db.SiteFix, generationContext GenerationContext) (json.RawMessage, error) {
+	intent, propositions, err := approvedPropositionContract(fix.EvidenceSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	finding, err := approvedFindingEvidence(fix.EvidenceSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	changes := finding["source_association_changes"]
+	if changes == nil {
+		changes = []any{}
+	}
+	return json.Marshal(map[string]any{
+		"context_profile_version":    generationContext.ProfileVersion,
+		"primary_intent_before":      intent,
+		"primary_intent_after":       intent,
+		"preserved_propositions":     propositions,
+		"added_propositions":         []string{},
+		"removed_propositions":       []string{},
+		"unsupported_claims":         []string{},
+		"source_association_changes": changes,
+	})
 }
 
-func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix) (ApplicationPlan, GenerationResult, error) {
+func (g LLMApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext) GenerationCall {
+	payload := append(append(append(append([]byte{}, fix.ProposedFix...), fix.EvidenceSnapshot...), fix.AcceptanceTests...), generationContext.ProductProfile...)
+	sum := sha256.Sum256(payload)
+	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-fix-generation-v2", RequestFingerprint: hex.EncodeToString(sum[:])}
+}
+
+func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext) (ApplicationPlan, GenerationResult, error) {
 	if g.Provider == nil {
 		return ApplicationPlan{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "provider_unavailable"}, errors.New("Doctor fix generation provider is unavailable")
 	}
@@ -333,10 +585,19 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix) (
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "invalid_target"}, err
 	}
-	prompt, _ := json.Marshal(map[string]any{"target_url": target, "evidence": fix.EvidenceSnapshot, "proposed_fix": fix.ProposedFix, "acceptance_tests": fix.AcceptanceTests})
+	if !meaningfulJSON(generationContext.ProductProfile) || !meaningfulJSON(generationContext.ObservedEvidence) {
+		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "missing_grounding_context"}, errors.New("Doctor fix generation requires Product Context and observed page evidence")
+	}
+	prompt, _ := json.Marshal(map[string]any{
+		"target_url":       target,
+		"context":          generationContext,
+		"evidence":         fix.EvidenceSnapshot,
+		"proposed_fix":     fix.ProposedFix,
+		"acceptance_tests": fix.AcceptanceTests,
+	})
 	resp, err := g.Provider.Complete(ctx, llm.CompletionReq{
-		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
-		Prompt:  "Return a JSON object with patch_snapshot, diff_snapshot, resolution_criteria, source_file_paths, source_mapping_confidence, and source_mapping_reason. Preserve the target URL.\n" + string(prompt),
+		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Use only the supplied Product Context and observed page evidence. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
+		Prompt:  "Return a JSON object with patch_snapshot, diff_snapshot, resolution_criteria, source_file_paths, source_mapping_confidence, source_mapping_reason, and grounding. grounding must include context_profile_version, primary_intent_before, primary_intent_after, preserved_propositions, added_propositions, removed_propositions, unsupported_claims, and source_association_changes. added_propositions, removed_propositions, and unsupported_claims must be empty. Preserve the target URL and proposition set.\n" + string(prompt),
 		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 1400,
 	})
 	result := GenerationResult{Provider: firstNonEmpty(resp.Provider, "tokengate"), Model: firstNonEmpty(resp.Model, g.Model), Status: "ok", PromptTokens: int32(max(resp.PromptTokens, 0)), CompletionTokens: int32(max(resp.CompletionTokens, 0)), TotalTokens: int32(max(resp.Tokens, 0)), CostUSD: resp.CostUSD}
@@ -351,6 +612,7 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix) (
 		SourceFilePaths         json.RawMessage `json:"source_file_paths"`
 		SourceMappingConfidence string          `json:"source_mapping_confidence"`
 		SourceMappingReason     string          `json:"source_mapping_reason"`
+		Grounding               json.RawMessage `json:"grounding"`
 	}
 	if err := decodeJSONObject(resp.Text, &generated); err != nil {
 		result.Status, result.ErrorCode = "failed", "invalid_response"
@@ -360,7 +622,7 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix) (
 		TargetURL: target, NormalizedTargetURL: target, OpportunityKey: "doctor:" + fix.ID.String(),
 		SourceFilePaths: generated.SourceFilePaths, SourceMappingConfidence: firstNonEmpty(generated.SourceMappingConfidence, "low"),
 		SourceMappingReason: generated.SourceMappingReason, PatchSnapshot: generated.PatchSnapshot,
-		DiffSnapshot: generated.DiffSnapshot, ResolutionCriteria: generated.ResolutionCriteria,
+		DiffSnapshot: generated.DiffSnapshot, ResolutionCriteria: generated.ResolutionCriteria, GroundingSnapshot: generated.Grounding,
 		Status: "manual_apply_required",
 	}
 	var paths []string

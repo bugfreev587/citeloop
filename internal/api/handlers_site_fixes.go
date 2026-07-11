@@ -409,24 +409,28 @@ func (c doctorSiteFixCreationCoordinator) CreateFromFinding(ctx context.Context,
 	if c.preparations == nil || c.backend == nil {
 		return db.SiteFix{}, false, errors.New("canonical Site Fix creation dependencies unavailable")
 	}
-	finding, err := c.backend.LoadFinding(ctx, projectID, findingID)
-	if err != nil {
-		return db.SiteFix{}, false, err
-	}
-	if finding.ProjectID != projectID || finding.ID != findingID {
-		return db.SiteFix{}, false, sitefix.ErrProjectMismatch
-	}
-	if finding.Status != "active" {
-		return db.SiteFix{}, false, fmt.Errorf("%w: finding status %q", sitefix.ErrIncompleteCandidate, finding.Status)
-	}
-	canonical, err := c.backend.Materialize(ctx, finding)
-	if err != nil {
-		return db.SiteFix{}, false, err
-	}
-	if strings.TrimSpace(canonical.Identity.ExactSignatureHash) == "" {
-		return db.SiteFix{}, false, sitefix.ErrIncompleteCandidate
-	}
 	for attempt := 0; attempt < 3; attempt++ {
+		// Every attempt reloads and rematerializes before Phase A. If Phase B
+		// reports a stale snapshot, the previous preparation claim is failed by
+		// runPreparationLeader before this loop reruns the provider comparison
+		// outside database locks against current evidence and bucket versions.
+		finding, err := c.backend.LoadFinding(ctx, projectID, findingID)
+		if err != nil {
+			return db.SiteFix{}, false, err
+		}
+		if finding.ProjectID != projectID || finding.ID != findingID {
+			return db.SiteFix{}, false, sitefix.ErrProjectMismatch
+		}
+		if finding.Status != "active" {
+			return db.SiteFix{}, false, fmt.Errorf("%w: finding status %q", sitefix.ErrIncompleteCandidate, finding.Status)
+		}
+		canonical, err := c.backend.Materialize(ctx, finding)
+		if err != nil {
+			return db.SiteFix{}, false, err
+		}
+		if strings.TrimSpace(canonical.Identity.ExactSignatureHash) == "" {
+			return db.SiteFix{}, false, sitefix.ErrIncompleteCandidate
+		}
 		if existing, ok, err := c.backend.FindEvidenceMerge(ctx, projectID, canonical); err != nil {
 			return db.SiteFix{}, false, err
 		} else if ok {
@@ -461,7 +465,11 @@ func (c doctorSiteFixCreationCoordinator) CreateFromFinding(ctx context.Context,
 			}
 			return c.consumeFollowerPreparation(ctx, finding, canonical, prepared)
 		}
-		return c.runPreparationLeader(ctx, finding, canonical, claim)
+		fix, created, err := c.runPreparationLeader(ctx, finding, canonical, claim)
+		if errors.Is(err, discovery.ErrSnapshotStale) {
+			continue
+		}
+		return fix, created, err
 	}
 	return db.SiteFix{}, false, ErrDoctorSiteFixCreateBusy
 }
@@ -535,8 +543,8 @@ func (c doctorSiteFixCreationCoordinator) runPreparationLeader(ctx context.Conte
 
 	result, err := c.backend.Reserve(ctx, finding.ProjectID, prepared, claim)
 	if err != nil {
-		// Fail closed on a stale snapshot. A new request rematerializes and
-		// persists its own exact-merge decision/evidence association.
+		// The outer coordinator retries stale snapshots only after this leader
+		// returns and its deferred claim failure releases the old preparation.
 		return db.SiteFix{}, false, err
 	}
 	if result.Work.Type != "site_fix" {

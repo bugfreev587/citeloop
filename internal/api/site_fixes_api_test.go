@@ -202,14 +202,33 @@ func TestPreparationMutationNoRowsIsLeaseLostConflict(t *testing.T) {
 	}
 }
 
-func TestDoctorSiteFixCreationDoesNotRepeatPreparationWithAStaleCandidate(t *testing.T) {
-	raw, err := os.ReadFile("handlers_site_fixes.go")
-	if err != nil {
-		t.Fatal(err)
+func TestDoctorSiteFixCreationReloadsAndRecomparesAfterSnapshotStale(t *testing.T) {
+	projectID, findingID := uuid.New(), uuid.New()
+	backend := newDoctorSiteFixCreationBackendStub(projectID, findingID)
+	backend.reserveErrOnce = discovery.ErrSnapshotStale
+	backend.onReserveError = func() {
+		finding := backend.findings[findingID]
+		finding.Evidence = json.RawMessage(`{"source":"gsc","snapshot":"v2"}`)
+		backend.findings[findingID] = finding
+		backend.candidates[findingID] = sitefix.CanonicalCandidate{
+			ID:        uuid.New(),
+			Candidate: discovery.Candidate{ProjectID: projectID, EvidenceFingerprint: "evidence-v2"},
+			Identity:  discovery.Identity{ExactSignatureHash: "exact-v2"},
+		}
 	}
-	body := functionSource(t, string(raw), "func (c doctorSiteFixCreationCoordinator) runPreparationLeader", "func (c doctorSiteFixCreationCoordinator) consumeFollowerPreparation")
-	if strings.Contains(body, "for attempt") || strings.Contains(body, "CreateFromFinding(") {
-		t.Fatal("snapshot-stale retry reuses the original materialized candidate; return conflict so a new request reloads the finding")
+	coordinator := doctorSiteFixCreationCoordinator{preparations: newDurableDoctorSiteFixPreparationManager(), backend: backend}
+
+	fix, created, err := coordinator.CreateFromFinding(context.Background(), projectID, findingID)
+	if err != nil || !created || fix.ID != backend.fix.ID {
+		t.Fatalf("retry result fix=%+v created=%v err=%v", fix, created, err)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.loadFindingCalls != 2 || backend.materializeCalls != 2 || backend.semanticPrepareCalls != 2 || backend.reserveCalls != 2 {
+		t.Fatalf("load=%d materialize=%d semantic=%d reserve=%d", backend.loadFindingCalls, backend.materializeCalls, backend.semanticPrepareCalls, backend.reserveCalls)
+	}
+	if len(backend.preparedCandidateIDs) != 2 || backend.preparedCandidateIDs[0] == backend.preparedCandidateIDs[1] {
+		t.Fatalf("stale candidate was reused: %v", backend.preparedCandidateIDs)
 	}
 }
 
@@ -1141,6 +1160,10 @@ type doctorSiteFixCreationBackendStub struct {
 	prepareErrOnce       error
 	prepareDeadlines     []time.Time
 	reserveClaims        []doctorSiteFixPreparationClaim
+	loadFindingCalls     int
+	materializeCalls     int
+	reserveErrOnce       error
+	onReserveError       func()
 }
 
 func newDoctorSiteFixCreationBackendStub(projectID, findingID uuid.UUID) *doctorSiteFixCreationBackendStub {
@@ -1175,10 +1198,16 @@ func (b *doctorSiteFixCreationBackendStub) addEquivalentFinding(findingID uuid.U
 }
 
 func (b *doctorSiteFixCreationBackendStub) LoadFinding(_ context.Context, _ uuid.UUID, findingID uuid.UUID) (db.SeoDoctorFinding, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.loadFindingCalls++
 	return b.findings[findingID], nil
 }
 
 func (b *doctorSiteFixCreationBackendStub) Materialize(_ context.Context, finding db.SeoDoctorFinding) (sitefix.CanonicalCandidate, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.materializeCalls++
 	return b.candidates[finding.ID], nil
 }
 
@@ -1213,6 +1242,14 @@ func (b *doctorSiteFixCreationBackendStub) Reserve(_ context.Context, _ uuid.UUI
 	defer b.mu.Unlock()
 	b.reserveCalls++
 	b.reserveClaims = append(b.reserveClaims, claim)
+	if b.reserveErrOnce != nil {
+		err := b.reserveErrOnce
+		b.reserveErrOnce = nil
+		if b.onReserveError != nil {
+			b.onReserveError()
+		}
+		return discovery.ReservationResult{}, err
+	}
 	b.workExists = true
 	return discovery.ReservationResult{SignatureID: b.workSignatureID, Work: discovery.WorkReference{Type: "site_fix", ID: b.fix.ID}}, nil
 }
