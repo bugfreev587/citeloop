@@ -55,6 +55,17 @@ where s.project_id = $1
   )
 order by s.normalized_page_url asc, s.target_user_agent asc, s.evidence_type asc;
 
+-- name: GetLatestGEOCrawlerAuditRun :one
+select * from geo_runs
+where project_id = $1 and agent = 'geo_crawler_audit'
+order by started_at desc, id desc
+limit 1;
+
+-- name: ListAICrawlerAccessSnapshotsForRun :many
+select * from ai_crawler_access_snapshots
+where project_id = sqlc.arg(project_id) and run_id = sqlc.arg(run_id)
+order by normalized_page_url asc, target_user_agent asc, evidence_type asc;
+
 -- name: UpsertCrawlerAccessOpportunity :one
 with updated as (
   update seo_opportunities so set

@@ -77,6 +77,20 @@ func TestSemanticComparatorReturnsStructuredDecision(t *testing.T) {
 	}
 }
 
+func TestSemanticComparatorUsesConfiguredCompletionPurpose(t *testing.T) {
+	overlapID := uuid.New()
+	provider := &semanticProviderStub{response: llm.CompletionResp{
+		Text: `{"decision":"merge_evidence","owner":"doctor","work_signature":"abc123","overlaps":["` + overlapID.String() + `"],"reason":"same mutation","confidence":0.94}`,
+	}}
+	comparator := NewLLMSemanticComparator(provider, "tokengate", "site-fix-model").WithPurpose(llm.PurposeSiteFix)
+	if _, _, err := comparator.Compare(context.Background(), semanticTestRequest(t, overlapID)); err != nil {
+		t.Fatal(err)
+	}
+	if provider.request.Purpose != llm.PurposeSiteFix {
+		t.Fatalf("completion purpose = %q, want %q", provider.request.Purpose, llm.PurposeSiteFix)
+	}
+}
+
 func TestSemanticComparatorRejectsMalformedOrUnsafeResponses(t *testing.T) {
 	overlapID := uuid.New()
 	tests := []struct {

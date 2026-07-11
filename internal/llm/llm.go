@@ -40,10 +40,13 @@ type CompletionReq struct {
 
 // CompletionResp carries the text plus accounting used by the cost breaker (§5.4).
 type CompletionResp struct {
-	Text    string
-	Model   string
-	Tokens  int
-	CostUSD float64
+	Text             string
+	Provider         string
+	Model            string
+	PromptTokens     int
+	CompletionTokens int
+	Tokens           int
+	CostUSD          float64
 }
 
 // Provider is the LLMProvider interface from PRD §4.

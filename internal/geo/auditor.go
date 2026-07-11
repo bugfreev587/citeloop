@@ -111,6 +111,10 @@ func (a Auditor) Audit(ctx context.Context, req AuditRequest) []AuditResult {
 			} else if probe.accessState != AccessOK {
 				result.Confidence = ConfidenceMedium
 				result.Inferred = true
+			} else if robotsState == RobotsAllowed {
+				result.EvidenceType = EvidenceRobotsStatic
+				result.Confidence = ConfidenceHigh
+				result.Inferred = true
 			}
 			results = append(results, result)
 		}

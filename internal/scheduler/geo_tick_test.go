@@ -30,7 +30,7 @@ func TestSchedulerGEOTickUsesConfiguredAnswerProvider(t *testing.T) {
 		GEOProviderRunBudgetUSD: 0.25,
 	}
 
-	service := s.geoService(context.Background(), db.New(nil))
+	service := s.geoService(context.Background(), db.New(nil), nil)
 	if service.AnswerProvider == nil || !service.AnswerProvider.Available() {
 		t.Fatal("geo service should include configured automatic answer provider")
 	}

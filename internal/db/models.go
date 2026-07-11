@@ -174,39 +174,43 @@ type AutopilotRun struct {
 }
 
 type ContentAction struct {
-	ID                      uuid.UUID          `json:"id"`
-	ProjectID               uuid.UUID          `json:"project_id"`
-	OpportunityID           uuid.UUID          `json:"opportunity_id"`
-	ActionType              string             `json:"action_type"`
-	Status                  string             `json:"status"`
-	TargetArticleID         pgtype.UUID        `json:"target_article_id"`
-	TargetUrl               *string            `json:"target_url"`
-	NormalizedTargetUrl     *string            `json:"normalized_target_url"`
-	TargetContentHashBefore *string            `json:"target_content_hash_before"`
-	TargetContentHashAfter  *string            `json:"target_content_hash_after"`
-	DraftArticleID          pgtype.UUID        `json:"draft_article_id"`
-	BaselineWindow          json.RawMessage    `json:"baseline_window"`
-	MeasurementWindow       json.RawMessage    `json:"measurement_window"`
-	PublishedAt             pgtype.Timestamptz `json:"published_at"`
-	OutcomeSummary          json.RawMessage    `json:"outcome_summary"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	AssetType               *string            `json:"asset_type"`
-	TargetSurfaceID         pgtype.UUID        `json:"target_surface_id"`
-	RiskReasons             json.RawMessage    `json:"risk_reasons"`
-	EvidenceSnapshot        json.RawMessage    `json:"evidence_snapshot"`
-	InputSnapshot           json.RawMessage    `json:"input_snapshot"`
-	OutputSnapshot          json.RawMessage    `json:"output_snapshot"`
-	DiffSnapshot            json.RawMessage    `json:"diff_snapshot"`
-	ReviewRequired          bool               `json:"review_required"`
-	ApprovedBy              *string            `json:"approved_by"`
-	ApprovedAt              pgtype.Timestamptz `json:"approved_at"`
-	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
-	VerificationSnapshot    json.RawMessage    `json:"verification_snapshot"`
-	ApprovalSource          string             `json:"approval_source"`
-	RoutingSource           string             `json:"routing_source"`
-	WorkType                *string            `json:"work_type"`
-	StatusReason            *string            `json:"status_reason"`
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	OpportunityID              uuid.UUID          `json:"opportunity_id"`
+	ActionType                 string             `json:"action_type"`
+	Status                     string             `json:"status"`
+	TargetArticleID            pgtype.UUID        `json:"target_article_id"`
+	TargetUrl                  *string            `json:"target_url"`
+	NormalizedTargetUrl        *string            `json:"normalized_target_url"`
+	TargetContentHashBefore    *string            `json:"target_content_hash_before"`
+	TargetContentHashAfter     *string            `json:"target_content_hash_after"`
+	DraftArticleID             pgtype.UUID        `json:"draft_article_id"`
+	BaselineWindow             json.RawMessage    `json:"baseline_window"`
+	MeasurementWindow          json.RawMessage    `json:"measurement_window"`
+	PublishedAt                pgtype.Timestamptz `json:"published_at"`
+	OutcomeSummary             json.RawMessage    `json:"outcome_summary"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	AssetType                  *string            `json:"asset_type"`
+	TargetSurfaceID            pgtype.UUID        `json:"target_surface_id"`
+	RiskReasons                json.RawMessage    `json:"risk_reasons"`
+	EvidenceSnapshot           json.RawMessage    `json:"evidence_snapshot"`
+	InputSnapshot              json.RawMessage    `json:"input_snapshot"`
+	OutputSnapshot             json.RawMessage    `json:"output_snapshot"`
+	DiffSnapshot               json.RawMessage    `json:"diff_snapshot"`
+	ReviewRequired             bool               `json:"review_required"`
+	ApprovedBy                 *string            `json:"approved_by"`
+	ApprovedAt                 pgtype.Timestamptz `json:"approved_at"`
+	VerifiedAt                 pgtype.Timestamptz `json:"verified_at"`
+	VerificationSnapshot       json.RawMessage    `json:"verification_snapshot"`
+	ApprovalSource             string             `json:"approval_source"`
+	RoutingSource              string             `json:"routing_source"`
+	WorkType                   *string            `json:"work_type"`
+	StatusReason               *string            `json:"status_reason"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 }
 
 type ContentInventory struct {
@@ -380,6 +384,42 @@ type DiscoveryShadowRun struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DoctorAiOnDemandTrigger struct {
+	RequestID           uuid.UUID          `json:"request_id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	SiteFixID           uuid.UUID          `json:"site_fix_id"`
+	TriggerKind         string             `json:"trigger_kind"`
+	RequestedPolicy     string             `json:"requested_policy"`
+	Status              string             `json:"status"`
+	ProcessingToken     pgtype.UUID        `json:"processing_token"`
+	ProcessingExpiresAt pgtype.Timestamptz `json:"processing_expires_at"`
+	AiCallID            pgtype.UUID        `json:"ai_call_id"`
+	ResultSnapshot      []byte             `json:"result_snapshot"`
+	RejectionReason     *string            `json:"rejection_reason"`
+	RequestedAt         pgtype.Timestamptz `json:"requested_at"`
+	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
+	LifecycleAppliedAt  pgtype.Timestamptz `json:"lifecycle_applied_at"`
+}
+
+type DoctorSiteFixPreparationLease struct {
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	ExactSignatureHash          string             `json:"exact_signature_hash"`
+	LeaseToken                  uuid.UUID          `json:"lease_token"`
+	RuntimeAuthorityFingerprint string             `json:"runtime_authority_fingerprint"`
+	LeaderCandidateID           uuid.UUID          `json:"leader_candidate_id"`
+	ArbitrationDecisionID       pgtype.UUID        `json:"arbitration_decision_id"`
+	ResolvedProvider            *string            `json:"resolved_provider"`
+	ResolvedModel               *string            `json:"resolved_model"`
+	Status                      string             `json:"status"`
+	LeaseExpiresAt              pgtype.Timestamptz `json:"lease_expires_at"`
+	ResultExpiresAt             pgtype.Timestamptz `json:"result_expires_at"`
+	AttemptCount                int64              `json:"attempt_count"`
+	LastErrorCode               *string            `json:"last_error_code"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
+}
+
 type GenerationRun struct {
 	ID        uuid.UUID          `json:"id"`
 	ProjectID uuid.UUID          `json:"project_id"`
@@ -530,6 +570,45 @@ type GeoVisibilityScore struct {
 	ComputedAt          pgtype.Timestamptz `json:"computed_at"`
 }
 
+type GrowthCutoverSession struct {
+	BatchID    uuid.UUID          `json:"batch_id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	FenceToken uuid.UUID          `json:"fence_token"`
+	Status     string             `json:"status"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	Error      *string            `json:"error"`
+}
+
+type GrowthCutoverSessionEntry struct {
+	BatchID               uuid.UUID          `json:"batch_id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	SequenceNumber        int32              `json:"sequence_number"`
+	OpportunityID         uuid.UUID          `json:"opportunity_id"`
+	RunID                 uuid.UUID          `json:"run_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ArbitrationDecisionID pgtype.UUID        `json:"arbitration_decision_id"`
+	AiCallID              pgtype.UUID        `json:"ai_call_id"`
+	WorkSignatureID       pgtype.UUID        `json:"work_signature_id"`
+	Disposition           string             `json:"disposition"`
+	EntryStatus           string             `json:"entry_status"`
+	BeforeSnapshot        json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot         json.RawMessage    `json:"after_snapshot"`
+	InverseOperation      json.RawMessage    `json:"inverse_operation"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthOpportunityWorkAlias struct {
+	ProjectID              uuid.UUID          `json:"project_id"`
+	LegacyOpportunityID    uuid.UUID          `json:"legacy_opportunity_id"`
+	CanonicalObjectType    string             `json:"canonical_object_type"`
+	CanonicalOpportunityID pgtype.UUID        `json:"canonical_opportunity_id"`
+	CanonicalSiteFixID     pgtype.UUID        `json:"canonical_site_fix_id"`
+	WorkSignatureID        uuid.UUID          `json:"work_signature_id"`
+	Disposition            string             `json:"disposition"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
 type GuardrailCheck struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`
@@ -556,6 +635,101 @@ type InternalLinkEdge struct {
 	TargetArticleID     pgtype.UUID        `json:"target_article_id"`
 	FirstSeenAt         pgtype.Timestamptz `json:"first_seen_at"`
 	LastSeenAt          pgtype.Timestamptz `json:"last_seen_at"`
+}
+
+type LegacyObjectAlias struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	MigrationBatchID    uuid.UUID          `json:"migration_batch_id"`
+	LegacyObjectType    string             `json:"legacy_object_type"`
+	LegacyObjectID      uuid.UUID          `json:"legacy_object_id"`
+	CanonicalObjectType string             `json:"canonical_object_type"`
+	CanonicalObjectID   uuid.UUID          `json:"canonical_object_id"`
+	AliasState          string             `json:"alias_state"`
+	ProvenanceSnapshot  json.RawMessage    `json:"provenance_snapshot"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MigrationBatch struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	Product                string             `json:"product"`
+	BatchKind              string             `json:"batch_kind"`
+	Status                 string             `json:"status"`
+	SchemaVersion          string             `json:"schema_version"`
+	SourceCount            int32              `json:"source_count"`
+	MigratedCount          int32              `json:"migrated_count"`
+	ArchivedDuplicateCount int32              `json:"archived_duplicate_count"`
+	ReviewCount            int32              `json:"review_count"`
+	WriterAuthorityBefore  string             `json:"writer_authority_before"`
+	WriterAuthorityAfter   string             `json:"writer_authority_after"`
+	SourceSnapshot         json.RawMessage    `json:"source_snapshot"`
+	ResultSnapshot         json.RawMessage    `json:"result_snapshot"`
+	InitiatedBy            string             `json:"initiated_by"`
+	StartedAt              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type MigrationLedger struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	MigrationBatchID        uuid.UUID          `json:"migration_batch_id"`
+	SequenceNumber          int32              `json:"sequence_number"`
+	SourceObjectType        string             `json:"source_object_type"`
+	SourceObjectID          uuid.UUID          `json:"source_object_id"`
+	CanonicalObjectType     string             `json:"canonical_object_type"`
+	CanonicalObjectID       pgtype.UUID        `json:"canonical_object_id"`
+	Operation               string             `json:"operation"`
+	OperationVersion        string             `json:"operation_version"`
+	CutoverPoint            string             `json:"cutover_point"`
+	RollbackEligibility     string             `json:"rollback_eligibility"`
+	BeforeHash              string             `json:"before_hash"`
+	AfterHash               string             `json:"after_hash"`
+	BeforeSnapshot          json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot           json.RawMessage    `json:"after_snapshot"`
+	InverseOperationVersion string             `json:"inverse_operation_version"`
+	InverseOperation        json.RawMessage    `json:"inverse_operation"`
+	AppliedBy               string             `json:"applied_by"`
+	AppliedAt               pgtype.Timestamptz `json:"applied_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+type MigrationReviewItem struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	MigrationBatchID   uuid.UUID          `json:"migration_batch_id"`
+	SourceObjectType   string             `json:"source_object_type"`
+	SourceObjectID     uuid.UUID          `json:"source_object_id"`
+	ReasonCode         string             `json:"reason_code"`
+	Reason             string             `json:"reason"`
+	SourceSnapshot     json.RawMessage    `json:"source_snapshot"`
+	ProposedResolution json.RawMessage    `json:"proposed_resolution"`
+	Status             string             `json:"status"`
+	ResolutionSnapshot []byte             `json:"resolution_snapshot"`
+	ResolvedBy         *string            `json:"resolved_by"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MigrationRollbackEvent struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	MigrationBatchID    uuid.UUID          `json:"migration_batch_id"`
+	MigrationLedgerID   pgtype.UUID        `json:"migration_ledger_id"`
+	EventSequence       int32              `json:"event_sequence"`
+	EventType           string             `json:"event_type"`
+	RollbackEligibility string             `json:"rollback_eligibility"`
+	CutoverPoint        string             `json:"cutover_point"`
+	Reason              string             `json:"reason"`
+	ForwardFixReference *string            `json:"forward_fix_reference"`
+	EventSnapshot       json.RawMessage    `json:"event_snapshot"`
+	EventVersion        string             `json:"event_version"`
+	OccurredAt          pgtype.Timestamptz `json:"occurred_at"`
+	RolledBackAt        pgtype.Timestamptz `json:"rolled_back_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type NotificationChannel struct {
@@ -654,6 +828,19 @@ type ProductProfile struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProductWriterAuthority struct {
+	ProjectID          uuid.UUID          `json:"project_id"`
+	Product            string             `json:"product"`
+	WriterAuthority    string             `json:"writer_authority"`
+	WriteFenced        bool               `json:"write_fenced"`
+	FenceToken         pgtype.UUID        `json:"fence_token"`
+	FencedBy           *string            `json:"fenced_by"`
+	FencedAt           pgtype.Timestamptz `json:"fenced_at"`
+	AuthorityChangedAt pgtype.Timestamptz `json:"authority_changed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Project struct {
 	ID        uuid.UUID          `json:"id"`
 	OwnerID   string             `json:"owner_id"`
@@ -717,6 +904,7 @@ type RollbackRecord struct {
 	Reason            *string            `json:"reason"`
 	PerformedBy       *string            `json:"performed_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	SiteFixID         pgtype.UUID        `json:"site_fix_id"`
 }
 
 type SafeModeEvent struct {
@@ -826,6 +1014,7 @@ type SeoDoctorFinding struct {
 	ResolvedAt            pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	FindingKind           string             `json:"finding_kind"`
 }
 
 type SeoDoctorRun struct {
@@ -850,6 +1039,7 @@ type SeoDoctorRun struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	HealthyCoverage json.RawMessage    `json:"healthy_coverage"`
 }
 
 type SeoExperiment struct {
@@ -918,31 +1108,36 @@ type SeoObjective struct {
 }
 
 type SeoOpportunity struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	Type                   string             `json:"type"`
-	Status                 string             `json:"status"`
-	PriorityScore          pgtype.Numeric     `json:"priority_score"`
-	Confidence             pgtype.Numeric     `json:"confidence"`
-	PageUrl                *string            `json:"page_url"`
-	NormalizedPageUrl      string             `json:"normalized_page_url"`
-	ArticleID              pgtype.UUID        `json:"article_id"`
-	TopicID                pgtype.UUID        `json:"topic_id"`
-	Query                  *string            `json:"query"`
-	Evidence               json.RawMessage    `json:"evidence"`
-	RecommendedAction      *string            `json:"recommended_action"`
-	ExpectedImpact         *string            `json:"expected_impact"`
-	Effort                 int32              `json:"effort"`
-	RiskLevel              string             `json:"risk_level"`
-	CreatedByRunID         pgtype.UUID        `json:"created_by_run_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	OpportunityKey         string             `json:"opportunity_key"`
-	SnoozedUntil           pgtype.Timestamptz `json:"snoozed_until"`
-	SnoozeReason           *string            `json:"snooze_reason"`
-	UnsnoozedAt            pgtype.Timestamptz `json:"unsnoozed_at"`
-	OpportunityIdentityKey string             `json:"opportunity_identity_key"`
-	EvidenceFingerprint    string             `json:"evidence_fingerprint"`
+	ID                         uuid.UUID          `json:"id"`
+	ProjectID                  uuid.UUID          `json:"project_id"`
+	Type                       string             `json:"type"`
+	Status                     string             `json:"status"`
+	PriorityScore              pgtype.Numeric     `json:"priority_score"`
+	Confidence                 pgtype.Numeric     `json:"confidence"`
+	PageUrl                    *string            `json:"page_url"`
+	NormalizedPageUrl          string             `json:"normalized_page_url"`
+	ArticleID                  pgtype.UUID        `json:"article_id"`
+	TopicID                    pgtype.UUID        `json:"topic_id"`
+	Query                      *string            `json:"query"`
+	Evidence                   json.RawMessage    `json:"evidence"`
+	RecommendedAction          *string            `json:"recommended_action"`
+	ExpectedImpact             *string            `json:"expected_impact"`
+	Effort                     int32              `json:"effort"`
+	RiskLevel                  string             `json:"risk_level"`
+	CreatedByRunID             pgtype.UUID        `json:"created_by_run_id"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	OpportunityKey             string             `json:"opportunity_key"`
+	SnoozedUntil               pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeReason               *string            `json:"snooze_reason"`
+	UnsnoozedAt                pgtype.Timestamptz `json:"unsnoozed_at"`
+	OpportunityIdentityKey     string             `json:"opportunity_identity_key"`
+	EvidenceFingerprint        string             `json:"evidence_fingerprint"`
+	CanonicalSiteFixID         pgtype.UUID        `json:"canonical_site_fix_id"`
+	CanonicalReadOnly          bool               `json:"canonical_read_only"`
+	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
+	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	CanonicalGrowth            bool               `json:"canonical_growth"`
 }
 
 type SeoOpportunityReviewState struct {
@@ -1029,46 +1224,106 @@ type SeoWatchlistItem struct {
 }
 
 type SiteChangeApplication struct {
-	ID                      uuid.UUID          `json:"id"`
-	ProjectID               uuid.UUID          `json:"project_id"`
-	SourceOpportunityID     pgtype.UUID        `json:"source_opportunity_id"`
-	ContentActionID         uuid.UUID          `json:"content_action_id"`
-	PageUpdateDraftID       pgtype.UUID        `json:"page_update_draft_id"`
-	ApplicationKind         string             `json:"application_kind"`
-	TargetUrl               string             `json:"target_url"`
-	NormalizedTargetUrl     string             `json:"normalized_target_url"`
-	OpportunityKey          string             `json:"opportunity_key"`
-	PublisherConnectionID   pgtype.UUID        `json:"publisher_connection_id"`
-	RepoFullName            *string            `json:"repo_full_name"`
-	BaseBranch              *string            `json:"base_branch"`
-	WorkingBranch           *string            `json:"working_branch"`
-	BaseCommitSha           *string            `json:"base_commit_sha"`
-	HeadCommitSha           *string            `json:"head_commit_sha"`
-	SourceFilePath          *string            `json:"source_file_path"`
-	SourceFilePaths         json.RawMessage    `json:"source_file_paths"`
-	SourceMappingConfidence string             `json:"source_mapping_confidence"`
-	SourceMappingReason     string             `json:"source_mapping_reason"`
-	BaseFileSha             *string            `json:"base_file_sha"`
-	BaseContentHash         *string            `json:"base_content_hash"`
-	ProposedContentHash     *string            `json:"proposed_content_hash"`
-	PatchSnapshot           json.RawMessage    `json:"patch_snapshot"`
-	DiffSnapshot            json.RawMessage    `json:"diff_snapshot"`
-	ResolutionCriteria      json.RawMessage    `json:"resolution_criteria"`
-	GithubPrNumber          *int32             `json:"github_pr_number"`
-	GithubPrUrl             *string            `json:"github_pr_url"`
-	GithubPrState           *string            `json:"github_pr_state"`
-	DeploymentSnapshot      json.RawMessage    `json:"deployment_snapshot"`
-	VerificationSnapshot    json.RawMessage    `json:"verification_snapshot"`
-	FailureReason           *string            `json:"failure_reason"`
-	Status                  string             `json:"status"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	PrCreatedAt             pgtype.Timestamptz `json:"pr_created_at"`
-	MergedAt                pgtype.Timestamptz `json:"merged_at"`
-	DeployedAt              pgtype.Timestamptz `json:"deployed_at"`
-	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
-	NextPollAt              pgtype.Timestamptz `json:"next_poll_at"`
-	NextNotifyAt            pgtype.Timestamptz `json:"next_notify_at"`
+	ID                          uuid.UUID          `json:"id"`
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	SourceOpportunityID         pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID             pgtype.UUID        `json:"content_action_id"`
+	PageUpdateDraftID           pgtype.UUID        `json:"page_update_draft_id"`
+	ApplicationKind             string             `json:"application_kind"`
+	TargetUrl                   string             `json:"target_url"`
+	NormalizedTargetUrl         string             `json:"normalized_target_url"`
+	OpportunityKey              string             `json:"opportunity_key"`
+	PublisherConnectionID       pgtype.UUID        `json:"publisher_connection_id"`
+	RepoFullName                *string            `json:"repo_full_name"`
+	BaseBranch                  *string            `json:"base_branch"`
+	WorkingBranch               *string            `json:"working_branch"`
+	BaseCommitSha               *string            `json:"base_commit_sha"`
+	HeadCommitSha               *string            `json:"head_commit_sha"`
+	SourceFilePath              *string            `json:"source_file_path"`
+	SourceFilePaths             json.RawMessage    `json:"source_file_paths"`
+	SourceMappingConfidence     string             `json:"source_mapping_confidence"`
+	SourceMappingReason         string             `json:"source_mapping_reason"`
+	BaseFileSha                 *string            `json:"base_file_sha"`
+	BaseContentHash             *string            `json:"base_content_hash"`
+	ProposedContentHash         *string            `json:"proposed_content_hash"`
+	PatchSnapshot               json.RawMessage    `json:"patch_snapshot"`
+	DiffSnapshot                json.RawMessage    `json:"diff_snapshot"`
+	ResolutionCriteria          json.RawMessage    `json:"resolution_criteria"`
+	GithubPrNumber              *int32             `json:"github_pr_number"`
+	GithubPrUrl                 *string            `json:"github_pr_url"`
+	GithubPrState               *string            `json:"github_pr_state"`
+	DeploymentSnapshot          json.RawMessage    `json:"deployment_snapshot"`
+	VerificationSnapshot        json.RawMessage    `json:"verification_snapshot"`
+	FailureReason               *string            `json:"failure_reason"`
+	Status                      string             `json:"status"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PrCreatedAt                 pgtype.Timestamptz `json:"pr_created_at"`
+	MergedAt                    pgtype.Timestamptz `json:"merged_at"`
+	DeployedAt                  pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                  pgtype.Timestamptz `json:"verified_at"`
+	NextPollAt                  pgtype.Timestamptz `json:"next_poll_at"`
+	NextNotifyAt                pgtype.Timestamptz `json:"next_notify_at"`
+	SiteFixID                   pgtype.UUID        `json:"site_fix_id"`
+	PrClaimToken                pgtype.UUID        `json:"pr_claim_token"`
+	PrClaimExpiresAt            pgtype.Timestamptz `json:"pr_claim_expires_at"`
+	PrClaimAuthorityFingerprint *string            `json:"pr_claim_authority_fingerprint"`
+}
+
+type SiteFix struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SiteFixEvidenceMerge struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ArbitrationDecisionID uuid.UUID          `json:"arbitration_decision_id"`
+	SiteFixID             uuid.UUID          `json:"site_fix_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	FindingKind           string             `json:"finding_kind"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type SiteFixVerification struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	SiteFixID           uuid.UUID          `json:"site_fix_id"`
+	AttemptNumber       int32              `json:"attempt_number"`
+	EvidenceRead        json.RawMessage    `json:"evidence_read"`
+	AcceptanceResults   json.RawMessage    `json:"acceptance_results"`
+	AiCallID            pgtype.UUID        `json:"ai_call_id"`
+	Result              string             `json:"result"`
+	RetryClassification string             `json:"retry_classification"`
+	FailureReason       *string            `json:"failure_reason"`
+	AttemptedAt         pgtype.Timestamptz `json:"attempted_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type TechnicalCheck struct {
@@ -1139,6 +1394,26 @@ type WorkConflictBucket struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkRelationship struct {
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	DependentCandidateID      uuid.UUID          `json:"dependent_candidate_id"`
+	DependentWorkSignatureID  uuid.UUID          `json:"dependent_work_signature_id"`
+	DependentWorkType         string             `json:"dependent_work_type"`
+	DependentWorkID           uuid.UUID          `json:"dependent_work_id"`
+	BlockingWorkSignatureID   uuid.UUID          `json:"blocking_work_signature_id"`
+	RelationshipType          string             `json:"relationship_type"`
+	DependencyClass           string             `json:"dependency_class"`
+	Reason                    string             `json:"reason"`
+	OverlappingMutationFields json.RawMessage    `json:"overlapping_mutation_fields"`
+	ReassessmentTrigger       string             `json:"reassessment_trigger"`
+	AttributionConfounder     *bool              `json:"attribution_confounder"`
+	Active                    bool               `json:"active"`
+	ResolvedAt                pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkReviewMemory struct {
 	ID                            uuid.UUID          `json:"id"`
 	ProjectID                     uuid.UUID          `json:"project_id"`
@@ -1159,6 +1434,8 @@ type WorkReviewMemory struct {
 	Active                        bool               `json:"active"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
+	MigrationBatchID              pgtype.UUID        `json:"migration_batch_id"`
+	LegacyReviewStateID           pgtype.UUID        `json:"legacy_review_state_id"`
 }
 
 type WorkSignatureAlias struct {

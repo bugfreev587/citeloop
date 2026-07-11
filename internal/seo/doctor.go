@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -63,6 +64,14 @@ type DoctorHumanReport struct {
 	CheckedURLs int            `json:"checked_urls"`
 }
 
+type doctorCheckCoverage struct {
+	Check       string   `json:"check"`
+	CheckedURLs []string `json:"checked_urls"`
+	PassedURLs  []string `json:"passed_urls"`
+	FailedURLs  []string `json:"failed_urls"`
+	SkippedURLs []string `json:"skipped_urls"`
+}
+
 type doctorFindingCandidate struct {
 	ProjectID             string
 	FindingKey            string
@@ -89,6 +98,7 @@ type doctorFindingCandidate struct {
 	ImportanceMultiplier  float64
 	LinkedOpportunityID   pgtype.UUID
 	LinkedContentActionID pgtype.UUID
+	FindingKind           string
 }
 
 type soft404Evidence struct {
@@ -178,7 +188,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 	if run.Status == "completed" {
-		return s.DoctorReport(ctx, run.ProjectID, run.ID)
+		return s.currentDoctorReport(ctx, run)
 	}
 
 	startedAt := pgtype.Timestamptz{Time: s.now(), Valid: true}
@@ -201,10 +211,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return s.failDoctorRun(ctx, run, DoctorStageDiscovering, "Could not load SEO property.", err)
 	}
 	siteURL = prop.SiteUrl
-	checks, err := s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
-		ProjectID: run.ProjectID,
-		LimitRows: 100,
-	})
+	checks, crawlComplete, err := s.loadNewestTechnicalChecks(ctx, run.ProjectID)
 	if err != nil {
 		return s.failDoctorRun(ctx, run, DoctorStageDiscovering, "Could not read technical checks.", err)
 	}
@@ -221,13 +228,23 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		if _, err := s.Sync(ctx, run.ProjectID, siteURL); err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageCrawling, "Technical crawl failed.", err)
 		}
-		checks, err = s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
-			ProjectID: run.ProjectID,
-			LimitRows: 100,
-		})
+		checks, crawlComplete, err = s.loadNewestTechnicalChecks(ctx, run.ProjectID)
 		if err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawl results.", err)
 		}
+	}
+	crawlerAccess := []db.AiCrawlerAccessSnapshot{}
+	geoRunComplete := false
+	geoRun, err := s.Q.GetLatestGEOCrawlerAuditRun(ctx, run.ProjectID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawler-access audit state.", err)
+	}
+	if err == nil {
+		crawlerAccess, err = s.Q.ListAICrawlerAccessSnapshotsForRun(ctx, db.ListAICrawlerAccessSnapshotsForRunParams{ProjectID: run.ProjectID, RunID: geoRun.ID})
+		if err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawler-access evidence.", err)
+		}
+		geoRunComplete = strings.EqualFold(geoRun.Status, "ok")
 	}
 
 	pages := int32(len(checks))
@@ -247,20 +264,51 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 
-	candidates := doctorFindingCandidatesFromChecks(run.ProjectID, checks)
-	if len(candidates) == 0 {
-		candidates = append(candidates, doctorFindingCandidate{
-			ProjectID:      run.ProjectID.String(),
-			Severity:       "Info",
-			Category:       "coverage",
-			IssueType:      "no_active_technical_blockers",
-			Status:         "active",
-			AffectedURLs:   []string{siteURL},
-			NormalizedURLs: []string{siteURL},
-			Evidence:       map[string]any{"source": "technical_checks", "checked_urls": len(checks)},
-			FixIntent:      "No repair needed.",
-			WhyItMatters:   "Doctor did not find an active technical blocker in the current scan window.",
+	candidates, growthCandidates := doctorFindingCandidatesAndGrowthFromChecks(run.ProjectID, checks)
+	candidates = append(candidates, doctorFindingCandidatesFromCrawlerAccess(run.ProjectID, crawlerAccess)...)
+	intelligence := s.loadDoctorIntelligenceInputs(ctx, run.ProjectID)
+	candidates = applyDoctorPagePriorityInputs(candidates, intelligence.Priority)
+	candidates = attachDoctorContextSnapshot(candidates, intelligence.ProductContext)
+	for i := range candidates {
+		candidates[i] = candidates[i].withDefaults()
+	}
+	authorized, authorityDegraded := s.doctorDiagnosisAuthority(ctx, run.ProjectID, DoctorTrigger(run.Trigger))
+	aiState := doctorDiagnosisAIState{Status: doctorAIStatusDisabled}
+	if authorityDegraded {
+		aiState = doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}
+	} else {
+		candidates, aiState = runDoctorDiagnosisAI(ctx, doctorDiagnosisAIRequest{
+			ProjectID: run.ProjectID, RunID: run.ID, Authorized: authorized, Candidates: candidates,
+			Context: mustJSON(intelligence.ProductContext), Provider: s.LLM, Model: s.DoctorAIModel,
+			Ledger: doctorPostgresAILedger{q: s.Q},
 		})
+	}
+	intelligence.Coverage = append(intelligence.Coverage, doctorAIReviewCoverage(aiState))
+	for _, candidate := range growthCandidates {
+		action := candidate.RecommendedAction
+		impact := candidate.ExpectedImpact
+		pageURL := strings.TrimSpace(candidate.PageURL)
+		var pageURLPtr *string
+		if pageURL != "" {
+			pageURLPtr = &pageURL
+		}
+		if _, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
+			ProjectID:         run.ProjectID,
+			Type:              candidate.Type,
+			Status:            "open",
+			PriorityScore:     pgutil.Numeric(candidate.PriorityScore),
+			Confidence:        pgutil.Numeric(candidate.Confidence),
+			PageUrl:           pageURLPtr,
+			NormalizedPageUrl: candidate.NormalizedPageURL,
+			Evidence:          mustJSON(candidate.Evidence),
+			RecommendedAction: &action,
+			ExpectedImpact:    &impact,
+			Effort:            candidate.Effort,
+			RiskLevel:         candidate.RiskLevel,
+			CreatedByRunID:    uuidToPG(run.ID),
+		}); err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not route growth work to Opportunities.", err)
+		}
 	}
 	seenKeys := make([]string, 0, len(candidates))
 	now := pgtype.Timestamptz{Time: s.now(), Valid: true}
@@ -272,20 +320,36 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		}
 		seenKeys = append(seenKeys, finding.FindingKey)
 	}
-	if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
-		ProjectID:  run.ProjectID,
-		RunID:      run.ID,
-		ResolvedAt: now,
-		ActiveKeys: seenKeys,
-	}); err != nil {
-		return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
+	if crawlComplete {
+		assessedSitemapURLs, assessedGeoScopes := doctorAssessedResolutionScopes(checks, crawlerAccess, geoRunComplete)
+		if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
+			ProjectID:           run.ProjectID,
+			RunID:               run.ID,
+			ResolvedAt:          now,
+			ActiveKeys:          seenKeys,
+			AssessedSitemapUrls: assessedSitemapURLs,
+			AssessedGeoScopes:   assessedGeoScopes,
+		}); err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
+		}
 	}
 
-	score := doctorHealthScore(candidates)
+	visibleFindings, err := s.Q.ListCurrentSEODoctorFindings(ctx, db.ListCurrentSEODoctorFindingsParams{ProjectID: run.ProjectID, RunID: run.ID})
+	if err != nil {
+		return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not read active Doctor findings.", err)
+	}
+	reportCandidates := doctorCandidatesFromRows(visibleFindings)
+	score := doctorHealthScore(reportCandidates)
 	score32 := int32(score)
-	issuesFound := int32(nonInfoIssueCount(candidates))
-	human := buildDoctorHumanReport(score, candidates, len(checks))
-	human.Status = doctorDisplayStatus(score, candidates)
+	issuesFound := int32(nonInfoIssueCount(reportCandidates))
+	human := buildDoctorHumanReport(score, reportCandidates, len(checks))
+	human.Status = doctorDisplayStatus(score, reportCandidates)
+	coverage := appendGEOAuditCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), geoRunComplete)
+	coverage = appendCrawlCompletenessCoverage(coverage, crawlComplete)
+	coverage = append(coverage, intelligence.Coverage...)
+	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
+		human.Status = "needs_attention"
+	}
 	run, err = s.Q.CompleteSEODoctorRun(ctx, db.CompleteSEODoctorRunParams{
 		ID:              run.ID,
 		ProjectID:       run.ProjectID,
@@ -296,15 +360,132 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		IssuesFound:     issuesFound,
 		HealthScore:     &score32,
 		OutputSummary: mustJSON(map[string]any{
-			"human_report": human,
-			"status":       human.Status,
+			"human_report":     human,
+			"status":           human.Status,
+			"healthy_coverage": coverage,
+			"growth_rerouted":  len(growthCandidates),
+			"doctor_ai_review": aiState,
 		}),
-		FinishedAt: pgtype.Timestamptz{Time: s.now(), Valid: true},
+		HealthyCoverage: mustJSON(coverage),
+		FinishedAt:      pgtype.Timestamptz{Time: s.now(), Valid: true},
 	})
 	if err != nil {
 		return DoctorReport{}, err
 	}
-	return s.DoctorReport(ctx, run.ProjectID, run.ID)
+	return s.currentDoctorReport(ctx, run)
+}
+
+func doctorAssessedResolutionScopes(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
+	sitemapURLs := []string{}
+	for _, check := range checks {
+		crawlState := strings.ToLower(normalizedEvidenceText(jsonObject(check.RawDetails)["crawl_status"]))
+		if crawlState == "partial" || crawlState == "unchecked" || crawlState == "skipped" {
+			continue
+		}
+		status := statusValue(check.SitemapStatus)
+		if status != "present" && status != "missing" {
+			continue
+		}
+		sitemapURLs = append(sitemapURLs, firstNonEmpty(check.NormalizedPageUrl, check.PageUrl))
+	}
+	geoScopes := []string{}
+	if !geoRunComplete {
+		return sortedUniqueStrings(sitemapURLs), geoScopes
+	}
+	for _, snapshot := range snapshots {
+		state := strings.ToLower(strings.TrimSpace(snapshot.RobotsState))
+		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.Confidence, "high") || (state != "allowed" && state != "disallowed") {
+			continue
+		}
+		geoScopes = append(geoScopes, geoResolutionScope(firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl), snapshot.TargetUserAgent))
+	}
+	return sortedUniqueStrings(sitemapURLs), sortedUniqueStrings(geoScopes)
+}
+
+func normalizedTargetUserAgent(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func geoResolutionScope(normalizedURL, targetUserAgent string) string {
+	return strings.TrimSpace(normalizedURL) + "\n" + normalizedTargetUserAgent(targetUserAgent)
+}
+
+func geoCoverageIdentity(snapshot db.AiCrawlerAccessSnapshot) string {
+	return firstNonEmpty(snapshot.PageUrl, snapshot.NormalizedPageUrl) + " [target_user_agent=" + normalizedTargetUserAgent(snapshot.TargetUserAgent) + "]"
+}
+
+func (s Service) loadNewestTechnicalChecks(ctx context.Context, projectID uuid.UUID) ([]db.TechnicalCheck, bool, error) {
+	const pageSize, maxChecks = 250, 10000
+	coverage, err := s.Q.CountNewestTechnicalCheckRun(ctx, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	runID, err := uuid.Parse(coverage.RunID)
+	if err != nil {
+		if coverage.CheckCount == 0 {
+			return []db.TechnicalCheck{}, false, nil
+		}
+		return nil, false, fmt.Errorf("invalid newest technical-check run ID: %w", err)
+	}
+	bounded := coverage.CheckCount > maxChecks
+	total := coverage.CheckCount
+	if bounded {
+		total = maxChecks
+	}
+	out := make([]db.TechnicalCheck, 0, total)
+	for offset := int32(0); int64(offset) < total; offset += pageSize {
+		rows, err := s.Q.ListNewestTechnicalCheckRunPage(ctx, db.ListNewestTechnicalCheckRunPageParams{ProjectID: projectID, RunID: runID, OffsetRows: offset, LimitRows: pageSize})
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, rows...)
+		if len(rows) == 0 {
+			break
+		}
+	}
+	return out, latestTechnicalCheckCrawlComplete(coverage.RunStatus, coverage.CheckCount, len(out), coverage.IncompleteCheckCount, bounded), nil
+}
+
+func latestTechnicalCheckCrawlComplete(runStatus string, expected int64, loaded int, incomplete int64, bounded bool) bool {
+	status := strings.ToLower(strings.TrimSpace(runStatus))
+	return !bounded && incomplete == 0 && (status == "ok" || status == "degraded") && expected == int64(loaded)
+}
+
+func appendCrawlCompletenessCoverage(coverage []doctorCheckCoverage, complete bool) []doctorCheckCoverage {
+	if complete {
+		return coverage
+	}
+	return append(coverage, doctorCheckCoverage{
+		Check:       "crawl_completeness",
+		CheckedURLs: []string{},
+		PassedURLs:  []string{},
+		FailedURLs:  []string{},
+		SkippedURLs: []string{"latest_crawl_incomplete_or_bounded"},
+	})
+}
+
+func appendGEOAuditCompletenessCoverage(coverage []doctorCheckCoverage, complete bool) []doctorCheckCoverage {
+	for i := range coverage {
+		if coverage[i].Check != "geo_crawler_access" {
+			continue
+		}
+		if !complete {
+			coverage[i].SkippedURLs = append(coverage[i].SkippedURLs, "latest_geo_crawler_audit_incomplete_or_missing")
+			normalizeDoctorCoverage(&coverage[i])
+		}
+		return coverage
+	}
+	marker := "latest_geo_crawler_audit_has_no_evidence"
+	if !complete {
+		marker = "latest_geo_crawler_audit_incomplete_or_missing"
+	}
+	return append(coverage, doctorCheckCoverage{
+		Check:       "geo_crawler_access",
+		CheckedURLs: []string{},
+		PassedURLs:  []string{},
+		FailedURLs:  []string{},
+		SkippedURLs: []string{marker},
+	})
 }
 
 func (s Service) DoctorLatest(ctx context.Context, projectID uuid.UUID) (DoctorReport, error) {
@@ -312,7 +493,7 @@ func (s Service) DoctorLatest(ctx context.Context, projectID uuid.UUID) (DoctorR
 	if err != nil {
 		return DoctorReport{}, err
 	}
-	return s.DoctorReport(ctx, projectID, run.ID)
+	return s.currentDoctorReport(ctx, run)
 }
 
 func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (DoctorReport, error) {
@@ -327,6 +508,18 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 	if err != nil {
 		return DoctorReport{}, err
 	}
+	return doctorReportFromRows(run, findings), nil
+}
+
+func (s Service) currentDoctorReport(ctx context.Context, run db.SeoDoctorRun) (DoctorReport, error) {
+	findings, err := s.Q.ListCurrentSEODoctorFindings(ctx, db.ListCurrentSEODoctorFindingsParams{ProjectID: run.ProjectID, RunID: run.ID})
+	if err != nil {
+		return DoctorReport{}, err
+	}
+	return doctorReportFromRows(run, findings), nil
+}
+
+func doctorReportFromRows(run db.SeoDoctorRun, findings []db.SeoDoctorFinding) DoctorReport {
 	candidates := doctorCandidatesFromRows(findings)
 	score := 100
 	if run.HealthScore != nil {
@@ -336,11 +529,16 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 	}
 	human := buildDoctorHumanReport(score, candidates, int(run.PagesChecked))
 	human.Status = doctorDisplayStatus(score, candidates)
+	var coverage []doctorCheckCoverage
+	_ = json.Unmarshal(run.HealthyCoverage, &coverage)
+	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
+		human.Status = "needs_attention"
+	}
 	return DoctorReport{
 		Run:      run,
 		Findings: nonNilSlice(findings),
 		Human:    human,
-	}, nil
+	}
 }
 
 func (s Service) DismissDoctorFinding(ctx context.Context, projectID, findingID uuid.UUID) (db.SeoDoctorFinding, error) {
@@ -553,6 +751,7 @@ func doctorFindingKey(candidate doctorFindingCandidate) string {
 	sort.Strings(normalizedURLs)
 	parts := []string{
 		strings.ToLower(strings.TrimSpace(candidate.ProjectID)),
+		strings.ToLower(strings.TrimSpace(candidate.FindingKind)),
 		strings.ToLower(strings.TrimSpace(candidate.IssueType)),
 		strings.Join(normalizedURLs, ","),
 		strings.ToLower(strings.TrimSpace(candidate.CanonicalTarget)),
@@ -563,6 +762,21 @@ func doctorFindingKey(candidate doctorFindingCandidate) string {
 }
 
 func doctorFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.TechnicalCheck) []doctorFindingCandidate {
+	findings, _ := doctorFindingCandidatesAndGrowthFromChecks(projectID, checks)
+	return findings
+}
+
+func doctorFindingCandidatesAndGrowthFromChecks(projectID uuid.UUID, checks []db.TechnicalCheck) ([]doctorFindingCandidate, []actionableSEOOpportunityCandidate) {
+	out := doctorBrokenFindingCandidatesFromChecks(projectID, checks)
+	optimizations, growth := doctorOptimizationCandidatesFromChecks(projectID, checks)
+	out = append(out, optimizations...)
+	for i := range out {
+		out[i] = out[i].withDefaults()
+	}
+	return out, growth
+}
+
+func doctorBrokenFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.TechnicalCheck) []doctorFindingCandidate {
 	out := make([]doctorFindingCandidate, 0)
 	for _, check := range checks {
 		base := doctorFindingCandidate{
@@ -581,29 +795,36 @@ func doctorFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.Technica
 			Confidence:           80,
 			ConfidenceLabel:      "high",
 		}
-		if check.HttpStatus == nil || *check.HttpStatus >= 400 {
+		if check.HttpStatus != nil && (*check.HttpStatus < 200 || *check.HttpStatus >= 300) {
 			status := int32(0)
 			if check.HttpStatus != nil {
 				status = *check.HttpStatus
 			}
 			out = append(out, base.withIssue("P0", "http", "broken_url", fmt.Sprintf("HTTP status %d blocks reliable indexing.", status), "Return a successful page for valid URLs or a real 404/410 for invalid URLs."))
 		}
-		if statusValue(check.RobotsStatus) == "noindex" {
+		switch statusValue(check.RobotsStatus) {
+		case "noindex":
 			out = append(out, base.withIssue("P0", "indexing", "noindex", "Important pages marked noindex cannot rank.", "Remove noindex from pages that should appear in search."))
+		case "blocked", "disallowed":
+			out = append(out, base.withIssue("P0", "indexing", "robots_blocked", "Important pages blocked by robots rules cannot be crawled reliably.", "Allow crawlers to access pages that should appear in search."))
 		}
-		if missingOrUnknown(check.CanonicalStatus) {
+		switch statusValue(check.CanonicalStatus) {
+		case "missing":
 			out = append(out, base.withIssue("P1", "canonical", "canonical_missing", "Missing canonical tags make URL consolidation less predictable.", "Add a self-referencing canonical URL or point to the preferred canonical page."))
+		case "mismatch", "invalid", "multiple":
+			issue := "canonical_" + statusValue(check.CanonicalStatus)
+			out = append(out, base.withIssue("P1", "canonical", issue, "The canonical declaration does not identify exactly one valid final URL.", "Set exactly one valid canonical URL matching the final production URL."))
 		}
-		if missingOrUnknown(check.StructuredDataStatus) {
+		if observedMissing(check.StructuredDataStatus) {
 			out = append(out, base.withIssue("P1", "structured_data", "structured_data_missing", "Missing structured data reduces eligibility for rich understanding and previews.", "Add valid JSON-LD schema for the page type."))
 		}
-		if missingOrUnknown(check.TitleStatus) {
+		if observedMissing(check.TitleStatus) {
 			out = append(out, base.withIssue("P2", "metadata", "title_missing", "Missing titles weaken search result clarity.", "Add a concise, unique title tag."))
 		}
-		if missingOrUnknown(check.MetaDescriptionStatus) {
+		if observedMissing(check.MetaDescriptionStatus) {
 			out = append(out, base.withIssue("P2", "metadata", "meta_description_missing", "Missing descriptions reduce control over search snippets.", "Add a relevant meta description."))
 		}
-		if missingOrUnknown(check.H1Status) {
+		if observedMissing(check.H1Status) {
 			out = append(out, base.withIssue("P2", "content", "h1_missing", "Missing H1s make page topic hierarchy less clear.", "Add one descriptive H1."))
 		}
 		if sitemapGapObserved(check.SitemapStatus) {
@@ -618,8 +839,128 @@ func doctorFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.Technica
 			out = append(out, base.withIssue("P1", "structured_data", "unsafe_mdx_detected", "Unsafe MDX or template script content can break rendering or schema parsing.", "Move raw script/schema output to a safe rendering path."))
 		}
 	}
-	for i := range out {
-		out[i] = out[i].withDefaults()
+	return out
+}
+
+func doctorOptimizationCandidatesFromChecks(projectID uuid.UUID, checks []db.TechnicalCheck) ([]doctorFindingCandidate, []actionableSEOOpportunityCandidate) {
+	out := make([]doctorFindingCandidate, 0)
+	growth := make([]actionableSEOOpportunityCandidate, 0)
+	titles := map[string][]db.TechnicalCheck{}
+	for _, check := range checks {
+		details := jsonObject(check.RawDetails)
+		citation := evidenceObject(details["citation_readiness"])
+		added := evidenceStrings(citation["added_propositions"])
+		removed := evidenceStrings(citation["removed_propositions"])
+		if len(added) > 0 || len(removed) > 0 {
+			growth = append(growth, citationFactExpansionCandidate(check, citation))
+			continue
+		}
+		if title := normalizedEvidenceText(details["page_title"]); title != "" {
+			titles[strings.ToLower(title)] = append(titles[strings.ToLower(title)], check)
+			if len([]rune(title)) > 70 || len([]rune(title)) < 10 {
+				out = append(out, doctorOptimizationFinding(projectID, check, "metadata_readability", "metadata", details,
+					"Make the existing metadata easier to read without changing the page's intent."))
+			}
+		}
+
+		if len(citation) == 0 {
+			continue
+		}
+		if normalizedEvidenceText(citation["supported_fact_extractability"]) == "needs_optimization" {
+			out = append(out, doctorOptimizationFinding(projectID, check, "supported_fact_extractability", "citation_readiness", details,
+				"Reformat existing supported facts into an extractable structure without adding claims."))
+		}
+		association := normalizedEvidenceText(citation["source_association_status"])
+		if association != "" && association != "associated" && association != "healthy" {
+			out = append(out, doctorOptimizationFinding(projectID, check, "source_association", "citation_readiness", details,
+				"Associate existing propositions with their existing visible sources."))
+		}
+		entityName := normalizedEvidenceText(citation["entity_name"])
+		canonicalName := normalizedEvidenceText(citation["canonical_entity_name"])
+		if entityName != "" && canonicalName != "" && !strings.EqualFold(entityName, canonicalName) {
+			out = append(out, doctorOptimizationFinding(projectID, check, "entity_naming_consistency", "citation_readiness", details,
+				"Use the established entity name consistently without changing the page's proposition set."))
+		}
+	}
+	for _, duplicates := range titles {
+		if len(duplicates) < 2 {
+			continue
+		}
+		for _, check := range duplicates {
+			out = append(out, doctorOptimizationFinding(projectID, check, "duplicate_metadata_template", "metadata", jsonObject(check.RawDetails),
+				"Differentiate the existing page metadata from the duplicated template without changing page intent."))
+		}
+	}
+	return out, growth
+}
+
+func doctorOptimizationFinding(projectID uuid.UUID, check db.TechnicalCheck, issueType, category string, details map[string]any, fix string) doctorFindingCandidate {
+	citation := evidenceObject(details["citation_readiness"])
+	intent := normalizedEvidenceText(details["primary_intent"])
+	preserved := evidenceStrings(citation["preserved_propositions"])
+	if len(preserved) == 0 {
+		preserved = evidenceStrings(details["existing_propositions"])
+	}
+	evidence := map[string]any{
+		"source":                     "technical_checks",
+		"page_url":                   check.PageUrl,
+		"normalized_page_url":        check.NormalizedPageUrl,
+		"finding_kind":               "optimization",
+		"primary_intent_before":      intent,
+		"primary_intent_after":       intent,
+		"preserved_propositions":     preserved,
+		"added_propositions":         []string{},
+		"removed_propositions":       evidenceStrings(citation["removed_propositions"]),
+		"source_association_changes": evidenceList(citation["source_association_changes"]),
+	}
+	return doctorFindingCandidate{
+		ProjectID: projectID.String(), Severity: "P2", Category: category, IssueType: issueType,
+		Status: "active", AffectedURLs: []string{check.PageUrl}, NormalizedURLs: []string{check.NormalizedPageUrl},
+		Evidence: evidence, WhyItMatters: "The live page can be made clearer and more machine-readable without changing its intent or adding facts.",
+		FixIntent: fix, StructuralLocator: issueType, FindingKind: "optimization",
+		Confidence: 80, ConfidenceLabel: "high", ImportanceLabel: "important", ImportanceMultiplier: 1,
+	}
+}
+
+func citationFactExpansionCandidate(check db.TechnicalCheck, citation map[string]any) actionableSEOOpportunityCandidate {
+	evidence := actionableEvidence("doctor_citation_readiness", "citation_fact_expansion", check.NormalizedPageUrl, "",
+		"growth_route = proposed citation optimization adds propositions not present on live page", "measurement_required",
+		"The proposal requires new facts, so its value must be tested as delayed Growth work.",
+		[]string{"technical_checks", "doctor_fail_closed"}, map[string]any{
+			"preserved_propositions":     evidenceStrings(citation["preserved_propositions"]),
+			"added_propositions":         evidenceStrings(citation["added_propositions"]),
+			"removed_propositions":       evidenceStrings(citation["removed_propositions"]),
+			"source_association_changes": evidenceList(citation["source_association_changes"]),
+			"hypothesis":                 "Adding the supported facts may improve citation readiness after a measurement window.",
+			"measurement_window_days":    28,
+		})
+	return actionableSEOOpportunityCandidate{
+		Type: "citation_fact_expansion", PageURL: check.PageUrl, NormalizedPageURL: check.NormalizedPageUrl,
+		PriorityScore: 62, Confidence: 65,
+		RecommendedAction: "Test adding the supported facts as a measured citation-readiness growth hypothesis",
+		ExpectedImpact:    "May improve citation readiness after the new propositions are reviewed and measured.",
+		Effort:            3, RiskLevel: "medium", Evidence: evidence,
+	}
+}
+
+func doctorFindingCandidatesFromCrawlerAccess(projectID uuid.UUID, snapshots []db.AiCrawlerAccessSnapshot) []doctorFindingCandidate {
+	out := make([]doctorFindingCandidate, 0)
+	seen := map[string]bool{}
+	for _, snapshot := range snapshots {
+		identity := geoResolutionScope(firstNonEmpty(snapshot.NormalizedPageUrl, snapshot.PageUrl), snapshot.TargetUserAgent)
+		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.RobotsState, "disallowed") || !strings.EqualFold(snapshot.Confidence, "high") || seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		targetUserAgent := normalizedTargetUserAgent(snapshot.TargetUserAgent)
+		out = append(out, doctorFindingCandidate{
+			ProjectID: projectID.String(), Severity: "P0", Category: "geo", IssueType: "geo_crawler_access_blocked",
+			Status: "active", AffectedURLs: []string{snapshot.PageUrl}, NormalizedURLs: []string{snapshot.NormalizedPageUrl},
+			Evidence:          map[string]any{"source": "geo_crawler_access_snapshot", "finding_kind": "broken", "target_user_agent": snapshot.TargetUserAgent, "robots_state": snapshot.RobotsState, "confidence": snapshot.Confidence},
+			WhyItMatters:      "An authoritative robots rule blocks an AI/search crawler from the page.",
+			FixIntent:         "Review the robots policy and allow the crawler when that matches the project's indexing policy.",
+			StructuralLocator: "geo_crawler_access_blocked[target_user_agent=" + targetUserAgent + "]", FindingKind: "broken", Confidence: 90, ConfidenceLabel: "high", ImportanceLabel: "important", ImportanceMultiplier: 1,
+		}.withDefaults())
 	}
 	return out
 }
@@ -648,6 +989,9 @@ func (c doctorFindingCandidate) withDefaults() doctorFindingCandidate {
 	}
 	if c.IssueType == "" {
 		c.IssueType = "technical_visibility_issue"
+	}
+	if c.FindingKind == "" {
+		c.FindingKind = "broken"
 	}
 	if c.Confidence == 0 {
 		c.Confidence = ConfidenceValue(c.ConfidenceLabel)
@@ -685,6 +1029,7 @@ func (c doctorFindingCandidate) withDefaults() doctorFindingCandidate {
 	c.Evidence["confidence"] = c.Confidence
 	c.Evidence["confidence_label"] = c.ConfidenceLabel
 	c.Evidence["importance_label"] = c.ImportanceLabel
+	c.Evidence["finding_kind"] = c.FindingKind
 	if c.FindingKey == "" {
 		c.FindingKey = doctorFindingKey(c)
 	}
@@ -713,6 +1058,7 @@ func (c doctorFindingCandidate) upsertParams(projectID, runID uuid.UUID, seenAt 
 		LinkedOpportunityID:   c.LinkedOpportunityID,
 		LinkedContentActionID: c.LinkedContentActionID,
 		SeenAt:                seenAt,
+		FindingKind:           c.FindingKind,
 	}
 }
 
@@ -730,6 +1076,7 @@ func doctorCandidatesFromRows(rows []db.SeoDoctorFinding) []doctorFindingCandida
 			Evidence:             jsonObject(row.Evidence),
 			Confidence:           confidenceFromFinding(row),
 			ImportanceMultiplier: 1,
+			FindingKind:          row.FindingKind,
 		})
 	}
 	return out
@@ -792,6 +1139,11 @@ func missingOrUnknown(value *string) bool {
 	return status == "" || status == "missing" || status == "unknown" || status == "invalid"
 }
 
+func observedMissing(value *string) bool {
+	status := statusValue(value)
+	return status == "missing" || status == "invalid"
+}
+
 func sitemapGapObserved(value *string) bool {
 	return statusValue(value) == "missing"
 }
@@ -801,6 +1153,210 @@ func statusValue(value *string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(*value))
+}
+
+func normalizedEvidenceText(value any) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
+func evidenceObject(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case json.RawMessage:
+		return jsonObject(typed)
+	case []byte:
+		return jsonObject(json.RawMessage(typed))
+	default:
+		return map[string]any{}
+	}
+}
+
+func evidenceStrings(value any) []string {
+	values := make([]string, 0)
+	switch typed := value.(type) {
+	case []string:
+		values = append(values, typed...)
+	case []any:
+		for _, item := range typed {
+			if text := normalizedEvidenceText(item); text != "" && text != "<nil>" {
+				values = append(values, text)
+			}
+		}
+	}
+	return values
+}
+
+func evidenceList(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case nil:
+		return []any{}
+	default:
+		return []any{typed}
+	}
+}
+
+func buildDoctorHealthyCoverage(checks []db.TechnicalCheck, crawlerAccess []db.AiCrawlerAccessSnapshot) []doctorCheckCoverage {
+	type checkDefinition struct {
+		name     string
+		classify func(db.TechnicalCheck) string
+	}
+	statusCheck := func(value func(db.TechnicalCheck) *string) func(db.TechnicalCheck) string {
+		return func(check db.TechnicalCheck) string {
+			status := statusValue(value(check))
+			switch status {
+			case "present", "index", "indexed", "allowed", "included", "valid", "ok":
+				return "passed"
+			case "missing", "invalid", "mismatch", "multiple", "noindex", "blocked", "disallowed":
+				return "failed"
+			default:
+				return "skipped"
+			}
+		}
+	}
+	definitions := []checkDefinition{
+		{name: "http_status", classify: func(check db.TechnicalCheck) string {
+			if check.HttpStatus == nil {
+				return "skipped"
+			}
+			if *check.HttpStatus >= 200 && *check.HttpStatus < 300 {
+				return "passed"
+			}
+			return "failed"
+		}},
+		{name: "robots", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.RobotsStatus })},
+		{name: "canonical", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.CanonicalStatus })},
+		{name: "title", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.TitleStatus })},
+		{name: "meta_description", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.MetaDescriptionStatus })},
+		{name: "h1", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.H1Status })},
+		{name: "structured_data", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.StructuredDataStatus })},
+		{name: "sitemap", classify: statusCheck(func(check db.TechnicalCheck) *string { return check.SitemapStatus })},
+		{name: "internal_links", classify: func(check db.TechnicalCheck) string {
+			if check.InternalLinkCount == nil {
+				return "skipped"
+			}
+			if *check.InternalLinkCount > 0 {
+				return "passed"
+			}
+			return "failed"
+		}},
+	}
+	out := make([]doctorCheckCoverage, 0, len(definitions)+1)
+	for _, definition := range definitions {
+		coverage := doctorCheckCoverage{Check: definition.name, CheckedURLs: []string{}, PassedURLs: []string{}, FailedURLs: []string{}, SkippedURLs: []string{}}
+		for _, check := range checks {
+			url := strings.TrimSpace(check.PageUrl)
+			if url == "" {
+				url = strings.TrimSpace(check.NormalizedPageUrl)
+			}
+			state := definition.classify(check)
+			crawlState := strings.ToLower(normalizedEvidenceText(jsonObject(check.RawDetails)["crawl_status"]))
+			if crawlState == "partial" || crawlState == "unchecked" || crawlState == "skipped" {
+				state = "skipped"
+			}
+			switch state {
+			case "passed":
+				coverage.CheckedURLs = append(coverage.CheckedURLs, url)
+				coverage.PassedURLs = append(coverage.PassedURLs, url)
+			case "failed":
+				coverage.CheckedURLs = append(coverage.CheckedURLs, url)
+				coverage.FailedURLs = append(coverage.FailedURLs, url)
+			default:
+				coverage.SkippedURLs = append(coverage.SkippedURLs, url)
+			}
+		}
+		normalizeDoctorCoverage(&coverage)
+		out = append(out, coverage)
+	}
+	if len(crawlerAccess) > 0 {
+		coverage := doctorCheckCoverage{Check: "geo_crawler_access", CheckedURLs: []string{}, PassedURLs: []string{}, FailedURLs: []string{}, SkippedURLs: []string{}}
+		for _, snapshot := range crawlerAccess {
+			url := geoCoverageIdentity(snapshot)
+			authoritativeRobots := strings.EqualFold(snapshot.EvidenceType, "robots_static") && strings.EqualFold(snapshot.Confidence, "high")
+			if !authoritativeRobots && (!strings.EqualFold(snapshot.Confidence, "high") || snapshot.Inferred) {
+				coverage.SkippedURLs = append(coverage.SkippedURLs, url)
+				continue
+			}
+			coverage.CheckedURLs = append(coverage.CheckedURLs, url)
+			if strings.EqualFold(snapshot.RobotsState, "disallowed") || strings.EqualFold(snapshot.AccessState, "blocked") {
+				coverage.FailedURLs = append(coverage.FailedURLs, url)
+			} else {
+				coverage.PassedURLs = append(coverage.PassedURLs, url)
+			}
+		}
+		normalizeDoctorCoverage(&coverage)
+		out = append(out, coverage)
+	}
+	return out
+}
+
+func normalizeDoctorCoverage(coverage *doctorCheckCoverage) {
+	coverage.CheckedURLs = sortedUniqueStrings(coverage.CheckedURLs)
+	coverage.PassedURLs = sortedUniqueStrings(coverage.PassedURLs)
+	coverage.FailedURLs = sortedUniqueStrings(coverage.FailedURLs)
+	coverage.SkippedURLs = sortedUniqueStrings(coverage.SkippedURLs)
+	failed := stringSet(coverage.FailedURLs)
+	skipped := stringSet(coverage.SkippedURLs)
+	passed := coverage.PassedURLs[:0]
+	for _, url := range coverage.PassedURLs {
+		if !failed[url] && !skipped[url] {
+			passed = append(passed, url)
+		}
+	}
+	coverage.PassedURLs = passed
+}
+
+func doctorCoverageComplete(coverage []doctorCheckCoverage) bool {
+	if len(coverage) == 0 {
+		return false
+	}
+	for _, check := range coverage {
+		if doctorOptionalIntelligenceCoverage(check.Check) {
+			continue
+		}
+		if len(check.SkippedURLs) > 0 || len(check.FailedURLs) > 0 || len(check.CheckedURLs) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func doctorOptionalIntelligenceCoverage(check string) bool {
+	switch check {
+	case "gsc_priority_context", "ga4_priority_context", "doctor_ai_review", "product_context":
+		return true
+	default:
+		return false
+	}
+}
+
+func sortedUniqueStrings(values []string) []string {
+	set := stringSet(values)
+	out := make([]string, 0, len(set))
+	for value := range set {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[value] = true
+	}
+	return out
 }
 
 func developerInstructionForIssue(issueType string) string {

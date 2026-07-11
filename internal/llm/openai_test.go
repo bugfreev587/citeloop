@@ -235,6 +235,21 @@ func TestOpenAIChatCompleteCanDisableProviderFallbackForSiteFix(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatCompletePreservesResolvedUsageOnProviderError(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"model":"claude-opus-4-8","usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13},"error":{"message":"rate limited"}}`))}, nil
+	})
+	p := NewOpenAIChat("tg-test-key", "https://tokengate.example/v1", "claude-opus-4-8")
+	p.client = &http.Client{Transport: transport}
+	resp, err := p.Complete(context.Background(), CompletionReq{Prompt: "repair", Purpose: PurposeSiteFix, Model: "claude-opus-4-8", DisableProviderFallback: true})
+	if err == nil {
+		t.Fatal("expected provider error")
+	}
+	if resp.Provider != "tokengate" || resp.Model != "claude-opus-4-8" || resp.PromptTokens != 11 || resp.CompletionTokens != 2 || resp.Tokens != 13 || resp.CostUSD <= 0 {
+		t.Fatalf("provider error ledger response = %+v", resp)
+	}
+}
+
 func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	p := NewOpenAIChat("", "https://example.test/v1", "claude-haiku-4-5-20251001")
 	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "hi"}); err == nil {

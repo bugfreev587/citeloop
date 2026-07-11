@@ -3,6 +3,7 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -117,7 +118,19 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 			if err != nil {
 				return finish("error", result, err)
 			}
+			if opp.ID == uuid.Nil {
+				continue
+			}
 			result.Opportunities = append(result.Opportunities, opp)
+			if s.GrowthWriter != nil {
+				canExecute, err := s.GrowthWriter.CanExecuteOpportunity(ctx, projectID, opp.ID)
+				if err != nil {
+					return finish("error", result, err)
+				}
+				if !canExecute {
+					continue
+				}
+			}
 			brief, err := s.createAssetBrief(ctx, projectID, run.ID, opp.ID, gap)
 			if err != nil {
 				return finish("error", result, err)
@@ -129,8 +142,21 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 }
 
 func (s Service) AcceptGEOAssetBrief(ctx context.Context, projectID, briefID uuid.UUID) (AcceptGEOAssetBriefResult, error) {
-	if _, err := s.Q.GetGEOAssetBriefForProject(ctx, db.GetGEOAssetBriefForProjectParams{ID: briefID, ProjectID: projectID}); err != nil {
+	brief, err := s.Q.GetGEOAssetBriefForProject(ctx, db.GetGEOAssetBriefForProjectParams{ID: briefID, ProjectID: projectID})
+	if err != nil {
 		return AcceptGEOAssetBriefResult{}, err
+	}
+	if s.GrowthWriter != nil {
+		if err := s.GrowthWriter.EnsureOpportunityReserved(ctx, projectID, brief.OpportunityID); err != nil {
+			return AcceptGEOAssetBriefResult{}, err
+		}
+		canExecute, err := s.GrowthWriter.CanExecuteOpportunity(ctx, projectID, brief.OpportunityID)
+		if err != nil {
+			return AcceptGEOAssetBriefResult{}, err
+		}
+		if !canExecute {
+			return AcceptGEOAssetBriefResult{}, errors.New("Growth opportunity is blocked by unresolved Doctor work")
+		}
 	}
 	accepted, err := s.Q.UpdateGEOAssetBriefStatus(ctx, db.UpdateGEOAssetBriefStatusParams{ID: briefID, ProjectID: projectID, Status: "accepted"})
 	if err != nil {
@@ -205,10 +231,18 @@ func (s Service) upsertObservationOpportunity(ctx context.Context, projectID uui
 	action := gap.Action
 	impact := gap.Impact
 	query := gap.PromptText
-	return s.Q.UpsertGEOObservationOpportunity(ctx, db.UpsertGEOObservationOpportunityParams{
+	if s.GrowthWriter == nil {
+		return s.Q.UpsertGEOObservationOpportunity(ctx, db.UpsertGEOObservationOpportunityParams{
+			ProjectID: projectID, Type: gap.Type, Status: "open",
+			PriorityScore: pgutil.Numeric(gap.Priority), Confidence: pgutil.Numeric(gap.Confidence),
+			PageUrl: nil, NormalizedPageUrl: "", Query: &query, Evidence: jsonBytes(gap.Evidence),
+			RecommendedAction: &action, ExpectedImpact: &impact, Effort: 3, RiskLevel: gap.Risk,
+		})
+	}
+	opportunity, err := s.GrowthWriter.CreateOpportunity(ctx, db.CreateCanonicalGrowthOpportunityParams{
+		ID:                uuid.New(),
 		ProjectID:         projectID,
 		Type:              gap.Type,
-		Status:            "open",
 		PriorityScore:     pgutil.Numeric(gap.Priority),
 		Confidence:        pgutil.Numeric(gap.Confidence),
 		PageUrl:           nil,
@@ -220,6 +254,18 @@ func (s Service) upsertObservationOpportunity(ctx context.Context, projectID uui
 		Effort:            3,
 		RiskLevel:         gap.Risk,
 	})
+	if err != nil {
+		return db.UpsertGEOObservationOpportunityRow{}, err
+	}
+	return db.UpsertGEOObservationOpportunityRow{
+		ID: opportunity.ID, ProjectID: opportunity.ProjectID, Type: opportunity.Type,
+		Status: opportunity.Status, PriorityScore: opportunity.PriorityScore, Confidence: opportunity.Confidence,
+		PageUrl: opportunity.PageUrl, NormalizedPageUrl: opportunity.NormalizedPageUrl,
+		Query: opportunity.Query, Evidence: opportunity.Evidence, RecommendedAction: opportunity.RecommendedAction,
+		ExpectedImpact: opportunity.ExpectedImpact, Effort: opportunity.Effort, RiskLevel: opportunity.RiskLevel,
+		OpportunityIdentityKey: opportunity.OpportunityIdentityKey, EvidenceFingerprint: opportunity.EvidenceFingerprint,
+		CanonicalGrowth: opportunity.CanonicalGrowth,
+	}, nil
 }
 
 func (s Service) createAssetBrief(ctx context.Context, projectID, runID, opportunityID uuid.UUID, gap geoGap) (db.GeoAssetBrief, error) {

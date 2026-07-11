@@ -70,8 +70,8 @@ func TestDiscoveryQueriesExposeShadowFoundation(t *testing.T) {
 		t.Fatal("candidate snapshots must be idempotent within a run without overwriting prior-run provenance")
 	}
 	signatureQuery := strings.ToLower(upsertShadowWorkSignature)
-	if !strings.Contains(signatureQuery, "on conflict (candidate_id, mode)") {
-		t.Fatal("shadow signature upsert must conflict only with the same candidate mode")
+	if !strings.Contains(signatureQuery, "on conflict (candidate_id) where mode in ('shadow')") {
+		t.Fatal("shadow signature upsert must target only the partial shadow uniqueness index")
 	}
 	updateClause := strings.SplitN(signatureQuery, "do update set", 2)
 	if len(updateClause) != 2 {

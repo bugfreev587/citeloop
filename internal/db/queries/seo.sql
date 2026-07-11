@@ -176,6 +176,29 @@ where project_id = $1
   and property_id = $2
   and (clicks is not null or impressions is not null);
 
+-- name: ListDoctorPagePriorityInputs :many
+select
+  max(page_url)::text as page_url,
+  normalized_page_url,
+  coalesce(sum(clicks), 0)::numeric as gsc_clicks_28d,
+  coalesce(sum(impressions), 0)::numeric as gsc_impressions_28d,
+  coalesce(sum(ga4_sessions), 0)::numeric as ga4_sessions_28d,
+  coalesce(sum(ga4_engaged_sessions), 0)::numeric as ga4_engaged_sessions_28d,
+  coalesce(sum(ga4_conversions), 0)::numeric as ga4_key_events_28d,
+  max(date)::date as evidence_fresh_through
+from page_performance_daily
+where project_id = sqlc.arg(project_id)
+  and date >= current_date - 28
+  and (
+    clicks is not null or impressions is not null or ga4_sessions is not null
+    or ga4_engaged_sessions is not null or ga4_conversions is not null
+  )
+group by normalized_page_url
+order by
+  coalesce(sum(impressions), 0) + coalesce(sum(ga4_sessions), 0) desc,
+  normalized_page_url asc
+limit least(greatest(sqlc.arg(limit_rows)::int, 1), 50);
+
 -- name: ListSearchQueryOpportunityRollups :many
 select
   max(page_url)::text as page_url,
@@ -304,6 +327,7 @@ update seo_doctor_runs set
   issues_found = sqlc.arg(issues_found),
   health_score = sqlc.arg(health_score),
   output_summary = sqlc.arg(output_summary)::jsonb,
+  healthy_coverage = sqlc.arg(healthy_coverage)::jsonb,
   error = null,
   updated_at = now(),
   finished_at = sqlc.arg(finished_at)
@@ -361,7 +385,7 @@ insert into seo_doctor_findings
    affected_urls, normalized_urls, evidence, why_it_matters, fix_intent,
    developer_instructions, likely_files_or_surfaces, acceptance_tests,
    risk_level, review_required, autofix_eligible, linked_opportunity_id,
-   linked_content_action_id, first_seen_at, last_seen_at)
+   linked_content_action_id, first_seen_at, last_seen_at, finding_kind)
 values (
   sqlc.arg(project_id),
   sqlc.arg(run_id),
@@ -384,13 +408,15 @@ values (
   sqlc.narg(linked_opportunity_id),
   sqlc.narg(linked_content_action_id),
   sqlc.arg(seen_at),
-  sqlc.arg(seen_at)
+  sqlc.arg(seen_at),
+  sqlc.arg(finding_kind)
 )
 on conflict (project_id, finding_key) where status = 'active' do update set
   run_id = excluded.run_id,
   severity = excluded.severity,
   category = excluded.category,
   issue_type = excluded.issue_type,
+  finding_kind = excluded.finding_kind,
   affected_urls = excluded.affected_urls,
   normalized_urls = excluded.normalized_urls,
   evidence = excluded.evidence,
@@ -417,12 +443,42 @@ update seo_doctor_findings set
 where project_id = sqlc.arg(project_id)
   and status = 'active'
   and run_id <> sqlc.arg(run_id)
-  and not (finding_key = any(sqlc.arg(active_keys)::text[]));
+  and not (finding_key = any(sqlc.arg(active_keys)::text[]))
+  and (
+    issue_type not in ('important_page_missing_from_sitemap', 'geo_crawler_access_blocked')
+    or (
+      issue_type = 'important_page_missing_from_sitemap'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value = any(sqlc.arg(assessed_sitemap_urls)::text[])
+      )
+    )
+    or (
+      issue_type = 'geo_crawler_access_blocked'
+      and exists (
+        select 1 from jsonb_array_elements_text(normalized_urls) scoped_url
+        where scoped_url.value || chr(10) || lower(btrim(coalesce(evidence->>'target_user_agent', ''))) = any(sqlc.arg(assessed_geo_scopes)::text[])
+      )
+    )
+  );
 
 -- name: ListSEODoctorFindingsForRun :many
 select * from seo_doctor_findings
 where project_id = $1
   and run_id = $2
+order by
+  case severity
+    when 'P0' then 0
+    when 'P1' then 1
+    when 'P2' then 2
+    else 3
+  end,
+  updated_at desc;
+
+-- name: ListCurrentSEODoctorFindings :many
+select * from seo_doctor_findings
+where project_id = $1
+  and (run_id = $2 or status = 'active')
 order by
   case severity
     when 'P0' then 0
@@ -466,6 +522,33 @@ where tc.project_id = sqlc.arg(project_id)
   )
 order by tc.checked_at desc
 limit sqlc.arg(limit_rows);
+
+-- name: CountNewestTechnicalCheckRun :one
+with latest as (
+  select latest_run.id
+  from seo_runs latest_run
+  where latest_run.project_id = sqlc.arg(scoped_project_id) and latest_run.agent = 'seo_sync'
+  order by latest_run.started_at desc, latest_run.id desc
+  limit 1
+)
+select coalesce((select id::text from latest), '')::text as run_id,
+       count(tc.id)::bigint as check_count,
+       count(tc.id) filter (where
+         tc.http_status is null
+         or tc.raw_details ? 'error'
+         or coalesce(tc.raw_details->>'crawl_status', '') in ('partial', 'unchecked', 'skipped')
+       )::bigint as incomplete_check_count,
+       coalesce(max(sr.status), '')::text as run_status
+from seo_runs sr
+left join technical_checks tc on tc.run_id = sr.id and tc.project_id = sr.project_id
+where sr.id = (select id from latest);
+
+-- name: ListNewestTechnicalCheckRunPage :many
+select tc.* from technical_checks tc
+where tc.project_id = sqlc.arg(project_id)
+  and tc.run_id = sqlc.arg(run_id)
+order by tc.normalized_page_url, tc.id
+limit sqlc.arg(limit_rows) offset sqlc.arg(offset_rows);
 
 -- name: UpsertSEOOpportunity :one
 with opportunity_input as (
@@ -587,30 +670,553 @@ reopened_review_state as (
 )
 select * from upserted;
 
+-- name: CreateCanonicalGrowthOpportunity :one
+insert into seo_opportunities
+  (id, project_id, type, status, priority_score, confidence, page_url,
+   normalized_page_url, article_id, topic_id, query, evidence,
+   recommended_action, expected_impact, effort, risk_level, created_by_run_id,
+   opportunity_key, opportunity_identity_key, evidence_fingerprint, canonical_growth)
+values
+  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(type), 'open',
+   sqlc.arg(priority_score), sqlc.arg(confidence), sqlc.narg(page_url),
+   sqlc.arg(normalized_page_url), sqlc.narg(article_id), sqlc.narg(topic_id),
+   sqlc.narg(query), sqlc.arg(evidence)::jsonb, sqlc.narg(recommended_action),
+   sqlc.narg(expected_impact), sqlc.arg(effort), sqlc.arg(risk_level),
+   sqlc.narg(created_by_run_id), sqlc.arg(exact_signature_hash),
+   sqlc.arg(exact_signature_hash), sqlc.arg(evidence_fingerprint), true)
+returning *;
+
+-- name: MergeCanonicalGrowthOpportunityEvidence :one
+with locked_signature as (
+  select signature.id, signature.reserved_work_id
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = sqlc.arg(work_signature_id)
+    and signature.mode = 'enforced' and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+  for update
+), merged as (
+  update seo_opportunities opportunity set
+    evidence = opportunity.evidence || jsonb_build_object(
+      'merged_cross_source_evidence',
+      coalesce(opportunity.evidence->'merged_cross_source_evidence', '[]'::jsonb)
+        || jsonb_build_array(sqlc.arg(evidence)::jsonb)
+    ),
+    priority_score = greatest(opportunity.priority_score, sqlc.arg(incoming_priority_score)::numeric),
+    confidence = greatest(opportunity.confidence, sqlc.arg(incoming_confidence)::numeric),
+    evidence_fingerprint = sqlc.arg(evidence_fingerprint),
+    updated_at = now()
+  from locked_signature signature
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = signature.reserved_work_id
+  returning opportunity.*
+), updated_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = sqlc.arg(evidence_fingerprint), updated_at = now()
+  from locked_signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = locked_signature.id
+  returning signature.id
+)
+select merged.* from merged, updated_signature;
+
+-- name: GetCanonicalGrowthOpportunityByWorkSignatureForUpdate :one
+select opportunity.* from work_signature_registry signature
+join seo_opportunities opportunity
+  on opportunity.project_id = signature.project_id and opportunity.id = signature.reserved_work_id
+where signature.project_id = sqlc.arg(project_id)
+  and signature.id = sqlc.arg(work_signature_id)
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'opportunities' and signature.reserved_work_type = 'seo_opportunity'
+for update of opportunity;
+
+-- name: GetWorkSignatureForGrowthEvidenceMergeForUpdate :one
+select * from work_signature_registry
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(work_signature_id)
+  and mode = 'enforced' and active = true
+for update;
+
 -- name: ListSEOOpportunities :many
-select * from seo_opportunities
-where project_id = sqlc.arg(project_id)
-  and (sqlc.arg(type)::text = '' or type = sqlc.arg(type))
-  and (sqlc.arg(status)::text = '' or status = sqlc.arg(status))
-  and (sqlc.arg(cursor_created_at)::timestamptz is null or created_at < sqlc.arg(cursor_created_at))
-order by priority_score desc, created_at desc
+select seo_opportunities.* from seo_opportunities
+where seo_opportunities.project_id = sqlc.arg(project_id)
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and (sqlc.arg(type)::text = '' or seo_opportunities.type = sqlc.arg(type))
+  and (sqlc.arg(status)::text = '' or seo_opportunities.status = sqlc.arg(status))
+  and (sqlc.arg(cursor_created_at)::timestamptz is null or seo_opportunities.created_at < sqlc.arg(cursor_created_at))
+order by seo_opportunities.priority_score desc, seo_opportunities.created_at desc
 limit sqlc.arg(limit_rows);
 
 -- name: GetSEOOpportunity :one
+select seo_opportunities.* from seo_opportunities
+where seo_opportunities.id = $1 and seo_opportunities.project_id = $2
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  );
+
+-- name: LockSEOOpportunityForGrowthReserve :one
 select * from seo_opportunities
-where id = $1 and project_id = $2;
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+  and status in ('open','accepted','converted','snoozed','watching')
+for update;
+
+-- name: ListActiveLegacyGrowthOpportunities :many
+select opportunity.* from seo_opportunities opportunity
+where opportunity.project_id = sqlc.arg(project_id)
+  and opportunity.canonical_growth = false
+  and opportunity.canonical_read_only = false
+  and not is_legacy_doctor_technical_opportunity(opportunity.type, opportunity.evidence)
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = opportunity.project_id
+      and alias.legacy_opportunity_id = opportunity.id
+      and alias.disposition in ('canonicalized','duplicate','doctor_merge')
+  )
+  and opportunity.status in ('open','accepted','converted','snoozed','watching')
+order by opportunity.created_at, opportunity.id
+limit sqlc.arg(limit_rows);
+
+-- name: MarkLegacyGrowthOpportunityCanonical :one
+update seo_opportunities set canonical_growth = true, updated_at = now()
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(id)
+  and canonical_growth = false and canonical_read_only = false
+returning *;
+
+-- name: CreateDuplicateGrowthOpportunityAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, work_signature_id, disposition)
+select sqlc.arg(project_id), sqlc.arg(legacy_opportunity_id), 'seo_opportunity', signature.reserved_work_id,
+       signature.id, 'duplicate'
+from work_signature_registry signature
+where signature.project_id = sqlc.arg(project_id)
+  and signature.id = sqlc.arg(work_signature_id)
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'opportunities'
+  and signature.reserved_work_type = 'seo_opportunity'
+  and signature.reserved_work_id is not null
+  and signature.reserved_work_id <> sqlc.arg(legacy_opportunity_id)
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_opportunity_id = excluded.canonical_opportunity_id,
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_site_fix_id = null,
+  work_signature_id = excluded.work_signature_id,
+  disposition = 'duplicate'
+returning *;
+
+-- name: CreateCanonicalizedGrowthOpportunityAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, work_signature_id, disposition)
+values (sqlc.arg(project_id), sqlc.arg(opportunity_id), 'seo_opportunity', sqlc.arg(opportunity_id),
+        sqlc.arg(work_signature_id), 'canonicalized')
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_opportunity_id = excluded.canonical_opportunity_id,
+  canonical_site_fix_id = null,
+  work_signature_id = excluded.work_signature_id,
+  disposition = excluded.disposition
+returning *;
+
+-- name: CreateDoctorGrowthEvidenceAlias :one
+insert into growth_opportunity_work_aliases
+  (project_id, legacy_opportunity_id, canonical_object_type, canonical_site_fix_id, work_signature_id, disposition)
+select sqlc.arg(project_id), sqlc.arg(legacy_opportunity_id), 'site_fix', fix.id,
+       signature.id, 'doctor_merge'
+from work_signature_registry signature
+join site_fixes fix on fix.project_id = signature.project_id and fix.work_signature_id = signature.id
+where signature.project_id = sqlc.arg(project_id)
+  and signature.id = sqlc.arg(work_signature_id)
+  and signature.mode = 'enforced' and signature.active = true
+  and signature.owner = 'doctor' and signature.reserved_work_type = 'site_fix'
+on conflict (project_id, legacy_opportunity_id) do update set
+  canonical_object_type = excluded.canonical_object_type,
+  canonical_opportunity_id = null,
+  canonical_site_fix_id = excluded.canonical_site_fix_id,
+  work_signature_id = excluded.work_signature_id,
+  disposition = excluded.disposition
+returning *;
+
+-- name: GetGrowthOpportunityWorkAlias :one
+select * from growth_opportunity_work_aliases
+where project_id = sqlc.arg(project_id)
+  and legacy_opportunity_id = sqlc.arg(legacy_opportunity_id);
+
+-- name: GetGrowthExecutionChainForUpdate :one
+with locked_actions as materialized (
+  select action.* from content_actions action
+  where action.project_id = sqlc.arg(project_id)
+    and action.opportunity_id = sqlc.arg(source_opportunity_id)
+  order by action.id
+  for update of action
+), locked_topics as materialized (
+  select topic.* from topics topic
+  join locked_actions action on action.id = topic.source_content_action_id
+  where topic.project_id = sqlc.arg(project_id)
+  order by topic.id
+  for update of topic
+), locked_articles as materialized (
+  select article.* from articles article
+  where article.project_id = sqlc.arg(project_id)
+    and (
+      exists (select 1 from locked_topics topic where topic.id = article.topic_id)
+      or exists (select 1 from locked_actions action where action.target_article_id = article.id or action.draft_article_id = article.id)
+    )
+  order by article.id
+  for update of article
+), locked_applications as materialized (
+  select application.* from site_change_applications application
+  join locked_actions action on action.id = application.content_action_id
+  where application.project_id = sqlc.arg(project_id)
+  order by application.id
+  for update of application
+), locked_drafts as materialized (
+  select draft.* from page_update_drafts draft
+  join locked_actions action on action.id = draft.content_action_id
+  where draft.project_id = sqlc.arg(project_id)
+  order by draft.id
+  for update of draft
+), locked_measurements as materialized (
+  select measurement.* from action_measurements measurement
+  join locked_actions action on action.id = measurement.content_action_id
+  where measurement.project_id = sqlc.arg(project_id)
+  order by measurement.id
+  for update of measurement
+), locked_runs as materialized (
+  select run.* from generation_runs run
+  where run.project_id = sqlc.arg(project_id)
+    and run.input->>'topic' = any(
+      coalesce((select array_agg(topic.id::text) from locked_topics topic), array[]::text[])
+    )
+  order by run.id
+  for update of run
+)
+select
+  (select count(*)::bigint from locked_actions) as action_count,
+  (select count(*)::bigint from locked_actions source
+    join content_actions canonical
+      on canonical.project_id = source.project_id
+     and canonical.opportunity_id = sqlc.narg(canonical_opportunity_id)
+     and canonical.action_type = source.action_type
+     and canonical.id <> source.id) as conflicting_action_count,
+  jsonb_build_object(
+    'content_actions', coalesce((select jsonb_agg(to_jsonb(action) order by action.id) from locked_actions action), '[]'::jsonb),
+    'topics', coalesce((select jsonb_agg(to_jsonb(topic) order by topic.id) from locked_topics topic), '[]'::jsonb),
+    'articles', coalesce((select jsonb_agg(to_jsonb(article) order by article.id) from locked_articles article), '[]'::jsonb),
+    'site_change_applications', coalesce((select jsonb_agg(to_jsonb(application) order by application.id) from locked_applications application), '[]'::jsonb),
+    'page_update_drafts', coalesce((select jsonb_agg(to_jsonb(draft) order by draft.id) from locked_drafts draft), '[]'::jsonb),
+    'action_measurements', coalesce((select jsonb_agg(to_jsonb(measurement) order by measurement.id) from locked_measurements measurement), '[]'::jsonb),
+    'generation_runs', coalesce((select jsonb_agg(to_jsonb(run) order by run.id) from locked_runs run), '[]'::jsonb)
+  ) as execution_snapshot;
+
+-- name: RepointDuplicateGrowthContentActions :one
+with repointed as (
+  update content_actions action set opportunity_id = sqlc.arg(canonical_opportunity_id), updated_at = now()
+  where action.project_id = sqlc.arg(project_id)
+    and action.opportunity_id = sqlc.arg(source_opportunity_id)
+    and not exists (
+      select 1 from content_actions canonical
+      where canonical.project_id = action.project_id
+        and canonical.opportunity_id = sqlc.arg(canonical_opportunity_id)
+        and canonical.action_type = action.action_type
+        and canonical.id <> action.id
+    )
+  returning action.id
+)
+select count(*)::bigint as repointed_count,
+       coalesce(array_agg(repointed.id order by repointed.id), array[]::uuid[])::uuid[] as repointed_content_action_ids
+from repointed;
+
+-- name: RestoreGrowthContentActionRepoints :execrows
+update content_actions action set opportunity_id = sqlc.arg(source_opportunity_id), updated_at = now()
+where action.project_id = sqlc.arg(project_id)
+  and action.opportunity_id = sqlc.arg(canonical_opportunity_id)
+  and action.id = any(sqlc.arg(content_action_ids)::uuid[]);
+
+-- name: StartGrowthCutoverSession :one
+insert into growth_cutover_sessions
+  (batch_id, project_id, fence_token, status)
+values (sqlc.arg(batch_id), sqlc.arg(project_id), sqlc.arg(fence_token), 'applying')
+returning *;
+
+-- name: GetActiveGrowthCutoverSession :one
+select * from growth_cutover_sessions
+where project_id = sqlc.arg(project_id) and status = 'applying'
+order by started_at desc limit 1;
+
+-- name: AppendGrowthCutoverSessionEntry :one
+insert into growth_cutover_session_entries
+  (batch_id, project_id, sequence_number, opportunity_id, run_id, candidate_id,
+   arbitration_decision_id, ai_call_id, work_signature_id, disposition,
+   before_snapshot, after_snapshot, inverse_operation)
+values
+  (sqlc.arg(batch_id), sqlc.arg(project_id), sqlc.arg(sequence_number),
+   sqlc.arg(opportunity_id), sqlc.arg(run_id), sqlc.arg(candidate_id),
+   sqlc.narg(arbitration_decision_id), sqlc.narg(ai_call_id), sqlc.narg(work_signature_id),
+   sqlc.arg(disposition), sqlc.arg(before_snapshot)::jsonb,
+   sqlc.arg(after_snapshot)::jsonb, sqlc.arg(inverse_operation)::jsonb)
+returning *;
+
+-- name: UpdateGrowthCutoverSessionEntryDecision :one
+update growth_cutover_session_entries set
+  arbitration_decision_id = coalesce(sqlc.narg(arbitration_decision_id), arbitration_decision_id),
+  ai_call_id = coalesce(sqlc.narg(ai_call_id), ai_call_id),
+  work_signature_id = coalesce(sqlc.narg(work_signature_id), work_signature_id),
+  disposition = sqlc.arg(disposition),
+  entry_status = sqlc.arg(entry_status),
+  before_snapshot = coalesce(sqlc.narg(before_snapshot)::jsonb, before_snapshot),
+  after_snapshot = sqlc.arg(after_snapshot)::jsonb,
+  inverse_operation = sqlc.arg(inverse_operation)::jsonb
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and opportunity_id = sqlc.arg(opportunity_id)
+returning *;
+
+-- name: ListGrowthCutoverSessionEntries :many
+select * from growth_cutover_session_entries
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+order by sequence_number desc;
+
+-- name: FinishGrowthCutoverSession :one
+update growth_cutover_sessions
+set status = sqlc.arg(status), error = sqlc.narg(error), finished_at = now()
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and status = 'applying'
+returning *;
+
+-- name: SetGrowthCutoverSessionReviewRequired :one
+update growth_cutover_sessions set error = sqlc.arg(error)
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and status = 'applying'
+returning *;
+
+-- name: MarkGrowthCutoverSessionEntriesRolledBack :execrows
+update growth_cutover_session_entries set entry_status = 'rolled_back'
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and entry_status <> 'rolled_back';
+
+-- name: CountUnrepresentedActiveLegacyGrowth :one
+select count(*)::bigint from seo_opportunities opportunity
+where opportunity.project_id = sqlc.arg(project_id)
+  and opportunity.canonical_read_only = false
+  and not is_legacy_doctor_technical_opportunity(opportunity.type, opportunity.evidence)
+  and opportunity.status in ('open','accepted','converted','snoozed','watching')
+  and not exists (
+    select 1 from work_signature_registry owned_signature
+    where owned_signature.project_id = opportunity.project_id
+      and owned_signature.mode = 'enforced' and owned_signature.active = true
+      and owned_signature.owner = 'opportunities'
+      and owned_signature.reserved_work_type = 'seo_opportunity'
+      and owned_signature.reserved_work_id = opportunity.id
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    join work_signature_registry alias_signature
+      on alias_signature.project_id = alias.project_id
+     and alias_signature.id = alias.work_signature_id
+     and alias_signature.mode = 'enforced' and alias_signature.active = true
+    where alias.project_id = opportunity.project_id
+      and alias.legacy_opportunity_id = opportunity.id
+  );
+
+-- name: RollbackGrowthCutoverDuplicate :one
+with tombstoned_alias as (
+  update growth_opportunity_work_aliases alias set disposition = 'rolled_back'
+  where alias.project_id = sqlc.arg(project_id)
+    and alias.legacy_opportunity_id = sqlc.arg(opportunity_id)
+    and alias.disposition in ('duplicate','doctor_merge')
+  returning alias.legacy_opportunity_id, alias.work_signature_id
+), restored_growth as (
+  update seo_opportunities opportunity set
+    evidence = sqlc.narg(canonical_evidence)::jsonb,
+    priority_score = coalesce(sqlc.narg(canonical_priority_score)::numeric, opportunity.priority_score),
+    confidence = coalesce(sqlc.narg(canonical_confidence)::numeric, opportunity.confidence),
+    evidence_fingerprint = coalesce(sqlc.narg(canonical_evidence_fingerprint)::text, opportunity.evidence_fingerprint),
+    updated_at = now()
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = sqlc.narg(canonical_opportunity_id)
+    and exists (select 1 from tombstoned_alias)
+  returning opportunity.id
+), restored_doctor as (
+  update site_fixes fix set evidence_snapshot = sqlc.narg(canonical_evidence)::jsonb, updated_at = now()
+  where fix.project_id = sqlc.arg(project_id)
+    and fix.id = sqlc.narg(canonical_site_fix_id)
+    and exists (select 1 from tombstoned_alias)
+  returning fix.id
+), restored_signature as (
+  update work_signature_registry signature set
+    evidence_fingerprint = coalesce(sqlc.narg(canonical_evidence_fingerprint)::text, signature.evidence_fingerprint),
+    updated_at = now()
+  from tombstoned_alias alias
+  where signature.project_id = sqlc.arg(project_id) and signature.id = alias.work_signature_id
+  returning signature.id
+), tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
+  where candidate.project_id = sqlc.arg(project_id)
+    and candidate.id = sqlc.arg(candidate_id)
+    and exists (select 1 from tombstoned_alias)
+  returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = sqlc.arg(project_id) and decision.candidate_id = sqlc.arg(candidate_id)
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = sqlc.arg(project_id)
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = sqlc.arg(candidate_id)
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = sqlc.arg(project_id) and run.id = sqlc.arg(run_id)
+  returning run.id
+)
+select count(*)::bigint as removed_count from tombstoned_alias;
+
+-- name: RollbackGrowthCutoverMaterialized :one
+with tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
+  where candidate.project_id = sqlc.arg(project_id) and candidate.id = sqlc.arg(candidate_id)
+  returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = sqlc.arg(project_id) and decision.candidate_id = sqlc.arg(candidate_id)
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = sqlc.arg(project_id)
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = sqlc.arg(candidate_id)
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = sqlc.arg(project_id) and run.id = sqlc.arg(run_id)
+  returning run.id
+)
+select count(*)::bigint as tombstoned_count from tombstoned_candidate;
+
+-- name: RollbackGrowthCutoverCanonical :one
+with source_signature as materialized (
+  select signature.id, signature.candidate_id, signature.conflict_bucket_keys
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = sqlc.arg(work_signature_id)
+    and signature.candidate_id = sqlc.arg(candidate_id)
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = sqlc.arg(opportunity_id)
+), expected_keys as materialized (
+  select distinct key.bucket_key
+  from source_signature signature
+  cross join lateral jsonb_array_elements_text(signature.conflict_bucket_keys) key(bucket_key)
+), locked_buckets as materialized (
+  select bucket.id
+  from work_conflict_buckets bucket
+  join expected_keys expected on expected.bucket_key = bucket.bucket_key
+  where bucket.project_id = sqlc.arg(project_id)
+  order by bucket.bucket_key
+  for update of bucket
+), tombstoned_relationships as (
+  update work_relationships relationship set active = false, resolved_at = now(), updated_at = now()
+  from source_signature signature
+  where relationship.project_id = sqlc.arg(project_id)
+    and (relationship.dependent_work_signature_id = signature.id
+      or relationship.blocking_work_signature_id = signature.id)
+  returning relationship.id
+), tombstoned_aliases as (
+  update growth_opportunity_work_aliases alias set disposition = 'rolled_back'
+  from source_signature signature
+  where alias.project_id = sqlc.arg(project_id)
+    and alias.work_signature_id = signature.id
+  returning alias.legacy_opportunity_id
+), reverted_opportunity as (
+  update seo_opportunities opportunity
+  set canonical_growth = false, updated_at = now()
+  from source_signature signature
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = sqlc.arg(opportunity_id)
+    and opportunity.canonical_growth = true
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning opportunity.id
+), tombstoned_signature as (
+  update work_signature_registry signature set active = false, status = 'migration_rolled_back', updated_at = now()
+  from source_signature source
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = source.id
+    and exists (select 1 from reverted_opportunity)
+  returning signature.candidate_id
+), tombstoned_candidate as (
+  update discovery_candidates candidate set status = 'migration_rolled_back', updated_at = now()
+  from tombstoned_signature signature
+  where candidate.project_id = sqlc.arg(project_id)
+    and candidate.id = signature.candidate_id
+  returning candidate.id
+), superseded_decisions as (
+  update discovery_arbitration_decisions decision set status = 'superseded', updated_at = now()
+  where decision.project_id = sqlc.arg(project_id) and decision.candidate_id = sqlc.arg(candidate_id)
+  returning decision.id
+), terminal_ai_calls as (
+  update ai_call_records call set
+    status = case when call.status in ('queued','running') then 'failed' else call.status end,
+    error_code = case when call.status in ('queued','running') then 'growth_cutover_rolled_back' else call.error_code end,
+    finished_at = case when call.status in ('queued','running') then coalesce(call.finished_at, now()) else call.finished_at end,
+    updated_at = now()
+  where call.project_id = sqlc.arg(project_id)
+    and call.linked_object_type = 'discovery_candidate'
+    and call.linked_object_id = sqlc.arg(candidate_id)
+  returning call.id
+), failed_run as (
+  update discovery_shadow_runs run set status = 'failed', error = 'growth cutover rolled back',
+    finished_at = coalesce(finished_at, now()), updated_at = now()
+  where run.project_id = sqlc.arg(project_id) and run.id = sqlc.arg(run_id)
+  returning run.id
+), bumped as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id and exists (select 1 from tombstoned_signature)
+  returning bucket.id
+)
+select count(*)::bigint as removed_count from tombstoned_signature;
 
 -- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set
   status = $3,
   updated_at = now()
-where id = $1 and project_id = $2
+where seo_opportunities.id = $1 and seo_opportunities.project_id = $2
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning *;
 
 -- name: CountOpenSEOOpportunities :one
 select count(*)::bigint from seo_opportunities
-where project_id = $1
-  and status = 'open';
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status = 'open'
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  );
 
 -- name: CreateContentAction :one
 insert into content_actions
@@ -639,7 +1245,13 @@ update seo_opportunities set
   snoozed_until = sqlc.arg(snoozed_until),
   snooze_reason = sqlc.narg(snooze_reason),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status in ('open','snoozed')
+where seo_opportunities.id = sqlc.arg(id) and seo_opportunities.project_id = sqlc.arg(project_id) and seo_opportunities.status in ('open','snoozed')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning *;
 
 -- name: UnsnoozeSEOOpportunity :one
@@ -648,7 +1260,13 @@ update seo_opportunities set
   snoozed_until = null,
   unsnoozed_at = now(),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status = 'snoozed'
+where seo_opportunities.id = sqlc.arg(id) and seo_opportunities.project_id = sqlc.arg(project_id) and seo_opportunities.status = 'snoozed'
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning *;
 
 -- name: WakeDueSnoozedSEOOpportunities :execrows
@@ -656,10 +1274,16 @@ update seo_opportunities set
   status = 'open',
   unsnoozed_at = now(),
   updated_at = now()
-where project_id = $1
-  and status = 'snoozed'
-  and snoozed_until is not null
-  and snoozed_until <= now();
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status = 'snoozed'
+  and seo_opportunities.snoozed_until is not null
+  and seo_opportunities.snoozed_until <= now()
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  );
 
 -- name: CreateSEOWatchlistItem :one
 insert into seo_watchlist_items
@@ -930,6 +1554,9 @@ with verified_application as (
     updated_at = now()
   where site_change_applications.id = sqlc.arg(application_id)
     and site_change_applications.project_id = sqlc.arg(project_id)
+    and site_change_applications.content_action_id is not null
+    and site_change_applications.site_fix_id is null
+    and exists (select 1 from content_actions action where action.project_id=site_change_applications.project_id and action.id=site_change_applications.content_action_id and action.canonical_read_only=false)
   returning content_action_id
 )
 update content_actions set
@@ -1061,7 +1688,7 @@ insert into site_change_applications
    source_mapping_confidence, source_mapping_reason, base_file_sha,
    base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot,
    resolution_criteria, status)
-values (
+select
   sqlc.arg(project_id),
   sqlc.narg(source_opportunity_id),
   sqlc.arg(content_action_id),
@@ -1087,7 +1714,7 @@ values (
   sqlc.arg(diff_snapshot)::jsonb,
   sqlc.arg(resolution_criteria)::jsonb,
   sqlc.arg(status)
-)
+where sqlc.arg(content_action_id)::uuid is not null
 on conflict (project_id, opportunity_key)
 where status in (
   'draft_ready',
@@ -1153,17 +1780,20 @@ select * from site_change_applications
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: ListOpenSiteChangePRApplications :many
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and status = 'github_pr_open'
-  and github_pr_number is not null
-order by updated_at asc;
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.status = 'github_pr_open'
+  and application.github_pr_number is not null
+  and application.content_action_id is not null
+  and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.updated_at asc;
 
 -- name: GetActiveSiteChangeApplicationByOpportunityKey :one
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and opportunity_key = sqlc.arg(opportunity_key)
-  and status in (
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.opportunity_key = sqlc.arg(opportunity_key)
+  and application.status in (
     'draft_ready',
     'source_mapping_required',
     'ready_for_pr',
@@ -1177,11 +1807,13 @@ where project_id = sqlc.arg(project_id)
     'conflict',
     'manual_apply_required'
   )
-order by updated_at desc
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.updated_at desc
 limit 1;
 
 -- name: MarkSiteChangeApplicationGitHubPR :one
-update site_change_applications set
+update site_change_applications application set
   status = 'github_pr_open',
   working_branch = sqlc.arg(working_branch),
   head_commit_sha = sqlc.narg(head_commit_sha),
@@ -1193,29 +1825,38 @@ update site_change_applications set
   next_poll_at = now() + interval '5 minutes',
   next_notify_at = now() + interval '12 hours',
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
 returning *;
 
 -- name: ListMergedSiteChangeApplicationsForVerification :many
-select * from site_change_applications
-where project_id = sqlc.arg(project_id)
-  and status = 'github_pr_merged'
-order by merged_at asc nulls first;
+select application.* from site_change_applications application
+where application.project_id = sqlc.arg(project_id)
+  and application.status = 'github_pr_merged'
+  and application.content_action_id is not null
+  and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
+order by application.merged_at asc nulls first;
 
 -- name: SetSiteChangePRNextPollAt :exec
-update site_change_applications set
+update site_change_applications application set
   next_poll_at = sqlc.arg(next_poll_at),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false);
 
 -- name: SetSiteChangePRNextNotifyAt :exec
-update site_change_applications set
+update site_change_applications application set
   next_notify_at = sqlc.arg(next_notify_at),
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false);
 
 -- name: MarkSiteChangeApplicationStatus :one
-update site_change_applications set
+update site_change_applications application set
   status = sqlc.arg(status),
   github_pr_state = coalesce(sqlc.narg(github_pr_state), github_pr_state),
   deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
@@ -1225,7 +1866,9 @@ update site_change_applications set
   deployed_at = case when sqlc.arg(status) in ('verification_pending','verified') then coalesce(deployed_at, now()) else deployed_at end,
   verified_at = case when sqlc.arg(status) = 'verified' then coalesce(verified_at, now()) else verified_at end,
   updated_at = now()
-where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+where application.id = sqlc.arg(id) and application.project_id = sqlc.arg(project_id)
+  and application.content_action_id is not null and application.site_fix_id is null
+  and exists (select 1 from content_actions action where action.project_id=application.project_id and action.id=application.content_action_id and action.canonical_read_only=false)
 returning *;
 
 -- name: MarkContentActionMeasuringForDraftArticle :one
@@ -1240,6 +1883,15 @@ returning *;
 select ca.* from content_actions ca
 where ca.project_id = sqlc.arg(project_id)
   and ca.status = 'measuring'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and (
     ca.published_at is null
     or ca.measurement_window = '{}'::jsonb
@@ -1464,6 +2116,15 @@ left join topics t
   on t.source_content_action_id = ca.id
 where ca.project_id = $1
   and ca.status = 'ready_for_review'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and t.id is null
   and coalesce(ca.work_type, '') <> 'fix_site_issue'
   and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (
@@ -1538,11 +2199,17 @@ where tc.project_id = $1
   );
 
 -- name: SEOOpportunityCounts :many
-select type, status, count(*)::bigint as count
+select seo_opportunities.type, seo_opportunities.status, count(*)::bigint as count
 from seo_opportunities
-where project_id = $1
-group by type, status
-order by type, status;
+where seo_opportunities.project_id = $1
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+group by seo_opportunities.type, seo_opportunities.status
+order by seo_opportunities.type, seo_opportunities.status;
 
 -- name: ContentActionCounts :many
 select status, count(*)::bigint as count

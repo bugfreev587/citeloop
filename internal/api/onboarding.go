@@ -221,7 +221,12 @@ func (s *Server) runContextOpportunityDiscovery(ctx context.Context, projectID u
 		log.Warn("context opportunity discovery skipped: database unavailable", "project_id", projectID)
 		return
 	}
-	result, err := s.seoService().Analyze(ctx, projectID)
+	svc, err := s.seoServiceWithGrowthAuthority(ctx, projectID, config.GrowthAITriggerManual)
+	if err != nil {
+		log.Warn("context opportunity discovery authority unavailable", "project_id", projectID, "err", err)
+		return
+	}
+	result, err := svc.Analyze(ctx, projectID)
 	if err != nil {
 		log.Warn("context opportunity discovery failed", "project_id", projectID, "err", err)
 		return

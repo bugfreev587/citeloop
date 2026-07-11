@@ -328,11 +328,23 @@ func (q *Queries) ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic,
 
 const selectDueScheduledTopics = `-- name: SelectDueScheduledTopics :many
 select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
-where project_id = $1
-  and status = 'scheduled'
-  and scheduled_at is not null
-  and scheduled_at <= now()
-order by scheduled_at asc
+where topics.project_id = $1
+  and topics.status = 'scheduled'
+  and topics.scheduled_at is not null
+  and topics.scheduled_at <= now()
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = topics.project_id and authority.product = 'opportunities'
+      and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from content_actions action
+    join growth_opportunity_work_aliases alias
+      on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where action.project_id = topics.project_id and action.id = topics.source_content_action_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+order by topics.scheduled_at asc
 for update skip locked
 `
 
@@ -378,12 +390,24 @@ func (q *Queries) SelectDueScheduledTopics(ctx context.Context, projectID uuid.U
 
 const selectGenerationCandidates = `-- name: SelectGenerationCandidates :many
 select id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts from topics
-where project_id = $1
-  and status in ('backlog','scheduled')
+where topics.project_id = $1
+  and topics.status in ('backlog','scheduled')
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = topics.project_id and authority.product = 'opportunities'
+      and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from content_actions action
+    join growth_opportunity_work_aliases alias
+      on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where action.project_id = topics.project_id and action.id = topics.source_content_action_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 order by
   case when source_content_action_id is not null then 0 else 1 end,
-  priority asc,
-  created_at asc
+  topics.priority asc,
+  topics.created_at asc
 limit $2
 for update skip locked
 `
@@ -503,7 +527,19 @@ func (q *Queries) SetTopicScheduledAtForProject(ctx context.Context, arg SetTopi
 
 const startTopicGenerationForProject = `-- name: StartTopicGenerationForProject :one
 update topics set status = 'generating'
-where id = $1 and project_id = $2 and status in ('backlog','scheduled')
+where topics.id = $1 and topics.project_id = $2 and topics.status in ('backlog','scheduled')
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = topics.project_id and authority.product = 'opportunities'
+      and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from content_actions action
+    join growth_opportunity_work_aliases alias
+      on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where action.project_id = topics.project_id and action.id = topics.source_content_action_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
 returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts
 `
 

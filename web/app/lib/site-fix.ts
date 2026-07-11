@@ -3,6 +3,97 @@
 // Fixes page and the SEO/Results surfaces share one implementation.
 import { SEOContentAction, ResultsAction } from "./api";
 import { visibilityLifecycleLabel } from "./dashboard-ux-logic";
+import type { SiteFix } from "./types";
+
+function canonicalObject(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
+}
+
+export function canonicalSiteFixTarget(fix: SiteFix) {
+  return fix.target_urls.find((url) => url.trim()) ?? "Project surface";
+}
+
+export function canonicalSiteFixTitle(fix: SiteFix) {
+  const proposed = canonicalObject(fix.proposed_fix);
+  return String(proposed.fix_intent ?? proposed.developer_instructions ?? `Doctor ${fix.finding_kind} fix`);
+}
+
+export function canonicalSiteFixStatusLabel(status: SiteFix["status"]) {
+  switch (status) {
+    case "proposed":
+      return "Proposed";
+    case "approved":
+      return "Approved";
+    case "preparing":
+      return "Preparing";
+    case "ready_to_apply":
+      return "Ready to apply";
+    case "applying":
+      return "Applying";
+    case "awaiting_deploy":
+      return "Awaiting deploy";
+    case "verifying":
+      return "Verifying";
+    case "failed_retryable":
+      return "Verification needs retry";
+    case "reopened":
+      return "Reopened";
+    case "verified":
+      return "Verified";
+    case "failed_terminal":
+      return "Closed after failure";
+    case "superseded":
+      return "Superseded";
+    case "migration_rolled_back":
+      return "Migration rolled back";
+  }
+}
+
+export function canonicalSiteFixNextAction(fix: SiteFix) {
+  switch (fix.status) {
+    case "proposed":
+      return "Review the evidence and approve this fix.";
+    case "approved":
+    case "ready_to_apply":
+      return "Apply the approved change.";
+    case "preparing":
+      return "Application preparation is incomplete. Retry apply to start a new audited generation attempt.";
+    case "applying":
+      return "Application is in progress; refresh for the deploy handoff.";
+    case "awaiting_deploy":
+      return "Deploy the applied change, then start verification.";
+    case "verifying":
+      return "Verification is checking the acceptance criteria.";
+    case "failed_retryable":
+    case "reopened":
+      return "Retry verification after addressing the failure evidence.";
+    case "verified":
+      return "Closed loop complete.";
+    case "failed_terminal":
+      return "This fix is closed. Create a new revision from Doctor if work is still required.";
+    case "superseded":
+      return "A newer Site Fix revision owns the next action.";
+    case "migration_rolled_back":
+      return "This migrated record is no longer active.";
+  }
+}
+
+export function canonicalSiteFixAIJSON(fix: SiteFix) {
+  return JSON.stringify(
+    {
+      site_fix_id: fix.id,
+      doctor_finding_id: fix.doctor_finding_id,
+      finding_kind: fix.finding_kind,
+      target_urls: fix.target_urls,
+      evidence_snapshot: fix.evidence_snapshot,
+      proposed_fix: fix.proposed_fix,
+      acceptance_tests: fix.acceptance_tests,
+      verification_snapshot: fix.verification_snapshot,
+    },
+    null,
+    2,
+  );
+}
 
 export function compactOutcomeText(outcome: any) {
   if (!outcome || (typeof outcome === "object" && Object.keys(outcome).length === 0)) return "No outcome summary yet.";

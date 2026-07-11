@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
@@ -21,6 +22,14 @@ function severityTone(severity: string): "red" | "amber" | "blue" | "neutral" {
   if (severity === "P1") return "amber";
   if (severity === "P2") return "blue";
   return "neutral";
+}
+
+function findingKindLabel(finding: SEODoctorFinding) {
+  return finding.finding_kind === "optimization" ? "Optimization" : "Broken";
+}
+
+function findingKindTone(finding: SEODoctorFinding): "red" | "blue" {
+  return finding.finding_kind === "optimization" ? "blue" : "red";
 }
 
 function statusTone(status?: string): "red" | "amber" | "green" | "blue" | "neutral" {
@@ -366,10 +375,12 @@ async function writeClipboardText(text: string) {
   }
 }
 
-export function DoctorClient({ projectId }: { projectId: string }) {
+export function DoctorClient({ projectId, initialFindingId }: { projectId: string; initialFindingId?: string }) {
   const api = useApi();
+  const router = useRouter();
   const { notify } = useToast();
   const pendingRunNoticeID = useRef<string | null>(null);
+  const initialSelectionHandled = useRef(false);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -419,9 +430,10 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const run = report?.run ?? null;
   const counts = issueCounts(report);
   const visibleFindings = useMemo(() => {
-    const findings = sortedFindings(report?.findings ?? []);
+    const findings = sortedFindings((report?.findings ?? []).filter((finding) => finding.finding_kind !== "healthy"));
     return filter === "all" ? findings : findings.filter((finding) => finding.severity === filter);
   }, [filter, report?.findings]);
+  const healthyCoverage = run?.healthy_coverage ?? [];
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
   const lastRunAt = doctorRunTimestamp(run);
@@ -433,6 +445,15 @@ export function DoctorClient({ projectId }: { projectId: string }) {
   const selectedRepairJSON = useMemo(() => {
     return selectedFinding ? JSON.stringify(buildAIRepairPayload(selectedFinding), null, 2) : "";
   }, [selectedFinding]);
+
+  useEffect(() => {
+    if (loading || initialSelectionHandled.current) return;
+    initialSelectionHandled.current = true;
+    if (initialFindingId && (report?.findings ?? []).some((finding) => finding.id === initialFindingId && finding.finding_kind !== "healthy")) {
+      setFilter("all");
+      setSelectedFindingID(initialFindingId);
+    }
+  }, [initialFindingId, loading, report?.findings]);
 
   useEffect(() => {
     if (selectedFindingID && !selectedFinding) setSelectedFindingID(null);
@@ -483,14 +504,14 @@ export function DoctorClient({ projectId }: { projectId: string }) {
     setBusyFindingID(finding.id);
     setBusyKind("add");
     try {
-      await api.convertSEODoctorFinding(projectId, finding.id);
+      const fix = await api.createDoctorSiteFix(projectId, finding.id);
       notify({
         tone: "green",
         title: "Added to Site Fixes",
-        detail: "Track the PR, apply, and verify steps on the Site Fixes page.",
+        detail: "Review, approve, apply, deploy, and verify the canonical Site Fix.",
       });
       setSelectedFindingID(null);
-      await refresh();
+      router.push(`/projects/${projectId}/site-fixes?fix=${fix.id}`);
     } catch (err: any) {
       notify({ tone: "red", title: "Could not add to Site Fixes", detail: err?.apiMessage || err?.message });
     } finally {
@@ -627,6 +648,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                 <div className="flex h-full min-w-0 flex-col justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={findingKindTone(finding)}>{findingKindLabel(finding)}</Badge>
                       <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
                       <Badge tone="neutral">{finding.category}</Badge>
                       {finding.status === "active" ? (
@@ -643,11 +665,41 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                     <div className="mt-3 truncate rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">{firstURL(finding)}</div>
                   </div>
                   <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
-                    <span>Open details</span>
+                    <span>{finding.status === "active" ? "Next: create Site Fix" : `Status: ${finding.status}`}</span>
                     <ChevronRight className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600" size={17} />
                   </div>
                 </div>
               </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader title="Healthy coverage" eyebrow="Checks that passed" />
+        {healthyCoverage.length === 0 ? (
+          <EmptyState title="No healthy coverage recorded" detail="Run Doctor to record structured passed, failed, and skipped coverage for each check." />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {healthyCoverage.map((coverage) => (
+              <article key={coverage.check} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-bold text-slate-950">
+                      {coverage.check.replaceAll("_", " ")}
+                    </h2>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">Structured coverage, not actionable work</p>
+                  </div>
+                  <Badge tone={coverage.failed_urls.length ? "amber" : "green"}>
+                    {coverage.passed_urls.length} passed
+                  </Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
+                  <span>{coverage.checked_urls.length} checked</span>
+                  <span>{coverage.failed_urls.length} failed</span>
+                  <span>{coverage.skipped_urls.length} skipped</span>
+                </div>
+              </article>
             ))}
           </div>
         )}
@@ -667,6 +719,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
         badges={
           selectedFinding ? (
             <>
+              <Badge tone={findingKindTone(selectedFinding)}>{findingKindLabel(selectedFinding)}</Badge>
               <Badge tone={severityTone(selectedFinding.severity)}>{selectedFinding.severity}</Badge>
               <Badge tone="neutral">{selectedFinding.category}</Badge>
               <Badge tone="neutral">{selectedFinding.issue_type}</Badge>
@@ -681,7 +734,7 @@ export function DoctorClient({ projectId }: { projectId: string }) {
                 size="sm"
                 variant="ai"
                 onClick={() => void addToSiteFixes(selectedFinding)}
-                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active"}
+                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active" || selectedFinding.finding_kind === "healthy"}
               >
                 <ButtonProgress
                   busy={busyFindingID === selectedFinding.id && busyKind === "add"}

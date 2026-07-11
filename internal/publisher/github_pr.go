@@ -9,16 +9,18 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 type GitHubPRClient struct {
-	Token      string
-	Repo       string
-	BaseBranch string
-	Log        *slog.Logger
-	client     *http.Client
+	Token          string
+	Repo           string
+	BaseBranch     string
+	Log            *slog.Logger
+	client         *http.Client
+	BeforeMutation func(context.Context) error
 }
 
 type GitHubPRInput struct {
@@ -83,15 +85,25 @@ func (c *GitHubPRClient) CreatePageUpdatePR(ctx context.Context, in GitHubPRInpu
 		return GitHubPRResult{}, err
 	}
 	commitFileSHA := currentSHA
+	headCommitSHA := ""
 	if !branchCreated {
-		commitFileSHA, err = c.fileSHA(ctx, sourcePath, workingBranch)
+		var branchContent string
+		branchContent, commitFileSHA, err = c.ReadFile(ctx, sourcePath, workingBranch)
 		if err != nil {
 			return GitHubPRResult{}, err
 		}
+		if branchContent == in.ProposedContentMD {
+			headCommitSHA, err = c.refCommitSHA(ctx, workingBranch)
+			if err != nil {
+				return GitHubPRResult{}, err
+			}
+		}
 	}
-	headCommitSHA, err := c.commitFile(ctx, sourcePath, []byte(in.ProposedContentMD), commitFileSHA, workingBranch, in.CommitMessage)
-	if err != nil {
-		return GitHubPRResult{}, err
+	if headCommitSHA == "" {
+		headCommitSHA, err = c.commitFile(ctx, sourcePath, []byte(in.ProposedContentMD), commitFileSHA, workingBranch, in.CommitMessage)
+		if err != nil {
+			return GitHubPRResult{}, err
+		}
 	}
 	number, url, state, err := c.openPullRequest(ctx, workingBranch, in.Title, in.Body)
 	if err != nil {
@@ -177,7 +189,11 @@ func (c *GitHubPRClient) fileSHA(ctx context.Context, sourcePath, ref string) (s
 }
 
 func (c *GitHubPRClient) baseCommitSHA(ctx context.Context) (string, error) {
-	api := "https://api.github.com/repos/" + c.Repo + "/git/ref/heads/" + c.BaseBranch
+	return c.refCommitSHA(ctx, c.BaseBranch)
+}
+
+func (c *GitHubPRClient) refCommitSHA(ctx context.Context, branch string) (string, error) {
+	api := "https://api.github.com/repos/" + c.Repo + "/git/ref/heads/" + strings.TrimSpace(branch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return "", err
@@ -207,6 +223,11 @@ func (c *GitHubPRClient) baseCommitSHA(ctx context.Context) (string, error) {
 }
 
 func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) (bool, error) {
+	if c.BeforeMutation != nil {
+		if err := c.BeforeMutation(ctx); err != nil {
+			return false, err
+		}
+	}
 	payload := map[string]any{"ref": "refs/heads/" + branch, "sha": sha}
 	body, _ := json.Marshal(payload)
 	endpoint := "https://api.github.com/repos/" + c.Repo + "/git/refs"
@@ -231,6 +252,11 @@ func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) (
 }
 
 func (c *GitHubPRClient) commitFile(ctx context.Context, sourcePath string, content []byte, fileSHA, branch, message string) (string, error) {
+	if c.BeforeMutation != nil {
+		if err := c.BeforeMutation(ctx); err != nil {
+			return "", err
+		}
+	}
 	payload := map[string]any{
 		"message": strings.TrimSpace(message),
 		"content": base64.StdEncoding.EncodeToString(content),
@@ -252,6 +278,11 @@ func (c *GitHubPRClient) commitFile(ctx context.Context, sourcePath string, cont
 }
 
 func (c *GitHubPRClient) openPullRequest(ctx context.Context, branch, title, body string) (int, string, string, error) {
+	if c.BeforeMutation != nil {
+		if err := c.BeforeMutation(ctx); err != nil {
+			return 0, "", "", err
+		}
+	}
 	payload := map[string]any{"title": strings.TrimSpace(title), "head": branch, "base": c.BaseBranch, "body": body}
 	var out struct {
 		Number  int    `json:"number"`
@@ -298,6 +329,51 @@ func (c *GitHubPRClient) GetPullRequest(ctx context.Context, number int) (GitHub
 		return GitHubPRState{}, err
 	}
 	return GitHubPRState{Number: out.Number, State: out.State, Merged: out.Merged, MergedAt: out.MergedAt, HTMLURL: out.HTMLURL}, nil
+}
+
+// FindPullRequestByHead reconciles a deterministic working branch before any
+// new GitHub mutation. This closes the lost-response window where the PR was
+// created remotely but its identifiers were not persisted locally.
+func (c *GitHubPRClient) FindPullRequestByHead(ctx context.Context, workingBranch string) (GitHubPRResult, bool, error) {
+	workingBranch = strings.TrimSpace(workingBranch)
+	parts := strings.SplitN(c.Repo, "/", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || workingBranch == "" {
+		return GitHubPRResult{}, false, fmt.Errorf("repo owner and working branch are required to reconcile a pull request")
+	}
+	endpoint := "https://api.github.com/repos/" + c.Repo + "/pulls?state=all&base=" + url.QueryEscape(c.BaseBranch) + "&head=" + url.QueryEscape(parts[0]+":"+workingBranch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return GitHubPRResult{}, false, err
+	}
+	c.auth(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return GitHubPRResult{}, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return GitHubPRResult{}, false, fmt.Errorf("github PR reconcile %d: %s", resp.StatusCode, string(raw))
+	}
+	var rows []struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+		State   string `json:"state"`
+		Head    struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return GitHubPRResult{}, false, err
+	}
+	if len(rows) == 0 {
+		return GitHubPRResult{}, false, nil
+	}
+	row := rows[0]
+	return GitHubPRResult{
+		Number: row.Number, URL: row.HTMLURL, State: row.State, WorkingBranch: workingBranch,
+		BaseBranch: c.BaseBranch, HeadCommitSHA: row.Head.SHA,
+	}, true, nil
 }
 
 func (c *GitHubPRClient) doJSON(ctx context.Context, method, endpoint string, payload any, out any, allowed ...int) error {

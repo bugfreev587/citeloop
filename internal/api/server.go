@@ -23,16 +23,19 @@ import (
 )
 
 type Server struct {
-	Pool            *pgxpool.Pool
-	Q               *db.Queries
-	LLM             llm.Provider
-	Search          search.Provider
-	Blog            *publisher.BlogPublisher
-	Sched           *scheduler.Scheduler
-	Env             config.Env
-	Log             *slog.Logger
-	SEOData         seo.GoogleDataProvider
-	githubAppClient githubAppAPI
+	Pool             *pgxpool.Pool
+	Q                *db.Queries
+	LLM              llm.Provider
+	Search           search.Provider
+	Blog             *publisher.BlogPublisher
+	Sched            *scheduler.Scheduler
+	Env              config.Env
+	Log              *slog.Logger
+	SEOData          seo.GoogleDataProvider
+	SiteFixes        DoctorSiteFixService
+	SiteFixLifecycle DoctorSiteFixLifecycleService
+	SiteFixMigration siteFixMigrationService
+	githubAppClient  githubAppAPI
 
 	OnboardingRunner         projectOnboardingRunner
 	InsightInventoryRunner   insightInventoryRunner
@@ -80,6 +83,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/admin/projects/{projectID}/discovery-review/{candidateID}/resolve", s.resolveAdminDiscoveryReview)
 			r.Get("/admin/projects/{projectID}/discovery-semantic-evaluation", s.getAdminDiscoverySemanticEvaluation)
 			r.Post("/admin/projects/{projectID}/discovery-semantic-evaluation/run", s.runAdminDiscoverySemanticEvaluation)
+			r.Post("/admin/projects/{projectID}/site-fix-migration/dry-run", s.dryRunAdminSiteFixMigration)
+			r.Post("/admin/projects/{projectID}/site-fix-migration/apply", s.applyAdminSiteFixMigration)
+			r.Post("/admin/projects/{projectID}/site-fix-migration/{batchID}/rollback", s.rollbackAdminSiteFixMigration)
+			r.Get("/admin/projects/{projectID}/site-fix-migration/{batchID}", s.getAdminSiteFixMigrationReport)
 			r.Get("/admin/users", s.listAdminUsers)
 			r.Delete("/admin/users/{ownerID}", s.deleteAdminUser)
 		})
@@ -203,6 +210,7 @@ func (s *Server) Router() http.Handler {
 				})
 			})
 			s.registerDoctorRoutes(r, "/doctor")
+			s.registerCanonicalDoctorSiteFixRoutes(r, "/doctor")
 			r.Route("/geo", func(r chi.Router) {
 				r.Get("/overview", s.getGEOOverview)
 				r.Post("/crawler-audit", s.runGEOCrawlerAudit)

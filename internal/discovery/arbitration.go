@@ -269,6 +269,20 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		return s.store.SavePreparedDecision(ctx, base)
 	}
 
+	deterministicSoftDependencies := []uuid.UUID(nil)
+	deterministicHardDependencies := []uuid.UUID(nil)
+	if decision, ok, classifyErr := deterministicCrossLineDecision(candidate, snapshot.ActiveWorks); classifyErr != nil {
+		base.Disposition = DispositionManualResolution
+		base.Decision = DecisionHold
+		base.Reason = "cross-line dependency classification failed closed: " + classifyErr.Error()
+		base.Status = ArbitrationStatusHeld
+		return s.persistHold(ctx, candidate, snapshot, base)
+	} else if ok && decision.Decision == DecisionBlockOnOtherLine {
+		deterministicHardDependencies = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
+	} else if ok && decision.Decision == DecisionCreate {
+		deterministicSoftDependencies = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
+	}
+
 	possible, incompleteMemory := semanticOverlapSet(snapshot)
 	if len(possible) == 0 && !incompleteMemory {
 		base.Disposition = DispositionDeterministicSafe
@@ -337,8 +351,18 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	base.Decision = decision.Decision
 	base.Owner = decision.Owner
 	base.OverlapWorkIDs = append([]uuid.UUID(nil), decision.Overlaps...)
+	if decision.Decision == DecisionCreate && len(deterministicHardDependencies) > 0 {
+		base.Decision = DecisionBlockOnOtherLine
+		base.Owner = ownerForCandidate(candidate.Candidate)
+		base.OverlapWorkIDs = unionUUIDs(base.OverlapWorkIDs, deterministicHardDependencies)
+		base.Reason = "semantic comparison found distinct intent, but structured mutation overlap still requires Doctor verification first: " + decision.Reason
+	} else if decision.Decision == DecisionCreate {
+		base.OverlapWorkIDs = unionUUIDs(base.OverlapWorkIDs, deterministicSoftDependencies)
+	}
 	base.ComparedWorkIDs = semanticWorkIDs(possible)
-	base.Reason = decision.Reason
+	if base.Reason == "" {
+		base.Reason = decision.Reason
+	}
 	base.Confidence = decision.Confidence
 	base.SemanticFingerprint = decision.SemanticFingerprint
 	base.Provider = firstNonEmpty(usage.Provider, config.Provider)
@@ -373,6 +397,59 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 	base.Status = ArbitrationStatusPrepared
 	return s.store.SavePreparedDecision(ctx, base)
+}
+
+func unionUUIDs(left, right []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(left)+len(right))
+	for _, id := range append(append([]uuid.UUID(nil), left...), right...) {
+		if id != uuid.Nil {
+			seen[id] = struct{}{}
+		}
+	}
+	out := make([]uuid.UUID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
+type deterministicDependencyDecision struct {
+	Decision       DecisionKind
+	OverlapWorkIDs []uuid.UUID
+	Reason         string
+}
+
+func deterministicCrossLineDecision(candidate ArbitrationCandidate, active []SnapshotWork) (deterministicDependencyDecision, bool, error) {
+	if len(active) == 0 || ownerForCandidate(candidate.Candidate) != OwnerOpportunities {
+		return deterministicDependencyDecision{}, false, nil
+	}
+	classified := make([]uuid.UUID, 0, len(active))
+	hard := false
+	for _, work := range active {
+		relationship, ok, err := ClassifyCrossLineDependency(candidate.Candidate, work)
+		if err != nil {
+			return deterministicDependencyDecision{}, false, err
+		}
+		if !ok {
+			return deterministicDependencyDecision{}, false, nil
+		}
+		classified = append(classified, work.ID)
+		if relationship.Class == DependencyHardBlocker {
+			hard = true
+		}
+	}
+	sort.Slice(classified, func(i, j int) bool { return classified[i].String() < classified[j].String() })
+	if hard {
+		return deterministicDependencyDecision{
+			Decision: DecisionBlockOnOtherLine, OverlapWorkIDs: classified,
+			Reason: "structured cross-line mutation overlap requires the blocking work to verify first",
+		}, true, nil
+	}
+	return deterministicDependencyDecision{
+		Decision: DecisionCreate, OverlapWorkIDs: classified,
+		Reason: "structured cross-line mutations are disjoint; preserve soft attribution dependencies",
+	}, true, nil
 }
 
 func (s *ArbitrationService) persistHold(ctx context.Context, candidate ArbitrationCandidate, snapshot BucketSnapshot, prepared PreparedDecision) (PreparedDecision, error) {

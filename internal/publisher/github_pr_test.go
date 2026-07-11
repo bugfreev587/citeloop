@@ -182,6 +182,40 @@ func TestGitHubPRClientReusesExistingDraftBranch(t *testing.T) {
 	}
 }
 
+func TestGitHubPRClientReconcilesOrphanBranchWithoutDuplicateCommit(t *testing.T) {
+	putCalls := 0
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/contents/page.md" && req.URL.Query().Get("ref") == "main":
+			return jsonResponse(http.StatusOK, `{"sha":"base-file-sha"}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
+			return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit-sha"}}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/refs":
+			return jsonResponse(http.StatusUnprocessableEntity, `{"message":"Reference already exists"}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/contents/page.md" && req.URL.Query().Get("ref") == "citeloop/orphan":
+			return jsonResponse(http.StatusOK, `{"sha":"branch-file-sha","encoding":"base64","content":"IyBVcGRhdGVk"}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/citeloop/orphan":
+			return jsonResponse(http.StatusOK, `{"object":{"sha":"orphan-head-sha"}}`), nil
+		case req.Method == http.MethodPut:
+			putCalls++
+			return jsonResponse(http.StatusOK, `{"commit":{"sha":"duplicate"}}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/pulls":
+			return jsonResponse(http.StatusCreated, `{"number":43,"html_url":"https://github.com/owner/unipost/pull/43","state":"open"}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s?%s", req.Method, req.URL.Path, req.URL.RawQuery)
+			return nil, nil
+		}
+	})}
+	result, err := client.CreatePageUpdatePR(context.Background(), GitHubPRInput{SourcePath: "page.md", WorkingBranch: "citeloop/orphan", BaseFileSHA: "base-file-sha", ProposedContentMD: "# Updated", CommitMessage: "fix", Title: "fix", Body: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if putCalls != 0 || result.HeadCommitSHA != "orphan-head-sha" {
+		t.Fatalf("putCalls=%d result=%+v", putCalls, result)
+	}
+}
+
 func TestGitHubPRClientGetPullRequestReportsMerge(t *testing.T) {
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -226,5 +260,19 @@ func TestGitHubPRClientGetPullRequestRequiresNumber(t *testing.T) {
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	if _, err := client.GetPullRequest(context.Background(), 0); err == nil {
 		t.Fatal("expected error for zero PR number")
+	}
+}
+
+func TestGitHubPRClientFindsExistingPullRequestByDeterministicHead(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/repos/owner/unipost/pulls" || req.URL.Query().Get("head") != "owner:citeloop/doctor-site-fix-abc" {
+			t.Fatalf("unexpected request %s %s?%s", req.Method, req.URL.Path, req.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `[{"number":42,"html_url":"https://github.com/owner/unipost/pull/42","state":"open","head":{"sha":"head-sha"}}]`), nil
+	})}
+	result, found, err := client.FindPullRequestByHead(context.Background(), "citeloop/doctor-site-fix-abc")
+	if err != nil || !found || result.Number != 42 || result.HeadCommitSHA != "head-sha" {
+		t.Fatalf("result=%+v found=%v err=%v", result, found, err)
 	}
 }

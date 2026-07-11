@@ -118,6 +118,40 @@ func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
 	}
 }
 
+func TestNewestTechnicalCheckRunQueriesAreCompleteAndDeterministic(t *testing.T) {
+	countQuery := strings.ToLower(countNewestTechnicalCheckRun)
+	for _, want := range []string{
+		"latest_run.agent = 'seo_sync'",
+		"order by latest_run.started_at desc, latest_run.id desc",
+		"count(tc.id)",
+		"incomplete_check_count",
+		"raw_details ? 'error'",
+		"run_id",
+		"run_status",
+	} {
+		if !strings.Contains(countQuery, want) {
+			t.Fatalf("CountNewestTechnicalCheckRun missing %q in %s", want, countQuery)
+		}
+	}
+
+	pageQuery := strings.ToLower(listNewestTechnicalCheckRunPage)
+	for _, want := range []string{
+		"tc.run_id = $2",
+		"order by tc.normalized_page_url, tc.id",
+		"limit $4 offset $3",
+	} {
+		if !strings.Contains(pageQuery, want) {
+			t.Fatalf("ListNewestTechnicalCheckRunPage missing %q in %s", want, pageQuery)
+		}
+	}
+	if strings.Contains(pageQuery, "limit 100") {
+		t.Fatalf("latest Doctor crawl query must not truncate at 100: %s", pageQuery)
+	}
+	if strings.Contains(pageQuery, "from seo_runs latest") {
+		t.Fatalf("paginated reads must use the run ID selected by the aggregate: %s", pageQuery)
+	}
+}
+
 func TestSEODoctorSchemaDefinesRunsAndFindings(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0034_seo_doctor.sql"))
 	if err != nil {
@@ -174,5 +208,51 @@ func TestSEODoctorQueriesExposeRunFindingAndFreshnessContracts(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(listSEODoctorRunsDueWeekly), "interval '6 days'") {
 		t.Fatalf("ListSEODoctorRunsDueWeekly must respect manual/onboarding/weekly freshness window: %s", listSEODoctorRunsDueWeekly)
+	}
+}
+
+func TestResolveMissingDoctorFindingsIsSourceAware(t *testing.T) {
+	query := strings.ToLower(resolveMissingSEODoctorFindings)
+	for _, want := range []string{
+		"important_page_missing_from_sitemap",
+		"geo_crawler_access_blocked",
+		"jsonb_array_elements_text(normalized_urls)",
+		"any($5::text[])",
+		"any($6::text[])",
+		"evidence->>'target_user_agent'",
+		"chr(10)",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("ResolveMissingSEODoctorFindings missing source-aware guard %q in %s", want, query)
+		}
+	}
+}
+
+func TestDoctorRunFindingsIncludePreservedActiveFindingsWithoutUnionDuplicates(t *testing.T) {
+	historicalQuery := strings.ToLower(listSEODoctorFindingsForRun)
+	if !strings.Contains(historicalQuery, "and run_id = $2") || strings.Contains(historicalQuery, "or status = 'active'") {
+		t.Fatalf("historical Doctor report must remain strictly run-scoped: %s", historicalQuery)
+	}
+	currentQuery := strings.ToLower(listCurrentSEODoctorFindings)
+	if !strings.Contains(currentQuery, "run_id = $2 or status = 'active'") {
+		t.Fatalf("current Doctor report must include preserved active older findings: %s", currentQuery)
+	}
+	if strings.Contains(currentQuery, " union ") {
+		t.Fatalf("current Doctor report should not duplicate current active findings through UNION: %s", currentQuery)
+	}
+}
+
+func TestDoctorGEOEvidenceQueriesUseOneExactLatestAuditRun(t *testing.T) {
+	runQuery := strings.ToLower(getLatestGEOCrawlerAuditRun)
+	for _, want := range []string{"agent = 'geo_crawler_audit'", "order by started_at desc, id desc", "limit 1"} {
+		if !strings.Contains(runQuery, want) {
+			t.Fatalf("GetLatestGEOCrawlerAuditRun missing %q in %s", want, runQuery)
+		}
+	}
+	snapshotQuery := strings.ToLower(listAICrawlerAccessSnapshotsForRun)
+	for _, want := range []string{"project_id = $1", "run_id = $2"} {
+		if !strings.Contains(snapshotQuery, want) {
+			t.Fatalf("ListAICrawlerAccessSnapshotsForRun missing %q in %s", want, snapshotQuery)
+		}
 	}
 }

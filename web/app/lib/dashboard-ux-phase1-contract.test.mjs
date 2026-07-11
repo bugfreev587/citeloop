@@ -370,8 +370,7 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
   assert.match(opportunityDrawer, /Detected/);
   assert.match(opportunityDrawer, /formatDate\(selectedOpportunity\.created_at \?\? null\)/);
 
-  // Site Fix action timestamps moved to the dedicated Site Fixes page: its grid
-  // and its RightDrawer "Action timeline" section.
+  // Canonical Site Fix timestamps live on the dedicated repair-loop surface.
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
   const siteFixesGridStart = siteFixes.indexOf("data-site-fixes-grid");
   const siteFixesGridEnd = siteFixes.indexOf("</section>", siteFixesGridStart);
@@ -380,12 +379,12 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
   const siteFixDrawer = siteFixes.slice(siteFixDrawerStart);
 
   assert.match(siteFixesBlock, /data-site-fixes-grid/);
-  assert.match(siteFixesBlock, /md:grid-cols-2 xl:grid-cols-3/);
-  assert.match(siteFixes, /min-h-\[220px\]/);
-  assert.match(siteFixDrawer, /Action timeline/);
-  assert.match(siteFixDrawer, /Approved/);
-  assert.match(siteFixDrawer, /formatDate\(drawerAction\.approved_at \?\? null\)/);
-  assert.match(siteFixDrawer, /formatDate\(drawerAction\.created_at \?\? null\)/);
+  assert.match(siteFixesBlock, /sm:grid-cols-2 xl:grid-cols-3/);
+  assert.match(siteFixes, /min-h-56/);
+  assert.match(siteFixes, /Updated \{formatDate\(fix\.updated_at \?\? fix\.created_at \?\? null\)\}/);
+  assert.match(siteFixDrawer, /<LifecycleStrip fix=\{selected\}/);
+  assert.match(siteFixes, /\["Finding", "Approved", "Applied \/ deploy", "Verified"\]/);
+  assert.match(siteFixDrawer, /formatDate\(selected\.created_at \?\? null\)/);
 });
 
 test("results surface defaults to published outcomes with card-triggered attribution details", () => {
@@ -1512,7 +1511,7 @@ test("settings groups every top-level section behind a tab", () => {
     "Activity Log",
     "Google connection",
     "Publisher connection",
-    "Opportunity Finding",
+    "AI assistance",
     "Crawl config",
     "Notifications",
   ];
@@ -1527,7 +1526,7 @@ test("settings groups every top-level section behind a tab", () => {
   assert.match(settings, /activeSettingsTab === "activity" && \(/);
   assert.match(settings, /activeSettingsTab === "search-console" && \(/);
   assert.match(settings, /activeSettingsTab === "publisher" && \(/);
-  assert.match(settings, /activeSettingsTab === "opportunity-finding" && \(/);
+  assert.match(settings, /activeSettingsTab === "ai-assistance" && \(/);
   assert.match(settings, /activeSettingsTab === "crawl" && \(/);
   assert.match(settings, /activeSettingsTab === "notifications" && \(/);
   assert.doesNotMatch(settings, /activeSettingsTab === "subscriptions" && \(/);
@@ -1613,28 +1612,28 @@ test("settings deep links open the matching configuration tab", () => {
   assert.match(settings, /onClick=\{\(\) => activateSettingsTab\(tab\.id\)\}/);
 });
 
-test("settings expose Opportunity Finding controls", () => {
+test("settings expose independent Doctor and Opportunities AI controls", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
 
   for (const expected of [
-    '"opportunity-finding"',
-    "Opportunity Finding",
-    "opportunity_finding_source_mix",
-    "ai_discovery_automation",
-    "All",
-    "Signal Scan",
-    "AI Discovery",
+    '"ai-assistance"',
+    "AI assistance",
+    "doctor_ai_enabled",
+    "doctor_ai_run_policy",
+    "growth_ai_enabled",
+    "growth_ai_run_policy",
     "Automatic",
-    "Semi-automatic",
-    "Manual",
+    "On demand",
+    "Manual only",
   ]) {
     assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
-  assert.match(settings, /const aiDiscoveryFindingEnabled = config\.opportunity_finding_source_mix !== "signal_scan";/);
-  assert.match(settings, /opportunityFindingBadgeLabel/);
-  assert.match(settings, /"Signal Scan only"/);
-  assert.match(settings, /aiDiscoveryFindingEnabled && \(\s*<Field label="AI Discovery Setting">/);
+  const panel = settings.slice(settings.indexOf('id="settings-panel-ai-assistance"'));
+  assert.match(panel, /AI assistance: Doctor/);
+  assert.match(panel, /shared provider credential/);
+  assert.doesNotMatch(panel, /opportunity_finding_source_mix/);
+  assert.doesNotMatch(panel, /ai_discovery_automation/);
 });
 
 test("settings exposes Automation as the system setup tab", () => {

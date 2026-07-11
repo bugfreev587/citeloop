@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -16,12 +17,16 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/googledata"
+	"github.com/citeloop/citeloop/internal/growthwork"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
 )
 
@@ -42,11 +47,34 @@ type GoogleDataProvider interface {
 
 // Service coordinates the Operations Loop backend workflow.
 type Service struct {
-	Q           *db.Queries
-	HTTPClient  *http.Client
-	BlogBaseURL string
-	GoogleData  GoogleDataProvider
-	Now         func() time.Time
+	Q                *db.Queries
+	Pool             *pgxpool.Pool
+	HTTPClient       *http.Client
+	BlogBaseURL      string
+	GoogleData       GoogleDataProvider
+	LLM              llm.Provider
+	DoctorAIModel    string
+	GrowthComparator discovery.SemanticComparator
+	Now              func() time.Time
+}
+
+func (s Service) createGrowthOpportunity(ctx context.Context, in db.UpsertSEOOpportunityParams) (db.SeoOpportunity, error) {
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).CreateOpportunity(ctx, db.CreateCanonicalGrowthOpportunityParams{
+		ID: uuid.New(), ProjectID: in.ProjectID, Type: in.Type,
+		PriorityScore: in.PriorityScore, Confidence: in.Confidence, PageUrl: in.PageUrl,
+		NormalizedPageUrl: in.NormalizedPageUrl, ArticleID: in.ArticleID, TopicID: in.TopicID,
+		Query: in.Query, Evidence: in.Evidence, RecommendedAction: in.RecommendedAction,
+		ExpectedImpact: in.ExpectedImpact, Effort: in.Effort, RiskLevel: in.RiskLevel,
+		CreatedByRunID: in.CreatedByRunID,
+	})
+}
+
+func (s Service) EnsureGrowthOpportunityReservations(ctx context.Context, projectID uuid.UUID) error {
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).EnsureLegacyReservations(ctx, projectID)
+}
+
+func (s Service) EnsureGrowthOpportunityReserved(ctx context.Context, projectID, opportunityID uuid.UUID) error {
+	return growthwork.NewService(s.Pool, s.Q, s.GrowthComparator).EnsureOpportunityReserved(ctx, projectID, opportunityID)
 }
 
 type SyncResult struct {
@@ -107,9 +135,28 @@ type TechnicalResult struct {
 	MetaDescriptionStatus string         `json:"meta_description_status"`
 	H1Status              string         `json:"h1_status"`
 	StructuredDataStatus  string         `json:"structured_data_status"`
+	SitemapStatus         string         `json:"sitemap_status"`
 	InternalLinkCount     int32          `json:"internal_link_count"`
 	OutboundLinkCount     int32          `json:"outbound_link_count"`
 	RawDetails            map[string]any `json:"raw_details"`
+}
+
+type sitemapInventory struct {
+	URLs          map[string]struct{}
+	Complete      bool
+	Documents     int
+	Bytes         int
+	SiteURL       string
+	Normalization URLNormalizationConfig
+}
+
+func (s sitemapInventory) Contains(rawURL string) bool {
+	normalized, err := NormalizeURL(rawURL, s.SiteURL, s.Normalization)
+	if err != nil {
+		return false
+	}
+	_, ok := s.URLs[normalized]
+	return ok
 }
 
 func (s Service) Overview(ctx context.Context, projectID uuid.UUID) (Overview, error) {
@@ -243,11 +290,17 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	if err != nil {
 		return finish("error", result, err)
 	}
+	client := s.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	normalization := decodeNormalizationConfig(prop.UrlNormalizationConfig)
+	sitemap := loadSitemapInventory(ctx, client, prop.SiteUrl, normalization)
 	for _, article := range articles {
 		if article.CanonicalUrl == nil || strings.TrimSpace(*article.CanonicalUrl) == "" {
 			continue
 		}
-		normalized, status, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, *article.CanonicalUrl, uuidToPG(article.ID), article.ContentHash, strings.Contains(strings.ToLower(article.ContentMd), "<script"))
+		normalized, status, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, *article.CanonicalUrl, uuidToPG(article.ID), article.ContentHash, strings.Contains(strings.ToLower(article.ContentMd), "<script"), &sitemap)
 		if err != nil {
 			return finish("error", result, err)
 		}
@@ -272,7 +325,7 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 		}
 	}
 	if result.CheckedURLs == 0 && strings.TrimSpace(prop.SiteUrl) != "" {
-		_, _, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, prop.SiteUrl, pgtype.UUID{}, nil, false)
+		_, _, err := s.recordTechnicalCheck(ctx, projectID, run.ID, prop, prop.SiteUrl, pgtype.UUID{}, nil, false, &sitemap)
 		if err != nil {
 			return finish("error", result, err)
 		}
@@ -497,51 +550,7 @@ func (s Service) Analyze(ctx context.Context, projectID uuid.UUID) (SyncResult, 
 		}
 		return result, err
 	}
-	articles, err := s.Q.ListPublishedCanonicalArticlesForSEO(ctx, projectID)
-	if err != nil {
-		return finish("error", result, err)
-	}
 	prop, _ := s.ensureProperty(ctx, projectID, "")
-	for _, article := range articles {
-		if article.CanonicalUrl == nil {
-			continue
-		}
-		normalized, err := NormalizeURL(*article.CanonicalUrl, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig))
-		if err != nil {
-			return finish("error", result, err)
-		}
-		if article.CanonicalUrlVerifiedAt.Valid && article.Status == "published" {
-			continue
-		}
-		evidence := map[string]any{
-			"status":                    article.Status,
-			"canonical_url_verified_at": article.CanonicalUrlVerifiedAt.Valid,
-			"source":                    "articles_state",
-		}
-		action := "technical SEO fix task"
-		impact := "Confirm canonical URL availability and indexing health before generating more query-level recommendations."
-		_, err = s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
-			ProjectID:         projectID,
-			Type:              "indexing_anomaly",
-			Status:            "open",
-			PriorityScore:     pgutil.Numeric(80),
-			Confidence:        pgutil.Numeric(70),
-			PageUrl:           article.CanonicalUrl,
-			NormalizedPageUrl: normalized,
-			ArticleID:         uuidToPG(article.ID),
-			TopicID:           uuidToPG(article.TopicID),
-			Evidence:          mustJSON(evidence),
-			RecommendedAction: &action,
-			ExpectedImpact:    &impact,
-			Effort:            2,
-			RiskLevel:         "low",
-			CreatedByRunID:    uuidToPG(run.ID),
-		})
-		if err != nil {
-			return finish("error", result, err)
-		}
-		result.GeneratedAnomalies++
-	}
 	metricGenerated, err := s.generateSearchMetricOpportunities(ctx, projectID, run.ID, prop)
 	if err != nil {
 		return finish("error", result, err)
@@ -622,7 +631,7 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -640,6 +649,9 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		generated++
 	}
@@ -688,7 +700,7 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		}
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err := s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -706,6 +718,9 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		generated++
 	}
@@ -954,7 +969,7 @@ func (s Service) generateColdStartOpportunities(ctx context.Context, projectID u
 		query := candidate.Query
 		action := candidate.RecommendedAction
 		impact := candidate.ExpectedImpact
-		_, err = s.Q.UpsertSEOOpportunity(ctx, db.UpsertSEOOpportunityParams{
+		created, err := s.createGrowthOpportunity(ctx, db.UpsertSEOOpportunityParams{
 			ProjectID:         projectID,
 			Type:              candidate.Type,
 			Status:            "open",
@@ -972,6 +987,9 @@ func (s Service) generateColdStartOpportunities(ctx context.Context, projectID u
 		})
 		if err != nil {
 			return generated, err
+		}
+		if created.ID == uuid.Nil {
+			continue
 		}
 		seen[candidate.Query] = true
 		generated++
@@ -998,14 +1016,15 @@ func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.C
 	source, evidenceCount := strongestEvidenceSource(inventory)
 
 	baseEvidence := map[string]any{
-		"source":         "context_confirmation",
-		"positioning":    positioning,
-		"icp":            icp,
-		"value_props":    firstN(valueProps, 5),
-		"features":       firstN(features, 5),
-		"key_terms":      firstN(keyTerms, 8),
-		"source_pages":   len(inventory),
-		"evidence_count": evidenceCount,
+		"source":                     "context_confirmation",
+		"positioning":                positioning,
+		"icp":                        icp,
+		"value_props":                firstN(valueProps, 5),
+		"features":                   firstN(features, 5),
+		"key_terms":                  firstN(keyTerms, 8),
+		"source_pages":               len(inventory),
+		"evidence_count":             evidenceCount,
+		"intended_slug_or_canonical": strings.TrimRight(siteURL, "/") + "/use-cases",
 	}
 	candidates := []coldStartOpportunityCandidate{
 		{
@@ -1033,9 +1052,10 @@ func coldStartOpportunityCandidates(profileRaw json.RawMessage, inventory []db.C
 			Effort:            4,
 			RiskLevel:         "medium",
 			Evidence: map[string]any{
-				"source":          "context_confirmation",
-				"differentiators": firstN(differentiators, 6),
-				"competitors":     firstN(competitors, 6),
+				"source":                     "context_confirmation",
+				"differentiators":            firstN(differentiators, 6),
+				"competitors":                firstN(competitors, 6),
+				"intended_slug_or_canonical": strings.TrimRight(siteURL, "/") + "/compare",
 			},
 		})
 	}
@@ -1276,19 +1296,27 @@ func (s Service) recordTechnicalCheck(
 	articleID pgtype.UUID,
 	contentHash *string,
 	unsafeMDX bool,
+	sitemap *sitemapInventory,
 ) (string, string, error) {
 	normalized, err := NormalizeURL(rawURL, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig))
 	if err != nil {
 		return "", "", err
 	}
-	check := s.checkURL(ctx, rawURL, prop.SiteUrl)
+	check := s.checkURLWithSitemap(ctx, rawURL, prop.SiteUrl, decodeNormalizationConfig(prop.UrlNormalizationConfig), sitemap)
 	status := "unknown"
 	if check.HTTPStatus != nil && *check.HTTPStatus >= 200 && *check.HTTPStatus < 300 {
 		status = "ok"
 	} else if check.HTTPStatus != nil {
 		status = "http_error"
 	}
-	_, err = s.Q.UpsertTechnicalCheck(ctx, db.UpsertTechnicalCheckParams{
+	_, err = s.Q.UpsertTechnicalCheck(ctx, technicalCheckParams(
+		projectID, runID, rawURL, normalized, articleID, contentHash, unsafeMDX, check,
+	))
+	return normalized, status, err
+}
+
+func technicalCheckParams(projectID, runID uuid.UUID, rawURL, normalized string, articleID pgtype.UUID, contentHash *string, unsafeMDX bool, check TechnicalResult) db.UpsertTechnicalCheckParams {
+	params := db.UpsertTechnicalCheckParams{
 		ProjectID:             projectID,
 		RunID:                 runID,
 		PageUrl:               rawURL,
@@ -1301,13 +1329,16 @@ func (s Service) recordTechnicalCheck(
 		MetaDescriptionStatus: strPtr(check.MetaDescriptionStatus),
 		H1Status:              strPtr(check.H1Status),
 		StructuredDataStatus:  strPtr(check.StructuredDataStatus),
-		InternalLinkCount:     &check.InternalLinkCount,
-		OutboundLinkCount:     &check.OutboundLinkCount,
+		SitemapStatus:         strPtr(check.SitemapStatus),
 		ContentHash:           contentHash,
 		UnsafeMdxDetected:     unsafeMDX,
 		RawDetails:            mustJSON(check.RawDetails),
-	})
-	return normalized, status, err
+	}
+	if crawlState := strings.ToLower(normalizedEvidenceText(check.RawDetails["crawl_status"])); crawlState != "partial" && crawlState != "unchecked" && crawlState != "skipped" {
+		params.InternalLinkCount = &check.InternalLinkCount
+		params.OutboundLinkCount = &check.OutboundLinkCount
+	}
+	return params
 }
 
 func (s Service) ensureProperty(ctx context.Context, projectID uuid.UUID, siteURL string) (db.SeoProperty, error) {
@@ -1338,6 +1369,15 @@ func (s Service) checkURL(ctx context.Context, rawURL, siteURL string) Technical
 	if client == nil {
 		client = http.DefaultClient
 	}
+	inventory := loadSitemapInventory(ctx, client, siteURL, URLNormalizationConfig{})
+	return s.checkURLWithSitemap(ctx, rawURL, siteURL, URLNormalizationConfig{}, &inventory)
+}
+
+func (s Service) checkURLWithSitemap(ctx context.Context, rawURL, siteURL string, normalization URLNormalizationConfig, sitemap *sitemapInventory) TechnicalResult {
+	client := s.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -1351,28 +1391,81 @@ func (s Service) checkURL(ctx context.Context, rawURL, siteURL string) Technical
 	}
 	defer res.Body.Close()
 	status := int32(res.StatusCode)
-	limited := io.LimitReader(res.Body, 1<<20)
-	body, _ := io.ReadAll(limited)
+	body, readErr := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	bodyTruncated := len(body) > 1<<20
+	if bodyTruncated {
+		body = body[:1<<20]
+	}
+	bodyPartial := bodyTruncated || readErr != nil
 	htmlStr := string(body)
 	htmlLower := strings.ToLower(htmlStr)
+	canonicalState := "unknown"
+	canonicalURLs := []string{}
+	robotsState := "unknown"
+	titleState := "unknown"
+	metaDescriptionState := "unknown"
+	h1State := "unknown"
+	structuredDataState := "unknown"
+	internalLinkCount := int32(0)
+	outboundLinkCount := int32(0)
+	if !bodyPartial {
+		canonicalState, canonicalURLs = classifyCanonical(htmlStr, rawURL, res.Request.URL.String(), normalization)
+		robotsState = robotsStatus(htmlLower, res.Header.Values("X-Robots-Tag")...)
+		titleState = presenceStatus(htmlLower, `<title`)
+		metaDescriptionState = presenceStatus(htmlLower, `name=["']description["']`)
+		h1State = presenceStatus(htmlLower, `<h1`)
+		structuredDataState = presenceStatus(htmlLower, `application/ld\+json`)
+		internalLinkCount = countLinks(htmlLower, siteURL, true)
+		outboundLinkCount = countLinks(htmlLower, siteURL, false)
+	} else {
+		for _, header := range res.Header.Values("X-Robots-Tag") {
+			if xRobotsNoindex(header) {
+				robotsState = "noindex"
+				break
+			}
+		}
+	}
 	rawDetails := map[string]any{
 		"status":     res.Status,
 		"final_url":  res.Request.URL.String(),
 		"body_bytes": len(body),
 	}
-	for key, value := range extractRepairMetadataFacts(htmlStr, res.Request.URL) {
-		rawDetails[key] = value
+	if bodyPartial {
+		rawDetails["crawl_status"] = "partial"
+	}
+	if bodyTruncated {
+		rawDetails["body_truncated"] = true
+	}
+	if readErr != nil {
+		rawDetails["error"] = "read response body: " + readErr.Error()
+	}
+	if !bodyPartial {
+		for key, value := range extractRepairMetadataFacts(htmlStr, res.Request.URL) {
+			rawDetails[key] = value
+		}
+	}
+	rawDetails["canonical_urls"] = canonicalURLs
+	rawDetails["requested_url"] = rawURL
+	rawDetails["final_url"] = res.Request.URL.String()
+	sitemapState := "unknown"
+	if sitemap != nil && sitemap.Complete {
+		if sitemap.Contains(rawURL) || sitemap.Contains(res.Request.URL.String()) {
+			sitemapState = "present"
+		} else {
+			sitemapState = "missing"
+		}
 	}
 	return TechnicalResult{
 		HTTPStatus:            &status,
-		CanonicalStatus:       presenceStatus(htmlLower, `rel=["']canonical["']`),
-		RobotsStatus:          robotsStatus(htmlLower),
-		TitleStatus:           presenceStatus(htmlLower, `<title`),
-		MetaDescriptionStatus: presenceStatus(htmlLower, `name=["']description["']`),
-		H1Status:              presenceStatus(htmlLower, `<h1`),
-		StructuredDataStatus:  presenceStatus(htmlLower, `application/ld\+json`),
-		InternalLinkCount:     countLinks(htmlLower, siteURL, true),
-		OutboundLinkCount:     countLinks(htmlLower, siteURL, false),
+		CanonicalStatus:       canonicalState,
+		RobotsStatus:          robotsState,
+		TitleStatus:           titleState,
+		MetaDescriptionStatus: metaDescriptionState,
+		H1Status:              h1State,
+		StructuredDataStatus:  structuredDataState,
+		SitemapStatus:         sitemapState,
+		InternalLinkCount:     internalLinkCount,
+		OutboundLinkCount:     outboundLinkCount,
 		RawDetails:            rawDetails,
 	}
 }
@@ -1384,9 +1477,40 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 		return out
 	}
 	logoCandidates := []string{}
+	citationAssociations := []map[string]any{}
+	missingVisibleAssociation := false
+	propositionOrdinal := 0
+	hasExtractableStructure := false
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
+			inArticle := insideElement(n, "article")
+			if inArticle {
+				switch n.Data {
+				case "p", "li", "dd":
+					propositionOrdinal++
+					proposition := strings.Join(strings.Fields(nodeText(n)), " ")
+					sources, associated := propositionSourceURLs(n, baseURL)
+					if len([]rune(proposition)) >= 20 && len(sources) > 0 {
+						status := "associated"
+						if !associated {
+							status = "missing_visible_association"
+							missingVisibleAssociation = true
+						}
+						citationAssociations = append(citationAssociations, map[string]any{
+							"proposition":        proposition,
+							"source_urls":        sources,
+							"structural_locator": fmt.Sprintf("article %s:nth-of-type(%d)", n.Data, propositionOrdinal),
+							"association_status": status,
+						})
+					}
+				case "dl", "table":
+					hasExtractableStructure = true
+				}
+				if strings.TrimSpace(attr(n, "itemprop")) != "" {
+					hasExtractableStructure = true
+				}
+			}
 			switch n.Data {
 			case "html":
 				if lang := strings.TrimSpace(attr(n, "lang")); lang != "" {
@@ -1396,6 +1520,12 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 				if _, ok := out["page_title"]; !ok {
 					if title := strings.TrimSpace(nodeText(n)); title != "" {
 						out["page_title"] = title
+					}
+				}
+			case "h1":
+				if _, ok := out["primary_intent"]; !ok {
+					if heading := strings.Join(strings.Fields(nodeText(n)), " "); heading != "" {
+						out["primary_intent"] = heading
 					}
 				}
 			case "link":
@@ -1462,7 +1592,81 @@ func extractRepairMetadataFacts(htmlStr string, baseURL *url.URL) map[string]any
 	if logos := uniqueNonEmptyStrings(logoCandidates); len(logos) > 0 {
 		out["logo_candidates"] = logos
 	}
+	citation := map[string]any{}
+	if len(citationAssociations) > 0 {
+		propositions := []string{}
+		for _, association := range citationAssociations {
+			propositions = append(propositions, association["proposition"].(string))
+		}
+		citation["preserved_propositions"] = propositions
+		citation["added_propositions"] = []string{}
+		citation["removed_propositions"] = []string{}
+		changes := make([]any, len(citationAssociations))
+		for i := range citationAssociations {
+			changes[i] = citationAssociations[i]
+		}
+		citation["source_association_changes"] = changes
+		citation["source_association_status"] = "associated"
+		if missingVisibleAssociation {
+			citation["source_association_status"] = "missing_visible_association"
+		}
+		if len(citationAssociations) >= 2 && !hasExtractableStructure {
+			citation["supported_fact_extractability"] = "needs_optimization"
+		}
+	}
+	entityName := normalizedEvidenceText(out["application_name"])
+	canonicalEntityName := normalizedEvidenceText(out["og_site_name"])
+	if entityName != "" && canonicalEntityName != "" && !strings.EqualFold(entityName, canonicalEntityName) {
+		citation["entity_name"] = entityName
+		citation["canonical_entity_name"] = canonicalEntityName
+		if _, ok := citation["preserved_propositions"]; !ok {
+			citation["preserved_propositions"] = []string{}
+			citation["added_propositions"] = []string{}
+			citation["removed_propositions"] = []string{}
+			citation["source_association_changes"] = []any{}
+		}
+	}
+	if len(citation) > 0 {
+		out["citation_readiness"] = citation
+	}
 	return out
+}
+
+func propositionSourceURLs(node *html.Node, baseURL *url.URL) ([]string, bool) {
+	values := []string{}
+	allAssociated := true
+	var walk func(*html.Node, bool)
+	walk = func(n *html.Node, inCite bool) {
+		if n.Type == html.ElementNode {
+			inCite = inCite || n.Data == "cite"
+			if n.Data == "a" {
+				explicit := inCite || relHas(strings.ToLower(attr(n, "rel")), "cite")
+				resolved := resolveURL(attr(n, "href"), baseURL)
+				parsed, err := url.Parse(resolved)
+				external := err == nil && baseURL != nil && parsed.Host != "" && !strings.EqualFold(parsed.Host, baseURL.Host)
+				if resolved != "" && (explicit || external) {
+					values = append(values, resolved)
+					if !explicit {
+						allAssociated = false
+					}
+				}
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child, inCite)
+		}
+	}
+	walk(node, false)
+	return uniqueNonEmptyStrings(values), allAssociated
+}
+
+func insideElement(node *html.Node, name string) bool {
+	for current := node; current != nil; current = current.Parent {
+		if current.Type == html.ElementNode && strings.EqualFold(current.Data, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func attr(n *html.Node, name string) string {
@@ -1541,6 +1745,7 @@ func failedTechnicalResult(err error) TechnicalResult {
 		MetaDescriptionStatus: "unknown",
 		H1Status:              "unknown",
 		StructuredDataStatus:  "unknown",
+		SitemapStatus:         "unknown",
 		RawDetails:            map[string]any{"error": err.Error()},
 	}
 }
@@ -1553,14 +1758,256 @@ func presenceStatus(html, pattern string) string {
 	return "missing"
 }
 
-func robotsStatus(html string) string {
-	if strings.Contains(html, "noindex") {
-		return "noindex"
+func robotsStatus(htmlText string, headerValues ...string) string {
+	for _, value := range headerValues {
+		if xRobotsNoindex(value) {
+			return "noindex"
+		}
 	}
-	if strings.Contains(html, `name="robots"`) || strings.Contains(html, `name='robots'`) {
+	doc, err := html.Parse(strings.NewReader(htmlText))
+	if err == nil {
+		var walk func(*html.Node) bool
+		walk = func(n *html.Node) bool {
+			if n.Type == html.ElementNode && n.Data == "meta" {
+				name := strings.ToLower(strings.TrimSpace(attr(n, "name")))
+				if name == "robots" || name == "googlebot" || name == "bingbot" {
+					if directiveToken(attr(n, "content"), "noindex") || directiveToken(attr(n, "content"), "none") {
+						return true
+					}
+				}
+			}
+			for child := n.FirstChild; child != nil; child = child.NextSibling {
+				if walk(child) {
+					return true
+				}
+			}
+			return false
+		}
+		if walk(doc) {
+			return "noindex"
+		}
+	}
+	return "index"
+}
+
+func xRobotsNoindex(value string) bool {
+	scope := ""
+	for _, segment := range strings.Split(strings.ToLower(value), ",") {
+		directives := strings.TrimSpace(segment)
+		if colon := strings.Index(directives, ":"); colon >= 0 {
+			scope = strings.TrimSpace(directives[:colon])
+			directives = strings.TrimSpace(directives[colon+1:])
+		}
+		applicable := scope == "" || scope == "googlebot" || scope == "bingbot" || scope == "robots" || scope == "citeloop"
+		if applicable && (directiveToken(directives, "noindex") || directiveToken(directives, "none")) {
+			return true
+		}
+	}
+	return false
+}
+
+func directiveToken(value, want string) bool {
+	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\t' }) {
+		if token == want {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyCanonical(htmlText, requestedURL, finalURL string, normalization URLNormalizationConfig) (string, []string) {
+	doc, err := html.Parse(strings.NewReader(htmlText))
+	if err != nil {
+		return "invalid", nil
+	}
+	base, err := url.Parse(finalURL)
+	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
+		return "invalid", nil
+	}
+	hrefs := []string{}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "link" && relHas(strings.ToLower(attr(n, "rel")), "canonical") {
+			hrefs = append(hrefs, strings.TrimSpace(attr(n, "href")))
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	if len(hrefs) == 0 {
+		return "missing", []string{}
+	}
+	if len(hrefs) > 1 {
+		return "multiple", hrefs
+	}
+	if hrefs[0] == "" || strings.HasPrefix(hrefs[0], "://") {
+		return "invalid", hrefs
+	}
+	resolved, err := url.Parse(hrefs[0])
+	if err != nil {
+		return "invalid", hrefs
+	}
+	resolved = base.ResolveReference(resolved)
+	if resolved.Host == "" || (resolved.Scheme != "http" && resolved.Scheme != "https") {
+		return "invalid", hrefs
+	}
+	canonical, err := NormalizeURL(resolved.String(), finalURL, normalization)
+	if err != nil {
+		return "invalid", hrefs
+	}
+	want, err := NormalizeURL(finalURL, requestedURL, normalization)
+	if err != nil {
+		return "invalid", hrefs
+	}
+	if canonical != want {
+		return "mismatch", []string{resolved.String()}
+	}
+	return "present", []string{resolved.String()}
+}
+
+func checkSitemapStatus(ctx context.Context, client *http.Client, siteURL, pageURL string) string {
+	inventory := loadSitemapInventory(ctx, client, siteURL, URLNormalizationConfig{})
+	if !inventory.Complete {
+		return "unknown"
+	}
+	if inventory.Contains(pageURL) {
 		return "present"
 	}
 	return "missing"
+}
+
+func loadSitemapInventory(ctx context.Context, client *http.Client, siteURL string, normalization URLNormalizationConfig) sitemapInventory {
+	const maxDocuments, maxDepth, maxTotalBytes = 32, 2, 4 << 20
+	out := sitemapInventory{URLs: map[string]struct{}{}, Complete: true, SiteURL: siteURL, Normalization: normalization}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	base, err := url.Parse(strings.TrimSpace(siteURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		out.Complete = false
+		return out
+	}
+	sitemapClient := *client
+	callerRedirectPolicy := client.CheckRedirect
+	sitemapClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !sameURLOrigin(req.URL, base) {
+			return http.ErrUseLastResponse
+		}
+		if callerRedirectPolicy != nil {
+			return callerRedirectPolicy(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	type queued struct {
+		raw   string
+		depth int
+	}
+	queue := []queued{{base.ResolveReference(&url.URL{Path: "/sitemap.xml"}).String(), 0}}
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		if seen[item.raw] {
+			continue
+		}
+		seen[item.raw] = true
+		if out.Documents >= maxDocuments {
+			out.Complete = false
+			break
+		}
+		parsed, parseErr := url.Parse(item.raw)
+		if parseErr != nil || !strings.EqualFold(parsed.Host, base.Host) || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			out.Complete = false
+			continue
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, item.raw, nil)
+		if reqErr != nil {
+			out.Complete = false
+			continue
+		}
+		req.Header.Set("User-Agent", "CiteLoop SEO technical checker")
+		res, fetchErr := sitemapClient.Do(req)
+		if fetchErr != nil {
+			out.Complete = false
+			continue
+		}
+		if !sameURLOrigin(res.Request.URL, base) {
+			_ = res.Body.Close()
+			out.Complete = false
+			continue
+		}
+		readLimit := (1 << 20) + 1
+		if remaining := maxTotalBytes - out.Bytes; remaining+1 < readLimit {
+			readLimit = remaining + 1
+		}
+		body, readErr := io.ReadAll(io.LimitReader(res.Body, int64(readLimit)))
+		_ = res.Body.Close()
+		out.Documents++
+		out.Bytes += len(body)
+		if readErr != nil || res.StatusCode < 200 || res.StatusCode >= 300 || len(body) > 1<<20 {
+			out.Complete = false
+			continue
+		}
+		if out.Bytes > maxTotalBytes {
+			out.Complete = false
+			break
+		}
+		decoder := xml.NewDecoder(strings.NewReader(string(body)))
+		root := ""
+		locs := []string{}
+		for {
+			token, e := decoder.Token()
+			if e == io.EOF {
+				break
+			}
+			if e != nil {
+				out.Complete = false
+				break
+			}
+			start, ok := token.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			name := strings.ToLower(start.Name.Local)
+			if root == "" {
+				root = name
+			}
+			if name == "loc" {
+				var loc string
+				if decoder.DecodeElement(&loc, &start) == nil {
+					locs = append(locs, strings.TrimSpace(loc))
+				}
+			}
+		}
+		if root == "sitemapindex" {
+			if item.depth >= maxDepth {
+				out.Complete = false
+				continue
+			}
+			for _, loc := range locs {
+				queue = append(queue, queued{loc, item.depth + 1})
+			}
+		} else if root == "urlset" {
+			for _, loc := range locs {
+				if normalized, e := NormalizeURL(loc, siteURL, normalization); e == nil {
+					out.URLs[normalized] = struct{}{}
+				}
+			}
+		} else {
+			out.Complete = false
+		}
+	}
+	return out
+}
+
+func sameURLOrigin(candidate, base *url.URL) bool {
+	return candidate != nil && base != nil && strings.EqualFold(candidate.Scheme, base.Scheme) && strings.EqualFold(candidate.Host, base.Host)
 }
 
 func countLinks(html, siteURL string, internal bool) int32 {

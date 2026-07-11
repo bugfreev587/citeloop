@@ -23,14 +23,13 @@ test("api client exposes canonical read-only Doctor report, run, and finding met
     "getSEODoctorRun",
     "listSEODoctorRunFindings",
     "dismissSEODoctorFinding",
-    // A reviewed finding can be converted into a Site Fix (content action).
-    "convertSEODoctorFinding",
+    "createDoctorSiteFix",
   ]) {
     assert.match(api, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(api, /`\/projects\/\$\{id\}\/doctor`/);
   assert.match(api, /`\/projects\/\$\{id\}\/doctor\/runs`/);
-  assert.match(api, /\/doctor\/findings\/\$\{findingID\}\/convert`/);
+  assert.match(api, /\/doctor\/findings\/\$\{findingID\}\/site-fixes`/);
   assert.doesNotMatch(api, /\/seo\/doctor/);
   assert.doesNotMatch(api, /startSEODoctorGrowthLoop/);
   assert.doesNotMatch(api, /start-growth-loop/);
@@ -76,7 +75,11 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     // A reviewed finding can be routed into the dedicated Site Fixes lifecycle.
     "Add to Site Fixes",
     "addToSiteFixes",
-    "api.convertSEODoctorFinding",
+    "api.createDoctorSiteFix",
+    "finding_kind",
+    "Broken",
+    "Optimization",
+    "Healthy coverage",
     "acceptance_tests",
     "dismissSEODoctorFinding",
     "document.execCommand",
@@ -101,6 +104,8 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
     "startingGrowthLoop",
     "startGrowthLoop",
     "startSEODoctorGrowthLoop",
+    "api.convertSEODoctorFinding",
+    "SEOContentAction",
   ]) {
     assert.doesNotMatch(client, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

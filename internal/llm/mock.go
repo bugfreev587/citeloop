@@ -28,7 +28,7 @@ func (m *Mock) Complete(_ context.Context, req CompletionReq) (CompletionResp, e
 	default:
 		text = `{"ok":true}`
 	}
-	return CompletionResp{Text: text, Model: "mock", Tokens: 100, CostUSD: 0.001}, nil
+	return CompletionResp{Text: text, Provider: "mock", Model: "mock", PromptTokens: 60, CompletionTokens: 40, Tokens: 100, CostUSD: 0.001}, nil
 }
 
 const mockProfile = `{

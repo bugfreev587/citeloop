@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -29,8 +31,30 @@ func (s *Server) prepareAdminDiscoveryArbitration(w http.ResponseWriter, r *http
 	}
 	store := discovery.NewPostgresArbitrationStore(s.Pool, s.Q).WithSemanticRuntime("tokengate", s.Env.TokenGateModel)
 	var comparator discovery.SemanticComparator
-	if s.LLM != nil {
-		comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.Env.TokenGateModel)
+	candidate, err := s.Q.GetDiscoveryCandidateForArbitration(r.Context(), db.GetDiscoveryCandidateForArbitrationParams{ProjectID: projectID, CandidateID: candidateID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "discovery candidate not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if candidate.SuggestedOwner == string(discovery.OwnerOpportunities) || candidate.VerificationMode == string(discovery.VerificationDelayed) {
+		comparator, err = s.growthComparatorForProject(r.Context(), projectID, config.GrowthAITriggerManual)
+	} else {
+		project, projectErr := s.Q.GetProject(r.Context(), projectID)
+		if projectErr != nil {
+			err = projectErr
+		} else if projectConfig, parseErr := config.Parse(project.Config); parseErr != nil {
+			err = parseErr
+		} else if s.LLM != nil && projectConfig.AllowsDoctorAI(config.DoctorAITriggerDiagnosisUser) {
+			comparator = discovery.NewLLMSemanticComparator(s.LLM, "tokengate", s.Env.TokenGateModel).WithPurpose(llm.PurposeSiteFix)
+		}
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	prepared, err := discovery.NewArbitrationService(store, comparator).Prepare(r.Context(), projectID, candidateID)
 	if err != nil {

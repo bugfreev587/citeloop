@@ -40,6 +40,7 @@ var improvePageOpportunityTypes = map[string]bool{
 	"gsc_content_decay":           true,
 	"thin_evidence_page":          true,
 	"gsc_query_cannibalization":   true,
+	"citation_fact_expansion":     true,
 }
 
 // dualRouteOpportunityTypes may fit either Improve Page or Create Content;

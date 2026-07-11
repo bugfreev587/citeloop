@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	geopkg "github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -526,7 +527,12 @@ func (s *Server) analyzeGEOOpportunities(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := s.geoService(r.Context()).AnalyzeObservations(r.Context(), projectID, in)
+	service, err := s.geoServiceForProject(r.Context(), projectID, config.GrowthAITriggerManual)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result, err := service.AnalyzeObservations(r.Context(), projectID, in)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -566,7 +572,12 @@ func (s *Server) acceptGEOAssetBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad asset brief id")
 		return
 	}
-	result, err := s.geoService(r.Context()).AcceptGEOAssetBrief(r.Context(), projectID, briefID)
+	service, err := s.geoServiceForProject(r.Context(), projectID, config.GrowthAITriggerManual)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	result, err := service.AcceptGEOAssetBrief(r.Context(), projectID, briefID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

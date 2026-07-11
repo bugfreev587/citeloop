@@ -13,6 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeCanonicalDiscoveryRun = `-- name: CompleteCanonicalDiscoveryRun :one
+update discovery_shadow_runs
+set status = 'completed',
+    error = null,
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+where id = $1
+  and project_id = $2
+  and mode = 'canonical'
+returning id, project_id, mode, status, candidate_schema_version, signature_version, doctor_candidates, opportunity_candidates, identity_ready, needs_specification, exact_duplicate_groups, possible_conflict_groups, error, started_at, finished_at, created_at, updated_at
+`
+
+type CompleteCanonicalDiscoveryRunParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) CompleteCanonicalDiscoveryRun(ctx context.Context, arg CompleteCanonicalDiscoveryRunParams) (DiscoveryShadowRun, error) {
+	row := q.db.QueryRow(ctx, completeCanonicalDiscoveryRun, arg.ID, arg.ProjectID)
+	var i DiscoveryShadowRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Mode,
+		&i.Status,
+		&i.CandidateSchemaVersion,
+		&i.SignatureVersion,
+		&i.DoctorCandidates,
+		&i.OpportunityCandidates,
+		&i.IdentityReady,
+		&i.NeedsSpecification,
+		&i.ExactDuplicateGroups,
+		&i.PossibleConflictGroups,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const completeDiscoveryShadowRun = `-- name: CompleteDiscoveryShadowRun :one
 update discovery_shadow_runs set
   status = 'completed',
@@ -379,7 +421,7 @@ update work_review_memory set
 where project_id = $1
   and id = $2
   and active = true
-returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
 `
 
 type DeactivateWorkReviewMemoryParams struct {
@@ -410,6 +452,8 @@ func (q *Queries) DeactivateWorkReviewMemory(ctx context.Context, arg Deactivate
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
 	)
 	return i, err
 }
@@ -429,6 +473,59 @@ type DeleteShadowWorkSignatureForCandidateParams struct {
 func (q *Queries) DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error {
 	_, err := q.db.Exec(ctx, deleteShadowWorkSignatureForCandidate, arg.ProjectID, arg.CandidateID)
 	return err
+}
+
+const ensureCanonicalDiscoveryRun = `-- name: EnsureCanonicalDiscoveryRun :one
+insert into discovery_shadow_runs
+  (id, project_id, mode, status, candidate_schema_version, signature_version,
+   doctor_candidates, identity_ready)
+values
+  ($1, $2, 'canonical', 'running',
+   $3, $4, 1, 1)
+on conflict (id) do update set
+  updated_at = now()
+where discovery_shadow_runs.project_id = excluded.project_id
+  and discovery_shadow_runs.mode = 'canonical'
+  and discovery_shadow_runs.candidate_schema_version = excluded.candidate_schema_version
+  and discovery_shadow_runs.signature_version = excluded.signature_version
+returning id, project_id, mode, status, candidate_schema_version, signature_version, doctor_candidates, opportunity_candidates, identity_ready, needs_specification, exact_duplicate_groups, possible_conflict_groups, error, started_at, finished_at, created_at, updated_at
+`
+
+type EnsureCanonicalDiscoveryRunParams struct {
+	ID                     uuid.UUID `json:"id"`
+	ProjectID              uuid.UUID `json:"project_id"`
+	CandidateSchemaVersion string    `json:"candidate_schema_version"`
+	SignatureVersion       string    `json:"signature_version"`
+}
+
+func (q *Queries) EnsureCanonicalDiscoveryRun(ctx context.Context, arg EnsureCanonicalDiscoveryRunParams) (DiscoveryShadowRun, error) {
+	row := q.db.QueryRow(ctx, ensureCanonicalDiscoveryRun,
+		arg.ID,
+		arg.ProjectID,
+		arg.CandidateSchemaVersion,
+		arg.SignatureVersion,
+	)
+	var i DiscoveryShadowRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Mode,
+		&i.Status,
+		&i.CandidateSchemaVersion,
+		&i.SignatureVersion,
+		&i.DoctorCandidates,
+		&i.OpportunityCandidates,
+		&i.IdentityReady,
+		&i.NeedsSpecification,
+		&i.ExactDuplicateGroups,
+		&i.PossibleConflictGroups,
+		&i.Error,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const ensureWorkConflictBucket = `-- name: EnsureWorkConflictBucket :one
@@ -502,20 +599,24 @@ func (q *Queries) FailDiscoveryShadowRun(ctx context.Context, arg FailDiscoveryS
 const finishAICallRecord = `-- name: FinishAICallRecord :one
 update ai_call_records set
   status = $1,
-  error_code = $2,
-  prompt_tokens = $3,
-  completion_tokens = $4,
-  total_tokens = $5,
-  cost_usd = $6,
+  provider = coalesce($2, provider),
+  model = coalesce($3, model),
+  error_code = $4,
+  prompt_tokens = $5,
+  completion_tokens = $6,
+  total_tokens = $7,
+  cost_usd = $8,
   finished_at = now(),
   updated_at = now()
-where id = $7
-  and project_id = $8
+where id = $9
+  and project_id = $10
 returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
 `
 
 type FinishAICallRecordParams struct {
 	Status           string         `json:"status"`
+	ResolvedProvider *string        `json:"resolved_provider"`
+	ResolvedModel    *string        `json:"resolved_model"`
 	ErrorCode        *string        `json:"error_code"`
 	PromptTokens     int32          `json:"prompt_tokens"`
 	CompletionTokens int32          `json:"completion_tokens"`
@@ -528,6 +629,8 @@ type FinishAICallRecordParams struct {
 func (q *Queries) FinishAICallRecord(ctx context.Context, arg FinishAICallRecordParams) (AiCallRecord, error) {
 	row := q.db.QueryRow(ctx, finishAICallRecord,
 		arg.Status,
+		arg.ResolvedProvider,
+		arg.ResolvedModel,
 		arg.ErrorCode,
 		arg.PromptTokens,
 		arg.CompletionTokens,
@@ -536,6 +639,155 @@ func (q *Queries) FinishAICallRecord(ctx context.Context, arg FinishAICallRecord
 		arg.ID,
 		arg.ProjectID,
 	)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finishAICallRecordIfRunning = `-- name: FinishAICallRecordIfRunning :one
+update ai_call_records set
+  status = 'failed', error_code = $1, finished_at = now(), updated_at = now()
+where id = $2 and project_id = $3 and status = 'running'
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
+`
+
+type FinishAICallRecordIfRunningParams struct {
+	ErrorCode *string   `json:"error_code"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) FinishAICallRecordIfRunning(ctx context.Context, arg FinishAICallRecordIfRunningParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, finishAICallRecordIfRunning, arg.ErrorCode, arg.ID, arg.ProjectID)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finishCanonicalAICallFenced = `-- name: FinishCanonicalAICallFenced :one
+update ai_call_records set
+  status = case when status = 'running' then $1 else status end,
+  error_code = case when status = 'running' then $2 else error_code end,
+  provider = coalesce($3, provider),
+  model = coalesce($4, model),
+  prompt_tokens = $5,
+  completion_tokens = $6,
+  total_tokens = $7,
+  cost_usd = $8,
+  finished_at = coalesce(finished_at, now()),
+  updated_at = now()
+where id = $9 and project_id = $10
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
+`
+
+type FinishCanonicalAICallFencedParams struct {
+	Status           string         `json:"status"`
+	ErrorCode        *string        `json:"error_code"`
+	ResolvedProvider *string        `json:"resolved_provider"`
+	ResolvedModel    *string        `json:"resolved_model"`
+	PromptTokens     int32          `json:"prompt_tokens"`
+	CompletionTokens int32          `json:"completion_tokens"`
+	TotalTokens      int32          `json:"total_tokens"`
+	CostUsd          pgtype.Numeric `json:"cost_usd"`
+	ID               uuid.UUID      `json:"id"`
+	ProjectID        uuid.UUID      `json:"project_id"`
+}
+
+func (q *Queries) FinishCanonicalAICallFenced(ctx context.Context, arg FinishCanonicalAICallFencedParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, finishCanonicalAICallFenced,
+		arg.Status,
+		arg.ErrorCode,
+		arg.ResolvedProvider,
+		arg.ResolvedModel,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.TotalTokens,
+		arg.CostUsd,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getAICallRecord = `-- name: GetAICallRecord :one
+select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at from ai_call_records where id = $1 and project_id = $2
+`
+
+type GetAICallRecordParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetAICallRecord(ctx context.Context, arg GetAICallRecordParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, getAICallRecord, arg.ID, arg.ProjectID)
 	var i AiCallRecord
 	err := row.Scan(
 		&i.ID,
@@ -673,6 +925,61 @@ func (q *Queries) GetDiscoveryArbitrationConfig(ctx context.Context, projectID u
 	return i, err
 }
 
+const getDiscoveryCandidateForArbitration = `-- name: GetDiscoveryCandidateForArbitration :one
+select candidate.id, candidate.project_id, candidate.shadow_run_id, candidate.source_kind, candidate.source_object_type, candidate.source_object_id, candidate.target_kind, candidate.normalized_target_set, candidate.issue_or_hypothesis_family, candidate.change_family, candidate.proposed_mutations, candidate.artifact_intent, candidate.intended_slug_or_canonical, candidate.topic_entity_identity, candidate.audience_identity, candidate.primary_success_metric, candidate.verification_mode, candidate.evidence_ids, candidate.evidence_fingerprint, candidate.suggested_owner, candidate.confidence, candidate.candidate_schema_version, candidate.status, candidate.hold_reason, candidate.exact_signature_hash, candidate.signature_payload, candidate.conflict_bucket_keys, candidate.created_at, candidate.updated_at, candidate.candidate_version
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = $1
+  and candidate.id = $2
+  and run.mode = 'canonical'
+  and run.status = 'completed'
+`
+
+type GetDiscoveryCandidateForArbitrationParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	CandidateID uuid.UUID `json:"candidate_id"`
+}
+
+func (q *Queries) GetDiscoveryCandidateForArbitration(ctx context.Context, arg GetDiscoveryCandidateForArbitrationParams) (DiscoveryCandidate, error) {
+	row := q.db.QueryRow(ctx, getDiscoveryCandidateForArbitration, arg.ProjectID, arg.CandidateID)
+	var i DiscoveryCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ShadowRunID,
+		&i.SourceKind,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.TargetKind,
+		&i.NormalizedTargetSet,
+		&i.IssueOrHypothesisFamily,
+		&i.ChangeFamily,
+		&i.ProposedMutations,
+		&i.ArtifactIntent,
+		&i.IntendedSlugOrCanonical,
+		&i.TopicEntityIdentity,
+		&i.AudienceIdentity,
+		&i.PrimarySuccessMetric,
+		&i.VerificationMode,
+		&i.EvidenceIds,
+		&i.EvidenceFingerprint,
+		&i.SuggestedOwner,
+		&i.Confidence,
+		&i.CandidateSchemaVersion,
+		&i.Status,
+		&i.HoldReason,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CandidateVersion,
+	)
+	return i, err
+}
+
 const getDiscoveryCandidateForReview = `-- name: GetDiscoveryCandidateForReview :one
 select id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version from discovery_candidates
 where project_id = $1
@@ -757,6 +1064,51 @@ func (q *Queries) GetDiscoveryReviewItem(ctx context.Context, arg GetDiscoveryRe
 	return i, err
 }
 
+const getEnforcedWorkSignatureForReservedWork = `-- name: GetEnforcedWorkSignatureForReservedWork :one
+select id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint from work_signature_registry
+where project_id = $1
+  and mode = 'enforced'
+  and reserved_work_type = $2
+  and reserved_work_id = $3
+order by created_at desc
+limit 1
+`
+
+type GetEnforcedWorkSignatureForReservedWorkParams struct {
+	ProjectID        uuid.UUID   `json:"project_id"`
+	ReservedWorkType *string     `json:"reserved_work_type"`
+	ReservedWorkID   pgtype.UUID `json:"reserved_work_id"`
+}
+
+func (q *Queries) GetEnforcedWorkSignatureForReservedWork(ctx context.Context, arg GetEnforcedWorkSignatureForReservedWorkParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, getEnforcedWorkSignatureForReservedWork, arg.ProjectID, arg.ReservedWorkType, arg.ReservedWorkID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
+	)
+	return i, err
+}
+
 const getLatestDiscoverySemanticEvaluation = `-- name: GetLatestDiscoverySemanticEvaluation :one
 select id, project_id, dataset_version, confidence_threshold, duplicate_safety_recall_target, false_suppression_rate_target, total_cases, duplicate_safety_cases, distinct_cases, duplicate_safety_recall, false_suppression_rate, comparator_coverage, automated_disposition_coverage, hold_rate, threshold_backlog, weekly_ops_capacity, launch_ready, automatic_suppression_enabled, blockers, evaluated_by, created_at from discovery_semantic_evaluations
 where project_id = $1
@@ -825,6 +1177,98 @@ func (q *Queries) GetLatestDiscoveryShadowRun(ctx context.Context, projectID uui
 	return i, err
 }
 
+const getSEODoctorFindingForSiteFixForUpdate = `-- name: GetSEODoctorFindingForSiteFixForUpdate :one
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
+where project_id = $1
+  and id = $2
+for update
+`
+
+type GetSEODoctorFindingForSiteFixForUpdateParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	FindingID uuid.UUID `json:"finding_id"`
+}
+
+func (q *Queries) GetSEODoctorFindingForSiteFixForUpdate(ctx context.Context, arg GetSEODoctorFindingForSiteFixForUpdateParams) (SeoDoctorFinding, error) {
+	row := q.db.QueryRow(ctx, getSEODoctorFindingForSiteFixForUpdate, arg.ProjectID, arg.FindingID)
+	var i SeoDoctorFinding
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.FindingKey,
+		&i.Severity,
+		&i.Category,
+		&i.IssueType,
+		&i.Status,
+		&i.AffectedUrls,
+		&i.NormalizedUrls,
+		&i.Evidence,
+		&i.WhyItMatters,
+		&i.FixIntent,
+		&i.DeveloperInstructions,
+		&i.LikelyFilesOrSurfaces,
+		&i.AcceptanceTests,
+		&i.RiskLevel,
+		&i.ReviewRequired,
+		&i.AutofixEligible,
+		&i.LinkedOpportunityID,
+		&i.LinkedContentActionID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FindingKind,
+	)
+	return i, err
+}
+
+const growthOpportunityExecutionGuard = `-- name: GrowthOpportunityExecutionGuard :one
+select case when exists (
+  select 1 from product_writer_authority authority
+  where authority.project_id = $1
+    and authority.product = 'opportunities'
+    and authority.writer_authority = 'legacy'
+    and authority.write_fenced = false
+) then true else exists (
+  select 1
+  from work_signature_registry signature
+  where signature.project_id = $1
+    and signature.mode = 'enforced'
+    and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = $2
+    and not exists (
+      select 1 from growth_opportunity_work_aliases alias
+      where alias.project_id = signature.project_id
+        and alias.legacy_opportunity_id = $2
+        and alias.disposition in ('duplicate','doctor_merge')
+    )
+    and not exists (
+      select 1
+      from work_relationships relationship
+      where relationship.project_id = signature.project_id
+        and relationship.dependent_work_signature_id = signature.id
+        and relationship.dependency_class = 'hard_blocker'
+        and relationship.active = true
+    )
+) end::boolean as can_execute
+`
+
+type GrowthOpportunityExecutionGuardParams struct {
+	ProjectID     uuid.UUID   `json:"project_id"`
+	OpportunityID pgtype.UUID `json:"opportunity_id"`
+}
+
+func (q *Queries) GrowthOpportunityExecutionGuard(ctx context.Context, arg GrowthOpportunityExecutionGuardParams) (bool, error) {
+	row := q.db.QueryRow(ctx, growthOpportunityExecutionGuard, arg.ProjectID, arg.OpportunityID)
+	var can_execute bool
+	err := row.Scan(&can_execute)
+	return can_execute, err
+}
+
 const incrementConflictBucketVersions = `-- name: IncrementConflictBucketVersions :many
 update work_conflict_buckets
 set bucket_version = bucket_version + 1,
@@ -868,26 +1312,28 @@ func (q *Queries) IncrementConflictBucketVersions(ctx context.Context, arg Incre
 
 const insertEnforcedWorkSignature = `-- name: InsertEnforcedWorkSignature :one
 insert into work_signature_registry
-  (project_id, candidate_id, shadow_run_id, mode, status, active,
+  (id, project_id, candidate_id, shadow_run_id, mode, status, active,
    exact_signature_hash, signature_payload, semantic_fingerprint,
    conflict_bucket_keys, signature_version, owner,
    source_object_type, source_object_id, arbitration_decision_id,
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
-  ($1, $2, $3,
-   'enforced', 'reserved', true, $4,
-   $5::jsonb, $6,
+  ($1, $2, $3, $4,
+   'enforced', $5, true, $6,
    $7::jsonb, $8,
-   $9, $10, $11,
-   $12, $13,
-   $14, $15)
+   $9::jsonb, $10,
+   $11, $12, $13,
+   $14, $15,
+   $16, $17)
 returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint
 `
 
 type InsertEnforcedWorkSignatureParams struct {
+	ID                    uuid.UUID       `json:"id"`
 	ProjectID             uuid.UUID       `json:"project_id"`
 	CandidateID           uuid.UUID       `json:"candidate_id"`
 	ShadowRunID           uuid.UUID       `json:"shadow_run_id"`
+	Status                string          `json:"status"`
 	ExactSignatureHash    string          `json:"exact_signature_hash"`
 	SignaturePayload      json.RawMessage `json:"signature_payload"`
 	SemanticFingerprint   *string         `json:"semantic_fingerprint"`
@@ -904,9 +1350,11 @@ type InsertEnforcedWorkSignatureParams struct {
 
 func (q *Queries) InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnforcedWorkSignatureParams) (WorkSignatureRegistry, error) {
 	row := q.db.QueryRow(ctx, insertEnforcedWorkSignature,
+		arg.ID,
 		arg.ProjectID,
 		arg.CandidateID,
 		arg.ShadowRunID,
+		arg.Status,
 		arg.ExactSignatureHash,
 		arg.SignaturePayload,
 		arg.SemanticFingerprint,
@@ -948,7 +1396,7 @@ func (q *Queries) InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnf
 }
 
 const listActiveDoctorFindingsForDiscoveryShadow = `-- name: ListActiveDoctorFindingsForDiscoveryShadow :many
-select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
   and status in ('active','dismissed','converted')
 order by created_at asc
@@ -990,6 +1438,7 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 			&i.ResolvedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.FindingKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1002,10 +1451,16 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 }
 
 const listActiveSEOOpportunitiesForDiscoveryShadow = `-- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint from seo_opportunities
-where project_id = $1
-  and status in ('open','accepted','converted','dismissed','snoozed','watching')
-order by created_at asc
+select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth from seo_opportunities
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status in ('open','accepted','converted','dismissed','snoozed','watching')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+order by seo_opportunities.created_at asc
 `
 
 func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Context, projectID uuid.UUID) ([]SeoOpportunity, error) {
@@ -1043,6 +1498,11 @@ func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Conte
 			&i.UnsnoozedAt,
 			&i.OpportunityIdentityKey,
 			&i.EvidenceFingerprint,
+			&i.CanonicalSiteFixID,
+			&i.CanonicalReadOnly,
+			&i.LegacyMigrationBatchID,
+			&i.LegacyMigrationDisposition,
+			&i.CanonicalGrowth,
 		); err != nil {
 			return nil, err
 		}
@@ -1331,7 +1791,7 @@ func (q *Queries) ListSnapshotReviewAliases(ctx context.Context, arg ListSnapsho
 }
 
 const listSnapshotReviewMemory = `-- name: ListSnapshotReviewMemory :many
-select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at from work_review_memory
+select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id from work_review_memory
 where project_id = $1
   and active = true
   and conflict_bucket_keys ?| $2::text[]
@@ -1372,6 +1832,64 @@ func (q *Queries) ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshot
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationBatchID,
+			&i.LegacyReviewStateID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkSignaturesForRelationship = `-- name: ListWorkSignaturesForRelationship :many
+select id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint from work_signature_registry
+where project_id = $1
+  and id = any($2::uuid[])
+  and mode = 'enforced'
+  and active = true
+order by id
+`
+
+type ListWorkSignaturesForRelationshipParams struct {
+	ProjectID    uuid.UUID   `json:"project_id"`
+	SignatureIds []uuid.UUID `json:"signature_ids"`
+}
+
+func (q *Queries) ListWorkSignaturesForRelationship(ctx context.Context, arg ListWorkSignaturesForRelationshipParams) ([]WorkSignatureRegistry, error) {
+	rows, err := q.db.Query(ctx, listWorkSignaturesForRelationship, arg.ProjectID, arg.SignatureIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkSignatureRegistry
+	for rows.Next() {
+		var i WorkSignatureRegistry
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.CandidateID,
+			&i.ShadowRunID,
+			&i.Mode,
+			&i.Status,
+			&i.Active,
+			&i.ExactSignatureHash,
+			&i.SignaturePayload,
+			&i.SemanticFingerprint,
+			&i.ConflictBucketKeys,
+			&i.SignatureVersion,
+			&i.Owner,
+			&i.SourceObjectType,
+			&i.SourceObjectID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ArbitrationDecisionID,
+			&i.ReservedWorkType,
+			&i.ReservedWorkID,
+			&i.EvidenceFingerprint,
 		); err != nil {
 			return nil, err
 		}
@@ -1469,10 +1987,16 @@ func (q *Queries) LockConflictBucketsForReserve(ctx context.Context, arg LockCon
 }
 
 const lockDiscoveryCandidateForReserve = `-- name: LockDiscoveryCandidateForReserve :one
-select id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version from discovery_candidates
-where project_id = $1
-  and id = $2
-for update
+select candidate.id, candidate.project_id, candidate.shadow_run_id, candidate.source_kind, candidate.source_object_type, candidate.source_object_id, candidate.target_kind, candidate.normalized_target_set, candidate.issue_or_hypothesis_family, candidate.change_family, candidate.proposed_mutations, candidate.artifact_intent, candidate.intended_slug_or_canonical, candidate.topic_entity_identity, candidate.audience_identity, candidate.primary_success_metric, candidate.verification_mode, candidate.evidence_ids, candidate.evidence_fingerprint, candidate.suggested_owner, candidate.confidence, candidate.candidate_schema_version, candidate.status, candidate.hold_reason, candidate.exact_signature_hash, candidate.signature_payload, candidate.conflict_bucket_keys, candidate.created_at, candidate.updated_at, candidate.candidate_version
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = $1
+  and candidate.id = $2
+  and run.mode = 'canonical'
+  and run.status = 'completed'
+for update of candidate, run
 `
 
 type LockDiscoveryCandidateForReserveParams struct {
@@ -1598,6 +2122,144 @@ func (q *Queries) MarkArbitrationDecisionReserved(ctx context.Context, arg MarkA
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markArbitrationDecisionResolved = `-- name: MarkArbitrationDecisionResolved :one
+update discovery_arbitration_decisions
+set status = 'resolved', updated_at = now()
+where project_id = $1
+  and id = $2
+  and status = 'prepared'
+returning id, project_id, candidate_id, candidate_version, ai_call_id, disposition, decision, owner, overlap_work_ids, reason, confidence, semantic_fingerprint, compared_work_ids, expected_bucket_versions, snapshot_fingerprint, exact_signature_hash, signature_version, evidence_fingerprint, rules_version, prompt_version, provider, model, status, created_at, updated_at
+`
+
+type MarkArbitrationDecisionResolvedParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkArbitrationDecisionResolved(ctx context.Context, arg MarkArbitrationDecisionResolvedParams) (DiscoveryArbitrationDecision, error) {
+	row := q.db.QueryRow(ctx, markArbitrationDecisionResolved, arg.ProjectID, arg.ID)
+	var i DiscoveryArbitrationDecision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.CandidateVersion,
+		&i.AiCallID,
+		&i.Disposition,
+		&i.Decision,
+		&i.Owner,
+		&i.OverlapWorkIds,
+		&i.Reason,
+		&i.Confidence,
+		&i.SemanticFingerprint,
+		&i.ComparedWorkIds,
+		&i.ExpectedBucketVersions,
+		&i.SnapshotFingerprint,
+		&i.ExactSignatureHash,
+		&i.SignatureVersion,
+		&i.EvidenceFingerprint,
+		&i.RulesVersion,
+		&i.PromptVersion,
+		&i.Provider,
+		&i.Model,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markCanonicalWorkSignatureMigrationRolledBack = `-- name: MarkCanonicalWorkSignatureMigrationRolledBack :one
+with signature_snapshot as materialized (
+  select w.id, w.project_id, w.status as expected_status,
+         w.conflict_bucket_keys
+  from work_signature_registry w
+  where w.project_id = $1
+    and w.id = $2
+    and w.mode = 'enforced'
+    and w.active = true
+    and w.reserved_work_type = 'site_fix'
+    and w.status in ('reserved','proposed','approved','preparing','executing','awaiting_deploy','failed_retryable')
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from signature_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1
+  order by b.bucket_key
+  for update of b
+), locked_signature as materialized (
+  select w.id, w.project_id
+  from work_signature_registry w
+  join signature_snapshot s on s.id = w.id and s.project_id = w.project_id
+  where w.mode = 'enforced'
+    and w.active = true
+    and w.status = s.expected_status
+    and w.reserved_work_type = 'site_fix'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_signature)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update work_signature_registry w
+set status = 'cancelled', active = false, updated_at = now()
+from locked_signature locked
+where w.id = locked.id
+  and w.project_id = locked.project_id
+  and w.active = true
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning w.id, w.project_id, w.candidate_id, w.shadow_run_id, w.mode, w.status, w.active, w.exact_signature_hash, w.signature_payload, w.semantic_fingerprint, w.conflict_bucket_keys, w.signature_version, w.owner, w.source_object_type, w.source_object_id, w.created_at, w.updated_at, w.arbitration_decision_id, w.reserved_work_type, w.reserved_work_id, w.evidence_fingerprint
+`
+
+type MarkCanonicalWorkSignatureMigrationRolledBackParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkCanonicalWorkSignatureMigrationRolledBack(ctx context.Context, arg MarkCanonicalWorkSignatureMigrationRolledBackParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, markCanonicalWorkSignatureMigrationRolledBack, arg.ProjectID, arg.ID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
 	)
 	return i, err
 }
@@ -1853,7 +2515,49 @@ do update set
   exact_signature_hash = excluded.exact_signature_hash,
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
-  candidate_version = discovery_candidates.candidate_version + 1,
+  candidate_version = discovery_candidates.candidate_version + case when (
+    discovery_candidates.target_kind,
+    discovery_candidates.normalized_target_set,
+    discovery_candidates.issue_or_hypothesis_family,
+    discovery_candidates.change_family,
+    discovery_candidates.proposed_mutations,
+    discovery_candidates.artifact_intent,
+    discovery_candidates.intended_slug_or_canonical,
+    discovery_candidates.topic_entity_identity,
+    discovery_candidates.audience_identity,
+    discovery_candidates.primary_success_metric,
+    discovery_candidates.verification_mode,
+    discovery_candidates.evidence_ids,
+    discovery_candidates.evidence_fingerprint,
+    discovery_candidates.suggested_owner,
+    discovery_candidates.confidence,
+    discovery_candidates.status,
+    discovery_candidates.hold_reason,
+    discovery_candidates.exact_signature_hash,
+    discovery_candidates.signature_payload,
+    discovery_candidates.conflict_bucket_keys
+  ) is distinct from (
+    excluded.target_kind,
+    excluded.normalized_target_set,
+    excluded.issue_or_hypothesis_family,
+    excluded.change_family,
+    excluded.proposed_mutations,
+    excluded.artifact_intent,
+    excluded.intended_slug_or_canonical,
+    excluded.topic_entity_identity,
+    excluded.audience_identity,
+    excluded.primary_success_metric,
+    excluded.verification_mode,
+    excluded.evidence_ids,
+    excluded.evidence_fingerprint,
+    excluded.suggested_owner,
+    excluded.confidence,
+    excluded.status,
+    excluded.hold_reason,
+    excluded.exact_signature_hash,
+    excluded.signature_payload,
+    excluded.conflict_bucket_keys
+  ) then 1 else 0 end,
   updated_at = now()
 returning id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version
 `
@@ -2037,7 +2741,7 @@ values
    $5::jsonb, $6::jsonb,
    $7, $8, $9,
    $10)
-on conflict (candidate_id, mode) do update set
+on conflict (candidate_id) where mode in ('shadow') do update set
   shadow_run_id = excluded.shadow_run_id,
   status = 'shadow_observed',
   exact_signature_hash = excluded.exact_signature_hash,
@@ -2104,6 +2808,80 @@ func (q *Queries) UpsertShadowWorkSignature(ctx context.Context, arg UpsertShado
 	return i, err
 }
 
+const upsertWorkRelationship = `-- name: UpsertWorkRelationship :one
+insert into work_relationships
+  (project_id, dependent_candidate_id, dependent_work_signature_id,
+   dependent_work_type, dependent_work_id, blocking_work_signature_id,
+   relationship_type, dependency_class, reason,
+   overlapping_mutation_fields, reassessment_trigger, active)
+values
+  ($1, $2, $3,
+   $4, $5, $6,
+   $7, $8, $9,
+   $10::jsonb, $11, true)
+on conflict (project_id, dependent_work_signature_id, blocking_work_signature_id, relationship_type)
+do update set
+  dependency_class = excluded.dependency_class,
+  reason = excluded.reason,
+  overlapping_mutation_fields = excluded.overlapping_mutation_fields,
+  reassessment_trigger = excluded.reassessment_trigger,
+  active = true,
+  resolved_at = null,
+  updated_at = now()
+returning id, project_id, dependent_candidate_id, dependent_work_signature_id, dependent_work_type, dependent_work_id, blocking_work_signature_id, relationship_type, dependency_class, reason, overlapping_mutation_fields, reassessment_trigger, attribution_confounder, active, resolved_at, created_at, updated_at
+`
+
+type UpsertWorkRelationshipParams struct {
+	ProjectID                 uuid.UUID       `json:"project_id"`
+	DependentCandidateID      uuid.UUID       `json:"dependent_candidate_id"`
+	DependentWorkSignatureID  uuid.UUID       `json:"dependent_work_signature_id"`
+	DependentWorkType         string          `json:"dependent_work_type"`
+	DependentWorkID           uuid.UUID       `json:"dependent_work_id"`
+	BlockingWorkSignatureID   uuid.UUID       `json:"blocking_work_signature_id"`
+	RelationshipType          string          `json:"relationship_type"`
+	DependencyClass           string          `json:"dependency_class"`
+	Reason                    string          `json:"reason"`
+	OverlappingMutationFields json.RawMessage `json:"overlapping_mutation_fields"`
+	ReassessmentTrigger       string          `json:"reassessment_trigger"`
+}
+
+func (q *Queries) UpsertWorkRelationship(ctx context.Context, arg UpsertWorkRelationshipParams) (WorkRelationship, error) {
+	row := q.db.QueryRow(ctx, upsertWorkRelationship,
+		arg.ProjectID,
+		arg.DependentCandidateID,
+		arg.DependentWorkSignatureID,
+		arg.DependentWorkType,
+		arg.DependentWorkID,
+		arg.BlockingWorkSignatureID,
+		arg.RelationshipType,
+		arg.DependencyClass,
+		arg.Reason,
+		arg.OverlappingMutationFields,
+		arg.ReassessmentTrigger,
+	)
+	var i WorkRelationship
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DependentCandidateID,
+		&i.DependentWorkSignatureID,
+		&i.DependentWorkType,
+		&i.DependentWorkID,
+		&i.BlockingWorkSignatureID,
+		&i.RelationshipType,
+		&i.DependencyClass,
+		&i.Reason,
+		&i.OverlappingMutationFields,
+		&i.ReassessmentTrigger,
+		&i.AttributionConfounder,
+		&i.Active,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertWorkReviewMemory = `-- name: UpsertWorkReviewMemory :one
 insert into work_review_memory
   (project_id, candidate_id, work_signature_id,
@@ -2136,7 +2914,7 @@ do update set
   decided_by = excluded.decided_by,
   decided_at = excluded.decided_at,
   updated_at = now()
-returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at, migration_batch_id, legacy_review_state_id
 `
 
 type UpsertWorkReviewMemoryParams struct {
@@ -2198,6 +2976,8 @@ func (q *Queries) UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkRevi
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationBatchID,
+		&i.LegacyReviewStateID,
 	)
 	return i, err
 }

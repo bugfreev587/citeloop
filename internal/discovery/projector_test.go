@@ -229,6 +229,46 @@ func TestProjectCurrentDeterministicOpportunityTypes(t *testing.T) {
 	}
 }
 
+func TestEveryEmittedDoctorFindingHasImmediateRepairSpecification(t *testing.T) {
+	broken := []string{
+		"broken_url", "soft_404", "noindex", "robots_blocked", "canonical_missing", "structured_data_missing",
+		"title_missing", "meta_description_missing", "h1_missing", "important_page_missing_from_sitemap",
+		"internal_link_gap", "unsafe_mdx_detected", "geo_crawler_access_blocked",
+	}
+	optimizations := []string{
+		"metadata_readability", "duplicate_metadata_template", "supported_fact_extractability",
+		"source_association", "entity_naming_consistency",
+	}
+	for _, issueType := range append(broken, optimizations...) {
+		t.Run(issueType, func(t *testing.T) {
+			candidate := ProjectDoctorFinding(db.SeoDoctorFinding{
+				ID: uuid.New(), ProjectID: uuid.New(), RunID: uuid.New(), IssueType: issueType,
+				FindingKind: "broken", NormalizedUrls: json.RawMessage(`["https://example.com/page"]`),
+				Evidence: json.RawMessage(`{"source":"doctor"}`),
+			})
+			if candidate.Status != StatusIdentityReady || candidate.SuggestedOwner != OwnerDoctor || candidate.VerificationMode != VerificationImmediate || candidate.ArtifactIntent != ArtifactRepairExistingSurface {
+				t.Fatalf("candidate = %+v", candidate)
+			}
+			if len(candidate.ProposedMutations) != 1 || candidate.ChangeFamily == "" || candidate.ProposedMutations[0].Field == "" {
+				t.Fatalf("mutation spec = %+v", candidate)
+			}
+		})
+	}
+}
+
+func TestCitationFactExpansionProjectsAsDelayedExistingPageGrowth(t *testing.T) {
+	candidate := ProjectSEOOpportunity(db.SeoOpportunity{
+		ID: uuid.New(), ProjectID: uuid.New(), Type: "citation_fact_expansion",
+		NormalizedPageUrl: "https://example.com/page", Evidence: json.RawMessage(`{"added_propositions":["new fact"]}`),
+	})
+	if candidate.Status != StatusIdentityReady || candidate.SuggestedOwner != OwnerOpportunities || candidate.VerificationMode != VerificationDelayed || candidate.ArtifactIntent != ArtifactUpdateExistingContent {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+	if candidate.PrimarySuccessMetric == "" || len(candidate.ProposedMutations) != 1 {
+		t.Fatalf("growth spec = %+v", candidate)
+	}
+}
+
 func TestProjectAllCurrentlyEmittedOpportunityTypesHaveExplicitOutcome(t *testing.T) {
 	query := "pricing software"
 	tests := []struct {
@@ -250,7 +290,7 @@ func TestProjectAllCurrentlyEmittedOpportunityTypesHaveExplicitOutcome(t *testin
 		{typeName: "indexing_anomaly", want: StatusNeedsSpecification},
 		{typeName: "cold_start_context_plan", want: StatusNeedsSpecification},
 		{typeName: "cold_start_competitive_gap", want: StatusNeedsSpecification},
-		{typeName: "cold_start_evidence_page", want: StatusNeedsSpecification},
+		{typeName: "cold_start_evidence_page", want: StatusIdentityReady},
 	}
 	for _, tt := range tests {
 		t.Run(tt.typeName, func(t *testing.T) {

@@ -5,6 +5,32 @@ values
   (sqlc.arg(project_id), sqlc.arg(candidate_schema_version), sqlc.arg(signature_version))
 returning *;
 
+-- name: EnsureCanonicalDiscoveryRun :one
+insert into discovery_shadow_runs
+  (id, project_id, mode, status, candidate_schema_version, signature_version,
+   doctor_candidates, identity_ready)
+values
+  (sqlc.arg(id), sqlc.arg(project_id), 'canonical', 'running',
+   sqlc.arg(candidate_schema_version), sqlc.arg(signature_version), 1, 1)
+on conflict (id) do update set
+  updated_at = now()
+where discovery_shadow_runs.project_id = excluded.project_id
+  and discovery_shadow_runs.mode = 'canonical'
+  and discovery_shadow_runs.candidate_schema_version = excluded.candidate_schema_version
+  and discovery_shadow_runs.signature_version = excluded.signature_version
+returning *;
+
+-- name: CompleteCanonicalDiscoveryRun :one
+update discovery_shadow_runs
+set status = 'completed',
+    error = null,
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+where id = sqlc.arg(id)
+  and project_id = sqlc.arg(project_id)
+  and mode = 'canonical'
+returning *;
+
 -- name: CompleteDiscoveryShadowRun :one
 update discovery_shadow_runs set
   status = 'completed',
@@ -74,7 +100,49 @@ do update set
   exact_signature_hash = excluded.exact_signature_hash,
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
-  candidate_version = discovery_candidates.candidate_version + 1,
+  candidate_version = discovery_candidates.candidate_version + case when (
+    discovery_candidates.target_kind,
+    discovery_candidates.normalized_target_set,
+    discovery_candidates.issue_or_hypothesis_family,
+    discovery_candidates.change_family,
+    discovery_candidates.proposed_mutations,
+    discovery_candidates.artifact_intent,
+    discovery_candidates.intended_slug_or_canonical,
+    discovery_candidates.topic_entity_identity,
+    discovery_candidates.audience_identity,
+    discovery_candidates.primary_success_metric,
+    discovery_candidates.verification_mode,
+    discovery_candidates.evidence_ids,
+    discovery_candidates.evidence_fingerprint,
+    discovery_candidates.suggested_owner,
+    discovery_candidates.confidence,
+    discovery_candidates.status,
+    discovery_candidates.hold_reason,
+    discovery_candidates.exact_signature_hash,
+    discovery_candidates.signature_payload,
+    discovery_candidates.conflict_bucket_keys
+  ) is distinct from (
+    excluded.target_kind,
+    excluded.normalized_target_set,
+    excluded.issue_or_hypothesis_family,
+    excluded.change_family,
+    excluded.proposed_mutations,
+    excluded.artifact_intent,
+    excluded.intended_slug_or_canonical,
+    excluded.topic_entity_identity,
+    excluded.audience_identity,
+    excluded.primary_success_metric,
+    excluded.verification_mode,
+    excluded.evidence_ids,
+    excluded.evidence_fingerprint,
+    excluded.suggested_owner,
+    excluded.confidence,
+    excluded.status,
+    excluded.hold_reason,
+    excluded.exact_signature_hash,
+    excluded.signature_payload,
+    excluded.conflict_bucket_keys
+  ) then 1 else 0 end,
   updated_at = now()
 returning *;
 
@@ -89,7 +157,7 @@ values
    sqlc.arg(signature_payload)::jsonb, sqlc.arg(conflict_bucket_keys)::jsonb,
    sqlc.arg(signature_version), sqlc.narg(owner), sqlc.arg(source_object_type),
    sqlc.arg(source_object_id))
-on conflict (candidate_id, mode) do update set
+on conflict (candidate_id) where mode in ('shadow') do update set
   shadow_run_id = excluded.shadow_run_id,
   status = 'shadow_observed',
   exact_signature_hash = excluded.exact_signature_hash,
@@ -116,10 +184,16 @@ on conflict (project_id, bucket_key) do update set
 returning *;
 
 -- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select * from seo_opportunities
-where project_id = $1
-  and status in ('open','accepted','converted','dismissed','snoozed','watching')
-order by created_at asc;
+select seo_opportunities.* from seo_opportunities
+where seo_opportunities.project_id = $1
+  and seo_opportunities.status in ('open','accepted','converted','dismissed','snoozed','watching')
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = seo_opportunities.project_id
+      and alias.legacy_opportunity_id = seo_opportunities.id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
+order by seo_opportunities.created_at asc;
 
 -- name: ListActiveDoctorFindingsForDiscoveryShadow :many
 select * from seo_doctor_findings
@@ -167,6 +241,8 @@ returning *;
 -- name: FinishAICallRecord :one
 update ai_call_records set
   status = sqlc.arg(status),
+  provider = coalesce(sqlc.narg(resolved_provider), provider),
+  model = coalesce(sqlc.narg(resolved_model), model),
   error_code = sqlc.narg(error_code),
   prompt_tokens = sqlc.arg(prompt_tokens),
   completion_tokens = sqlc.arg(completion_tokens),
@@ -177,6 +253,30 @@ update ai_call_records set
 where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id)
 returning *;
+
+-- name: FinishAICallRecordIfRunning :one
+update ai_call_records set
+  status = 'failed', error_code = sqlc.arg(error_code), finished_at = now(), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status = 'running'
+returning *;
+
+-- name: FinishCanonicalAICallFenced :one
+update ai_call_records set
+  status = case when status = 'running' then sqlc.arg(status) else status end,
+  error_code = case when status = 'running' then sqlc.narg(error_code) else error_code end,
+  provider = coalesce(sqlc.narg(resolved_provider), provider),
+  model = coalesce(sqlc.narg(resolved_model), model),
+  prompt_tokens = sqlc.arg(prompt_tokens),
+  completion_tokens = sqlc.arg(completion_tokens),
+  total_tokens = sqlc.arg(total_tokens),
+  cost_usd = sqlc.arg(cost_usd),
+  finished_at = coalesce(finished_at, now()),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: GetAICallRecord :one
+select * from ai_call_records where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: CreateArbitrationDecision :one
 insert into discovery_arbitration_decisions
@@ -346,10 +446,33 @@ where project_id = sqlc.arg(project_id)
 for update;
 
 -- name: LockDiscoveryCandidateForReserve :one
-select * from discovery_candidates
+select candidate.*
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = sqlc.arg(project_id)
+  and candidate.id = sqlc.arg(candidate_id)
+  and run.mode = 'canonical'
+  and run.status = 'completed'
+for update of candidate, run;
+
+-- name: GetSEODoctorFindingForSiteFixForUpdate :one
+select * from seo_doctor_findings
 where project_id = sqlc.arg(project_id)
-  and id = sqlc.arg(candidate_id)
+  and id = sqlc.arg(finding_id)
 for update;
+
+-- name: GetDiscoveryCandidateForArbitration :one
+select candidate.*
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = sqlc.arg(project_id)
+  and candidate.id = sqlc.arg(candidate_id)
+  and run.mode = 'canonical'
+  and run.status = 'completed';
 
 -- name: LockConflictBucketsForReserve :many
 select * from work_conflict_buckets
@@ -360,14 +483,14 @@ for update;
 
 -- name: InsertEnforcedWorkSignature :one
 insert into work_signature_registry
-  (project_id, candidate_id, shadow_run_id, mode, status, active,
+  (id, project_id, candidate_id, shadow_run_id, mode, status, active,
    exact_signature_hash, signature_payload, semantic_fingerprint,
    conflict_bucket_keys, signature_version, owner,
    source_object_type, source_object_id, arbitration_decision_id,
    reserved_work_type, reserved_work_id, evidence_fingerprint)
 values
-  (sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
-   'enforced', 'reserved', true, sqlc.arg(exact_signature_hash),
+  (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(candidate_id), sqlc.arg(shadow_run_id),
+   'enforced', sqlc.arg(status), true, sqlc.arg(exact_signature_hash),
    sqlc.arg(signature_payload)::jsonb, sqlc.arg(semantic_fingerprint),
    sqlc.arg(conflict_bucket_keys)::jsonb, sqlc.arg(signature_version),
    sqlc.arg(owner), sqlc.arg(source_object_type), sqlc.arg(source_object_id),
@@ -383,10 +506,80 @@ where project_id = sqlc.arg(project_id)
   and bucket_key = any(sqlc.arg(bucket_keys)::text[])
 returning *;
 
+-- name: UpsertWorkRelationship :one
+insert into work_relationships
+  (project_id, dependent_candidate_id, dependent_work_signature_id,
+   dependent_work_type, dependent_work_id, blocking_work_signature_id,
+   relationship_type, dependency_class, reason,
+   overlapping_mutation_fields, reassessment_trigger, active)
+values
+  (sqlc.arg(project_id), sqlc.arg(dependent_candidate_id), sqlc.arg(dependent_work_signature_id),
+   sqlc.arg(dependent_work_type), sqlc.arg(dependent_work_id), sqlc.arg(blocking_work_signature_id),
+   sqlc.arg(relationship_type), sqlc.arg(dependency_class), sqlc.arg(reason),
+   sqlc.arg(overlapping_mutation_fields)::jsonb, sqlc.arg(reassessment_trigger), true)
+on conflict (project_id, dependent_work_signature_id, blocking_work_signature_id, relationship_type)
+do update set
+  dependency_class = excluded.dependency_class,
+  reason = excluded.reason,
+  overlapping_mutation_fields = excluded.overlapping_mutation_fields,
+  reassessment_trigger = excluded.reassessment_trigger,
+  active = true,
+  resolved_at = null,
+  updated_at = now()
+returning *;
+
+-- name: GrowthOpportunityExecutionGuard :one
+select case when exists (
+  select 1 from product_writer_authority authority
+  where authority.project_id = sqlc.arg(project_id)
+    and authority.product = 'opportunities'
+    and authority.writer_authority = 'legacy'
+    and authority.write_fenced = false
+) then true else exists (
+  select 1
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.mode = 'enforced'
+    and signature.active = true
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = sqlc.arg(opportunity_id)
+    and not exists (
+      select 1 from growth_opportunity_work_aliases alias
+      where alias.project_id = signature.project_id
+        and alias.legacy_opportunity_id = sqlc.arg(opportunity_id)
+        and alias.disposition in ('duplicate','doctor_merge')
+    )
+    and not exists (
+      select 1
+      from work_relationships relationship
+      where relationship.project_id = signature.project_id
+        and relationship.dependent_work_signature_id = signature.id
+        and relationship.dependency_class = 'hard_blocker'
+        and relationship.active = true
+    )
+) end::boolean as can_execute;
+
+-- name: ListWorkSignaturesForRelationship :many
+select * from work_signature_registry
+where project_id = sqlc.arg(project_id)
+  and id = any(sqlc.arg(signature_ids)::uuid[])
+  and mode = 'enforced'
+  and active = true
+order by id;
+
 -- name: MarkArbitrationDecisionReserved :one
 update discovery_arbitration_decisions
 set status = 'reserved',
     updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id)
+  and status = 'prepared'
+returning *;
+
+-- name: MarkArbitrationDecisionResolved :one
+update discovery_arbitration_decisions
+set status = 'resolved', updated_at = now()
 where project_id = sqlc.arg(project_id)
   and id = sqlc.arg(id)
   and status = 'prepared'
@@ -476,3 +669,68 @@ select * from discovery_semantic_evaluations
 where project_id = sqlc.arg(project_id)
 order by created_at desc
 limit 1;
+
+-- name: GetEnforcedWorkSignatureForReservedWork :one
+select * from work_signature_registry
+where project_id = sqlc.arg(project_id)
+  and mode = 'enforced'
+  and reserved_work_type = sqlc.arg(reserved_work_type)
+  and reserved_work_id = sqlc.arg(reserved_work_id)
+order by created_at desc
+limit 1;
+
+-- name: MarkCanonicalWorkSignatureMigrationRolledBack :one
+with signature_snapshot as materialized (
+  select w.id, w.project_id, w.status as expected_status,
+         w.conflict_bucket_keys
+  from work_signature_registry w
+  where w.project_id = sqlc.arg(project_id)
+    and w.id = sqlc.arg(id)
+    and w.mode = 'enforced'
+    and w.active = true
+    and w.reserved_work_type = 'site_fix'
+    and w.status in ('reserved','proposed','approved','preparing','executing','awaiting_deploy','failed_retryable')
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from signature_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_signature as materialized (
+  select w.id, w.project_id
+  from work_signature_registry w
+  join signature_snapshot s on s.id = w.id and s.project_id = w.project_id
+  where w.mode = 'enforced'
+    and w.active = true
+    and w.status = s.expected_status
+    and w.reserved_work_type = 'site_fix'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_signature)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update work_signature_registry w
+set status = 'cancelled', active = false, updated_at = now()
+from locked_signature locked
+where w.id = locked.id
+  and w.project_id = locked.project_id
+  and w.active = true
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning w.*;

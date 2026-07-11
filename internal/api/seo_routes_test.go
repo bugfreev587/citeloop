@@ -10,6 +10,7 @@ import (
 
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/googledata"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
@@ -86,9 +87,8 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 }
 
 func TestDoctorConvertRouteIsRegistered(t *testing.T) {
-	// A reviewed Doctor finding can be converted into a Site Fix (content action).
-	// The route is registered on both the canonical /doctor mount and the legacy
-	// /seo/doctor alias; a bad project id returns 400 (registered), not 404.
+	// The deprecated alias remains registered on both the canonical /doctor
+	// mount and the legacy /seo/doctor mount during cutover.
 	router := (&Server{}).Router()
 	findingID := uuid.New().String()
 
@@ -106,6 +106,53 @@ func TestDoctorConvertRouteIsRegistered(t *testing.T) {
 				t.Fatalf("convert route status = %d, want %d (route should be registered)", res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestCanonicalDoctorSiteFixRoutes(t *testing.T) {
+	router := (&Server{}).Router()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "create", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/findings/{findingID}/site-fixes"},
+		{name: "list", method: http.MethodGet, path: "/api/projects/{projectID}/doctor/site-fixes"},
+		{name: "detail", method: http.MethodGet, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}"},
+		{name: "approve", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/approve"},
+		{name: "apply", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/apply"},
+		{name: "verify", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/verify"},
+		{name: "terminate", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/terminate"},
+	}
+	registered := make(map[string]bool)
+	if err := chi.Walk(router.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !registered[tt.method+" "+tt.path] {
+				t.Fatalf("canonical route is not registered: %s %s", tt.method, tt.path)
+			}
+		})
+	}
+
+	for _, route := range []string{
+		"POST /api/projects/{projectID}/seo/doctor/findings/{findingID}/site-fixes",
+		"GET /api/projects/{projectID}/seo/doctor/site-fixes",
+		"GET /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}",
+		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/approve",
+		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/apply",
+		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/verify",
+		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/terminate",
+	} {
+		if registered[route] {
+			t.Fatalf("legacy /seo/doctor mount must not duplicate canonical successor route: %s", route)
+		}
 	}
 }
 

@@ -25,8 +25,10 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/contextmeta"
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
@@ -71,6 +73,7 @@ type Scheduler struct {
 	now                      func() time.Time
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
+	siteFixVerifier          canonicalSiteFixPageVerifier
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string
@@ -844,12 +847,13 @@ func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Q
 	stages := cfg.OpportunityFindingStages(true)
 	var firstErr error
 	if stages.SignalScan {
-		if err := s.runSEOForProject(ctx, q, p); err != nil {
+		if err := s.runSEOForProject(ctx, q, p, cfg); err != nil {
 			firstErr = fmt.Errorf("signal scan: %w", err)
 		}
 	}
 	if stages.AIDiscovery {
-		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q), opportunityfinding.AIDiscoveryOptions{
+		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q, comparator), opportunityfinding.AIDiscoveryOptions{
 			ObserveRequest: s.geoObserveRequest(),
 		})
 		if err != nil && firstErr == nil {
@@ -872,8 +876,9 @@ func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Q
 	return firstErr
 }
 
-func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	runner := s.newSEORunner(q)
+func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project, cfg config.ProjectConfig) error {
+	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+	runner := s.newSEORunner(q, comparator)
 	syncResult, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
 	if err != nil {
 		return fmt.Errorf("seo sync: %w", err)
@@ -914,7 +919,7 @@ func (s *Scheduler) TickSEODoctor(ctx context.Context) {
 }
 
 func (s *Scheduler) runSEODoctorForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	runner := s.newSEORunner(q)
+	runner := s.newSEORunner(q, nil)
 	siteURL := s.BlogBaseURL
 	if cfg, err := config.Parse(p.Config); err == nil && strings.TrimSpace(cfg.SiteURL) != "" {
 		siteURL = cfg.SiteURL
@@ -945,16 +950,19 @@ func (s *Scheduler) runSEODoctorForProject(ctx context.Context, q *db.Queries, p
 	return nil
 }
 
-func (s *Scheduler) newSEORunner(q *db.Queries) seoRunner {
+func (s *Scheduler) newSEORunner(q *db.Queries, growthComparator discovery.SemanticComparator) seoRunner {
 	if s.seoRunnerFactory != nil {
 		return s.seoRunnerFactory(q)
 	}
 	return seopkg.Service{
-		Q:           q,
-		HTTPClient:  s.httpClient,
-		BlogBaseURL: s.BlogBaseURL,
-		GoogleData:  s.SEOData,
-		Now:         s.now,
+		Q:                q,
+		Pool:             s.Pool,
+		HTTPClient:       s.httpClient,
+		BlogBaseURL:      s.BlogBaseURL,
+		GoogleData:       s.SEOData,
+		LLM:              s.LLM,
+		GrowthComparator: growthComparator,
+		Now:              s.now,
 	}
 }
 
@@ -1328,7 +1336,15 @@ func (s *Scheduler) TickGEO(ctx context.Context) {
 }
 
 func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID)
+	cfg, err := config.Parse(p.Config)
+	if err != nil {
+		return err
+	}
+	if !cfg.AllowsGrowthAI(config.GrowthAITriggerScheduled) {
+		return nil
+	}
+	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID, comparator)
 	s.logger().Info(
 		"geo tick complete",
 		"project", p.ID,
@@ -1342,17 +1358,18 @@ func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Proje
 	return err
 }
 
-func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID) (opportunityfinding.AIDiscoveryResult, error) {
-	svc := s.geoService(ctx, q)
+func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID, comparator discovery.SemanticComparator) (opportunityfinding.AIDiscoveryResult, error) {
+	svc := s.geoService(ctx, q, comparator)
 	result, err := opportunityfinding.RunAIDiscovery(ctx, projectID, q, svc, opportunityfinding.AIDiscoveryOptions{
 		ObserveRequest: s.geoObserveRequest(),
 	})
 	return result, err
 }
 
-func (s *Scheduler) geoService(ctx context.Context, q *db.Queries) geo.Service {
+func (s *Scheduler) geoService(ctx context.Context, q *db.Queries, comparator discovery.SemanticComparator) geo.Service {
 	return geo.Service{
 		Q:              q,
+		GrowthWriter:   growthwork.NewService(s.Pool, q, comparator),
 		HTTPClient:     s.httpClient,
 		AnswerProvider: s.geoAnswerProvider(ctx),
 		Now:            s.currentTime,
@@ -1465,10 +1482,15 @@ func (s *Scheduler) TickSiteFixReconcile(ctx context.Context) {
 }
 
 func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	apps, err := q.ListOpenSiteChangePRApplications(ctx, p.ID)
+	canonicalApps, err := q.ListCanonicalSiteFixPRsForReconciliation(ctx, p.ID)
 	if err != nil {
 		return err
 	}
+	legacyApps, err := q.ListOpenSiteChangePRApplications(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	apps := append(canonicalApps, legacyApps...)
 	if len(apps) == 0 {
 		return nil
 	}
@@ -1614,6 +1636,17 @@ func siteFixPRCreatedAt(app db.SiteChangeApplication) time.Time {
 }
 
 func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, reason string) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		_, err := q.MarkCanonicalSiteFixApplyFailure(ctx, db.MarkCanonicalSiteFixApplyFailureParams{
+			ProjectID: p.ID, SiteFixID: app.SiteFixID, ApplicationID: app.ID,
+			FailureReason: &reason,
+		})
+		return err
+	}
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
 		ID:                   app.ID,
 		ProjectID:            p.ID,
@@ -1637,7 +1670,7 @@ func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Que
 		"follow_up_reason":           reason,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1697,6 +1730,24 @@ func (s *Scheduler) githubTokenForProject(ctx context.Context, q publisherConnec
 }
 
 func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, pr publisher.GitHubPRState) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		mergedAt := s.currentTime()
+		if pr.MergedAt != nil {
+			mergedAt = pr.MergedAt.UTC()
+		}
+		if _, err := q.MarkCanonicalSiteFixPRMerged(ctx, db.MarkCanonicalSiteFixPRMergedParams{
+			SiteFixID: uuid.UUID(app.SiteFixID.Bytes), ProjectID: p.ID,
+			ApplicationID: app.ID, ObservedMergedAt: pgutil.TS(mergedAt),
+		}); err != nil {
+			return err
+		}
+		s.Log.Info("canonical Doctor Site Fix PR merged; awaiting deployment", "project", p.ID, "site_fix", uuid.UUID(app.SiteFixID.Bytes), "application", app.ID)
+		return nil
+	}
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	merged := "merged"
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
 		ID:                   app.ID,
@@ -1721,7 +1772,7 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 		"target_url":                 app.TargetUrl,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1741,6 +1792,19 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 }
 
 func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		reason := "pull request was closed without merging"
+		closedState := "closed"
+		_, err := q.MarkCanonicalSiteFixApplyFailure(ctx, db.MarkCanonicalSiteFixApplyFailureParams{
+			ProjectID: p.ID, SiteFixID: app.SiteFixID, ApplicationID: app.ID,
+			ObservedGithubPrState: &closedState, FailureReason: &reason,
+		})
+		return err
+	}
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	closedState := "closed"
 	reason := "pull request was closed without merging"
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
@@ -1766,7 +1830,7 @@ func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p
 		"target_url":                 app.TargetUrl,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1774,6 +1838,13 @@ func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p
 	}
 	s.Log.Info("site fix PR closed without merge", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
 	return nil
+}
+
+func legacyApplicationContentActionID(app db.SiteChangeApplication) (uuid.UUID, error) {
+	if !app.ContentActionID.Valid {
+		return uuid.Nil, fmt.Errorf("legacy Site Change application %s has no Content Action source", app.ID)
+	}
+	return uuid.UUID(app.ContentActionID.Bytes), nil
 }
 
 func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {

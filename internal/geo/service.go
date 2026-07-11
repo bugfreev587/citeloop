@@ -16,9 +16,8 @@ import (
 )
 
 const (
-	AgentCrawlerAudit     = "geo_crawler_audit"
-	ProviderHonestProbe   = "citeloop_honest_probe"
-	OpportunityTypeAccess = "geo_crawler_access_blocked"
+	AgentCrawlerAudit   = "geo_crawler_audit"
+	ProviderHonestProbe = "citeloop_honest_probe"
 )
 
 type Store interface {
@@ -30,7 +29,6 @@ type Store interface {
 	FinishGEORun(ctx context.Context, arg db.FinishGEORunParams) (db.GeoRun, error)
 	UpsertAICrawlerAccessSnapshot(ctx context.Context, arg db.UpsertAICrawlerAccessSnapshotParams) (db.AiCrawlerAccessSnapshot, error)
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]db.AiCrawlerAccessSnapshot, error)
-	UpsertCrawlerAccessOpportunity(ctx context.Context, arg db.UpsertCrawlerAccessOpportunityParams) (db.UpsertCrawlerAccessOpportunityRow, error)
 	CreateGEOPromptSet(ctx context.Context, arg db.CreateGEOPromptSetParams) (db.GeoPromptSet, error)
 	ListGEOPromptSets(ctx context.Context, arg db.ListGEOPromptSetsParams) ([]db.GeoPromptSet, error)
 	GetGEOPromptSetForProject(ctx context.Context, arg db.GetGEOPromptSetForProjectParams) (db.GeoPromptSet, error)
@@ -61,9 +59,16 @@ type Store interface {
 
 type Service struct {
 	Q              Store
+	GrowthWriter   GrowthOpportunityWriter
 	HTTPClient     *http.Client
 	AnswerProvider AnswerProvider
 	Now            func() time.Time
+}
+
+type GrowthOpportunityWriter interface {
+	CreateOpportunity(context.Context, db.CreateCanonicalGrowthOpportunityParams) (db.SeoOpportunity, error)
+	EnsureOpportunityReserved(context.Context, uuid.UUID, uuid.UUID) error
+	CanExecuteOpportunity(context.Context, uuid.UUID, uuid.UUID) (bool, error)
 }
 
 type CrawlerAuditRequest struct {
@@ -81,6 +86,7 @@ type CrawlerAuditResult struct {
 }
 
 func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req CrawlerAuditRequest) (CrawlerAuditResult, error) {
+	req.TargetUserAgents = effectiveTargetUserAgents(req.TargetUserAgents)
 	now := s.now()
 	run, err := s.Q.StartGEORun(ctx, db.StartGEORunParams{
 		ProjectID: projectID,
@@ -94,8 +100,12 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 	}
 
 	result := CrawlerAuditResult{
-		Run:             run,
-		DataSourceNotes: []string{"robots_static_authoritative", "http_waf_signals_inferred"},
+		Run: run,
+		DataSourceNotes: []string{
+			"robots_static_authoritative",
+			"http_waf_signals_inferred",
+			"crawler_access_observations_feed_doctor",
+		},
 	}
 	finish := func(status string, output any, runErr error) (CrawlerAuditResult, error) {
 		var errText *string
@@ -149,7 +159,6 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 		TargetUserAgents: req.TargetUserAgents,
 	})
 
-	blockerURLs := map[string]struct{}{}
 	for _, audited := range auditResults {
 		snapshot, err := s.Q.UpsertAICrawlerAccessSnapshot(ctx, db.UpsertAICrawlerAccessSnapshotParams{
 			ProjectID:         projectID,
@@ -175,55 +184,34 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 		}
 		result.Snapshots = append(result.Snapshots, snapshot)
 
-		if audited.RobotsState != RobotsDisallowed || audited.Confidence != ConfidenceHigh {
-			continue
-		}
-		if _, ok := blockerURLs[audited.NormalizedPageURL]; ok {
-			continue
-		}
-		blockerURLs[audited.NormalizedPageURL] = struct{}{}
-		if err := s.upsertCrawlerAccessBlocker(ctx, projectID, run.ID, audited); err != nil {
-			return finish("error", result, err)
-		}
-		result.CreatedBlockers++
 	}
 
 	return finish("ok", result, nil)
 }
 
-func (s Service) LatestCrawlerAudit(ctx context.Context, projectID uuid.UUID) ([]db.AiCrawlerAccessSnapshot, error) {
-	return s.Q.ListLatestAICrawlerAccessSnapshots(ctx, projectID)
+func effectiveTargetUserAgents(requested []string) []string {
+	if len(requested) == 0 {
+		return DefaultTargetUserAgents()
+	}
+	out := make([]string, 0, len(requested))
+	seen := map[string]bool{}
+	for _, value := range requested {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if value == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return DefaultTargetUserAgents()
+	}
+	return out
 }
 
-func (s Service) upsertCrawlerAccessBlocker(ctx context.Context, projectID, runID uuid.UUID, audited AuditResult) error {
-	action := "Review robots.txt policy for search-related AI crawlers and allow this path when it matches the project's indexing policy."
-	impact := "Restores a high-confidence crawlability precondition for AI answer-engine discovery and citation."
-	_, err := s.Q.UpsertCrawlerAccessOpportunity(ctx, db.UpsertCrawlerAccessOpportunityParams{
-		ProjectID:         projectID,
-		Type:              OpportunityTypeAccess,
-		Status:            "open",
-		PriorityScore:     pgutil.Numeric(90),
-		Confidence:        pgutil.Numeric(95),
-		PageUrl:           &audited.PageURL,
-		NormalizedPageUrl: audited.NormalizedPageURL,
-		Evidence: jsonBytes(map[string]any{
-			"run_id":             runID,
-			"page_url":           audited.PageURL,
-			"target_user_agent":  audited.TargetUserAgent,
-			"probe_user_agent":   audited.ProbeUserAgent,
-			"evidence_type":      audited.EvidenceType,
-			"robots_state":       audited.RobotsState,
-			"confidence":         audited.Confidence,
-			"inferred":           audited.Inferred,
-			"source_confidence":  "robots_static_authoritative",
-			"opportunity_source": AgentCrawlerAudit,
-		}),
-		RecommendedAction: &action,
-		ExpectedImpact:    &impact,
-		Effort:            2,
-		RiskLevel:         "medium",
-	})
-	return err
+func (s Service) LatestCrawlerAudit(ctx context.Context, projectID uuid.UUID) ([]db.AiCrawlerAccessSnapshot, error) {
+	return s.Q.ListLatestAICrawlerAccessSnapshots(ctx, projectID)
 }
 
 func (s Service) now() time.Time {

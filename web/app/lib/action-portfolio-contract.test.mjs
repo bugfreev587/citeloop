@@ -100,37 +100,50 @@ test("Action cards expose why, contribution, output type, and execution result",
   }
 });
 
-test("Merged and closed site fix PRs surface in the after-execution status", () => {
-  // The after-execution status copy now lives in the shared site-fix helper
-  // (actionPostExecutionText), consumed by both the analysis and Site Fixes UIs.
+test("Canonical site fix helpers describe the closed-loop lifecycle", () => {
   const lib = read("lib/site-fix.ts");
-  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "github_pr_merged"/);
-  assert.match(lib, /PR merged — verifying in production/);
-  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "github_pr_closed"/);
-  assert.match(lib, /PR closed without merging/);
-  assert.match(lib, /siteFixPublisherResultStatus\(action\) === "needs_follow_up"/);
-  assert.match(lib, /siteFixFollowUpReason\(action\) \|\| "Needs follow-up/);
-});
-
-test("Verified site fixes expose automatic verification and accurate PR actions", () => {
-  const lib = read("lib/site-fix.ts");
-  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
-  for (const snippet of ["siteFixVerificationLabel", "Verified automatically", "siteFixPRLinkLabel", "View merged PR"]) {
+  for (const snippet of ["canonicalSiteFixStatusLabel", "canonicalSiteFixNextAction", "Awaiting deploy", "Retry verification", "Retry apply", "Verified"]) {
     assert.match(lib, new RegExp(snippet));
   }
-  assert.match(siteFixes, /siteFixVerificationLabel/);
-  assert.match(siteFixes, /siteFixPRLinkLabel/);
-  assert.match(siteFixes, /!drawerAction\.verified_at/);
+});
 
-  const linkLabel = lib.match(/export function siteFixPRLinkLabel[\s\S]*?\n}/)?.[0] ?? "";
-  const closedIndex = linkLabel.indexOf('state === "closed"');
-  const openIndex = linkLabel.indexOf('state === "open"');
-  const mergedIndex = linkLabel.indexOf('state === "merged"');
-  const verifiedFallbackIndex = linkLabel.indexOf("action.verified_at");
-  assert.ok(closedIndex >= 0, "closed PR state should have an explicit label");
-  assert.ok(openIndex > closedIndex, "open PR state should be checked after closed state");
-  assert.ok(mergedIndex > openIndex, "merged PR state should be checked after open state");
-  assert.ok(verifiedFallbackIndex > mergedIndex, "verified_at should only be a fallback after explicit PR states");
+test("Canonical Site Fixes visibly expose provenance, application, and verification", () => {
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  for (const snippet of [
+    "Finding",
+    "Approved",
+    "Applied / deploy",
+    "Verified",
+    "Evidence",
+    "Proposed fix",
+    "Acceptance checks",
+    "Verification",
+    "failure_reason",
+    "retry_count",
+    "application",
+  ]) {
+    assert.match(siteFixes, new RegExp(snippet));
+  }
+  assert.match(siteFixes, /I applied this manually/);
+  assert.match(siteFixes, /drawerApplication\?\.status === "manual_apply_required"/);
+  assert.match(siteFixes, /href=\{`\/projects\/\$\{projectId\}\/doctor\?finding=\$\{selected\.doctor_finding_id\}`\}/);
+  assert.match(siteFixes, /legacy_opportunity_id/);
+  assert.match(siteFixes, /legacy_content_action_id/);
+  assert.match(siteFixes, /fix\.legacy_aliases\?\.some\(\(alias\) => alias\.object_id === requestedID\)/);
+  assert.match(siteFixes, /Legacy provenance/);
+  assert.match(siteFixes, /verifications: updated\.verifications \?\? existing\.verifications/);
+  assert.match(siteFixes, /\["approved", "preparing", "ready_to_apply"\]\.includes\(selected\.status\)/);
+  assert.match(siteFixes, /selected\.status === "preparing" \? "Retry apply" : "Apply fix"/);
+  assert.match(siteFixes, /busyLabel=\{retryingApply \? "Retrying" : "Applying"\}/);
+});
+
+test("Site Fix lifecycle never presents deploy or verification-in-progress as verified", () => {
+  const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const lifecycle = siteFixes.slice(siteFixes.indexOf("function LifecycleStrip"), siteFixes.indexOf("function DetailBlock"));
+  assert.match(lifecycle, /fix\.status === "verified"/);
+  assert.match(lifecycle, /isComplete/);
+  assert.match(lifecycle, /isCurrent/);
+  assert.doesNotMatch(lifecycle, /index <= current/);
 });
 
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {
@@ -142,16 +155,17 @@ test("Analysis surfaces approved site fixes as user-visible output", () => {
   // Approved site fixes are now surfaced on the dedicated Site Fixes page.
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
   for (const snippet of [
-    "isDirectAction",
-    "visibleSiteFixes",
+    "SiteFix",
+    "siteFixes",
     "data-site-fixes-grid",
     "Site Fixes",
-    "Reviewable output",
-    "actionOutputPreviewText",
-    "actionOutputTypeLabel(drawerAction)",
-    "actionSEOContributionText(drawerAction)",
-    "actionWhyNowText(action)",
+    "Proposed fix",
+    "canonicalSiteFixNextAction",
+    "canonicalSiteFixStatusLabel",
   ]) {
     assert.match(siteFixes, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const forbidden of ["SEOContentAction", "ResultsAction", "opportunity_status", "measuring", "Growth", "createSiteFixGitHubPR"]) {
+    assert.doesNotMatch(siteFixes, new RegExp(forbidden));
   }
 });

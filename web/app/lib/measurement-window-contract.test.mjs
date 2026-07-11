@@ -6,8 +6,8 @@ import test from "node:test";
 const appRoot = path.resolve(import.meta.dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(appRoot, relativePath), "utf8");
 
-test("SEO action list renders structured measurement checkpoints", () => {
-  // The measurement checkpoint label logic moved to the shared site-fix helper.
+test("Growth actions retain measurement checkpoints while canonical Site Fixes do not", () => {
+  // Growth-owned action surfaces still use structured measurement checkpoints.
   const lib = read("lib/site-fix.ts");
   for (const snippet of [
     "measurementWindowLabel",
@@ -19,7 +19,10 @@ test("SEO action list renders structured measurement checkpoints", () => {
   ]) {
     assert.match(lib, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  // The Site Fixes surface renders the structured checkpoint label.
+  // Doctor-owned repair loops end at verification and must not inherit Growth measurement state.
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
-  assert.match(siteFixes, /measurementWindowLabel\(/);
+  assert.doesNotMatch(siteFixes, /measurementWindowLabel\(/);
+  assert.doesNotMatch(siteFixes, /measurement_window/);
+  assert.match(siteFixes, /canonicalSiteFixNextAction/);
+  assert.match(siteFixes, /Verification/);
 });

@@ -71,6 +71,18 @@ type LLMSemanticComparator struct {
 	provider     llm.Provider
 	providerName string
 	model        string
+	purpose      llm.CompletionPurpose
+}
+
+// WithPurpose returns a comparator whose provider request is routed for the
+// same runtime purpose used by its caller's authority fingerprint.
+func (c *LLMSemanticComparator) WithPurpose(purpose llm.CompletionPurpose) *LLMSemanticComparator {
+	if c == nil {
+		return nil
+	}
+	configured := *c
+	configured.purpose = purpose
+	return &configured
 }
 
 func NewLLMSemanticComparator(provider llm.Provider, providerName, model string) *LLMSemanticComparator {
@@ -90,6 +102,7 @@ func (c *LLMSemanticComparator) Compare(ctx context.Context, request SemanticReq
 		return SemanticDecision{}, CallUsage{}, err
 	}
 	resp, err := c.provider.Complete(ctx, llm.CompletionReq{
+		Purpose:                 c.purpose,
 		System:                  "You are CiteLoop's work arbitration comparator. Compare only the structured work specifications supplied. Return the required JSON decision without markdown.",
 		Prompt:                  prompt,
 		Model:                   c.model,
@@ -267,4 +280,10 @@ func semanticFingerprint(identity Identity, model string) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// DeterministicSemanticFingerprint returns the exact fingerprint used by the
+// canonical arbitration path when no provider comparison is required.
+func DeterministicSemanticFingerprint(identity Identity) (string, error) {
+	return semanticFingerprint(identity, "deterministic")
 }
