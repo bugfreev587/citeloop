@@ -577,9 +577,23 @@ func (c doctorSiteFixCreationCoordinator) consumeFollowerPreparation(ctx context
 }
 
 type postgresDoctorSiteFixService struct {
-	q             *db.Queries
-	creation      doctorSiteFixCreationCoordinator
-	growthCutover *growthwork.Service
+	q                 *db.Queries
+	creation          doctorSiteFixCreationCoordinator
+	loadProjectConfig func(context.Context, uuid.UUID) (config.ProjectConfig, error)
+	newGrowthCutover  func(discovery.SemanticComparator) growthProjectCutover
+	growthProvider    llm.Provider
+	growthModel       string
+}
+
+type growthProjectCutover interface {
+	EnsureProjectCutover(context.Context, uuid.UUID) error
+}
+
+func authorizedGrowthComparator(projectConfig config.ProjectConfig, provider llm.Provider, model string) discovery.SemanticComparator {
+	if provider == nil || !projectConfig.AllowsGrowthAI(config.GrowthAITriggerManual) {
+		return nil
+	}
+	return discovery.NewLLMSemanticComparator(provider, "tokengate", model).WithPurpose(llm.PurposeDefault)
 }
 
 func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Provider, model string) DoctorSiteFixService {
@@ -589,7 +603,19 @@ func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Pro
 	}
 	backend := &postgresDoctorSiteFixBackend{pool: pool, q: q, comparator: comparator, model: strings.TrimSpace(model)}
 	return &postgresDoctorSiteFixService{
-		q: q, growthCutover: growthwork.NewService(pool, q, comparator),
+		q: q,
+		loadProjectConfig: func(ctx context.Context, projectID uuid.UUID) (config.ProjectConfig, error) {
+			project, err := q.GetProject(ctx, projectID)
+			if err != nil {
+				return config.ProjectConfig{}, err
+			}
+			return config.Parse(project.Config)
+		},
+		newGrowthCutover: func(growthComparator discovery.SemanticComparator) growthProjectCutover {
+			return growthwork.NewService(pool, q, growthComparator)
+		},
+		growthProvider: provider,
+		growthModel:    strings.TrimSpace(model),
 		creation: doctorSiteFixCreationCoordinator{
 			preparations: &postgresDoctorSiteFixPreparationManager{
 				q: q, runtimeProvider: provider, requestedModel: strings.TrimSpace(model),
@@ -605,10 +631,18 @@ func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, pr
 	if s == nil || s.q == nil {
 		return DoctorSiteFixResponse{}, false, errors.New("canonical Site Fix database unavailable")
 	}
-	if s.growthCutover == nil {
+	if s.loadProjectConfig == nil || s.newGrowthCutover == nil {
 		return DoctorSiteFixResponse{}, false, errors.New("Growth visibility gate unavailable")
 	}
-	if err := s.growthCutover.EnsureProjectCutover(ctx, projectID); err != nil {
+	projectConfig, err := s.loadProjectConfig(ctx, projectID)
+	if err != nil {
+		return DoctorSiteFixResponse{}, false, fmt.Errorf("load Growth AI authority: %w", err)
+	}
+	growthCutover := s.newGrowthCutover(authorizedGrowthComparator(projectConfig, s.growthProvider, s.growthModel))
+	if growthCutover == nil {
+		return DoctorSiteFixResponse{}, false, errors.New("Growth visibility gate unavailable")
+	}
+	if err := growthCutover.EnsureProjectCutover(ctx, projectID); err != nil {
 		return DoctorSiteFixResponse{}, false, fmt.Errorf("ensure Growth reservation visibility: %w", err)
 	}
 	fix, created, err := s.creation.CreateFromFinding(ctx, projectID, findingID)

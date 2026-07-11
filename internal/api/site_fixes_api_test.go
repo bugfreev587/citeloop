@@ -17,6 +17,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/sitefix"
 	"github.com/google/uuid"
@@ -264,6 +265,112 @@ func TestDoctorSiteFixRuntimeAuthorityDoesNotUseEnvOrResponseModelIdentity(t *te
 	if !strings.Contains(string(raw), ".WithPurpose(llm.PurposeSiteFix)") {
 		t.Fatal("Doctor semantic comparator request purpose is not aligned with runtime authority purpose")
 	}
+}
+
+func TestDoctorSiteFixGrowthCutoverDoesNotUseProviderWithoutGrowthAuthority(t *testing.T) {
+	for _, doctorAIEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("doctor_ai_%t", doctorAIEnabled), func(t *testing.T) {
+			provider := &growthAuthorityProviderStub{}
+			cfg := config.Default()
+			cfg.GrowthAIEnabled = false
+			cfg.GrowthAIRunPolicy = config.GrowthAIRunPolicyManualOnly
+			cfg.DoctorAIEnabled = doctorAIEnabled
+			cfg.DoctorAIRunPolicy = config.DoctorAIRunPolicyAutomatic
+			var received discovery.SemanticComparator
+			service := &postgresDoctorSiteFixService{
+				q: &db.Queries{},
+				loadProjectConfig: func(context.Context, uuid.UUID) (config.ProjectConfig, error) {
+					return cfg, nil
+				},
+				newGrowthCutover: func(comparator discovery.SemanticComparator) growthProjectCutover {
+					received = comparator
+					return growthProjectCutoverFunc(func(context.Context, uuid.UUID) error {
+						return growthwork.ErrGrowthHeld
+					})
+				},
+				growthProvider: provider,
+				growthModel:    "growth-planning-model",
+			}
+
+			_, _, err := service.CreateFromFinding(context.Background(), uuid.New(), uuid.New())
+			if !errors.Is(err, growthwork.ErrGrowthHeld) {
+				t.Fatalf("CreateFromFinding error = %v, want fail-closed Growth review hold", err)
+			}
+			if received != nil {
+				t.Fatal("Doctor/global provider authority leaked into Growth arbitration")
+			}
+			if provider.calls != 0 {
+				t.Fatalf("provider calls = %d, want 0", provider.calls)
+			}
+		})
+	}
+}
+
+func TestDoctorSiteFixGrowthCutoverUsesGrowthPlanningPurposeAndReportsCost(t *testing.T) {
+	provider := &growthAuthorityProviderStub{response: llm.CompletionResp{
+		Text:     `{"decision":"create","owner":"opportunities","work_signature":"growth-candidate","overlaps":[],"reason":"distinct growth work","confidence":0.97}`,
+		Provider: "growth-provider", Model: "growth-planning-model", Tokens: 42, CostUSD: 0.0123,
+	}}
+	cfg := config.Default()
+	cfg.GrowthAIEnabled = true
+	cfg.GrowthAIRunPolicy = config.GrowthAIRunPolicyManualOnly
+	sentinel := errors.New("stop after authorized Growth arbitration")
+	service := &postgresDoctorSiteFixService{
+		q: &db.Queries{},
+		loadProjectConfig: func(context.Context, uuid.UUID) (config.ProjectConfig, error) {
+			return cfg, nil
+		},
+		newGrowthCutover: func(comparator discovery.SemanticComparator) growthProjectCutover {
+			return growthProjectCutoverFunc(func(ctx context.Context, _ uuid.UUID) error {
+				if comparator == nil {
+					t.Fatal("authorized Growth arbitration did not receive a comparator")
+				}
+				_, usage, err := comparator.Compare(ctx, discovery.SemanticRequest{
+					CandidateID: uuid.New(),
+					Candidate:   discovery.Candidate{ProjectID: uuid.New(), SuggestedOwner: discovery.OwnerOpportunities, VerificationMode: discovery.VerificationDelayed},
+					Identity:    discovery.Identity{ExactSignatureHash: "growth-candidate", SignaturePayload: json.RawMessage(`{"project_id":"project","change_family":"content.growth","normalized_target_set":["https://example.com"],"normalized_mutations":[{"operation":"add","field":"content"}]}`)},
+				})
+				if err != nil {
+					t.Fatalf("Growth Compare: %v", err)
+				}
+				if usage.TotalTokens != 42 || usage.CostUSD != 0.0123 || usage.Provider != "tokengate" || usage.Model != "growth-planning-model" {
+					t.Fatalf("Growth usage attribution = %+v", usage)
+				}
+				return sentinel
+			})
+		},
+		growthProvider: provider,
+		growthModel:    "growth-planning-model",
+	}
+
+	_, _, err := service.CreateFromFinding(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("CreateFromFinding error = %v, want sentinel", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if provider.request.Purpose != llm.PurposeDefault {
+		t.Fatalf("Growth purpose = %q, want planning purpose %q", provider.request.Purpose, llm.PurposeDefault)
+	}
+}
+
+type growthAuthorityProviderStub struct {
+	calls    int
+	request  llm.CompletionReq
+	response llm.CompletionResp
+}
+
+type growthProjectCutoverFunc func(context.Context, uuid.UUID) error
+
+func (fn growthProjectCutoverFunc) EnsureProjectCutover(ctx context.Context, projectID uuid.UUID) error {
+	return fn(ctx, projectID)
+}
+
+func (p *growthAuthorityProviderStub) Complete(_ context.Context, request llm.CompletionReq) (llm.CompletionResp, error) {
+	p.calls++
+	p.request = request
+	return p.response, nil
 }
 
 type runtimeAuthorityProviderStub struct {
