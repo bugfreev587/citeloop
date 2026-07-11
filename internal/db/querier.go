@@ -14,6 +14,7 @@ import (
 
 type Querier interface {
 	AcknowledgeSEOPolicyRecoveryPlan(ctx context.Context, arg AcknowledgeSEOPolicyRecoveryPlanParams) (SeoPolicy, error)
+	ActiveOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error)
 	AppendCanonicalSiteFixVerification(ctx context.Context, arg AppendCanonicalSiteFixVerificationParams) (SiteFixVerification, error)
 	AppendGrowthCutoverSessionEntry(ctx context.Context, arg AppendGrowthCutoverSessionEntryParams) (GrowthCutoverSessionEntry, error)
 	AppendMigrationLedger(ctx context.Context, arg AppendMigrationLedgerParams) (MigrationLedger, error)
@@ -220,6 +221,7 @@ type Querier interface {
 	// approval can be staggered after it instead of publishing immediately.
 	LatestCanonicalPublishSlotForProject(ctx context.Context, projectID uuid.UUID) (pgtype.Timestamptz, error)
 	LatestCompletedSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
+	LatestOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error)
 	LatestSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
 	LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEODoctorFindingToActionParams) (SeoDoctorFinding, error)
 	ListAICrawlerAccessSnapshotsForRun(ctx context.Context, arg ListAICrawlerAccessSnapshotsForRunParams) ([]AiCrawlerAccessSnapshot, error)
@@ -376,8 +378,9 @@ type Querier interface {
 	MarkSiteChangeApplicationAndContentActionVerified(ctx context.Context, arg MarkSiteChangeApplicationAndContentActionVerifiedParams) (ContentAction, error)
 	MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg MarkSiteChangeApplicationGitHubPRParams) (SiteChangeApplication, error)
 	MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkSiteChangeApplicationStatusParams) (SiteChangeApplication, error)
+	MarkWorkflowEventDead(ctx context.Context, arg MarkWorkflowEventDeadParams) (WorkflowEvent, error)
 	MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error)
-	MarkWorkflowEventSucceeded(ctx context.Context, id uuid.UUID) (WorkflowEvent, error)
+	MarkWorkflowEventSucceeded(ctx context.Context, arg MarkWorkflowEventSucceededParams) (WorkflowEvent, error)
 	MaterializeConflictBuckets(ctx context.Context, arg MaterializeConflictBucketsParams) ([]WorkConflictBucket, error)
 	MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg MergeCanonicalDoctorSiteFixEvidenceParams) (MergeCanonicalDoctorSiteFixEvidenceRow, error)
 	MergeCanonicalGrowthOpportunityEvidence(ctx context.Context, arg MergeCanonicalGrowthOpportunityEvidenceParams) (MergeCanonicalGrowthOpportunityEvidenceRow, error)

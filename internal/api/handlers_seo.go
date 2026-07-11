@@ -20,7 +20,6 @@ import (
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
-	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -28,6 +27,7 @@ import (
 	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -311,59 +311,57 @@ func (s *Server) runOpportunityFinding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad project id")
 		return
 	}
-	project, err := s.Q.GetProject(r.Context(), projectID)
+	_, err = s.Q.GetProject(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg, err := config.Parse(project.Config)
-	if err != nil {
+	if err := s.enqueueOpportunityFindingWorkflowEvent(r.Context(), projectID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	stages := cfg.OpportunityFindingStages(false)
-	response := map[string]any{}
-	if stages.SignalScan {
-		svc, err := s.seoServiceWithGrowthAuthority(r.Context(), projectID, config.GrowthAITriggerManual)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		syncResult, err := svc.Sync(r.Context(), projectID, "")
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		analyzeResult, err := svc.Analyze(r.Context(), projectID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		response["sync"] = syncResult
-		response["analyze"] = analyzeResult
-	}
-	if stages.AIDiscovery {
-		geoService, err := s.geoServiceForProject(r.Context(), projectID, config.GrowthAITriggerManual)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		aiResult, err := opportunityfinding.RunAIDiscovery(r.Context(), projectID, s.Q, geoService, opportunityfinding.AIDiscoveryOptions{
-			ObserveRequest: s.aiDiscoveryObserveRequest(),
-		})
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		response["ai_discovery"] = aiResult
 	}
 	status, err := s.opportunityFindingStatus(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	response["status"] = status
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": status})
+}
+
+func (s *Server) enqueueOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) error {
+	if s.Pool == nil {
+		return errors.New("database unavailable")
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtextextended($1, 0))", workflowDedupeKey(workflow.EventOpportunityFindingRequested, projectID)); err != nil {
+		return err
+	}
+	q := db.New(tx)
+	if _, err := q.ActiveOpportunityFindingWorkflowEvent(ctx, projectID); err == nil {
+		return tx.Commit(ctx)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	requestID := uuid.New()
+	payload, err := json.Marshal(map[string]any{"request_id": requestID, "trigger": string(config.GrowthAITriggerManual)})
+	if err != nil {
+		return err
+	}
+	entityType := "project"
+	if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+		ProjectID: projectID, EventType: workflow.EventOpportunityFindingRequested,
+		EntityType: &entityType, EntityID: pgtype.UUID{Bytes: projectID, Valid: true},
+		DedupeKey: workflowDedupeKey(workflow.EventOpportunityFindingRequested, projectID, requestID),
+		Payload:   payload, RunAfter: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UUID) (OpportunityFindingStatus, error) {
@@ -375,7 +373,7 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 	if err != nil {
 		return OpportunityFindingStatus{}, err
 	}
-	latestRun, err := s.latestOpportunityFindingRun(ctx, projectID)
+	latestRun, latestWorkflow, err := s.latestOpportunityFindingRun(ctx, projectID)
 	if err != nil {
 		return OpportunityFindingStatus{}, err
 	}
@@ -391,7 +389,7 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 		GrowthAIEnabled:       cfg.GrowthAIEnabled,
 		GrowthAIRunPolicy:     cfg.GrowthAIRunPolicy,
 		ManualMode:            opportunityFindingManualMode(cfg),
-		LastRun:               opportunityFindingRunView(latestRun),
+		LastRun:               opportunityFindingRunView(latestRun, latestWorkflow),
 		NextFindingAt:         nextOpportunityFindingAt(time.Now().UTC(), cfg),
 		Summary:               opportunityFindingSummary(latestRun, cfg, counts),
 		Counts:                counts,
@@ -399,22 +397,60 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 	return status, nil
 }
 
-func (s *Server) latestOpportunityFindingRun(ctx context.Context, projectID uuid.UUID) (*db.SeoRun, error) {
+func (s *Server) latestOpportunityFindingRun(ctx context.Context, projectID uuid.UUID) (*db.SeoRun, *db.WorkflowEvent, error) {
 	runs, err := s.Q.ListSEORuns(ctx, db.ListSEORunsParams{
 		ProjectID: projectID,
 		Agent:     "seo_analyzer",
 		LimitRows: 1,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(runs) == 0 {
-		return nil, nil
+	var analyzer *db.SeoRun
+	if len(runs) > 0 {
+		analyzer = &runs[0]
 	}
-	return &runs[0], nil
+	workflowEvent, workflowErr := s.Q.LatestOpportunityFindingWorkflowEvent(ctx, projectID)
+	if workflowErr != nil && !errors.Is(workflowErr, pgx.ErrNoRows) {
+		return nil, nil, workflowErr
+	}
+	if workflowErr != nil {
+		return analyzer, nil, nil
+	}
+	return analyzer, &workflowEvent, nil
 }
 
-func opportunityFindingRunView(run *db.SeoRun) *OpportunityFindingRun {
+func opportunityFindingRunView(run *db.SeoRun, workflowEvent *db.WorkflowEvent) *OpportunityFindingRun {
+	workflowIsLatest := workflowEvent != nil && (workflowEvent.Status == "pending" || workflowEvent.Status == "running")
+	if workflowEvent != nil && !workflowIsLatest {
+		analyzerTime := pgTimePtr(runTime(run))
+		workflowTime := pgTimePtr(workflowEvent.UpdatedAt)
+		workflowIsLatest = run == nil || analyzerTime == nil || (workflowTime != nil && workflowTime.After(*analyzerTime))
+	}
+	if workflowIsLatest {
+		status := workflowEvent.Status
+		switch status {
+		case "pending":
+			status = "queued"
+		case "succeeded":
+			status = "completed"
+		case "dead":
+			status = "failed"
+		}
+		started := pgTimePtr(workflowEvent.LockedAt)
+		if started == nil {
+			started = pgTimePtr(workflowEvent.CreatedAt)
+		}
+		finished := pgTimePtr(workflowEvent.ProcessedAt)
+		if finished == nil && status == "failed" {
+			finished = pgTimePtr(workflowEvent.UpdatedAt)
+		}
+		var durationMs int64
+		if started != nil && finished != nil && finished.After(*started) {
+			durationMs = finished.Sub(*started).Milliseconds()
+		}
+		return &OpportunityFindingRun{ID: workflowEvent.ID, Status: status, StartedAt: started, FinishedAt: finished, DurationMs: durationMs, Error: workflowEvent.Error}
+	}
 	if run == nil {
 		return nil
 	}
@@ -432,6 +468,16 @@ func opportunityFindingRunView(run *db.SeoRun) *OpportunityFindingRun {
 		DurationMs: durationMs,
 		Error:      run.Error,
 	}
+}
+
+func runTime(run *db.SeoRun) pgtype.Timestamptz {
+	if run == nil {
+		return pgtype.Timestamptz{}
+	}
+	if run.FinishedAt.Valid {
+		return run.FinishedAt
+	}
+	return run.StartedAt
 }
 
 func opportunityFindingCounts(rows []db.SEOOpportunityCountsRow) OpportunityFindingCounts {

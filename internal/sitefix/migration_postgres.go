@@ -478,7 +478,7 @@ func (s *PostgresMigrationStore) applyOnce(ctx context.Context, plan MigrationPl
 				}
 			}
 			if findingCreated != uuid.Nil {
-				if err := appendLedger(sourceType+":finding", sourceID, "seo_doctor_finding", findingCreated, "create", map[string]any{"missing": true}, nil, map[string]any{"operation": "tombstone_finding"}); err != nil {
+				if err := appendLedger(sourceType, sourceID, "seo_doctor_finding", findingCreated, "create", map[string]any{"missing": true}, nil, map[string]any{"operation": "tombstone_finding"}); err != nil {
 					return MigrationBatchReport{}, err
 				}
 			}

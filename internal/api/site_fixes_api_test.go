@@ -233,6 +233,23 @@ func TestDoctorSiteFixCreationReloadsAndRecomparesAfterSnapshotStale(t *testing.
 	}
 }
 
+func TestDoctorSiteFixCreationRejectsLegacyHealthySentinelBeforeMaterialization(t *testing.T) {
+	projectID, findingID := uuid.New(), uuid.New()
+	backend := newDoctorSiteFixCreationBackendStub(projectID, findingID)
+	finding := backend.findings[findingID]
+	finding.IssueType = "no_active_technical_blockers"
+	backend.findings[findingID] = finding
+	coordinator := doctorSiteFixCreationCoordinator{preparations: newDurableDoctorSiteFixPreparationManager(), backend: backend}
+
+	_, created, err := coordinator.CreateFromFinding(context.Background(), projectID, findingID)
+	if !errors.Is(err, sitefix.ErrHealthyFinding) || created {
+		t.Fatalf("legacy healthy sentinel result created=%v err=%v, want ErrHealthyFinding", created, err)
+	}
+	if backend.materializeCalls != 0 || backend.prepareCalls != 0 || backend.reserveCalls != 0 {
+		t.Fatalf("legacy healthy sentinel reached repair pipeline: materialize=%d prepare=%d reserve=%d", backend.materializeCalls, backend.prepareCalls, backend.reserveCalls)
+	}
+}
+
 func TestDoctorSiteFixRuntimeWiresConcreteCanonicalService(t *testing.T) {
 	raw, err := os.ReadFile("../../cmd/api/main.go")
 	if err != nil {

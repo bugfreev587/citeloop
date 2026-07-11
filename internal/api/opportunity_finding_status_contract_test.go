@@ -4,6 +4,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/citeloop/citeloop/internal/db"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestOpportunityFindingStatusUsesRunHistoryAndProjectConfig(t *testing.T) {
@@ -67,21 +72,98 @@ func TestOpportunityFindingRoutesAreMounted(t *testing.T) {
 	}
 }
 
-func TestRunOpportunityFindingIncludesAIDiscoveryStage(t *testing.T) {
+func TestRunOpportunityFindingQueuesAIDiscoveryStage(t *testing.T) {
 	raw, err := os.ReadFile("handlers_seo.go")
 	if err != nil {
 		t.Fatalf("read handlers_seo.go: %v", err)
 	}
 	source := string(raw)
-	body := functionBody(t, source, "func (s *Server) runOpportunityFinding")
+	body := functionBody(t, source, "func (s *Server) enqueueOpportunityFindingWorkflowEvent")
 	for _, want := range []string{
-		"OpportunityFindingStages(false)",
-		"opportunityfinding.RunAIDiscovery",
-		`"ai_discovery"`,
+		"EventOpportunityFindingRequested",
+		"GrowthAITriggerManual",
+		"EnqueueWorkflowEvent",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("runOpportunityFinding must include AI Discovery stage; missing %q", want)
+			t.Fatalf("runOpportunityFinding must queue the durable AI Discovery stage; missing %q", want)
 		}
+	}
+}
+
+func TestManualOpportunityFindingUsesDurableWorkflow(t *testing.T) {
+	raw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	body := functionBody(t, string(raw), "func (s *Server) runOpportunityFinding")
+	for _, want := range []string{
+		"enqueueOpportunityFindingWorkflowEvent",
+		"http.StatusAccepted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manual Opportunity Finding must enqueue durable work; missing %q", want)
+		}
+	}
+	enqueueBody := functionBody(t, string(raw), "func (s *Server) enqueueOpportunityFindingWorkflowEvent")
+	for _, want := range []string{"EventOpportunityFindingRequested", "pg_advisory_xact_lock", "ActiveOpportunityFindingWorkflowEvent", "EnqueueWorkflowEvent", "tx.Commit"} {
+		if !strings.Contains(enqueueBody, want) {
+			t.Fatalf("manual Opportunity Finding enqueue must atomically reuse active work; missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"svc.Sync", "svc.Analyze", "RunAIDiscovery"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("manual request must not run long stage %q in the HTTP context", forbidden)
+		}
+	}
+
+	statusBody := functionBody(t, string(raw), "func (s *Server) latestOpportunityFindingRun")
+	if !strings.Contains(statusBody, "LatestOpportunityFindingWorkflowEvent") {
+		t.Fatal("Opportunity Finding status must prefer the durable workflow event")
+	}
+}
+
+func TestOpportunityFindingRunViewUsesWorkflowLifecycle(t *testing.T) {
+	created := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)
+	finished := created.Add(42 * time.Second)
+	event := db.WorkflowEvent{
+		ID: uuid.New(), Status: "pending",
+		CreatedAt: pgtype.Timestamptz{Time: created, Valid: true},
+	}
+	view := opportunityFindingRunView(nil, &event)
+	if view == nil || view.Status != "queued" || view.StartedAt == nil || !view.StartedAt.Equal(created) {
+		t.Fatalf("queued workflow view = %#v", view)
+	}
+
+	analyzerStarted := created.Add(10 * time.Second)
+	analyzerFinished := analyzerStarted.Add(5 * time.Second)
+	analyzer := &db.SeoRun{
+		ID: uuid.New(), Status: "ok",
+		StartedAt:  pgtype.Timestamptz{Time: analyzerStarted, Valid: true},
+		FinishedAt: pgtype.Timestamptz{Time: analyzerFinished, Valid: true},
+	}
+	event.Status = "running"
+	event.LockedAt = pgtype.Timestamptz{Time: created.Add(time.Second), Valid: true}
+	view = opportunityFindingRunView(analyzer, &event)
+	if view.Status != "running" || view.ID != event.ID {
+		t.Fatalf("active workflow was hidden by its newer Signal Scan analyzer row: %#v", view)
+	}
+
+	event.Status = "succeeded"
+	event.ProcessedAt = pgtype.Timestamptz{Time: finished, Valid: true}
+	event.UpdatedAt = pgtype.Timestamptz{Time: finished, Valid: true}
+	view = opportunityFindingRunView(analyzer, &event)
+	if view.Status != "completed" || view.FinishedAt == nil || view.DurationMs != 41_000 {
+		t.Fatalf("completed workflow view = %#v", view)
+	}
+
+	errText := "provider timeout"
+	event.Status = "dead"
+	event.Error = &errText
+	event.ProcessedAt = pgtype.Timestamptz{}
+	event.UpdatedAt = pgtype.Timestamptz{Time: finished, Valid: true}
+	view = opportunityFindingRunView(nil, &event)
+	if view.Status != "failed" || view.Error == nil || *view.Error != errText || view.FinishedAt == nil {
+		t.Fatalf("failed workflow view = %#v", view)
 	}
 }
 

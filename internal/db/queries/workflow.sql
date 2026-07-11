@@ -37,10 +37,14 @@ with candidates as (
   for update skip locked
 )
 update workflow_events set
-  status = 'pending',
-  run_after = now(),
+  status = case when event_type = 'opportunity_finding.requested' then 'dead' else 'pending' end,
+  run_after = case when event_type = 'opportunity_finding.requested' then run_after else now() end,
   locked_at = null,
-  error = coalesce(error, 'reclaimed after worker timeout'),
+  processed_at = case when event_type = 'opportunity_finding.requested' then now() else processed_at end,
+  error = case
+    when event_type = 'opportunity_finding.requested' then 'worker interrupted; explicit retry required to avoid repeating billable stages'
+    else coalesce(error, 'reclaimed after worker timeout')
+  end,
   updated_at = now()
 where id in (select id from candidates)
 returning *;
@@ -52,7 +56,9 @@ update workflow_events set
   locked_at = null,
   error = null,
   updated_at = now()
-where id = $1
+where id = sqlc.arg(id)
+  and status = 'running'
+  and attempts = sqlc.arg(expected_attempts)
 returning *;
 
 -- name: MarkWorkflowEventFailed :one
@@ -65,9 +71,23 @@ update workflow_events set
     else now() + interval '30 minutes'
   end,
   locked_at = null,
-  error = $2,
+  error = sqlc.arg(error),
   updated_at = now()
-where id = $1
+where id = sqlc.arg(id)
+  and status = 'running'
+  and attempts = sqlc.arg(expected_attempts)
+returning *;
+
+-- name: MarkWorkflowEventDead :one
+update workflow_events set
+  status = 'dead',
+  locked_at = null,
+  processed_at = now(),
+  error = sqlc.arg(error),
+  updated_at = now()
+where id = sqlc.arg(id)
+  and status = 'running'
+  and attempts = sqlc.arg(expected_attempts)
 returning *;
 
 -- name: RetryWorkflowEvent :one
@@ -86,3 +106,18 @@ where project_id = $1
   and status = 'dead'
 order by updated_at desc
 limit $2;
+
+-- name: LatestOpportunityFindingWorkflowEvent :one
+select * from workflow_events
+where project_id = $1
+  and event_type = 'opportunity_finding.requested'
+order by created_at desc, id desc
+limit 1;
+
+-- name: ActiveOpportunityFindingWorkflowEvent :one
+select * from workflow_events
+where project_id = $1
+  and event_type = 'opportunity_finding.requested'
+  and status in ('pending','running')
+order by created_at desc, id desc
+limit 1;

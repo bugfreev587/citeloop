@@ -13,6 +13,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activeOpportunityFindingWorkflowEvent = `-- name: ActiveOpportunityFindingWorkflowEvent :one
+select id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at from workflow_events
+where project_id = $1
+  and event_type = 'opportunity_finding.requested'
+  and status in ('pending','running')
+order by created_at desc, id desc
+limit 1
+`
+
+func (q *Queries) ActiveOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error) {
+	row := q.db.QueryRow(ctx, activeOpportunityFindingWorkflowEvent, projectID)
+	var i WorkflowEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.EventType,
+		&i.EntityType,
+		&i.EntityID,
+		&i.DedupeKey,
+		&i.Payload,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LockedAt,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimPendingWorkflowEvents = `-- name: ClaimPendingWorkflowEvents :many
 with candidates as (
   select id
@@ -120,6 +152,37 @@ func (q *Queries) EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowE
 	return i, err
 }
 
+const latestOpportunityFindingWorkflowEvent = `-- name: LatestOpportunityFindingWorkflowEvent :one
+select id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at from workflow_events
+where project_id = $1
+  and event_type = 'opportunity_finding.requested'
+order by created_at desc, id desc
+limit 1
+`
+
+func (q *Queries) LatestOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error) {
+	row := q.db.QueryRow(ctx, latestOpportunityFindingWorkflowEvent, projectID)
+	var i WorkflowEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.EventType,
+		&i.EntityType,
+		&i.EntityID,
+		&i.DedupeKey,
+		&i.Payload,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LockedAt,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listDeadWorkflowEventsForProject = `-- name: ListDeadWorkflowEventsForProject :many
 select id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at from workflow_events
 where project_id = $1
@@ -169,6 +232,48 @@ func (q *Queries) ListDeadWorkflowEventsForProject(ctx context.Context, arg List
 	return items, nil
 }
 
+const markWorkflowEventDead = `-- name: MarkWorkflowEventDead :one
+update workflow_events set
+  status = 'dead',
+  locked_at = null,
+  processed_at = now(),
+  error = $1,
+  updated_at = now()
+where id = $2
+  and status = 'running'
+  and attempts = $3
+returning id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at
+`
+
+type MarkWorkflowEventDeadParams struct {
+	Error            *string   `json:"error"`
+	ID               uuid.UUID `json:"id"`
+	ExpectedAttempts int32     `json:"expected_attempts"`
+}
+
+func (q *Queries) MarkWorkflowEventDead(ctx context.Context, arg MarkWorkflowEventDeadParams) (WorkflowEvent, error) {
+	row := q.db.QueryRow(ctx, markWorkflowEventDead, arg.Error, arg.ID, arg.ExpectedAttempts)
+	var i WorkflowEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.EventType,
+		&i.EntityType,
+		&i.EntityID,
+		&i.DedupeKey,
+		&i.Payload,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LockedAt,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markWorkflowEventFailed = `-- name: MarkWorkflowEventFailed :one
 update workflow_events set
   status = case when attempts >= 4 then 'dead' else 'pending' end,
@@ -179,19 +284,22 @@ update workflow_events set
     else now() + interval '30 minutes'
   end,
   locked_at = null,
-  error = $2,
+  error = $1,
   updated_at = now()
-where id = $1
+where id = $2
+  and status = 'running'
+  and attempts = $3
 returning id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at
 `
 
 type MarkWorkflowEventFailedParams struct {
-	ID    uuid.UUID `json:"id"`
-	Error *string   `json:"error"`
+	Error            *string   `json:"error"`
+	ID               uuid.UUID `json:"id"`
+	ExpectedAttempts int32     `json:"expected_attempts"`
 }
 
 func (q *Queries) MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error) {
-	row := q.db.QueryRow(ctx, markWorkflowEventFailed, arg.ID, arg.Error)
+	row := q.db.QueryRow(ctx, markWorkflowEventFailed, arg.Error, arg.ID, arg.ExpectedAttempts)
 	var i WorkflowEvent
 	err := row.Scan(
 		&i.ID,
@@ -221,11 +329,18 @@ update workflow_events set
   error = null,
   updated_at = now()
 where id = $1
+  and status = 'running'
+  and attempts = $2
 returning id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at
 `
 
-func (q *Queries) MarkWorkflowEventSucceeded(ctx context.Context, id uuid.UUID) (WorkflowEvent, error) {
-	row := q.db.QueryRow(ctx, markWorkflowEventSucceeded, id)
+type MarkWorkflowEventSucceededParams struct {
+	ID               uuid.UUID `json:"id"`
+	ExpectedAttempts int32     `json:"expected_attempts"`
+}
+
+func (q *Queries) MarkWorkflowEventSucceeded(ctx context.Context, arg MarkWorkflowEventSucceededParams) (WorkflowEvent, error) {
+	row := q.db.QueryRow(ctx, markWorkflowEventSucceeded, arg.ID, arg.ExpectedAttempts)
 	var i WorkflowEvent
 	err := row.Scan(
 		&i.ID,
@@ -258,10 +373,14 @@ with candidates as (
   for update skip locked
 )
 update workflow_events set
-  status = 'pending',
-  run_after = now(),
+  status = case when event_type = 'opportunity_finding.requested' then 'dead' else 'pending' end,
+  run_after = case when event_type = 'opportunity_finding.requested' then run_after else now() end,
   locked_at = null,
-  error = coalesce(error, 'reclaimed after worker timeout'),
+  processed_at = case when event_type = 'opportunity_finding.requested' then now() else processed_at end,
+  error = case
+    when event_type = 'opportunity_finding.requested' then 'worker interrupted; explicit retry required to avoid repeating billable stages'
+    else coalesce(error, 'reclaimed after worker timeout')
+  end,
   updated_at = now()
 where id in (select id from candidates)
 returning id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at

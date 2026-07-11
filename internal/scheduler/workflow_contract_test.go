@@ -27,6 +27,26 @@ func TestSchedulerWorkflowHandlerPlansReviewedOpportunities(t *testing.T) {
 	}
 }
 
+func TestSchedulerWorkflowHandlerRunsManualOpportunityFinding(t *testing.T) {
+	source, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, want := range []string{
+		"case workflow.EventOpportunityFindingRequested:",
+		"handleOpportunityFindingRequested",
+		"runOpportunityFindingForProject",
+		"runOpportunityFindingForProject(ctx, q, project, false)",
+		"workflow.Permanent(err)",
+		"opportunityfinding.RunAIDiscovery",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("scheduler durable Opportunity Finding handler missing %q", want)
+		}
+	}
+}
+
 func TestOpportunityReviewedPlansAcceptedActionsWithoutWaitingForAllOpenOpportunities(t *testing.T) {
 	source, err := os.ReadFile("scheduler.go")
 	if err != nil {

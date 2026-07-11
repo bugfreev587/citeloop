@@ -423,6 +423,9 @@ func (c doctorSiteFixCreationCoordinator) CreateFromFinding(ctx context.Context,
 		if finding.ProjectID != projectID || finding.ID != findingID {
 			return db.SiteFix{}, false, sitefix.ErrProjectMismatch
 		}
+		if finding.FindingKind == "healthy" || strings.EqualFold(strings.TrimSpace(finding.IssueType), "no_active_technical_blockers") {
+			return db.SiteFix{}, false, sitefix.ErrHealthyFinding
+		}
 		if finding.Status != "active" {
 			return db.SiteFix{}, false, fmt.Errorf("%w: finding status %q", sitefix.ErrIncompleteCandidate, finding.Status)
 		}

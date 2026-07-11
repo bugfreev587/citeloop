@@ -466,6 +466,7 @@ where project_id = sqlc.arg(project_id)
 select * from seo_doctor_findings
 where project_id = $1
   and run_id = $2
+  and issue_type <> 'no_active_technical_blockers'
 order by
   case severity
     when 'P0' then 0
@@ -479,6 +480,7 @@ order by
 select * from seo_doctor_findings
 where project_id = $1
   and (run_id = $2 or status = 'active')
+  and issue_type <> 'no_active_technical_blockers'
 order by
   case severity
     when 'P0' then 0

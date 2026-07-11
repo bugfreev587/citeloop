@@ -53,12 +53,13 @@ type supportedIndexPredicate struct {
 }
 
 type supportedIndexDefinition struct {
-	Name       string
-	Schema     string
-	Table      string
-	Unique     bool
-	Keys       []supportedIndexKey
-	Predicates []supportedIndexPredicate
+	Name             string
+	Schema           string
+	Table            string
+	Unique           bool
+	NullsNotDistinct bool
+	Keys             []supportedIndexKey
+	Predicates       []supportedIndexPredicate
 }
 
 type migrationTx interface {
@@ -249,6 +250,7 @@ type migrationIndexState struct {
 	Valid                 bool
 	Ready                 bool
 	Unique                bool
+	NullsNotDistinct      bool
 	TargetInCurrentSchema bool
 	TargetTable           string
 	AccessMethod          string
@@ -266,6 +268,7 @@ func inspectMigrationIndex(ctx context.Context, conn migrationConnection, indexN
 	err := conn.QueryRow(ctx, `
 		select c.relkind in ('i','I'), coalesce(i.indisvalid, false),
 		       coalesce(i.indisready, false), coalesce(i.indisunique, false),
+		       coalesce(i.indnullsnotdistinct, false),
 		       coalesce(tn.nspname = current_schema(), false), coalesce(t.relname, ''),
 		       coalesce(am.amname, ''), coalesce(i.indkey::text, ''),
 		       coalesce(pg_get_expr(i.indexprs, i.indrelid, true), ''),
@@ -281,7 +284,7 @@ func inspectMigrationIndex(ctx context.Context, conn migrationConnection, indexN
 		join pg_namespace n on n.oid = c.relnamespace
 		where n.nspname = current_schema() and c.relname = $1`, indexName).
 		Scan(
-			&state.IsIndex, &state.Valid, &state.Ready, &state.Unique,
+			&state.IsIndex, &state.Valid, &state.Ready, &state.Unique, &state.NullsNotDistinct,
 			&state.TargetInCurrentSchema, &state.TargetTable, &state.AccessMethod,
 			&state.IndKey, &state.IndexExpressions, &state.IndOption,
 			&state.Opclasses, &state.Collations, &state.Definition, &state.Predicate,
@@ -314,8 +317,8 @@ func validateMigrationIndexDefinition(state migrationIndexState, spec migrationS
 	if !state.TargetInCurrentSchema || state.TargetTable != spec.IndexSpec.Table {
 		return fmt.Errorf("index definition mismatch for %s: target table", spec.IndexName)
 	}
-	if state.Unique != spec.IndexSpec.Unique || state.AccessMethod != "btree" {
-		return fmt.Errorf("index definition mismatch for %s: uniqueness or access method", spec.IndexName)
+	if state.Unique != spec.IndexSpec.Unique || state.NullsNotDistinct != spec.IndexSpec.NullsNotDistinct || state.AccessMethod != "btree" {
+		return fmt.Errorf("index definition mismatch for %s: uniqueness, null equality, or access method", spec.IndexName)
 	}
 	if state.IndexExpressions != "" {
 		return fmt.Errorf("index definition mismatch for %s: expressions are unsupported", spec.IndexName)
@@ -371,6 +374,7 @@ var concurrentIndexStatementPattern = regexp.MustCompile(`(?is)^create\s+(?:uniq
 var supportedIndexHeaderPattern = regexp.MustCompile(`(?is)^create\s+(unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)\s+on\s+(.+)$`)
 var supportedIndexTablePattern = regexp.MustCompile(`(?is)^(?:([a-z_][a-z0-9_]*)\.)?([a-z_][a-z0-9_]*)\s+(.+)$`)
 var supportedIndexKeyPattern = regexp.MustCompile(`(?i)^([a-z_][a-z0-9_]*)(?:\s+(asc|desc))?$`)
+var nullsNotDistinctSuffixPattern = regexp.MustCompile(`(?i)^nulls\s+not\s+distinct(?:\s+|$)`)
 var notNullPredicatePattern = regexp.MustCompile(`(?i)^([a-z_][a-z0-9_]*)\s+is\s+not\s+null$`)
 var literalEqualityPredicatePattern = regexp.MustCompile(`(?is)^([a-z_][a-z0-9_]*)\s*=\s*(.+)$`)
 var inPredicatePattern = regexp.MustCompile(`(?is)^([a-z_][a-z0-9_]*)\s+in\s*\((.*)\)$`)
@@ -482,6 +486,14 @@ func parseSupportedIndexDefinition(sql string) (supportedIndexDefinition, error)
 	}
 	var predicates []supportedIndexPredicate
 	trailing = strings.TrimSpace(trailing)
+	nullsNotDistinct := false
+	if suffix := nullsNotDistinctSuffixPattern.FindString(trailing); suffix != "" {
+		nullsNotDistinct = true
+		trailing = strings.TrimSpace(trailing[len(suffix):])
+	}
+	if nullsNotDistinct && match[1] == "" {
+		return supportedIndexDefinition{}, errors.New("NULLS NOT DISTINCT requires a unique index")
+	}
 	if trailing != "" {
 		if len(trailing) < len("where ") || !strings.EqualFold(trailing[:len("where ")], "where ") {
 			return supportedIndexDefinition{}, errors.New("unsupported index suffix")
@@ -493,13 +505,14 @@ func parseSupportedIndexDefinition(sql string) (supportedIndexDefinition, error)
 	}
 	return supportedIndexDefinition{
 		Name: strings.ToLower(match[2]), Schema: strings.ToLower(tableMatch[1]),
-		Table: strings.ToLower(tableMatch[2]), Unique: match[1] != "", Keys: keys, Predicates: predicates,
+		Table: strings.ToLower(tableMatch[2]), Unique: match[1] != "", NullsNotDistinct: nullsNotDistinct,
+		Keys: keys, Predicates: predicates,
 	}, nil
 }
 
 func (definition supportedIndexDefinition) signature() string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "unique=%t;name=%s;table=%s;keys=", definition.Unique, definition.Name, definition.Table)
+	fmt.Fprintf(&out, "unique=%t;nulls-not-distinct=%t;name=%s;table=%s;keys=", definition.Unique, definition.NullsNotDistinct, definition.Name, definition.Table)
 	for i, key := range definition.Keys {
 		if i > 0 {
 			out.WriteByte(',')

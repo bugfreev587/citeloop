@@ -63,6 +63,19 @@ func TestWorkflowEventQueriesExposeDurableWorkerSemantics(t *testing.T) {
 	if !strings.Contains(reclaimStuckWorkflowEvents, "status = 'running'") || !strings.Contains(reclaimStuckWorkflowEvents, "interval '30 minutes'") {
 		t.Fatal("ReclaimStuckWorkflowEvents must avoid reclaiming long LLM generation work before thirty minutes")
 	}
+	if !strings.Contains(reclaimStuckWorkflowEvents, "event_type = 'opportunity_finding.requested'") ||
+		!strings.Contains(reclaimStuckWorkflowEvents, "explicit retry required to avoid repeating billable stages") {
+		t.Fatal("stuck manual Opportunity Finding must dead-letter instead of replaying uncheckpointed billable stages")
+	}
+	for name, contract := range map[string]struct{ query, attemptPredicate string }{
+		"success": {markWorkflowEventSucceeded, "attempts = $2"},
+		"failure": {markWorkflowEventFailed, "attempts = $3"},
+		"dead":    {markWorkflowEventDead, "attempts = $3"},
+	} {
+		if !strings.Contains(contract.query, "status = 'running'") || !strings.Contains(contract.query, contract.attemptPredicate) {
+			t.Fatalf("workflow %s transition must fence stale workers by running status and claimed attempt", name)
+		}
+	}
 	if !strings.Contains(markWorkflowEventFailed, "status = case when attempts >= 4 then 'dead' else 'pending' end") {
 		t.Fatal("MarkWorkflowEventFailed must dead-letter events after the fourth attempt")
 	}
