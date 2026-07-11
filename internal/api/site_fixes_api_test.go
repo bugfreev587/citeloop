@@ -754,6 +754,8 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		legacyOpportunityID := uuid.New()
 		legacyActionID := uuid.New()
 		migrationBatchID := uuid.New()
+		duplicateOpportunityID := uuid.New()
+		duplicateActionID := uuid.New()
 		fix.LegacyOpportunityID = pgtype.UUID{Bytes: legacyOpportunityID, Valid: true}
 		fix.LegacyContentActionID = pgtype.UUID{Bytes: legacyActionID, Valid: true}
 		fix.MigrationBatchID = pgtype.UUID{Bytes: migrationBatchID, Valid: true}
@@ -761,6 +763,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 			SiteFix:       fix,
 			Application:   &db.SiteChangeApplication{ID: applicationID, ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}, Status: "manual_apply_required"},
 			Verifications: []db.SiteFixVerification{{ID: verificationID, ProjectID: projectID, SiteFixID: fixID, AttemptNumber: 1, AiCallID: pgtype.UUID{Bytes: aiCallID, Valid: true}, Result: "failed"}},
+			LegacyAliases: []DoctorSiteFixLegacyAlias{{ObjectType: "seo_opportunity", ObjectID: duplicateOpportunityID}, {ObjectType: "content_action", ObjectID: duplicateActionID}},
 		}
 		approvedDetail := detail
 		approvedDetail.Status = "approved"
@@ -794,7 +797,7 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		} {
 			response := serveSiteFixRequest(t, service, request.method, request.path)
 			body := response.Body.String()
-			for _, expected := range []string{applicationID.String(), verificationID.String(), aiCallID.String(), legacyOpportunityID.String(), legacyActionID.String(), migrationBatchID.String()} {
+			for _, expected := range []string{applicationID.String(), verificationID.String(), aiCallID.String(), legacyOpportunityID.String(), legacyActionID.String(), migrationBatchID.String(), duplicateOpportunityID.String(), duplicateActionID.String(), `"object_type":"seo_opportunity"`, `"object_type":"content_action"`} {
 				if !strings.Contains(body, expected) {
 					t.Fatalf("%s %s omitted canonical detail %s: %s", request.method, request.path, expected, body)
 				}

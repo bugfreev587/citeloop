@@ -80,8 +80,14 @@ type DoctorSiteFixService interface {
 // lifecycle evidence.
 type DoctorSiteFixResponse struct {
 	db.SiteFix
-	Application   *db.SiteChangeApplication `json:"application"`
-	Verifications []db.SiteFixVerification  `json:"verifications"`
+	Application   *db.SiteChangeApplication  `json:"application"`
+	Verifications []db.SiteFixVerification   `json:"verifications"`
+	LegacyAliases []DoctorSiteFixLegacyAlias `json:"legacy_aliases"`
+}
+
+type DoctorSiteFixLegacyAlias struct {
+	ObjectType string    `json:"object_type"`
+	ObjectID   uuid.UUID `json:"object_id"`
 }
 
 type DoctorSiteFixVerificationRequest struct {
@@ -910,6 +916,10 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	if err != nil {
 		return nil, err
 	}
+	aliases, err := s.q.ListCanonicalSiteFixAliasesForList(ctx, db.ListCanonicalSiteFixAliasesForListParams{ProjectID: projectID, Status: status})
+	if err != nil {
+		return nil, err
+	}
 	applicationsByFix := make(map[uuid.UUID]db.SiteChangeApplication, len(applications))
 	for _, application := range applications {
 		if application.SiteFixID.Valid {
@@ -920,11 +930,18 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	for _, verification := range verifications {
 		verificationsByFix[verification.SiteFixID] = append(verificationsByFix[verification.SiteFixID], verification)
 	}
+	aliasesByFix := make(map[uuid.UUID][]DoctorSiteFixLegacyAlias)
+	for _, alias := range aliases {
+		aliasesByFix[alias.CanonicalObjectID] = append(aliasesByFix[alias.CanonicalObjectID], DoctorSiteFixLegacyAlias{ObjectType: alias.LegacyObjectType, ObjectID: alias.LegacyObjectID})
+	}
 	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
 	for _, fix := range fixes {
-		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: verificationsByFix[fix.ID]}
+		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: verificationsByFix[fix.ID], LegacyAliases: aliasesByFix[fix.ID]}
 		if response.Verifications == nil {
 			response.Verifications = []db.SiteFixVerification{}
+		}
+		if response.LegacyAliases == nil {
+			response.LegacyAliases = []DoctorSiteFixLegacyAlias{}
 		}
 		if application, ok := applicationsByFix[fix.ID]; ok {
 			applicationCopy := application
@@ -966,7 +983,7 @@ func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, f
 }
 
 func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.SiteFix) (DoctorSiteFixResponse, error) {
-	response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}}
+	response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{}}
 	application, err := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{
 		ProjectID: fix.ProjectID, SiteFixID: pgtype.UUID{Bytes: fix.ID, Valid: true},
 	})
@@ -979,6 +996,13 @@ func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.
 	response.Verifications, err = s.q.ListCanonicalSiteFixVerifications(ctx, db.ListCanonicalSiteFixVerificationsParams{ProjectID: fix.ProjectID, SiteFixID: fix.ID})
 	if err != nil {
 		return DoctorSiteFixResponse{}, err
+	}
+	aliases, err := s.q.ListCanonicalSiteFixAliasesForFix(ctx, db.ListCanonicalSiteFixAliasesForFixParams{ProjectID: fix.ProjectID, CanonicalObjectID: fix.ID})
+	if err != nil {
+		return DoctorSiteFixResponse{}, err
+	}
+	for _, alias := range aliases {
+		response.LegacyAliases = append(response.LegacyAliases, DoctorSiteFixLegacyAlias{ObjectType: alias.LegacyObjectType, ObjectID: alias.LegacyObjectID})
 	}
 	return response, nil
 }

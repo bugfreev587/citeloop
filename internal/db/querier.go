@@ -225,6 +225,8 @@ type Querier interface {
 	ListArticlesByTopic(ctx context.Context, topicID uuid.UUID) ([]Article, error)
 	ListArticlesByTopicForProject(ctx context.Context, arg ListArticlesByTopicForProjectParams) ([]Article, error)
 	ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsParams) ([]AutopilotRun, error)
+	ListCanonicalSiteFixAliasesForFix(ctx context.Context, arg ListCanonicalSiteFixAliasesForFixParams) ([]LegacyObjectAlias, error)
+	ListCanonicalSiteFixAliasesForList(ctx context.Context, arg ListCanonicalSiteFixAliasesForListParams) ([]LegacyObjectAlias, error)
 	ListCanonicalSiteFixPRsForReconciliation(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListCanonicalSiteFixVerifications(ctx context.Context, arg ListCanonicalSiteFixVerificationsParams) ([]SiteFixVerification, error)
 	ListCanonicalSiteFixVerificationsForList(ctx context.Context, arg ListCanonicalSiteFixVerificationsForListParams) ([]SiteFixVerification, error)

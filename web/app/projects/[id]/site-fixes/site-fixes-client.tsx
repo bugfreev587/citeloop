@@ -118,7 +118,8 @@ function canonicalFixIDForAlias(fixes: SiteFix[], requestedID?: string) {
   return fixes.find((fix) =>
     fix.id === requestedID ||
     fix.legacy_opportunity_id === requestedID ||
-    fix.legacy_content_action_id === requestedID,
+    fix.legacy_content_action_id === requestedID ||
+    fix.legacy_aliases?.some((alias) => alias.object_id === requestedID),
   )?.id ?? null;
 }
 
@@ -182,6 +183,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               ...updated,
               application: application ?? updated.application ?? existing.application,
               verifications: updated.verifications ?? existing.verifications,
+              legacy_aliases: updated.legacy_aliases ?? existing.legacy_aliases,
             }
           : existing,
       ),
@@ -425,13 +427,14 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
             <DetailBlock title="Evidence" value={selected.evidence_snapshot} />
             <DetailBlock title="Proposed fix" value={selected.proposed_fix} />
             <DetailBlock title="Acceptance checks" value={selected.acceptance_tests} />
-            {(selected.legacy_opportunity_id || selected.legacy_content_action_id || selected.migration_batch_id) && (
+            {(selected.legacy_opportunity_id || selected.legacy_content_action_id || selected.migration_batch_id || selected.legacy_aliases?.length) && (
               <DetailBlock
                 title="Legacy provenance"
                 value={{
                   legacy_opportunity_id: selected.legacy_opportunity_id,
                   legacy_content_action_id: selected.legacy_content_action_id,
                   migration_batch_id: selected.migration_batch_id,
+                  legacy_aliases: selected.legacy_aliases,
                 }}
               />
             )}

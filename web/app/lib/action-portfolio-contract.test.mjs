@@ -129,6 +129,7 @@ test("Canonical Site Fixes visibly expose provenance, application, and verificat
   assert.match(siteFixes, /href=\{`\/projects\/\$\{projectId\}\/doctor\?finding=\$\{selected\.doctor_finding_id\}`\}/);
   assert.match(siteFixes, /legacy_opportunity_id/);
   assert.match(siteFixes, /legacy_content_action_id/);
+  assert.match(siteFixes, /fix\.legacy_aliases\?\.some\(\(alias\) => alias\.object_id === requestedID\)/);
   assert.match(siteFixes, /Legacy provenance/);
   assert.match(siteFixes, /verifications: updated\.verifications \?\? existing\.verifications/);
 });

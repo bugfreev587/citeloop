@@ -38,6 +38,11 @@ export type SiteFixVerification = {
   created_at?: string | null;
 };
 
+export type SiteFixLegacyAlias = {
+  object_type: string;
+  object_id: string;
+};
+
 export type SiteChangeApplication = {
   id: string;
   project_id?: string;
@@ -86,6 +91,7 @@ export type SiteFix = {
   legacy_opportunity_id?: string | null;
   legacy_content_action_id?: string | null;
   migration_batch_id?: string | null;
+  legacy_aliases?: SiteFixLegacyAlias[];
   approved_at?: string | null;
   applied_at?: string | null;
   deployed_at?: string | null;

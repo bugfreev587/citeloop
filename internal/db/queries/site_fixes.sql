@@ -69,6 +69,32 @@ join listed_site_fixes listed on listed.id = verification.site_fix_id
 where verification.project_id = sqlc.arg(project_id)
 order by verification.site_fix_id, verification.attempt_number asc, verification.id asc;
 
+-- name: ListCanonicalSiteFixAliasesForList :many
+with listed_site_fixes as (
+  select id as site_fix_id
+  from site_fixes
+  where project_id = sqlc.arg(project_id)
+    and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select alias.*
+from legacy_object_aliases alias
+join listed_site_fixes listed on listed.site_fix_id = alias.canonical_object_id
+where alias.project_id = sqlc.arg(project_id)
+  and alias.canonical_object_type = 'site_fix'
+  and alias.alias_state = 'active'
+order by alias.canonical_object_id, alias.legacy_object_type, alias.legacy_object_id;
+
+-- name: ListCanonicalSiteFixAliasesForFix :many
+select *
+from legacy_object_aliases
+where project_id = sqlc.arg(project_id)
+  and canonical_object_type = 'site_fix'
+  and canonical_object_id = sqlc.arg(canonical_object_id)
+  and alias_state = 'active'
+order by legacy_object_type, legacy_object_id;
+
 -- name: GetCanonicalSiteFixByWorkSignature :one
 select * from site_fixes
 where project_id = sqlc.arg(project_id)

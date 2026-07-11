@@ -796,6 +796,10 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       migration_batch_id: "batch-legacy",
       application: { id: "latest-application", site_fix_id: "fix-1", status: "manual_apply_required" },
       verifications: [{ id: "verification-1", site_fix_id: "fix-1", ai_call_id: "ai-call-1", result: "failed" }],
+      legacy_aliases: [
+        { object_type: "seo_opportunity", object_id: "duplicate-opportunity" },
+        { object_type: "content_action", object_id: "duplicate-action" },
+      ],
     };
     if (url.endsWith("/apply") || url.endsWith("/verify")) {
       const verifying = url.endsWith("/verify");
@@ -837,6 +841,10 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
     assert.equal(listed[0].migration_batch_id, "batch-legacy");
     assert.equal(listed[0].application.status, "manual_apply_required");
     assert.equal(listed[0].verifications[0].ai_call_id, "ai-call-1");
+    assert.deepEqual(listed[0].legacy_aliases, [
+      { object_type: "seo_opportunity", object_id: "duplicate-opportunity" },
+      { object_type: "content_action", object_id: "duplicate-action" },
+    ]);
     assert.equal(created.doctor_finding_id, "finding-1");
     assert.equal(approved.status, "approved");
     assert.equal(applied.site_fix.status, "awaiting_deploy");

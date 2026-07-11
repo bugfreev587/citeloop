@@ -3410,6 +3410,108 @@ func (q *Queries) ListActiveWorkForLegacyMigration(ctx context.Context, projectI
 	return items, nil
 }
 
+const listCanonicalSiteFixAliasesForFix = `-- name: ListCanonicalSiteFixAliasesForFix :many
+select id, project_id, migration_batch_id, legacy_object_type, legacy_object_id, canonical_object_type, canonical_object_id, alias_state, provenance_snapshot, created_at, updated_at
+from legacy_object_aliases
+where project_id = $1
+  and canonical_object_type = 'site_fix'
+  and canonical_object_id = $2
+  and alias_state = 'active'
+order by legacy_object_type, legacy_object_id
+`
+
+type ListCanonicalSiteFixAliasesForFixParams struct {
+	ProjectID         uuid.UUID `json:"project_id"`
+	CanonicalObjectID uuid.UUID `json:"canonical_object_id"`
+}
+
+func (q *Queries) ListCanonicalSiteFixAliasesForFix(ctx context.Context, arg ListCanonicalSiteFixAliasesForFixParams) ([]LegacyObjectAlias, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixAliasesForFix, arg.ProjectID, arg.CanonicalObjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LegacyObjectAlias
+	for rows.Next() {
+		var i LegacyObjectAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.LegacyObjectType,
+			&i.LegacyObjectID,
+			&i.CanonicalObjectType,
+			&i.CanonicalObjectID,
+			&i.AliasState,
+			&i.ProvenanceSnapshot,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCanonicalSiteFixAliasesForList = `-- name: ListCanonicalSiteFixAliasesForList :many
+with listed_site_fixes as (
+  select id as site_fix_id
+  from site_fixes
+  where project_id = $1
+    and ($2::text is null or status = $2::text)
+  order by updated_at desc, id asc
+  limit 250
+)
+select alias.id, alias.project_id, alias.migration_batch_id, alias.legacy_object_type, alias.legacy_object_id, alias.canonical_object_type, alias.canonical_object_id, alias.alias_state, alias.provenance_snapshot, alias.created_at, alias.updated_at
+from legacy_object_aliases alias
+join listed_site_fixes listed on listed.site_fix_id = alias.canonical_object_id
+where alias.project_id = $1
+  and alias.canonical_object_type = 'site_fix'
+  and alias.alias_state = 'active'
+order by alias.canonical_object_id, alias.legacy_object_type, alias.legacy_object_id
+`
+
+type ListCanonicalSiteFixAliasesForListParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Status    *string   `json:"status"`
+}
+
+func (q *Queries) ListCanonicalSiteFixAliasesForList(ctx context.Context, arg ListCanonicalSiteFixAliasesForListParams) ([]LegacyObjectAlias, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixAliasesForList, arg.ProjectID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LegacyObjectAlias
+	for rows.Next() {
+		var i LegacyObjectAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.LegacyObjectType,
+			&i.LegacyObjectID,
+			&i.CanonicalObjectType,
+			&i.CanonicalObjectID,
+			&i.AliasState,
+			&i.ProvenanceSnapshot,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCanonicalSiteFixPRsForReconciliation = `-- name: ListCanonicalSiteFixPRsForReconciliation :many
 select a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint from site_change_applications a
 join site_fixes sf

@@ -1567,6 +1567,9 @@ function normalizeSiteFix(raw: any): SiteFix {
     legacy_opportunity_id: data.legacy_opportunity_id ?? null,
     legacy_content_action_id: data.legacy_content_action_id ?? null,
     migration_batch_id: data.migration_batch_id ?? null,
+    legacy_aliases: data.legacy_aliases == null
+      ? undefined
+      : arrayFrom(data.legacy_aliases).map((alias) => ({ object_type: String(alias?.object_type ?? ""), object_id: String(alias?.object_id ?? "") })),
     approved_at: data.approved_at ?? null,
     applied_at: data.applied_at ?? null,
     deployed_at: data.deployed_at ?? null,

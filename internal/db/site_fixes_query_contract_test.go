@@ -292,10 +292,14 @@ func TestCanonicalSiteFixListDetailsAreBoundedAndBatchReadable(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	list := namedSQL(t, siteFixes, "ListCanonicalSiteFixes")
 	requireQuerySQL(t, list, "limit 250")
-	for _, name := range []string{"ListLatestCanonicalSiteFixApplications", "ListCanonicalSiteFixVerificationsForList"} {
+	for _, name := range []string{"ListLatestCanonicalSiteFixApplications", "ListCanonicalSiteFixVerificationsForList", "ListCanonicalSiteFixAliasesForList"} {
 		query := namedSQL(t, siteFixes, name)
 		requireQuerySQL(t, query, "project_id", "site_fix_id")
 	}
+	aliases := namedSQL(t, siteFixes, "ListCanonicalSiteFixAliasesForList")
+	requireQuerySQL(t, aliases, "canonical_object_type = 'site_fix'", "alias_state = 'active'", "limit 250")
+	getAliases := namedSQL(t, siteFixes, "ListCanonicalSiteFixAliasesForFix")
+	requireQuerySQL(t, getAliases, "project_id", "canonical_object_id", "canonical_object_type = 'site_fix'", "alias_state = 'active'")
 }
 
 func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) {
