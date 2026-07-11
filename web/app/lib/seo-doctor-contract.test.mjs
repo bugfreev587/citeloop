@@ -111,6 +111,17 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
   }
 });
 
+test("Doctor treats the historical no-blockers sentinel as non-actionable healthy coverage", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+
+  assert.match(client, /function isLegacyHealthSentinel/);
+  assert.match(client, /finding\.issue_type === "no_active_technical_blockers"/);
+  assert.match(client, /function isActionableDoctorFinding/);
+  assert.match(client, /filter\(isActionableDoctorFinding\)/);
+  assert.match(client, /initialFindingId[\s\S]*isActionableDoctorFinding\(finding\)/);
+  assert.match(client, /disabled=\{[\s\S]*!isActionableDoctorFinding\(selectedFinding\)/);
+});
+
 test("AI repair JSON includes necessary website repair context without Growth Loop metadata", () => {
   const client = read("projects/[id]/doctor/doctor-client.tsx");
   const repairPayloadBlock = client.slice(client.indexOf("function repairEvidence"), client.indexOf("async function writeClipboardText"));

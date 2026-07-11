@@ -850,6 +850,8 @@ function OpportunityFindingStatusPanel({
   const lastRunLabel = status?.last_run?.started_at ? formatDate(status.last_run.started_at) : "Not run yet";
   const nextRunLabel = status?.next_finding_at ? formatDate(status.next_finding_at) : manualMode ? "Manual mode" : "Not scheduled";
   const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
+  const runStatus = status?.last_run?.status;
+  const runActive = runStatus === "queued" || runStatus === "running";
   const summary = status?.summary?.length
     ? status.summary
     : [{ label: "Evidence review", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
@@ -870,6 +872,7 @@ function OpportunityFindingStatusPanel({
             <div className="text-sm font-bold text-slate-950">Opportunity Finding</div>
             <Badge tone={manualMode ? "amber" : "green"}>{manualMode ? "Manual mode" : automationLabel}</Badge>
             <Badge tone="neutral">{opportunityFindingModeLabel(status)}</Badge>
+            {runStatus && <Badge tone={runStatus === "failed" ? "red" : runStatus === "completed" ? "green" : "amber"}>{humanizeInternalType(runStatus)}</Badge>}
           </div>
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
             <div>
@@ -888,8 +891,8 @@ function OpportunityFindingStatusPanel({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy}>
-            <ButtonProgress busy={busy === "opportunity-finding"} busyLabel="Finding" idleIcon={<Search size={14} />}>
+          <Button size="sm" variant="primary" onClick={onRun} disabled={!!busy || runActive}>
+            <ButtonProgress busy={busy === "opportunity-finding" || runActive} busyLabel="Finding" idleIcon={<Search size={14} />}>
               Run finding
             </ButtonProgress>
           </Button>
@@ -977,6 +980,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [selectedLoopStage, setSelectedLoopStage] = useState<VisibilityLifecycleStage | null>(null);
   const analysisSurfaceRef = useRef<HTMLDivElement | null>(null);
   const refreshSequenceRef = useRef(0);
+  const opportunityFindingStatusSequenceRef = useRef(0);
   const analysisDrawerRef = useRef<HTMLElement | null>(null);
   const analysisReturnFocusRef = useRef<HTMLElement | null>(null);
   const resultsSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -984,6 +988,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const resultReturnFocusRef = useRef<HTMLElement | null>(null);
   const consumedResultHandoffRef = useRef<string | null>(null);
   const resultHandoffTimersRef = useRef<number[]>([]);
+  const opportunityFindingTerminalRef = useRef<string | null>(null);
   const selectedOpportunity = useMemo(
     () => opportunities.find((opp) => opp.id === selectedOpportunityID) ?? null,
     [opportunities, selectedOpportunityID],
@@ -993,6 +998,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     if (next) notify(next);
   };
 
+  const refreshOpportunityFindingStatus = useCallback(async () => {
+    const sequence = opportunityFindingStatusSequenceRef.current + 1;
+    opportunityFindingStatusSequenceRef.current = sequence;
+    const next = await api.getOpportunityFindingStatus(projectId);
+    if (sequence === opportunityFindingStatusSequenceRef.current) {
+      setOpportunityFindingStatus(next);
+    }
+    return next;
+  }, [api, projectId]);
+
   const refresh = useCallback(async () => {
     const refreshSequence = refreshSequenceRef.current + 1;
     refreshSequenceRef.current = refreshSequence;
@@ -1001,7 +1016,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const [
         overviewResult,
         summaryResult,
-        findingStatusResult,
         settingsResult,
         gscConnectionResult,
         briefResult,
@@ -1023,7 +1037,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
-        api.getOpportunityFindingStatus(projectId),
         api.getSEOSettings(projectId),
         api.getGSCConnection(projectId),
         api.getSEOBrief(projectId),
@@ -1047,7 +1060,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       const overviewData = settledValue(overviewResult);
       const summaryData = settledValue(summaryResult);
-      const findingStatus = settledValue(findingStatusResult);
       const settings = settledValue(settingsResult);
       const gscConnectionData = settledValue(gscConnectionResult);
       const briefData = settledValue(briefResult);
@@ -1069,7 +1081,6 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       if (overviewData) setOverview(overviewData);
       if (summaryData) setVisibilitySummary(summaryData);
-      if (findingStatus) setOpportunityFindingStatus(findingStatus);
       if (gscConnectionData) setGSCConnection(gscConnectionData);
       if (briefData) setBrief(briefData);
       if (opps && snoozedOpps && watchingOpps) setOpportunities([...opps, ...snoozedOpps, ...watchingOpps]);
@@ -1101,6 +1112,49 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       setMessage({ title: "SEO data unavailable", detail: e.message, tone: "red" });
     }
   }, [api, projectId]);
+
+  useEffect(() => {
+    void refreshOpportunityFindingStatus().catch((e: any) => {
+      setMessage({ title: "Could not load opportunity finding status", detail: e.message, tone: "red" });
+    });
+  }, [refreshOpportunityFindingStatus]);
+
+  useEffect(() => {
+    const status = opportunityFindingStatus;
+    const active = status?.last_run?.status === "queued" || status?.last_run?.status === "running";
+    if (!active) return;
+
+    let cancelled = false;
+    const timeout = window.setTimeout(async () => {
+      try {
+        const next = await refreshOpportunityFindingStatus();
+        if (cancelled) return;
+        const run = next.last_run;
+        if (!run || run.status === "queued" || run.status === "running") return;
+
+        if (opportunityFindingTerminalRef.current !== run.id) {
+          opportunityFindingTerminalRef.current = run.id;
+          if (run.status === "completed") {
+            setMessage({
+              title: "Opportunity finding complete",
+              detail: `${next.counts.open} open; ${next.counts.processed} already handled`,
+              tone: "green",
+            });
+          } else {
+            setMessage({ title: "Opportunity finding failed", detail: run.error ?? "The workflow could not complete.", tone: "red" });
+          }
+        }
+        await refresh();
+      } catch (e: any) {
+        if (cancelled) return;
+        setMessage({ title: "Could not refresh opportunity finding", detail: e.message, tone: "red" });
+      }
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [opportunityFindingStatus, refresh, refreshOpportunityFindingStatus]);
 
   useEffect(() => {
     refresh();
@@ -1459,7 +1513,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setBusy("refresh");
     setMessage(null);
     try {
-      await refresh();
+      await Promise.all([refresh(), refreshOpportunityFindingStatus()]);
     } finally {
       setBusy(null);
     }
@@ -1511,17 +1565,21 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setBusy("opportunity-finding");
     setMessage(null);
     try {
+      const statusSequence = opportunityFindingStatusSequenceRef.current + 1;
+      opportunityFindingStatusSequenceRef.current = statusSequence;
       const result = await api.runOpportunityFinding(projectId);
-      await refresh();
+      if (statusSequence === opportunityFindingStatusSequenceRef.current) {
+        setOpportunityFindingStatus(result.status);
+      }
       setMessage({
-        title: "Opportunity finding complete",
-        detail: `${result.status.counts.open} open; ${result.status.counts.processed} already handled`,
-        tone: "green",
+        title: "Opportunity finding started",
+        detail: "Signal and AI stages are running durably in the background.",
+        tone: "neutral",
       });
     } catch (e: any) {
       setMessage({ title: "Opportunity finding failed", detail: e.message, tone: "red" });
     } finally {
-      setBusy(null);
+      setBusy((current) => (current === "opportunity-finding" ? null : current));
     }
   }
 

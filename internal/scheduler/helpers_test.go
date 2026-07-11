@@ -103,13 +103,26 @@ func TestDailySEOTickRunsAutomaticAIDiscoveryWhenConfigured(t *testing.T) {
 	}
 	body := functionBody(t, string(raw), "func (s *Scheduler) runOpportunityFindingForProject")
 	for _, want := range []string{
-		"OpportunityFindingStages(true)",
+		"OpportunityFindingStages(scheduled)",
 		"opportunityfinding.RunAIDiscovery",
-		"runSEOForProject",
+		"runSEOForProjectWithTrigger",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("daily opportunity finding must include configured AI Discovery; missing %q", want)
 		}
+	}
+}
+
+func TestOpportunityFindingStepErrorsAreDeterministicAndRetryable(t *testing.T) {
+	err := opportunityFindingStepErrors(map[string]string{
+		"observe_provider": "provider timeout",
+		"crawler_audit":    "crawl unavailable",
+	})
+	if err == nil || err.Error() != "crawler_audit: crawl unavailable; observe_provider: provider timeout" {
+		t.Fatalf("step error = %v", err)
+	}
+	if opportunityFindingStepErrors(nil) != nil {
+		t.Fatal("empty AI Discovery step errors must remain successful")
 	}
 }
 

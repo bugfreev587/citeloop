@@ -2836,6 +2836,7 @@ const listCurrentSEODoctorFindings = `-- name: ListCurrentSEODoctorFindings :man
 select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
   and (run_id = $2 or status = 'active')
+  and issue_type <> 'no_active_technical_blockers'
 order by
   case severity
     when 'P0' then 0
@@ -3754,6 +3755,7 @@ const listSEODoctorFindingsForRun = `-- name: ListSEODoctorFindingsForRun :many
 select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
   and run_id = $2
+  and issue_type <> 'no_active_technical_blockers'
 order by
   case severity
     when 'P0' then 0

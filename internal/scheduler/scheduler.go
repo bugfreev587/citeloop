@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,8 @@ func (s *Scheduler) TickWorkflow(ctx context.Context) {
 
 func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEvent) error {
 	switch event.EventType {
+	case workflow.EventOpportunityFindingRequested:
+		return s.handleOpportunityFindingRequested(ctx, event.ProjectID)
 	case workflow.EventOpportunityReviewed:
 		return s.handleOpportunityReviewed(ctx, event.ProjectID)
 	case workflow.EventOpportunityBatchDone:
@@ -158,6 +161,21 @@ func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEv
 		s.Log.Info("workflow event ignored", "type", event.EventType, "project", event.ProjectID)
 		return nil
 	}
+}
+
+func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, projectID uuid.UUID) error {
+	q := db.New(s.Pool)
+	project, err := q.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if err := s.runOpportunityFindingForProject(ctx, q, project, false); err != nil {
+		// Until per-stage checkpoints land, rerunning the whole pipeline can repeat
+		// a successful billable provider step. Surface the failure for an explicit
+		// user retry instead of multiplying cost automatically.
+		return workflow.Permanent(err)
+	}
+	return nil
 }
 
 func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UUID) error {
@@ -833,31 +851,38 @@ func (s *Scheduler) TickSEO(ctx context.Context) {
 		return
 	}
 	for _, p := range projects {
-		if err := s.runOpportunityFindingForProject(ctx, q, p); err != nil {
+		if err := s.runOpportunityFindingForProject(ctx, q, p, true); err != nil {
 			s.logger().Error("opportunity finding tick failed", "project", p.ID, "err", err)
 		}
 	}
 }
 
-func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Queries, p db.Project) error {
+func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Queries, p db.Project, scheduled bool) error {
 	cfg, err := config.Parse(p.Config)
 	if err != nil {
 		return err
 	}
-	stages := cfg.OpportunityFindingStages(true)
-	var firstErr error
+	stages := cfg.OpportunityFindingStages(scheduled)
+	trigger := config.GrowthAITriggerManual
+	if scheduled {
+		trigger = config.GrowthAITriggerScheduled
+	}
+	runErrors := make([]error, 0, 2)
 	if stages.SignalScan {
-		if err := s.runSEOForProject(ctx, q, p, cfg); err != nil {
-			firstErr = fmt.Errorf("signal scan: %w", err)
+		if err := s.runSEOForProjectWithTrigger(ctx, q, p, cfg, trigger); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("signal scan: %w", err))
 		}
 	}
 	if stages.AIDiscovery {
-		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q, comparator), opportunityfinding.AIDiscoveryOptions{
 			ObserveRequest: s.geoObserveRequest(),
 		})
-		if err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("ai discovery: %w", err)
+		if err == nil {
+			err = opportunityFindingStepErrors(result.Errors)
+		}
+		if err != nil {
+			runErrors = append(runErrors, fmt.Errorf("ai discovery: %w", err))
 		}
 		s.logger().Info(
 			"ai discovery tick complete",
@@ -873,11 +898,31 @@ func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Q
 	if !stages.SignalScan && !stages.AIDiscovery {
 		s.logger().Info("opportunity finding tick skipped by settings", "project", p.ID)
 	}
-	return firstErr
+	return errors.Join(runErrors...)
+}
+
+func opportunityFindingStepErrors(stepErrors map[string]string) error {
+	if len(stepErrors) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(stepErrors))
+	for name := range stepErrors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, name+": "+stepErrors[name])
+	}
+	return errors.New(strings.Join(parts, "; "))
 }
 
 func (s *Scheduler) runSEOForProject(ctx context.Context, q *db.Queries, p db.Project, cfg config.ProjectConfig) error {
-	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
+	return s.runSEOForProjectWithTrigger(ctx, q, p, cfg, config.GrowthAITriggerScheduled)
+}
+
+func (s *Scheduler) runSEOForProjectWithTrigger(ctx context.Context, q *db.Queries, p db.Project, cfg config.ProjectConfig, trigger config.GrowthAITrigger) error {
+	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 	runner := s.newSEORunner(q, comparator)
 	syncResult, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
 	if err != nil {

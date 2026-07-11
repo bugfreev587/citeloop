@@ -132,7 +132,17 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   assert.notEqual(panelStart, -1, "seo-client.tsx missing OpportunityFindingStatusPanel");
   assert.notEqual(panelEnd, -1, "seo-client.tsx missing OpportunityFindingStatusPanel boundary");
   assert.equal(panelSource.includes("{manualMode && ("), false, "Run finding should be available from the status card in automatic mode too");
-  assert.match(panelSource, /<Button size="sm" variant="primary" onClick=\{onRun\} disabled=\{!!busy\}>/);
+  assert.match(panelSource, /<Button size="sm" variant="primary" onClick=\{onRun\} disabled=\{!!busy \|\| runActive\}>/);
+  for (const expected of [
+    'status?.last_run?.status === "queued"',
+    'status?.last_run?.status === "running"',
+    "window.setTimeout",
+    "api.getOpportunityFindingStatus(projectId)",
+    "opportunityFindingStatusSequenceRef",
+    'title: "Opportunity finding started"',
+  ]) {
+    assert.equal(source.includes(expected), true, `durable Opportunity Finding UI missing ${expected}`);
+  }
 });
 
 test("Analysis Site Fixes open a reusable right drawer for review", async () => {

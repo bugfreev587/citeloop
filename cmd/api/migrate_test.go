@@ -72,6 +72,7 @@ func TestMigrationRunnerSafetyContract(t *testing.T) {
 			"pg_get_indexdef",
 			"indisready",
 			"indisunique",
+			"indnullsnotdistinct",
 			"indkey",
 			"indexprs",
 			"indoption",
@@ -127,6 +128,7 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0059_05_active_legacy_alias_index.sql":                "uniq_active_legacy_object_alias",
 		"0062_z_seo_opportunities_project_identity.sql":        "seo_opportunities_project_id_id_key",
 		"0064_canonical_growth_legacy_index.sql":               "idx_seo_opportunities_legacy_growth_migration",
+		"0071_migration_ledger_effect_identity_index.sql":      "migration_ledger_effect_identity_key",
 	}
 	actualConcurrent := make(map[string]struct{})
 	entries, err := fs.ReadDir(migrations.FS, ".")
@@ -285,6 +287,10 @@ func TestPhaseTwoMigrationOrderingKeepsDDLBeforeIndexAndValidationAfterAdd(t *te
 		"0066_validate_fix_grounding_verification_stage.sql",
 		"0067_growth_cutover_status_constraints_add.sql",
 		"0068_growth_cutover_status_constraints_validate.sql",
+		"0069_migration_ledger_operations_add.sql",
+		"0070_migration_ledger_operations_validate.sql",
+		"0071_migration_ledger_effect_identity_index.sql",
+		"0072_migration_ledger_effect_identity_cutover.sql",
 	}
 	for index, name := range ordered {
 		position, ok := positions[name]
@@ -320,6 +326,26 @@ func TestParseMigrationSpecFailsClosed(t *testing.T) {
 				t.Fatal("expected fail-closed parse error")
 			}
 		})
+	}
+}
+
+func TestParseMigrationSpecPreservesNullsNotDistinctIdentity(t *testing.T) {
+	raw := []byte("-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_effect_identity\ncreate unique index concurrently if not exists idx_effect_identity on migration_ledger (migration_batch_id, canonical_object_id) nulls not distinct;")
+	spec, err := parseMigrationSpec("effect_identity.sql", raw)
+	if err != nil {
+		t.Fatalf("parse NULLS NOT DISTINCT concurrent index: %v", err)
+	}
+	if !spec.IndexSpec.NullsNotDistinct {
+		t.Fatal("effect identity index lost NULLS NOT DISTINCT semantics")
+	}
+
+	postgresDefinition := "CREATE UNIQUE INDEX idx_effect_identity ON public.migration_ledger USING btree (migration_batch_id, canonical_object_id) NULLS NOT DISTINCT"
+	actual, err := canonicalIndexDefinition(postgresDefinition)
+	if err != nil {
+		t.Fatalf("canonicalize PostgreSQL deparse: %v", err)
+	}
+	if actual != spec.IndexDefinition {
+		t.Fatalf("NULLS NOT DISTINCT signature mismatch: got %q want %q", actual, spec.IndexDefinition)
 	}
 }
 
@@ -439,20 +465,21 @@ func (r migrationTestRow) Scan(dest ...any) error {
 			return errors.New("unexpected index scan destination types")
 		}
 		*isIndex, *valid, *definition = r.relationIsIndex, r.value, r.definition
-	case 14:
+	case 15:
 		isIndex, okIndex := dest[0].(*bool)
 		valid, okValid := dest[1].(*bool)
 		ready, okReady := dest[2].(*bool)
 		unique, okUnique := dest[3].(*bool)
-		currentSchema, okSchema := dest[4].(*bool)
+		nullsNotDistinct, okNullsNotDistinct := dest[4].(*bool)
+		currentSchema, okSchema := dest[5].(*bool)
 		stringDestinations := make([]*string, 0, 9)
 		stringsOK := true
-		for _, destination := range dest[5:] {
+		for _, destination := range dest[6:] {
 			value, ok := destination.(*string)
 			stringsOK = stringsOK && ok
 			stringDestinations = append(stringDestinations, value)
 		}
-		if !okIndex || !okValid || !okReady || !okUnique || !okSchema || !stringsOK {
+		if !okIndex || !okValid || !okReady || !okUnique || !okNullsNotDistinct || !okSchema || !stringsOK {
 			return errors.New("unexpected catalog scan destination types")
 		}
 		definition, parseErr := parseSupportedIndexDefinition(r.definition)
@@ -478,7 +505,7 @@ func (r migrationTestRow) Scan(dest ...any) error {
 			indKey[0] = "0"
 		}
 		*isIndex, *valid, *ready = r.relationIsIndex, r.value, r.ready
-		*unique, *currentSchema = strings.Contains(strings.ToLower(r.definition), "create unique index"), true
+		*unique, *nullsNotDistinct, *currentSchema = strings.Contains(strings.ToLower(r.definition), "create unique index"), definition.NullsNotDistinct, true
 		table := definition.Table
 		if table == "" {
 			table = "widgets"

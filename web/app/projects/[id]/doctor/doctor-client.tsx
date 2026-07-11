@@ -17,6 +17,14 @@ function isActiveRun(run?: SEODoctorRun | null) {
   return run?.status === "queued" || run?.status === "running";
 }
 
+function isLegacyHealthSentinel(finding: SEODoctorFinding) {
+  return finding.issue_type === "no_active_technical_blockers";
+}
+
+function isActionableDoctorFinding(finding: SEODoctorFinding) {
+  return finding.finding_kind !== "healthy" && !isLegacyHealthSentinel(finding);
+}
+
 function severityTone(severity: string): "red" | "amber" | "blue" | "neutral" {
   if (severity === "P0") return "red";
   if (severity === "P1") return "amber";
@@ -430,7 +438,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const run = report?.run ?? null;
   const counts = issueCounts(report);
   const visibleFindings = useMemo(() => {
-    const findings = sortedFindings((report?.findings ?? []).filter((finding) => finding.finding_kind !== "healthy"));
+    const findings = sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding));
     return filter === "all" ? findings : findings.filter((finding) => finding.severity === filter);
   }, [filter, report?.findings]);
   const healthyCoverage = run?.healthy_coverage ?? [];
@@ -449,7 +457,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   useEffect(() => {
     if (loading || initialSelectionHandled.current) return;
     initialSelectionHandled.current = true;
-    if (initialFindingId && (report?.findings ?? []).some((finding) => finding.id === initialFindingId && finding.finding_kind !== "healthy")) {
+    if (initialFindingId && (report?.findings ?? []).some((finding) => finding.id === initialFindingId && isActionableDoctorFinding(finding))) {
       setFilter("all");
       setSelectedFindingID(initialFindingId);
     }
@@ -734,7 +742,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
                 size="sm"
                 variant="ai"
                 onClick={() => void addToSiteFixes(selectedFinding)}
-                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active" || selectedFinding.finding_kind === "healthy"}
+                disabled={busyFindingID === selectedFinding.id || selectedFinding.status !== "active" || !isActionableDoctorFinding(selectedFinding)}
               >
                 <ButtonProgress
                   busy={busyFindingID === selectedFinding.id && busyKind === "add"}
