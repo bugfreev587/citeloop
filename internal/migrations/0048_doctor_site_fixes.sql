@@ -12,7 +12,7 @@ $$;
 create table if not exists migration_batches (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete restrict,
-  product text not null default 'doctor' check (product in ('doctor')),
+  product text not null default 'doctor' check (product in ('doctor','opportunities','shared')),
   batch_kind text not null check (batch_kind in ('dry_run','forward','rollback')),
   status text not null check (status in ('completed','review_required','failed','rolled_back')),
   schema_version text not null,
@@ -41,7 +41,7 @@ for each row execute function reject_doctor_append_only_mutation();
 
 create table if not exists product_writer_authority (
   project_id uuid not null references projects(id) on delete cascade,
-  product text not null default 'doctor' check (product in ('doctor')),
+  product text not null default 'doctor' check (product in ('doctor','opportunities')),
   writer_authority text not null default 'legacy' check (writer_authority in ('legacy','canonical')),
   write_fenced boolean not null default false,
   fence_token uuid,
@@ -59,9 +59,29 @@ create table if not exists product_writer_authority (
 );
 
 insert into product_writer_authority (project_id, product, writer_authority, write_fenced)
-select p.id, 'doctor', 'legacy', false
+select p.id, supported.product, 'legacy', false
 from projects p
+cross join (values ('doctor'), ('opportunities')) as supported(product)
 on conflict (project_id, product) do nothing;
+
+create or replace function seed_project_writer_authority()
+returns trigger
+language plpgsql
+as $$
+begin
+  insert into product_writer_authority (project_id, product, writer_authority, write_fenced)
+  values
+    (new.id, 'doctor', 'legacy', false),
+    (new.id, 'opportunities', 'legacy', false)
+  on conflict (project_id, product) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists projects_seed_writer_authority on projects;
+create trigger projects_seed_writer_authority
+after insert on projects
+for each row execute function seed_project_writer_authority();
 
 create table if not exists site_fixes (
   id uuid primary key default gen_random_uuid(),
@@ -146,8 +166,17 @@ create table if not exists migration_ledger (
   source_object_id uuid not null,
   canonical_object_type text not null,
   canonical_object_id uuid,
-  operation text not null check (operation in ('create','repoint','archive_duplicate','authority_switch','rollback','tombstone')),
+  operation text not null check (operation in (
+    'create','map','decision_migrate','repoint','archive_duplicate',
+    'authority_switch','rollback','tombstone'
+  )),
   operation_version text not null,
+  cutover_point text not null check (cutover_point in (
+    'pre_cutover','writer_fenced','canonical_authority','rollback'
+  )),
+  rollback_eligibility text not null check (rollback_eligibility in (
+    'eligible','not_eligible','not_applicable','blocked_forward_fix_required'
+  )),
   before_hash text not null,
   after_hash text not null,
   before_snapshot jsonb not null check (jsonb_typeof(before_snapshot) = 'object'),
@@ -170,6 +199,44 @@ create index if not exists idx_migration_ledger_canonical
 
 create trigger migration_ledger_immutable
 before update or delete on migration_ledger
+for each row execute function reject_doctor_append_only_mutation();
+
+create table if not exists migration_rollback_events (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete restrict,
+  migration_batch_id uuid not null references migration_batches(id) on delete restrict,
+  migration_ledger_id uuid references migration_ledger(id) on delete restrict,
+  event_sequence int not null check (event_sequence >= 1),
+  event_type text not null check (event_type in (
+    'rollback_eligibility_assessed','rollback_started',
+    'rollback_blocked_forward_fix_required','rollback_completed'
+  )),
+  rollback_eligibility text not null check (rollback_eligibility in (
+    'eligible','not_eligible','not_applicable','blocked_forward_fix_required'
+  )),
+  cutover_point text not null check (cutover_point in (
+    'pre_cutover','writer_fenced','canonical_authority','rollback'
+  )),
+  reason text not null default '',
+  forward_fix_reference text,
+  event_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(event_snapshot) = 'object'),
+  event_version text not null,
+  occurred_at timestamptz not null,
+  rolled_back_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (migration_batch_id, event_sequence),
+  check ((event_type = 'rollback_completed') = (rolled_back_at is not null))
+);
+
+create index if not exists idx_migration_rollback_events_batch_age
+  on migration_rollback_events (migration_batch_id, occurred_at);
+
+create index if not exists idx_migration_rollback_events_ledger
+  on migration_rollback_events (migration_ledger_id, occurred_at)
+  where migration_ledger_id is not null;
+
+create trigger migration_rollback_events_immutable
+before update or delete on migration_rollback_events
 for each row execute function reject_doctor_append_only_mutation();
 
 create table if not exists migration_review_items (
@@ -200,7 +267,7 @@ create table if not exists legacy_object_aliases (
   migration_batch_id uuid not null references migration_batches(id) on delete restrict,
   legacy_object_type text not null,
   legacy_object_id uuid not null,
-  canonical_object_type text not null check (canonical_object_type in ('site_fix','migration_review')),
+  canonical_object_type text not null,
   canonical_object_id uuid not null,
   alias_state text not null default 'active' check (alias_state in ('active','rolled_back_tombstone')),
   provenance_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(provenance_snapshot) = 'object'),
@@ -308,3 +375,9 @@ alter table work_signature_registry
 alter table work_signature_registry
   add constraint work_signature_registry_shadow_run_id_fkey foreign key (shadow_run_id)
   references discovery_shadow_runs(id) on delete restrict;
+
+alter table work_signature_registry
+  drop constraint if exists work_signature_registry_candidate_id_fkey;
+alter table work_signature_registry
+  add constraint work_signature_registry_candidate_id_fkey foreign key (candidate_id)
+  references discovery_candidates(id) on delete restrict;

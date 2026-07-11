@@ -112,7 +112,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		"writer_authority text not null default 'legacy' check (writer_authority in ('legacy','canonical'))",
 		"write_fenced boolean not null default false",
 		"insert into product_writer_authority",
-		"select p.id, 'doctor', 'legacy', false",
+		"select p.id, supported.product, 'legacy', false",
 	)
 
 	requireSQL(t.Name()+" application source union", migration,
@@ -155,4 +155,97 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 			t.Fatal("seo_doctor_findings must not have a current Site Fix pointer")
 		}
 	}
+}
+
+func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0048_doctor_site_fixes.sql"))
+	if err != nil {
+		t.Fatalf("read Doctor Site Fix migration: %v", err)
+	}
+	migration := strings.ToLower(string(raw))
+	tableDefinition := func(t *testing.T, name string) string {
+		t.Helper()
+		pattern := regexp.MustCompile(`(?s)create table if not exists ` + regexp.QuoteMeta(name) + `\s*\((.*?)\n\);`)
+		match := pattern.FindStringSubmatch(migration)
+		if len(match) != 2 {
+			t.Errorf("migration must define %s", name)
+			return ""
+		}
+		return match[1]
+	}
+	requireSQL := func(t *testing.T, sql string, required ...string) {
+		t.Helper()
+		for _, want := range required {
+			if !strings.Contains(sql, want) {
+				t.Errorf("migration missing %q", want)
+			}
+		}
+	}
+
+	t.Run("append-only rollback lifecycle audit", func(t *testing.T) {
+		ledger := tableDefinition(t, "migration_ledger")
+		requireSQL(t, ledger,
+			"cutover_point text not null",
+			"rollback_eligibility text not null",
+			"'map'",
+			"'decision_migrate'",
+			"inverse_operation_version text not null",
+			"inverse_operation jsonb not null",
+		)
+		rollbackEvents := tableDefinition(t, "migration_rollback_events")
+		requireSQL(t, rollbackEvents,
+			"migration_batch_id uuid not null references migration_batches(id) on delete restrict",
+			"rollback_eligibility text not null",
+			"rollback_blocked_forward_fix_required",
+			"rollback_completed",
+			"rolled_back_at timestamptz",
+		)
+		requireSQL(t, migration,
+			"create trigger migration_rollback_events_immutable",
+			"before update or delete on migration_rollback_events",
+		)
+	})
+
+	t.Run("review memory migration aliases remain generic", func(t *testing.T) {
+		aliases := tableDefinition(t, "legacy_object_aliases")
+		if strings.Contains(aliases, "canonical_object_type in") {
+			t.Error("legacy_object_aliases must not constrain generic canonical object types")
+		}
+		requireSQL(t, aliases, "canonical_object_type text not null")
+		requireSQL(t, migration, "'decision_migrate'")
+	})
+
+	t.Run("future projects receive legacy writer authority", func(t *testing.T) {
+		requireSQL(t, migration,
+			"create or replace function seed_project_writer_authority()",
+			"insert into product_writer_authority",
+			"(new.id, 'doctor', 'legacy', false)",
+			"(new.id, 'opportunities', 'legacy', false)",
+			"on conflict (project_id, product) do nothing",
+			"create trigger projects_seed_writer_authority",
+			"after insert on projects",
+			"execute function seed_project_writer_authority()",
+		)
+	})
+
+	t.Run("candidate provenance cannot cascade", func(t *testing.T) {
+		candidateFK := regexp.MustCompile(`(?s)constraint work_signature_registry_candidate_id_fkey foreign key \(candidate_id\)\s+references discovery_candidates\(id\) on delete restrict`).MatchString(migration)
+		if !candidateFK {
+			t.Error("work_signature_registry_candidate_id_fkey must be replaced with ON DELETE RESTRICT")
+		}
+		requireSQL(t, migration, "drop constraint if exists work_signature_registry_candidate_id_fkey")
+	})
+
+	t.Run("shared migration products and writer products are stable", func(t *testing.T) {
+		batches := tableDefinition(t, "migration_batches")
+		authority := tableDefinition(t, "product_writer_authority")
+		requireSQL(t, batches, "product in ('doctor','opportunities','shared')")
+		requireSQL(t, authority, "product in ('doctor','opportunities')")
+		if strings.Contains(authority, "'shared'") {
+			t.Error("shared migration infrastructure must not create a shared product writer")
+		}
+		requireSQL(t, migration,
+			"cross join (values ('doctor'), ('opportunities')) as supported(product)",
+		)
+	})
 }
