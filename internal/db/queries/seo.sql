@@ -470,6 +470,33 @@ where tc.project_id = sqlc.arg(project_id)
 order by tc.checked_at desc
 limit sqlc.arg(limit_rows);
 
+-- name: CountNewestTechnicalCheckRun :one
+with latest as (
+  select latest_run.id
+  from seo_runs latest_run
+  where latest_run.project_id = sqlc.arg(scoped_project_id) and latest_run.agent = 'seo_sync'
+  order by latest_run.started_at desc, latest_run.id desc
+  limit 1
+)
+select coalesce((select id::text from latest), '')::text as run_id,
+       count(tc.id)::bigint as check_count,
+       count(tc.id) filter (where
+         tc.http_status is null
+         or tc.raw_details ? 'error'
+         or coalesce(tc.raw_details->>'crawl_status', '') in ('partial', 'unchecked', 'skipped')
+       )::bigint as incomplete_check_count,
+       coalesce(max(sr.status), '')::text as run_status
+from seo_runs sr
+left join technical_checks tc on tc.run_id = sr.id and tc.project_id = sr.project_id
+where sr.id = (select id from latest);
+
+-- name: ListNewestTechnicalCheckRunPage :many
+select tc.* from technical_checks tc
+where tc.project_id = sqlc.arg(project_id)
+  and tc.run_id = sqlc.arg(run_id)
+order by tc.normalized_page_url, tc.id
+limit sqlc.arg(limit_rows) offset sqlc.arg(offset_rows);
+
 -- name: UpsertSEOOpportunity :one
 with opportunity_input as (
   select

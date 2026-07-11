@@ -216,6 +216,42 @@ func TestProductionTechnicalAndGEOEvidenceCanProduceCompleteHealthyCoverage(t *t
 	}
 }
 
+func TestLatestTechnicalCheckCrawlCompletenessControlsResolutionAndHealth(t *testing.T) {
+	serviceSource, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(serviceSource), "articles = articles[:1000]") {
+		t.Fatal("SEO Sync must not silently truncate the technical crawl at 1,000 articles")
+	}
+	if !latestTechnicalCheckCrawlComplete("ok", 1001, 1001, 0, false) {
+		t.Fatal("a successful 1,001-page crawl must be complete")
+	}
+	for _, tc := range []struct {
+		name     string
+		status   string
+		expected int64
+		loaded   int
+		failed   int64
+		bounded  bool
+	}{
+		{name: "partial page load", status: "ok", expected: 1001, loaded: 1000},
+		{name: "failed latest run", status: "error", expected: 1001, loaded: 1001},
+		{name: "failed page fetch", status: "ok", expected: 1001, loaded: 1001, failed: 1},
+		{name: "bounded latest run", status: "ok", expected: 10001, loaded: 10000, bounded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if latestTechnicalCheckCrawlComplete(tc.status, tc.expected, tc.loaded, tc.failed, tc.bounded) {
+				t.Fatal("incomplete latest crawl reported complete")
+			}
+			coverage := appendCrawlCompletenessCoverage(nil, false)
+			if doctorCoverageComplete(coverage) {
+				t.Fatal("incomplete latest crawl reported healthy coverage")
+			}
+		})
+	}
+}
+
 func fullyCheckedDoctorPage(url string, status *int32, present *string, links *int32, details map[string]any) db.TechnicalCheck {
 	raw, _ := json.Marshal(details)
 	return db.TechnicalCheck{PageUrl: url, NormalizedPageUrl: url, HttpStatus: status, CanonicalStatus: present, RobotsStatus: present, TitleStatus: present, MetaDescriptionStatus: present, H1Status: present, StructuredDataStatus: present, SitemapStatus: present, InternalLinkCount: links, RawDetails: raw}

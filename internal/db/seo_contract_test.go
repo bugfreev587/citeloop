@@ -118,6 +118,40 @@ func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
 	}
 }
 
+func TestNewestTechnicalCheckRunQueriesAreCompleteAndDeterministic(t *testing.T) {
+	countQuery := strings.ToLower(countNewestTechnicalCheckRun)
+	for _, want := range []string{
+		"latest_run.agent = 'seo_sync'",
+		"order by latest_run.started_at desc, latest_run.id desc",
+		"count(tc.id)",
+		"incomplete_check_count",
+		"raw_details ? 'error'",
+		"run_id",
+		"run_status",
+	} {
+		if !strings.Contains(countQuery, want) {
+			t.Fatalf("CountNewestTechnicalCheckRun missing %q in %s", want, countQuery)
+		}
+	}
+
+	pageQuery := strings.ToLower(listNewestTechnicalCheckRunPage)
+	for _, want := range []string{
+		"tc.run_id = $2",
+		"order by tc.normalized_page_url, tc.id",
+		"limit $4 offset $3",
+	} {
+		if !strings.Contains(pageQuery, want) {
+			t.Fatalf("ListNewestTechnicalCheckRunPage missing %q in %s", want, pageQuery)
+		}
+	}
+	if strings.Contains(pageQuery, "limit 100") {
+		t.Fatalf("latest Doctor crawl query must not truncate at 100: %s", pageQuery)
+	}
+	if strings.Contains(pageQuery, "from seo_runs latest") {
+		t.Fatalf("paginated reads must use the run ID selected by the aggregate: %s", pageQuery)
+	}
+}
+
 func TestSEODoctorSchemaDefinesRunsAndFindings(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0034_seo_doctor.sql"))
 	if err != nil {

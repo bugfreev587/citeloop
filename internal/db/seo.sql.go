@@ -226,6 +226,46 @@ func (q *Queries) CountManualSEODoctorRunsSince(ctx context.Context, arg CountMa
 	return column_1, err
 }
 
+const countNewestTechnicalCheckRun = `-- name: CountNewestTechnicalCheckRun :one
+with latest as (
+  select latest_run.id
+  from seo_runs latest_run
+  where latest_run.project_id = $1 and latest_run.agent = 'seo_sync'
+  order by latest_run.started_at desc, latest_run.id desc
+  limit 1
+)
+select coalesce((select id::text from latest), '')::text as run_id,
+       count(tc.id)::bigint as check_count,
+       count(tc.id) filter (where
+         tc.http_status is null
+         or tc.raw_details ? 'error'
+         or coalesce(tc.raw_details->>'crawl_status', '') in ('partial', 'unchecked', 'skipped')
+       )::bigint as incomplete_check_count,
+       coalesce(max(sr.status), '')::text as run_status
+from seo_runs sr
+left join technical_checks tc on tc.run_id = sr.id and tc.project_id = sr.project_id
+where sr.id = (select id from latest)
+`
+
+type CountNewestTechnicalCheckRunRow struct {
+	RunID                string `json:"run_id"`
+	CheckCount           int64  `json:"check_count"`
+	IncompleteCheckCount int64  `json:"incomplete_check_count"`
+	RunStatus            string `json:"run_status"`
+}
+
+func (q *Queries) CountNewestTechnicalCheckRun(ctx context.Context, scopedProjectID uuid.UUID) (CountNewestTechnicalCheckRunRow, error) {
+	row := q.db.QueryRow(ctx, countNewestTechnicalCheckRun, scopedProjectID)
+	var i CountNewestTechnicalCheckRunRow
+	err := row.Scan(
+		&i.RunID,
+		&i.CheckCount,
+		&i.IncompleteCheckCount,
+		&i.RunStatus,
+	)
+	return i, err
+}
+
 const countOpenSEOOpportunities = `-- name: CountOpenSEOOpportunities :one
 select count(*)::bigint from seo_opportunities
 where project_id = $1
@@ -2334,6 +2374,67 @@ func (q *Queries) ListMergedSiteChangeApplicationsForVerification(ctx context.Co
 			&i.PrClaimToken,
 			&i.PrClaimExpiresAt,
 			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNewestTechnicalCheckRunPage = `-- name: ListNewestTechnicalCheckRunPage :many
+select tc.id, tc.project_id, tc.run_id, tc.page_url, tc.normalized_page_url, tc.article_id, tc.http_status, tc.canonical_status, tc.robots_status, tc.title_status, tc.meta_description_status, tc.h1_status, tc.structured_data_status, tc.sitemap_status, tc.internal_link_count, tc.outbound_link_count, tc.content_hash, tc.unsafe_mdx_detected, tc.raw_details, tc.checked_at from technical_checks tc
+where tc.project_id = $1
+  and tc.run_id = $2
+order by tc.normalized_page_url, tc.id
+limit $4 offset $3
+`
+
+type ListNewestTechnicalCheckRunPageParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	RunID      uuid.UUID `json:"run_id"`
+	OffsetRows int32     `json:"offset_rows"`
+	LimitRows  int32     `json:"limit_rows"`
+}
+
+func (q *Queries) ListNewestTechnicalCheckRunPage(ctx context.Context, arg ListNewestTechnicalCheckRunPageParams) ([]TechnicalCheck, error) {
+	rows, err := q.db.Query(ctx, listNewestTechnicalCheckRunPage,
+		arg.ProjectID,
+		arg.RunID,
+		arg.OffsetRows,
+		arg.LimitRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TechnicalCheck
+	for rows.Next() {
+		var i TechnicalCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.PageUrl,
+			&i.NormalizedPageUrl,
+			&i.ArticleID,
+			&i.HttpStatus,
+			&i.CanonicalStatus,
+			&i.RobotsStatus,
+			&i.TitleStatus,
+			&i.MetaDescriptionStatus,
+			&i.H1Status,
+			&i.StructuredDataStatus,
+			&i.SitemapStatus,
+			&i.InternalLinkCount,
+			&i.OutboundLinkCount,
+			&i.ContentHash,
+			&i.UnsafeMdxDetected,
+			&i.RawDetails,
+			&i.CheckedAt,
 		); err != nil {
 			return nil, err
 		}

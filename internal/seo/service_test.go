@@ -3,11 +3,15 @@ package seo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/google/uuid"
 )
 
 func TestProviderCanAttemptAfterRecoverableStatus(t *testing.T) {
@@ -96,9 +100,8 @@ func TestCheckURLProducesCitationReadinessEvidenceForDoctor(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<!doctype html><html><head>
 <meta name="application-name" content="Cite Loop"><meta property="og:site_name" content="CiteLoop">
-</head><body><article><h1>Explain the existing Doctor product</h1><p>Doctor checks the existing live site for technical problems.</p>
-<p>Each finding keeps the source evidence needed for verification.</p>
-<a href="https://docs.example.org/evidence">Evidence source</a></article></body></html>`))
+</head><body><article><h1>Explain the existing Doctor product</h1><p>Doctor checks the existing live site for technical problems.<a rel="cite" href="https://docs.example.org/one">source</a></p>
+<p>Each finding keeps the source evidence needed for verification.<cite><a href="https://docs.example.org/two">source</a></cite></p></article></body></html>`))
 	}))
 	defer server.Close()
 
@@ -107,7 +110,7 @@ func TestCheckURLProducesCitationReadinessEvidenceForDoctor(t *testing.T) {
 	if !ok {
 		t.Fatalf("citation_readiness evidence = %#v", result.RawDetails["citation_readiness"])
 	}
-	if citation["supported_fact_extractability"] != "needs_optimization" || citation["source_association_status"] != "missing_visible_association" {
+	if citation["supported_fact_extractability"] != "needs_optimization" || citation["source_association_status"] != "associated" {
 		t.Fatalf("citation readiness = %#v", citation)
 	}
 	if citation["entity_name"] != "Cite Loop" || citation["canonical_entity_name"] != "CiteLoop" {
@@ -143,6 +146,211 @@ func TestCheckURLHonorsXRobotsTagNoindex(t *testing.T) {
 	if result.RobotsStatus != "noindex" {
 		t.Fatalf("robots status = %q, want noindex from X-Robots-Tag", result.RobotsStatus)
 	}
+}
+
+func TestRobotsStatusParsesDirectivesWithoutBodyFalsePositives(t *testing.T) {
+	if got := robotsStatus(`<html><body>This article discusses noindex.</body></html>`); got != "index" {
+		t.Fatalf("body text status = %q", got)
+	}
+	if got := robotsStatus(`<meta name="robots" content="noindex,follow">`); got != "noindex" {
+		t.Fatalf("meta status = %q", got)
+	}
+	if got := robotsStatus(`<html></html>`, "OtherBot: noindex"); got != "index" {
+		t.Fatalf("unrelated scoped header = %q", got)
+	}
+	if got := robotsStatus(`<html></html>`, "Googlebot: noindex"); got != "noindex" {
+		t.Fatalf("applicable scoped header = %q", got)
+	}
+	if got := robotsStatus(`<html></html>`, "Googlebot: index, OtherBot: noindex"); got != "index" {
+		t.Fatalf("mixed scoped header = %q", got)
+	}
+	if got := robotsStatus(`<meta name="robots" content="none">`); got != "noindex" {
+		t.Fatalf("robots none status = %q", got)
+	}
+}
+
+func TestCanonicalStatusValidatesExactSingleFinalURL(t *testing.T) {
+	base := "https://example.com/final"
+	for _, tc := range []struct{ name, html, want string }{
+		{"exact", `<link rel="canonical" href="https://example.com/final">`, "present"},
+		{"wrong", `<link rel="canonical" href="https://example.com/other">`, "mismatch"},
+		{"duplicate", `<link rel="canonical" href="https://example.com/final"><link rel="canonical" href="https://example.com/final">`, "multiple"},
+		{"malformed", `<link rel="canonical" href="://bad">`, "invalid"},
+		{"unsupported scheme", `<link rel="canonical" href="javascript:alert(1)">`, "invalid"},
+		{"missing", `<html></html>`, "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _ := classifyCanonical(tc.html, base, base, URLNormalizationConfig{})
+			if status != tc.want {
+				t.Fatalf("status=%q want=%q", status, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckURLValidatesCanonicalAgainstRedirectFinalURL(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sitemap.xml":
+			_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/final</loc></url></urlset>`))
+		case "/start":
+			http.Redirect(w, r, "/final", http.StatusFound)
+		case "/final":
+			_, _ = w.Write([]byte(`<html><head><link rel="canonical" href="` + server.URL + `/final"></head></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result := (Service{HTTPClient: server.Client()}).checkURL(context.Background(), server.URL+"/start", server.URL)
+	if result.CanonicalStatus != "present" {
+		t.Fatalf("canonical status = %q, want present against redirect final URL", result.CanonicalStatus)
+	}
+	if got := result.RawDetails["final_url"]; got != server.URL+"/final" {
+		t.Fatalf("final_url = %#v", got)
+	}
+}
+
+func TestCheckURLMarksTruncatedBodyAsPartial(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sitemap.xml" {
+			_, _ = w.Write([]byte(`<urlset></urlset>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<html><head><title>Large page</title></head><body>` + strings.Repeat("x", (1<<20)+1) + `</body></html>`))
+	}))
+	defer server.Close()
+
+	result := (Service{HTTPClient: server.Client()}).checkURL(context.Background(), server.URL+"/large", server.URL)
+	if got := result.RawDetails["crawl_status"]; got != "partial" {
+		t.Fatalf("crawl_status = %#v, want partial", got)
+	}
+}
+
+func TestSitemapInventoryTraversesIndexOnceAndReusesExactLocations(t *testing.T) {
+	requests := map[string]int{}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.URL.Path]++
+		switch r.URL.Path {
+		case "/sitemap.xml":
+			_, _ = w.Write([]byte(`<sitemapindex><sitemap><loc>` + server.URL + `/child.xml</loc></sitemap></sitemapindex>`))
+		case "/child.xml":
+			_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/a</loc></url><url><loc>` + server.URL + `/b</loc></url></urlset>`))
+		default:
+			_, _ = w.Write([]byte(`<html><head><title>Page title</title></head><body><h1>Page</h1></body></html>`))
+		}
+	}))
+	defer server.Close()
+	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL)
+	for _, page := range []string{server.URL + "/a", server.URL + "/b"} {
+		_ = (Service{HTTPClient: server.Client()}).checkURLWithSitemap(context.Background(), page, server.URL, URLNormalizationConfig{}, &inv)
+	}
+	if requests["/sitemap.xml"] != 1 || requests["/child.xml"] != 1 {
+		t.Fatalf("requests=%v", requests)
+	}
+	if !inv.Contains(server.URL+"/a") || inv.Contains(server.URL+"/ab") {
+		t.Fatalf("inventory=%+v", inv)
+	}
+}
+
+func TestSitemapInventoryStopsAtDocumentBound(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sitemap.xml" {
+			var body strings.Builder
+			body.WriteString("<sitemapindex>")
+			for i := 0; i < 40; i++ {
+				fmt.Fprintf(&body, "<sitemap><loc>%s/child-%d.xml</loc></sitemap>", server.URL, i)
+			}
+			body.WriteString("</sitemapindex>")
+			_, _ = w.Write([]byte(body.String()))
+			return
+		}
+		_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/page</loc></url></urlset>`))
+	}))
+	defer server.Close()
+
+	inv := loadSitemapInventory(context.Background(), server.Client(), server.URL)
+	if inv.Complete {
+		t.Fatal("bounded sitemap inventory must be marked incomplete")
+	}
+	if inv.Documents > 32 {
+		t.Fatalf("documents = %d, want at most 32", inv.Documents)
+	}
+}
+
+func TestSitemapInventoryRejectsCrossOriginRedirects(t *testing.T) {
+	externalRequests := 0
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		externalRequests++
+		_, _ = w.Write([]byte(`<urlset><url><loc>https://example.com/leaked</loc></url></urlset>`))
+	}))
+	defer external.Close()
+
+	property := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, external.URL+"/outside.xml", http.StatusFound)
+	}))
+	defer property.Close()
+
+	inv := loadSitemapInventory(context.Background(), property.Client(), property.URL)
+	if inv.Complete {
+		t.Fatal("cross-origin sitemap redirect must make inventory incomplete")
+	}
+	if externalRequests != 0 {
+		t.Fatalf("cross-origin redirect was followed %d times", externalRequests)
+	}
+	if len(inv.URLs) != 0 {
+		t.Fatalf("cross-origin sitemap URLs were accepted: %#v", inv.URLs)
+	}
+}
+
+func TestCitationEvidenceRequiresExplicitPropositionSourceAssociation(t *testing.T) {
+	unrelated := extractRepairMetadataFacts(`<article><p>This is a sufficiently long product proposition for testing.</p><p>Another sufficiently long product proposition for testing.</p><a href="https://source.example/doc">unrelated footer</a></article>`, mustParseURL(t, "https://example.com"))
+	if _, ok := unrelated["citation_readiness"]; ok {
+		t.Fatalf("unrelated link produced citation evidence: %#v", unrelated)
+	}
+	explicit := extractRepairMetadataFacts(`<article><p>First supported proposition is explicitly sourced.<a rel="cite" href="https://source.example/one">source</a></p><p>Second supported proposition is explicitly sourced.<cite><a href="https://source.example/two">source</a></cite></p></article>`, mustParseURL(t, "https://example.com"))
+	citation, ok := explicit["citation_readiness"].(map[string]any)
+	if !ok {
+		t.Fatalf("explicit evidence=%#v", explicit)
+	}
+	changes, _ := citation["source_association_changes"].([]any)
+	if len(changes) != 2 {
+		t.Fatalf("changes=%#v", citation["source_association_changes"])
+	}
+
+	plain := extractRepairMetadataFacts(`<article><p>A supported proposition has a source in the same proposition element.<a href="https://source.example/plain">source</a></p></article>`, mustParseURL(t, "https://example.com"))
+	plainCitation, ok := plain["citation_readiness"].(map[string]any)
+	if !ok {
+		t.Fatalf("same-proposition plain link produced no evidence: %#v", plain)
+	}
+	if got := plainCitation["source_association_status"]; got != "missing_visible_association" {
+		t.Fatalf("source association status = %#v", got)
+	}
+	page := fullyCheckedDoctorPage("https://example.com/page", nil, nil, nil, plain)
+	findings, growth := doctorFindingCandidatesAndGrowthFromChecks(uuid.New(), []db.TechnicalCheck{page})
+	if len(growth) != 0 {
+		t.Fatalf("association repair was routed to growth: %#v", growth)
+	}
+	foundAssociation := false
+	for _, finding := range findings {
+		foundAssociation = foundAssociation || finding.IssueType == "source_association"
+	}
+	if !foundAssociation {
+		t.Fatalf("same-proposition plain source emitted no association optimization: %#v", findings)
+	}
+}
+
+func mustParseURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestGA4IntegrationFailureRequiresReconnectForInsufficientScope(t *testing.T) {

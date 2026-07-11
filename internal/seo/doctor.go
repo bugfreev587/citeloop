@@ -211,10 +211,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return s.failDoctorRun(ctx, run, DoctorStageDiscovering, "Could not load SEO property.", err)
 	}
 	siteURL = prop.SiteUrl
-	checks, err := s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
-		ProjectID: run.ProjectID,
-		LimitRows: 100,
-	})
+	checks, crawlComplete, err := s.loadNewestTechnicalChecks(ctx, run.ProjectID)
 	if err != nil {
 		return s.failDoctorRun(ctx, run, DoctorStageDiscovering, "Could not read technical checks.", err)
 	}
@@ -231,10 +228,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		if _, err := s.Sync(ctx, run.ProjectID, siteURL); err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageCrawling, "Technical crawl failed.", err)
 		}
-		checks, err = s.Q.ListLatestTechnicalChecks(ctx, db.ListLatestTechnicalChecksParams{
-			ProjectID: run.ProjectID,
-			LimitRows: 100,
-		})
+		checks, crawlComplete, err = s.loadNewestTechnicalChecks(ctx, run.ProjectID)
 		if err != nil {
 			return s.failDoctorRun(ctx, run, DoctorStageChecking, "Could not read crawl results.", err)
 		}
@@ -299,13 +293,15 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		}
 		seenKeys = append(seenKeys, finding.FindingKey)
 	}
-	if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
-		ProjectID:  run.ProjectID,
-		RunID:      run.ID,
-		ResolvedAt: now,
-		ActiveKeys: seenKeys,
-	}); err != nil {
-		return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
+	if crawlComplete {
+		if err := s.Q.ResolveMissingSEODoctorFindings(ctx, db.ResolveMissingSEODoctorFindingsParams{
+			ProjectID:  run.ProjectID,
+			RunID:      run.ID,
+			ResolvedAt: now,
+			ActiveKeys: seenKeys,
+		}); err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not resolve previous Doctor findings.", err)
+		}
 	}
 
 	score := doctorHealthScore(candidates)
@@ -313,7 +309,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	issuesFound := int32(nonInfoIssueCount(candidates))
 	human := buildDoctorHumanReport(score, candidates, len(checks))
 	human.Status = doctorDisplayStatus(score, candidates)
-	coverage := buildDoctorHealthyCoverage(checks, crawlerAccess)
+	coverage := appendCrawlCompletenessCoverage(buildDoctorHealthyCoverage(checks, crawlerAccess), crawlComplete)
 	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
 		human.Status = "needs_attention"
 	}
@@ -339,6 +335,56 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 	return s.DoctorReport(ctx, run.ProjectID, run.ID)
+}
+
+func (s Service) loadNewestTechnicalChecks(ctx context.Context, projectID uuid.UUID) ([]db.TechnicalCheck, bool, error) {
+	const pageSize, maxChecks = 250, 10000
+	coverage, err := s.Q.CountNewestTechnicalCheckRun(ctx, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	runID, err := uuid.Parse(coverage.RunID)
+	if err != nil {
+		if coverage.CheckCount == 0 {
+			return []db.TechnicalCheck{}, false, nil
+		}
+		return nil, false, fmt.Errorf("invalid newest technical-check run ID: %w", err)
+	}
+	bounded := coverage.CheckCount > maxChecks
+	total := coverage.CheckCount
+	if bounded {
+		total = maxChecks
+	}
+	out := make([]db.TechnicalCheck, 0, total)
+	for offset := int32(0); int64(offset) < total; offset += pageSize {
+		rows, err := s.Q.ListNewestTechnicalCheckRunPage(ctx, db.ListNewestTechnicalCheckRunPageParams{ProjectID: projectID, RunID: runID, OffsetRows: offset, LimitRows: pageSize})
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, rows...)
+		if len(rows) == 0 {
+			break
+		}
+	}
+	return out, latestTechnicalCheckCrawlComplete(coverage.RunStatus, coverage.CheckCount, len(out), coverage.IncompleteCheckCount, bounded), nil
+}
+
+func latestTechnicalCheckCrawlComplete(runStatus string, expected int64, loaded int, incomplete int64, bounded bool) bool {
+	status := strings.ToLower(strings.TrimSpace(runStatus))
+	return !bounded && incomplete == 0 && (status == "ok" || status == "degraded") && expected == int64(loaded)
+}
+
+func appendCrawlCompletenessCoverage(coverage []doctorCheckCoverage, complete bool) []doctorCheckCoverage {
+	if complete {
+		return coverage
+	}
+	return append(coverage, doctorCheckCoverage{
+		Check:       "crawl_completeness",
+		CheckedURLs: []string{},
+		PassedURLs:  []string{},
+		FailedURLs:  []string{},
+		SkippedURLs: []string{"latest_crawl_incomplete_or_bounded"},
+	})
 }
 
 func (s Service) DoctorLatest(ctx context.Context, projectID uuid.UUID) (DoctorReport, error) {
@@ -649,8 +695,12 @@ func doctorBrokenFindingCandidatesFromChecks(projectID uuid.UUID, checks []db.Te
 		case "blocked", "disallowed":
 			out = append(out, base.withIssue("P0", "indexing", "robots_blocked", "Important pages blocked by robots rules cannot be crawled reliably.", "Allow crawlers to access pages that should appear in search."))
 		}
-		if observedMissing(check.CanonicalStatus) {
+		switch statusValue(check.CanonicalStatus) {
+		case "missing":
 			out = append(out, base.withIssue("P1", "canonical", "canonical_missing", "Missing canonical tags make URL consolidation less predictable.", "Add a self-referencing canonical URL or point to the preferred canonical page."))
+		case "mismatch", "invalid", "multiple":
+			issue := "canonical_" + statusValue(check.CanonicalStatus)
+			out = append(out, base.withIssue("P1", "canonical", issue, "The canonical declaration does not identify exactly one valid final URL.", "Set exactly one valid canonical URL matching the final production URL."))
 		}
 		if observedMissing(check.StructuredDataStatus) {
 			out = append(out, base.withIssue("P1", "structured_data", "structured_data_missing", "Missing structured data reduces eligibility for rich understanding and previews.", "Add valid JSON-LD schema for the page type."))
@@ -1051,7 +1101,7 @@ func buildDoctorHealthyCoverage(checks []db.TechnicalCheck, crawlerAccess []db.A
 			switch status {
 			case "present", "index", "indexed", "allowed", "included", "valid", "ok":
 				return "passed"
-			case "missing", "invalid", "noindex", "blocked", "disallowed":
+			case "missing", "invalid", "mismatch", "multiple", "noindex", "blocked", "disallowed":
 				return "failed"
 			default:
 				return "skipped"
