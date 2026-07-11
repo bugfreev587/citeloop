@@ -29,3 +29,39 @@ func TestDiscoveryWorkIdentitySchemaContract(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryQueriesExposeShadowFoundation(t *testing.T) {
+	queries := map[string]string{
+		"CreateDiscoveryShadowRun":                     createDiscoveryShadowRun,
+		"CompleteDiscoveryShadowRun":                   completeDiscoveryShadowRun,
+		"FailDiscoveryShadowRun":                       failDiscoveryShadowRun,
+		"UpsertDiscoveryCandidate":                     upsertDiscoveryCandidate,
+		"UpsertShadowWorkSignature":                    upsertShadowWorkSignature,
+		"EnsureWorkConflictBucket":                     ensureWorkConflictBucket,
+		"ListActiveSEOOpportunitiesForDiscoveryShadow": listActiveSEOOpportunitiesForDiscoveryShadow,
+		"ListActiveDoctorFindingsForDiscoveryShadow":   listActiveDoctorFindingsForDiscoveryShadow,
+		"GetLatestDiscoveryShadowRun":                  getLatestDiscoveryShadowRun,
+		"ListDiscoveryShadowSignaturesForRun":          listDiscoveryShadowSignaturesForRun,
+	}
+	for name, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			t.Fatalf("%s query should exist", name)
+		}
+	}
+	for name, query := range map[string]string{
+		"opportunities": listActiveSEOOpportunitiesForDiscoveryShadow,
+		"doctor":        listActiveDoctorFindingsForDiscoveryShadow,
+	} {
+		lower := strings.ToLower(query)
+		if !strings.Contains(lower, "project_id = $1") {
+			t.Fatalf("%s shadow inventory must be project scoped: %s", name, query)
+		}
+		if !strings.Contains(lower, "status in") {
+			t.Fatalf("%s shadow inventory must be status bounded: %s", name, query)
+		}
+	}
+	if strings.Contains(strings.ToLower(upsertDiscoveryCandidate), "update seo_opportunities") ||
+		strings.Contains(strings.ToLower(upsertDiscoveryCandidate), "update seo_doctor_findings") {
+		t.Fatal("shadow candidate upsert must not mutate legacy work rows")
+	}
+}
