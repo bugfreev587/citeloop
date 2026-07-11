@@ -62,6 +62,7 @@ func TestDiscoveryArbitrationQueries(t *testing.T) {
 		"GetConflictBucketSnapshot":      getConflictBucketSnapshot,
 		"ListSnapshotActiveSignatures":   listSnapshotActiveSignatures,
 		"ListSnapshotReviewMemory":       listSnapshotReviewMemory,
+		"ListSnapshotReviewAliases":      listSnapshotReviewAliases,
 		"ListDiscoveryReviewItems":       listDiscoveryReviewItems,
 		"GetDiscoveryReviewItem":         getDiscoveryReviewItem,
 		"UpsertWorkReviewMemory":         upsertWorkReviewMemory,
@@ -86,5 +87,11 @@ func TestDiscoveryArbitrationQueries(t *testing.T) {
 	memory := strings.ToLower(listSnapshotReviewMemory)
 	if !strings.Contains(memory, "active = true") || !strings.Contains(memory, "conflict_bucket_keys ?|") {
 		t.Fatalf("review-memory snapshot must be active and bucket scoped: %s", listSnapshotReviewMemory)
+	}
+	aliases := strings.ToLower(listSnapshotReviewAliases)
+	for _, want := range []string{"join work_review_memory", "active = true", "conflict_bucket_keys ?|"} {
+		if !strings.Contains(aliases, want) {
+			t.Fatalf("review-memory alias snapshot missing %q: %s", want, listSnapshotReviewAliases)
+		}
 	}
 }

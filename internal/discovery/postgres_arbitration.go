@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
@@ -95,7 +97,11 @@ func (s *PostgresArbitrationStore) ReadSnapshot(ctx context.Context, projectID u
 	if err != nil {
 		return BucketSnapshot{}, err
 	}
-	return snapshotFromDB(keys, buckets, active, memory)
+	aliases, err := s.q.ListSnapshotReviewAliases(ctx, db.ListSnapshotReviewAliasesParams{ProjectID: projectID, BucketKeys: keys})
+	if err != nil {
+		return BucketSnapshot{}, err
+	}
+	return snapshotFromDB(keys, buckets, active, memory, aliases)
 }
 
 func (s *PostgresArbitrationStore) LoadConfig(ctx context.Context, projectID uuid.UUID) (ArbitrationConfig, error) {
@@ -241,6 +247,10 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 	if err != nil {
 		return ReservationResult{}, staleOnNoRows(err)
 	}
+	lockedCandidateKeys, err := decodeCanonicalBucketKeys(lockedCandidate.ConflictBucketKeys)
+	if err != nil || !reflect.DeepEqual(lockedCandidateKeys, keys) {
+		return ReservationResult{}, ErrSnapshotStale
+	}
 	active, err := tq.ListSnapshotActiveSignatures(ctx, db.ListSnapshotActiveSignaturesParams{
 		ProjectID: prepared.ProjectID, BucketKeys: keys,
 	})
@@ -253,7 +263,13 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 	if err != nil {
 		return ReservationResult{}, err
 	}
-	snapshot, err := snapshotFromDB(keys, lockedBuckets, active, memory)
+	aliases, err := tq.ListSnapshotReviewAliases(ctx, db.ListSnapshotReviewAliasesParams{
+		ProjectID: prepared.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReservationResult{}, err
+	}
+	snapshot, err := snapshotFromDB(keys, lockedBuckets, active, memory, aliases)
 	if err != nil {
 		return ReservationResult{}, ErrSnapshotStale
 	}
@@ -320,11 +336,268 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 	return ReservationResult{SignatureID: signature.ID, Work: work}, nil
 }
 
+func (s *PostgresArbitrationStore) ResolveReviewAtomically(ctx context.Context, request ReviewResolutionRequest) (result ReviewResolutionResult, resultErr error) {
+	if s == nil || s.pool == nil {
+		return ReviewResolutionResult{}, errors.New("database pool unavailable")
+	}
+	keys, err := canonicalBucketKeys(mapKeys(request.ExpectedBucketVersions))
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	tq := db.New(tx)
+
+	lockedBuckets, err := tq.LockConflictBucketsForReserve(ctx, db.LockConflictBucketsForReserveParams{
+		ProjectID: request.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, staleOnConflict(err)
+	}
+	reviewItem, err := tq.LockDiscoveryReviewItemForResolve(ctx, db.LockDiscoveryReviewItemForResolveParams{
+		ProjectID: request.ProjectID, CandidateID: request.CandidateID,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, staleOnNoRows(err)
+	}
+	lockedCandidate, err := tq.LockDiscoveryCandidateForReserve(ctx, db.LockDiscoveryCandidateForReserveParams{
+		ProjectID: request.ProjectID, CandidateID: request.CandidateID,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, staleOnNoRows(err)
+	}
+	active, err := tq.ListSnapshotActiveSignatures(ctx, db.ListSnapshotActiveSignaturesParams{
+		ProjectID: request.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	memoryRows, err := tq.ListSnapshotReviewMemory(ctx, db.ListSnapshotReviewMemoryParams{
+		ProjectID: request.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	aliasRows, err := tq.ListSnapshotReviewAliases(ctx, db.ListSnapshotReviewAliasesParams{
+		ProjectID: request.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	snapshot, err := snapshotFromDB(keys, lockedBuckets, active, memoryRows, aliasRows)
+	if err != nil {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	var itemVersions map[string]int64
+	if err := unmarshalJSON(reviewItem.ExpectedBucketVersions, &itemVersions); err != nil {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	if reviewItem.State == "resolved" || reviewItem.ExpectedCandidateVersion != request.ExpectedCandidateVersion ||
+		lockedCandidate.CandidateVersion != request.ExpectedCandidateVersion ||
+		!reflect.DeepEqual(itemVersions, request.ExpectedBucketVersions) ||
+		!reflect.DeepEqual(snapshot.Versions, request.ExpectedBucketVersions) {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	candidate, err := arbitrationCandidateFromDB(lockedCandidate)
+	if err != nil || candidate.Identity.ExactSignatureHash == "" || len(candidate.Identity.SignaturePayload) == 0 {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	candidateKeys, err := canonicalBucketKeys(candidate.Identity.ConflictBucketKeys)
+	if err != nil || !reflect.DeepEqual(candidateKeys, keys) {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	snapshotFingerprint, err := buildSnapshotFingerprint(snapshot)
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	semantic, err := semanticFingerprint(candidate.Identity, "manual-review")
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	owner := firstValidOwner(request.Owner, ownerForCandidate(candidate.Candidate))
+	decisionKind, status := manualResolutionDecision(request.Action)
+	prepared := PreparedDecision{
+		ProjectID: request.ProjectID, CandidateID: request.CandidateID,
+		CandidateVersion: request.ExpectedCandidateVersion,
+		Disposition:      DispositionManualResolution, Decision: decisionKind, Owner: owner,
+		OverlapWorkIDs: request.OverlapWorkIDs, ComparedWorkIDs: request.OverlapWorkIDs,
+		Reason: request.Reason, Confidence: 1, SemanticFingerprint: semantic,
+		ExpectedBucketVersions: cloneVersions(request.ExpectedBucketVersions),
+		SnapshotFingerprint:    snapshotFingerprint, ExactSignatureHash: candidate.Identity.ExactSignatureHash,
+		SignatureVersion:    candidate.Candidate.SignatureVersion,
+		EvidenceFingerprint: candidate.Candidate.EvidenceFingerprint,
+		RulesVersion:        ArbitrationRulesVersionV1, PromptVersion: "manual-review-v1",
+		Provider: "manual", Model: "manual", Status: status,
+	}
+	params, err := createDecisionParams(prepared)
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	decisionRow, err := tq.CreateArbitrationDecision(ctx, params)
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	result = ReviewResolutionResult{DecisionID: decisionRow.ID, Action: request.Action,
+		Reopened: request.Action == ReviewActionReopenDoctor || request.Action == ReviewActionReopenGrowth}
+
+	if isReviewMemoryAction(request.Action) {
+		memoryID, memoryErr := persistReviewMemoryInTransaction(ctx, tq, request, candidate, snapshot, semantic)
+		if memoryErr != nil {
+			return ReviewResolutionResult{}, memoryErr
+		}
+		result.ReviewMemoryID = memoryID
+	}
+	resolution, err := json.Marshal(struct {
+		Action         ReviewResolutionAction `json:"action"`
+		Owner          Owner                  `json:"owner"`
+		Reason         string                 `json:"reason"`
+		OverlapWorkIDs []uuid.UUID            `json:"overlap_work_ids"`
+		DecisionID     uuid.UUID              `json:"arbitration_decision_id"`
+	}{request.Action, owner, request.Reason, request.OverlapWorkIDs, decisionRow.ID})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	actor := request.ResolvedBy
+	if _, err := tq.ResolveDiscoveryReviewItem(ctx, db.ResolveDiscoveryReviewItemParams{
+		Resolution: resolution, ResolvedBy: &actor, ArbitrationDecisionID: nullableUUID(decisionRow.ID),
+		ProjectID: request.ProjectID, CandidateID: request.CandidateID,
+	}); err != nil {
+		return ReviewResolutionResult{}, staleOnNoRows(err)
+	}
+	updatedBuckets, err := tq.IncrementConflictBucketVersions(ctx, db.IncrementConflictBucketVersionsParams{
+		ProjectID: request.ProjectID, BucketKeys: keys,
+	})
+	if err != nil {
+		return ReviewResolutionResult{}, err
+	}
+	if len(updatedBuckets) != len(keys) {
+		return ReviewResolutionResult{}, ErrSnapshotStale
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ReviewResolutionResult{}, staleOnConflict(err)
+	}
+	return result, nil
+}
+
 func (s *PostgresArbitrationStore) requireQueries() error {
 	if s == nil || s.q == nil {
 		return errors.New("database queries unavailable")
 	}
 	return nil
+}
+
+func manualResolutionDecision(action ReviewResolutionAction) (DecisionKind, ArbitrationStatus) {
+	switch action {
+	case ReviewActionReopenDoctor, ReviewActionReopenGrowth:
+		return DecisionCreate, ArbitrationStatusPrepared
+	case ReviewActionMergeEvidence:
+		return DecisionMergeEvidence, ArbitrationStatusResolved
+	case ReviewActionBlockOnOtherLine:
+		return DecisionBlockOnOtherLine, ArbitrationStatusResolved
+	default:
+		return DecisionSuppress, ArbitrationStatusResolved
+	}
+}
+
+func persistReviewMemoryInTransaction(ctx context.Context, q *db.Queries, request ReviewResolutionRequest, candidate ArbitrationCandidate, snapshot BucketSnapshot, semantic string) (uuid.UUID, error) {
+	keys, err := canonicalBucketKeys(candidate.Identity.ConflictBucketKeys)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	bucketJSON, err := json.Marshal(keys)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	scope, err := json.Marshal(struct {
+		Owner          Owner       `json:"owner"`
+		Reason         string      `json:"reason"`
+		OverlapWorkIDs []uuid.UUID `json:"overlap_work_ids"`
+	}{Owner: firstValidOwner(request.Owner, ownerForCandidate(candidate.Candidate)), Reason: request.Reason, OverlapWorkIDs: request.OverlapWorkIDs})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	decidedAt := time.Now().UTC()
+	snoozedUntil := pgtype.Timestamptz{}
+	if request.Action == ReviewActionSnooze {
+		snoozedUntil = pgtype.Timestamptz{Time: request.SnoozedUntil.UTC(), Valid: true}
+	}
+	prior := priorReviewMemoryForSignature(snapshot.ReviewMemory, candidate.Identity.SignaturePayload)
+	if prior != nil && prior.ExactSignatureHash != candidate.Identity.ExactSignatureHash {
+		if _, err := q.DeactivateWorkReviewMemory(ctx, db.DeactivateWorkReviewMemoryParams{
+			ProjectID: request.ProjectID, ID: prior.ID,
+		}); err != nil {
+			return uuid.Nil, staleOnNoRows(err)
+		}
+	}
+	memory, err := q.UpsertWorkReviewMemory(ctx, db.UpsertWorkReviewMemoryParams{
+		ProjectID: request.ProjectID, CandidateID: nullableUUID(request.CandidateID),
+		ExactSignatureHashAtDecision:  candidate.Identity.ExactSignatureHash,
+		SemanticFingerprintAtDecision: semantic, SignaturePayload: candidate.Identity.SignaturePayload,
+		ConflictBucketKeys: bucketJSON, SignatureVersion: candidate.Candidate.SignatureVersion,
+		Decision: string(request.Action), DecisionScope: scope,
+		EvidenceFingerprintAtDecision: candidate.Candidate.EvidenceFingerprint,
+		SnoozedUntil:                  snoozedUntil, MaterialChangePolicyVersion: MaterialChangePolicyVersionV1,
+		DecidedBy: request.ResolvedBy, DecidedAt: pgtype.Timestamptz{Time: decidedAt, Valid: true}, Active: true,
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if prior != nil && prior.ExactSignatureHash != candidate.Identity.ExactSignatureHash {
+		aliases := []ReviewMemoryAliasSnapshot{{
+			ReviewMemoryID: prior.ID, ExactSignatureHash: prior.ExactSignatureHash,
+			SemanticFingerprint: prior.SemanticFingerprint, SignatureVersion: prior.SignatureVersion,
+		}}
+		for _, alias := range snapshot.ReviewAliases {
+			if alias.ReviewMemoryID == prior.ID {
+				aliases = append(aliases, alias)
+			}
+		}
+		for _, alias := range aliases {
+			if alias.ExactSignatureHash == "" || alias.SignatureVersion == "" || alias.ExactSignatureHash == candidate.Identity.ExactSignatureHash {
+				continue
+			}
+			if _, err := q.UpsertWorkSignatureAlias(ctx, db.UpsertWorkSignatureAliasParams{
+				ProjectID: request.ProjectID, ReviewMemoryID: memory.ID,
+				AliasExactSignatureHash:  alias.ExactSignatureHash,
+				AliasSemanticFingerprint: alias.SemanticFingerprint,
+				AliasSignatureVersion:    alias.SignatureVersion,
+			}); err != nil {
+				return uuid.Nil, err
+			}
+		}
+	}
+	return memory.ID, nil
+}
+
+func priorReviewMemoryForSignature(memories []ReviewMemorySnapshot, signaturePayload json.RawMessage) *ReviewMemorySnapshot {
+	for i := range memories {
+		if memories[i].Active && signatureEquivalentAcrossVersion(memories[i].SignaturePayload, signaturePayload) {
+			return &memories[i]
+		}
+	}
+	return nil
+}
+
+func signatureEquivalentAcrossVersion(left, right json.RawMessage) bool {
+	canonical := func(raw json.RawMessage) []byte {
+		var value map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+			return nil
+		}
+		delete(value, "signature_version")
+		result, _ := json.Marshal(value)
+		return result
+	}
+	leftCanonical := canonical(left)
+	rightCanonical := canonical(right)
+	return len(leftCanonical) > 0 && bytes.Equal(leftCanonical, rightCanonical)
 }
 
 func arbitrationCandidateFromDB(row db.DiscoveryCandidate) (ArbitrationCandidate, error) {
@@ -378,7 +651,7 @@ func arbitrationCandidateFromDB(row db.DiscoveryCandidate) (ArbitrationCandidate
 	}, nil
 }
 
-func snapshotFromDB(keys []string, buckets []db.WorkConflictBucket, active []db.WorkSignatureRegistry, memory []db.WorkReviewMemory) (BucketSnapshot, error) {
+func snapshotFromDB(keys []string, buckets []db.WorkConflictBucket, active []db.WorkSignatureRegistry, memory []db.WorkReviewMemory, aliases []db.WorkSignatureAlias) (BucketSnapshot, error) {
 	versions := make(map[string]int64, len(buckets))
 	for _, bucket := range buckets {
 		versions[bucket.BucketKey] = bucket.BucketVersion
@@ -407,6 +680,13 @@ func snapshotFromDB(keys []string, buckets []db.WorkConflictBucket, active []db.
 			SemanticFingerprint: row.SemanticFingerprintAtDecision, SignaturePayload: row.SignaturePayload,
 			EvidenceFingerprint: row.EvidenceFingerprintAtDecision, SignatureVersion: row.SignatureVersion,
 			SnoozedUntil: timestamp(row.SnoozedUntil), Active: row.Active,
+		})
+	}
+	result.ReviewAliases = make([]ReviewMemoryAliasSnapshot, 0, len(aliases))
+	for _, row := range aliases {
+		result.ReviewAliases = append(result.ReviewAliases, ReviewMemoryAliasSnapshot{
+			ReviewMemoryID: row.ReviewMemoryID, ExactSignatureHash: row.AliasExactSignatureHash,
+			SemanticFingerprint: row.AliasSemanticFingerprint, SignatureVersion: row.AliasSignatureVersion,
 		})
 	}
 	return result, nil
@@ -516,6 +796,14 @@ func mapKeys(values map[string]int64) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func decodeCanonicalBucketKeys(raw json.RawMessage) ([]string, error) {
+	var keys []string
+	if err := unmarshalJSON(raw, &keys); err != nil {
+		return nil, err
+	}
+	return canonicalBucketKeys(keys)
 }
 
 func unmarshalJSON(raw json.RawMessage, destination any) error {

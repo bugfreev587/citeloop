@@ -54,6 +54,7 @@ type Querier interface {
 	CreateSEOWatchlistItem(ctx context.Context, arg CreateSEOWatchlistItemParams) (SeoWatchlistItem, error)
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateProfiles(ctx context.Context, projectID uuid.UUID) error
+	DeactivateWorkReviewMemory(ctx context.Context, arg DeactivateWorkReviewMemoryParams) (WorkReviewMemory, error)
 	DeleteInventoryItem(ctx context.Context, id uuid.UUID) error
 	DeleteProject(ctx context.Context, id uuid.UUID) (Project, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (Project, error)
@@ -210,6 +211,7 @@ type Querier interface {
 	ListSafeModeEvents(ctx context.Context, arg ListSafeModeEventsParams) ([]SafeModeEvent, error)
 	ListSearchQueryOpportunityRollups(ctx context.Context, arg ListSearchQueryOpportunityRollupsParams) ([]ListSearchQueryOpportunityRollupsRow, error)
 	ListSnapshotActiveSignatures(ctx context.Context, arg ListSnapshotActiveSignaturesParams) ([]WorkSignatureRegistry, error)
+	ListSnapshotReviewAliases(ctx context.Context, arg ListSnapshotReviewAliasesParams) ([]WorkSignatureAlias, error)
 	ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshotReviewMemoryParams) ([]WorkReviewMemory, error)
 	ListStalePageUpdateDrafts(ctx context.Context, arg ListStalePageUpdateDraftsParams) ([]PageUpdateDraft, error)
 	ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error)
@@ -218,6 +220,7 @@ type Querier interface {
 	LockArbitrationDecisionForReserve(ctx context.Context, arg LockArbitrationDecisionForReserveParams) (DiscoveryArbitrationDecision, error)
 	LockConflictBucketsForReserve(ctx context.Context, arg LockConflictBucketsForReserveParams) ([]WorkConflictBucket, error)
 	LockDiscoveryCandidateForReserve(ctx context.Context, arg LockDiscoveryCandidateForReserveParams) (DiscoveryCandidate, error)
+	LockDiscoveryReviewItemForResolve(ctx context.Context, arg LockDiscoveryReviewItemForResolveParams) (DiscoveryReviewItem, error)
 	MarkArbitrationDecisionReserved(ctx context.Context, arg MarkArbitrationDecisionReservedParams) (DiscoveryArbitrationDecision, error)
 	MarkContentActionDraftReady(ctx context.Context, arg MarkContentActionDraftReadyParams) (ContentAction, error)
 	MarkContentActionMeasuringForDraftArticle(ctx context.Context, arg MarkContentActionMeasuringForDraftArticleParams) (ContentAction, error)
@@ -258,6 +261,7 @@ type Querier interface {
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
+	ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error
 	RetryNotificationDelivery(ctx context.Context, arg RetryNotificationDeliveryParams) (NotificationDelivery, error)
 	RetryPublishArticle(ctx context.Context, arg RetryPublishArticleParams) (Article, error)

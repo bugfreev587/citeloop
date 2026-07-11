@@ -234,6 +234,15 @@ where project_id = sqlc.arg(project_id)
   and conflict_bucket_keys ?| sqlc.arg(bucket_keys)::text[]
 order by id asc;
 
+-- name: ListSnapshotReviewAliases :many
+select a.* from work_signature_aliases a
+join work_review_memory m on m.id = a.review_memory_id
+where a.project_id = sqlc.arg(project_id)
+  and m.project_id = sqlc.arg(project_id)
+  and m.active = true
+  and m.conflict_bucket_keys ?| sqlc.arg(bucket_keys)::text[]
+order by a.id asc;
+
 -- name: GetDiscoveryCandidateForReview :one
 select * from discovery_candidates
 where project_id = sqlc.arg(project_id)
@@ -386,3 +395,31 @@ returning *;
 -- name: GetDiscoveryArbitrationConfig :one
 select * from discovery_arbitration_configs
 where project_id = sqlc.arg(project_id);
+
+-- name: LockDiscoveryReviewItemForResolve :one
+select * from discovery_review_items
+where project_id = sqlc.arg(project_id)
+  and candidate_id = sqlc.arg(candidate_id)
+for update;
+
+-- name: ResolveDiscoveryReviewItem :one
+update discovery_review_items set
+  state = 'resolved',
+  resolution = sqlc.arg(resolution)::jsonb,
+  resolved_by = sqlc.arg(resolved_by),
+  resolved_at = now(),
+  arbitration_decision_id = sqlc.arg(arbitration_decision_id),
+  updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and candidate_id = sqlc.arg(candidate_id)
+  and state <> 'resolved'
+returning *;
+
+-- name: DeactivateWorkReviewMemory :one
+update work_review_memory set
+  active = false,
+  updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(id)
+  and active = true
+returning *;

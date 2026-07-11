@@ -281,6 +281,48 @@ func (q *Queries) CreateDiscoveryShadowRun(ctx context.Context, arg CreateDiscov
 	return i, err
 }
 
+const deactivateWorkReviewMemory = `-- name: DeactivateWorkReviewMemory :one
+update work_review_memory set
+  active = false,
+  updated_at = now()
+where project_id = $1
+  and id = $2
+  and active = true
+returning id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at
+`
+
+type DeactivateWorkReviewMemoryParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) DeactivateWorkReviewMemory(ctx context.Context, arg DeactivateWorkReviewMemoryParams) (WorkReviewMemory, error) {
+	row := q.db.QueryRow(ctx, deactivateWorkReviewMemory, arg.ProjectID, arg.ID)
+	var i WorkReviewMemory
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.ExactSignatureHashAtDecision,
+		&i.SemanticFingerprintAtDecision,
+		&i.SignaturePayload,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Decision,
+		&i.DecisionScope,
+		&i.EvidenceFingerprintAtDecision,
+		&i.SnoozedUntil,
+		&i.MaterialChangePolicyVersion,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteShadowWorkSignatureForCandidate = `-- name: DeleteShadowWorkSignatureForCandidate :exec
 delete from work_signature_registry
 where project_id = $1
@@ -1071,6 +1113,49 @@ func (q *Queries) ListSnapshotActiveSignatures(ctx context.Context, arg ListSnap
 	return items, nil
 }
 
+const listSnapshotReviewAliases = `-- name: ListSnapshotReviewAliases :many
+select a.id, a.project_id, a.review_memory_id, a.alias_exact_signature_hash, a.alias_semantic_fingerprint, a.alias_signature_version, a.created_at from work_signature_aliases a
+join work_review_memory m on m.id = a.review_memory_id
+where a.project_id = $1
+  and m.project_id = $1
+  and m.active = true
+  and m.conflict_bucket_keys ?| $2::text[]
+order by a.id asc
+`
+
+type ListSnapshotReviewAliasesParams struct {
+	ProjectID  uuid.UUID `json:"project_id"`
+	BucketKeys []string  `json:"bucket_keys"`
+}
+
+func (q *Queries) ListSnapshotReviewAliases(ctx context.Context, arg ListSnapshotReviewAliasesParams) ([]WorkSignatureAlias, error) {
+	rows, err := q.db.Query(ctx, listSnapshotReviewAliases, arg.ProjectID, arg.BucketKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkSignatureAlias
+	for rows.Next() {
+		var i WorkSignatureAlias
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ReviewMemoryID,
+			&i.AliasExactSignatureHash,
+			&i.AliasSemanticFingerprint,
+			&i.AliasSignatureVersion,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSnapshotReviewMemory = `-- name: ListSnapshotReviewMemory :many
 select id, project_id, candidate_id, work_signature_id, exact_signature_hash_at_decision, semantic_fingerprint_at_decision, signature_payload, conflict_bucket_keys, signature_version, decision, decision_scope, evidence_fingerprint_at_decision, snoozed_until, material_change_policy_version, decided_by, decided_at, active, created_at, updated_at from work_review_memory
 where project_id = $1
@@ -1259,6 +1344,42 @@ func (q *Queries) LockDiscoveryCandidateForReserve(ctx context.Context, arg Lock
 	return i, err
 }
 
+const lockDiscoveryReviewItemForResolve = `-- name: LockDiscoveryReviewItemForResolve :one
+select id, project_id, candidate_id, state, reason, assignee, expected_bucket_versions, resolution, resolved_by, resolved_at, created_at, updated_at, expected_candidate_version, internal_owner, due_at, arbitration_decision_id from discovery_review_items
+where project_id = $1
+  and candidate_id = $2
+for update
+`
+
+type LockDiscoveryReviewItemForResolveParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	CandidateID uuid.UUID `json:"candidate_id"`
+}
+
+func (q *Queries) LockDiscoveryReviewItemForResolve(ctx context.Context, arg LockDiscoveryReviewItemForResolveParams) (DiscoveryReviewItem, error) {
+	row := q.db.QueryRow(ctx, lockDiscoveryReviewItemForResolve, arg.ProjectID, arg.CandidateID)
+	var i DiscoveryReviewItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.State,
+		&i.Reason,
+		&i.Assignee,
+		&i.ExpectedBucketVersions,
+		&i.Resolution,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ExpectedCandidateVersion,
+		&i.InternalOwner,
+		&i.DueAt,
+		&i.ArbitrationDecisionID,
+	)
+	return i, err
+}
+
 const markArbitrationDecisionReserved = `-- name: MarkArbitrationDecisionReserved :one
 update discovery_arbitration_decisions
 set status = 'reserved',
@@ -1346,6 +1467,58 @@ func (q *Queries) MaterializeConflictBuckets(ctx context.Context, arg Materializ
 		return nil, err
 	}
 	return items, nil
+}
+
+const resolveDiscoveryReviewItem = `-- name: ResolveDiscoveryReviewItem :one
+update discovery_review_items set
+  state = 'resolved',
+  resolution = $1::jsonb,
+  resolved_by = $2,
+  resolved_at = now(),
+  arbitration_decision_id = $3,
+  updated_at = now()
+where project_id = $4
+  and candidate_id = $5
+  and state <> 'resolved'
+returning id, project_id, candidate_id, state, reason, assignee, expected_bucket_versions, resolution, resolved_by, resolved_at, created_at, updated_at, expected_candidate_version, internal_owner, due_at, arbitration_decision_id
+`
+
+type ResolveDiscoveryReviewItemParams struct {
+	Resolution            json.RawMessage `json:"resolution"`
+	ResolvedBy            *string         `json:"resolved_by"`
+	ArbitrationDecisionID pgtype.UUID     `json:"arbitration_decision_id"`
+	ProjectID             uuid.UUID       `json:"project_id"`
+	CandidateID           uuid.UUID       `json:"candidate_id"`
+}
+
+func (q *Queries) ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error) {
+	row := q.db.QueryRow(ctx, resolveDiscoveryReviewItem,
+		arg.Resolution,
+		arg.ResolvedBy,
+		arg.ArbitrationDecisionID,
+		arg.ProjectID,
+		arg.CandidateID,
+	)
+	var i DiscoveryReviewItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.State,
+		&i.Reason,
+		&i.Assignee,
+		&i.ExpectedBucketVersions,
+		&i.Resolution,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ExpectedCandidateVersion,
+		&i.InternalOwner,
+		&i.DueAt,
+		&i.ArbitrationDecisionID,
+	)
+	return i, err
 }
 
 const updateArbitrationDecisionStatus = `-- name: UpdateArbitrationDecisionStatus :one

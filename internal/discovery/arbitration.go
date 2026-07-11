@@ -30,6 +30,7 @@ const (
 	DispositionReviewMemory            ArbitrationDisposition = "review_memory"
 	DispositionProviderFailure         ArbitrationDisposition = "provider_failure"
 	DispositionIncompleteSpecification ArbitrationDisposition = "incomplete_specification"
+	DispositionManualResolution        ArbitrationDisposition = "manual_resolution"
 )
 
 type ArbitrationStatus string
@@ -37,6 +38,7 @@ type ArbitrationStatus string
 const (
 	ArbitrationStatusPrepared ArbitrationStatus = "prepared"
 	ArbitrationStatusHeld     ArbitrationStatus = "held"
+	ArbitrationStatusResolved ArbitrationStatus = "resolved"
 )
 
 type ArbitrationCandidate struct {
@@ -69,10 +71,18 @@ type ReviewMemorySnapshot struct {
 	Active              bool
 }
 
+type ReviewMemoryAliasSnapshot struct {
+	ReviewMemoryID      uuid.UUID
+	ExactSignatureHash  string
+	SemanticFingerprint string
+	SignatureVersion    string
+}
+
 type BucketSnapshot struct {
-	Versions     map[string]int64
-	ActiveWorks  []SnapshotWork
-	ReviewMemory []ReviewMemorySnapshot
+	Versions      map[string]int64
+	ActiveWorks   []SnapshotWork
+	ReviewMemory  []ReviewMemorySnapshot
+	ReviewAliases []ReviewMemoryAliasSnapshot
 }
 
 type ArbitrationConfig struct {
@@ -235,7 +245,7 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		return s.store.SavePreparedDecision(ctx, base)
 	}
 
-	if memory := exactReviewMemory(snapshot.ReviewMemory, candidate); memory != nil {
+	if memory := exactReviewMemory(snapshot.ReviewMemory, candidate, s.now().UTC()); memory != nil {
 		base.Disposition = DispositionReviewMemory
 		base.Decision = DecisionSuppress
 		base.OverlapWorkIDs = []uuid.UUID{memory.ID}
@@ -243,7 +253,19 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		base.Reason = "active review memory applies to the unchanged work evidence"
 		base.Confidence = 1
 		base.SemanticFingerprint = memory.SemanticFingerprint
-		base.Status = ArbitrationStatusPrepared
+		base.Status = ArbitrationStatusResolved
+		return s.store.SavePreparedDecision(ctx, base)
+	}
+
+	if memory := exactReviewMemoryAlias(snapshot, candidate, s.now().UTC()); memory != nil {
+		base.Disposition = DispositionReviewMemory
+		base.Decision = DecisionSuppress
+		base.OverlapWorkIDs = []uuid.UUID{memory.ID}
+		base.ComparedWorkIDs = []uuid.UUID{memory.ID}
+		base.Reason = "review memory alias applies to the unchanged work evidence"
+		base.Confidence = 1
+		base.SemanticFingerprint = memory.SemanticFingerprint
+		base.Status = ArbitrationStatusResolved
 		return s.store.SavePreparedDecision(ctx, base)
 	}
 
@@ -328,6 +350,21 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		base.Status = ArbitrationStatusHeld
 		return s.persistHold(ctx, candidate, snapshot, base)
 	}
+	if decision.Decision == DecisionSuppress {
+		hasMemory, onlyMemory, allApply := reviewMemoryOverlapPolicy(snapshot, decision.Overlaps, candidate, s.now().UTC())
+		if hasMemory && onlyMemory && allApply {
+			base.Disposition = DispositionReviewMemory
+			base.Status = ArbitrationStatusResolved
+			return s.store.SavePreparedDecision(ctx, base)
+		}
+		if hasMemory && onlyMemory {
+			base.Disposition = DispositionReviewMemory
+			base.Decision = DecisionCreate
+			base.Reason = "versioned material evidence change reopens previously reviewed work"
+			base.Status = ArbitrationStatusPrepared
+			return s.store.SavePreparedDecision(ctx, base)
+		}
+	}
 	if decision.Decision == DecisionSuppress && (!config.LaunchReady || !config.AutomaticSuppressionEnabled) {
 		base.Decision = DecisionHold
 		base.Reason = "semantic suppression is disabled until the launch evaluation gate passes"
@@ -411,21 +448,70 @@ func exactActiveWork(works []SnapshotWork, hash string) *SnapshotWork {
 	return nil
 }
 
-func exactReviewMemory(memories []ReviewMemorySnapshot, candidate ArbitrationCandidate) *ReviewMemorySnapshot {
+func exactReviewMemory(memories []ReviewMemorySnapshot, candidate ArbitrationCandidate, now time.Time) *ReviewMemorySnapshot {
 	for i := range memories {
 		memory := &memories[i]
 		if !memory.Active || memory.ExactSignatureHash != candidate.Identity.ExactSignatureHash {
 			continue
 		}
-		if memory.EvidenceFingerprint != candidate.Candidate.EvidenceFingerprint {
-			continue
-		}
-		if memory.Decision == "snoozed" && !memory.SnoozedUntil.IsZero() && memory.SnoozedUntil.Before(time.Now()) {
+		if !reviewMemoryApplies(*memory, candidate, now) {
 			continue
 		}
 		return memory
 	}
 	return nil
+}
+
+func exactReviewMemoryAlias(snapshot BucketSnapshot, candidate ArbitrationCandidate, now time.Time) *ReviewMemorySnapshot {
+	for _, alias := range snapshot.ReviewAliases {
+		if alias.ExactSignatureHash != candidate.Identity.ExactSignatureHash {
+			continue
+		}
+		for i := range snapshot.ReviewMemory {
+			memory := &snapshot.ReviewMemory[i]
+			if memory.ID != alias.ReviewMemoryID || !memory.Active {
+				continue
+			}
+			if !reviewMemoryApplies(*memory, candidate, now) {
+				continue
+			}
+			return memory
+		}
+	}
+	return nil
+}
+
+func reviewMemoryApplies(memory ReviewMemorySnapshot, candidate ArbitrationCandidate, now time.Time) bool {
+	if !memory.Active {
+		return false
+	}
+	if memory.Decision == "snoozed" {
+		return !memory.SnoozedUntil.IsZero() && now.Before(memory.SnoozedUntil)
+	}
+	return memory.EvidenceFingerprint == candidate.Candidate.EvidenceFingerprint
+}
+
+func reviewMemoryOverlapPolicy(snapshot BucketSnapshot, overlaps []uuid.UUID, candidate ArbitrationCandidate, now time.Time) (hasMemory, onlyMemory, allApply bool) {
+	byID := make(map[uuid.UUID]ReviewMemorySnapshot, len(snapshot.ReviewMemory))
+	for _, memory := range snapshot.ReviewMemory {
+		if memory.Active {
+			byID[memory.ID] = memory
+		}
+	}
+	onlyMemory = len(overlaps) > 0
+	allApply = true
+	for _, id := range overlaps {
+		memory, ok := byID[id]
+		if !ok {
+			onlyMemory = false
+			continue
+		}
+		hasMemory = true
+		if !reviewMemoryApplies(memory, candidate, now) {
+			allApply = false
+		}
+	}
+	return hasMemory, onlyMemory, allApply
 }
 
 func semanticOverlapSet(snapshot BucketSnapshot) ([]SemanticWork, bool) {
@@ -473,18 +559,27 @@ func buildSnapshotFingerprint(snapshot BucketSnapshot) (string, error) {
 		Version int64  `json:"version"`
 	}
 	type active struct {
-		ID       string `json:"id"`
-		Exact    string `json:"exact"`
-		Semantic string `json:"semantic"`
-		Evidence string `json:"evidence"`
-		Version  string `json:"version"`
+		ID          string `json:"id"`
+		Exact       string `json:"exact"`
+		Semantic    string `json:"semantic"`
+		Evidence    string `json:"evidence"`
+		Version     string `json:"version"`
+		PayloadHash string `json:"payload_hash"`
 	}
 	type memory struct {
-		ID       string `json:"id"`
-		Decision string `json:"decision"`
+		ID           string `json:"id"`
+		Decision     string `json:"decision"`
+		Exact        string `json:"exact"`
+		Semantic     string `json:"semantic"`
+		Evidence     string `json:"evidence"`
+		Version      string `json:"version"`
+		PayloadHash  string `json:"payload_hash"`
+		SnoozedUntil string `json:"snoozed_until,omitempty"`
+	}
+	type alias struct {
+		MemoryID string `json:"memory_id"`
 		Exact    string `json:"exact"`
 		Semantic string `json:"semantic"`
-		Evidence string `json:"evidence"`
 		Version  string `json:"version"`
 	}
 	buckets := make([]bucketVersion, 0, len(snapshot.Versions))
@@ -494,24 +589,47 @@ func buildSnapshotFingerprint(snapshot BucketSnapshot) (string, error) {
 	sort.Slice(buckets, func(i, j int) bool { return buckets[i].Key < buckets[j].Key })
 	activeRows := make([]active, 0, len(snapshot.ActiveWorks))
 	for _, work := range snapshot.ActiveWorks {
-		activeRows = append(activeRows, active{ID: work.ID.String(), Exact: work.ExactSignatureHash, Semantic: work.SemanticFingerprint, Evidence: work.EvidenceFingerprint, Version: work.SignatureVersion})
+		activeRows = append(activeRows, active{ID: work.ID.String(), Exact: work.ExactSignatureHash, Semantic: work.SemanticFingerprint, Evidence: work.EvidenceFingerprint, Version: work.SignatureVersion, PayloadHash: rawFingerprint(work.SignaturePayload)})
 	}
 	sort.Slice(activeRows, func(i, j int) bool { return activeRows[i].ID < activeRows[j].ID })
 	memoryRows := make([]memory, 0, len(snapshot.ReviewMemory))
 	for _, row := range snapshot.ReviewMemory {
-		memoryRows = append(memoryRows, memory{ID: row.ID.String(), Decision: row.Decision, Exact: row.ExactSignatureHash, Semantic: row.SemanticFingerprint, Evidence: row.EvidenceFingerprint, Version: row.SignatureVersion})
+		snoozedUntil := ""
+		if !row.SnoozedUntil.IsZero() {
+			snoozedUntil = row.SnoozedUntil.UTC().Format(time.RFC3339Nano)
+		}
+		memoryRows = append(memoryRows, memory{ID: row.ID.String(), Decision: row.Decision, Exact: row.ExactSignatureHash, Semantic: row.SemanticFingerprint, Evidence: row.EvidenceFingerprint, Version: row.SignatureVersion, PayloadHash: rawFingerprint(row.SignaturePayload), SnoozedUntil: snoozedUntil})
 	}
 	sort.Slice(memoryRows, func(i, j int) bool { return memoryRows[i].ID < memoryRows[j].ID })
+	aliasRows := make([]alias, 0, len(snapshot.ReviewAliases))
+	for _, row := range snapshot.ReviewAliases {
+		aliasRows = append(aliasRows, alias{MemoryID: row.ReviewMemoryID.String(), Exact: row.ExactSignatureHash, Semantic: row.SemanticFingerprint, Version: row.SignatureVersion})
+	}
+	sort.Slice(aliasRows, func(i, j int) bool {
+		if aliasRows[i].MemoryID == aliasRows[j].MemoryID {
+			if aliasRows[i].Version == aliasRows[j].Version {
+				return aliasRows[i].Exact < aliasRows[j].Exact
+			}
+			return aliasRows[i].Version < aliasRows[j].Version
+		}
+		return aliasRows[i].MemoryID < aliasRows[j].MemoryID
+	})
 	raw, err := json.Marshal(struct {
 		Buckets []bucketVersion `json:"buckets"`
 		Active  []active        `json:"active"`
 		Memory  []memory        `json:"memory"`
-	}{Buckets: buckets, Active: activeRows, Memory: memoryRows})
+		Aliases []alias         `json:"aliases"`
+	}{Buckets: buckets, Active: activeRows, Memory: memoryRows, Aliases: aliasRows})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func rawFingerprint(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func cloneVersions(values map[string]int64) map[string]int64 {

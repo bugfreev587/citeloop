@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -152,8 +153,158 @@ func TestArbitrationPrepareAppliesExactReviewMemoryWithoutProvider(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if comparator.calls != 0 || prepared.Disposition != DispositionReviewMemory || prepared.Decision != DecisionSuppress || prepared.Status != ArbitrationStatusPrepared {
+	if comparator.calls != 0 || prepared.Disposition != DispositionReviewMemory || prepared.Decision != DecisionSuppress || prepared.Status != ArbitrationStatusResolved {
 		t.Fatalf("calls/prepared = %d/%+v", comparator.calls, prepared)
+	}
+}
+
+func TestArbitrationPrepareAppliesExactReviewMemoryAliasWithoutProvider(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	memoryID := uuid.New()
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: memoryID, Decision: "dismissed", ExactSignatureHash: "old-exact",
+		SignaturePayload:    candidate.Identity.SignaturePayload,
+		EvidenceFingerprint: candidate.Candidate.EvidenceFingerprint,
+		SignatureVersion:    "work-signature-v0", Active: true,
+	}}
+	store.snapshot.ReviewAliases = []ReviewMemoryAliasSnapshot{{
+		ReviewMemoryID: memoryID, ExactSignatureHash: candidate.Identity.ExactSignatureHash,
+		SemanticFingerprint: "semantic-alias", SignatureVersion: SignatureVersionV1,
+	}}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Disposition != DispositionReviewMemory || prepared.Status != ArbitrationStatusResolved || comparator.calls != 0 {
+		t.Fatalf("prepared=%+v comparator calls=%d", prepared, comparator.calls)
+	}
+}
+
+func TestArbitrationPrepareInheritsHighConfidenceSemanticReviewMemoryBeforeLaunchGate(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	memoryID := uuid.New()
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: memoryID, Decision: "dismissed", ExactSignatureHash: "different",
+		SignaturePayload:    json.RawMessage(`{"change_family":"metadata"}`),
+		EvidenceFingerprint: candidate.Candidate.EvidenceFingerprint, SignatureVersion: SignatureVersionV1, Active: true,
+	}}
+	store.config.LaunchReady = false
+	store.config.AutomaticSuppressionEnabled = false
+	comparator.decision = SemanticDecision{
+		Decision: DecisionSuppress, Owner: OwnerDoctor,
+		WorkSignature: candidate.Identity.ExactSignatureHash,
+		Overlaps:      []uuid.UUID{memoryID}, Reason: "same reviewed work", Confidence: 0.80,
+		SemanticFingerprint: "semantic-candidate",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionSuppress || prepared.Status != ArbitrationStatusResolved {
+		t.Fatalf("prepared = %+v", prepared)
+	}
+	if len(store.holds) != 0 {
+		t.Fatalf("semantic review-memory inheritance created hold: %+v", store.holds)
+	}
+}
+
+func TestArbitrationPrepareReopensDismissedMemoryAfterMaterialEvidenceChange(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	memoryID := uuid.New()
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: memoryID, Decision: "dismissed", ExactSignatureHash: candidate.Identity.ExactSignatureHash,
+		SignaturePayload:    candidate.Identity.SignaturePayload,
+		EvidenceFingerprint: "previous-evidence", SignatureVersion: SignatureVersionV1, Active: true,
+	}}
+	comparator.decision = SemanticDecision{
+		Decision: DecisionSuppress, Owner: OwnerDoctor,
+		WorkSignature: candidate.Identity.ExactSignatureHash,
+		Overlaps:      []uuid.UUID{memoryID}, Reason: "same work", Confidence: 0.95,
+		SemanticFingerprint: "semantic-candidate",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparator.calls != 1 || prepared.Decision != DecisionCreate || prepared.Status != ArbitrationStatusPrepared {
+		t.Fatalf("material change did not reopen: calls=%d prepared=%+v", comparator.calls, prepared)
+	}
+}
+
+func TestArbitrationPrepareHoldsLowConfidenceSemanticReviewMemory(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	memoryID := uuid.New()
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: memoryID, Decision: "dismissed", ExactSignatureHash: "different",
+		SignaturePayload:    candidate.Identity.SignaturePayload,
+		EvidenceFingerprint: candidate.Candidate.EvidenceFingerprint,
+		SignatureVersion:    SignatureVersionV1, Active: true,
+	}}
+	comparator.decision = SemanticDecision{
+		Decision: DecisionSuppress, Owner: OwnerDoctor,
+		WorkSignature: candidate.Identity.ExactSignatureHash,
+		Overlaps:      []uuid.UUID{memoryID}, Reason: "probably same", Confidence: 0.79,
+		SemanticFingerprint: "semantic-candidate",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionHold || prepared.Status != ArbitrationStatusHeld || len(store.holds) != 1 {
+		t.Fatalf("low confidence memory did not hold: %+v", prepared)
+	}
+}
+
+func TestArbitrationPrepareDoesNotUseReviewMemoryToBypassActiveWorkSuppressionGate(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	memoryID := uuid.New()
+	activeID := uuid.New()
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: memoryID, Decision: "dismissed", ExactSignatureHash: "different-memory",
+		SignaturePayload:    candidate.Identity.SignaturePayload,
+		EvidenceFingerprint: candidate.Candidate.EvidenceFingerprint,
+		SignatureVersion:    SignatureVersionV1, Active: true,
+	}}
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: activeID, ExactSignatureHash: "different-active", SignaturePayload: candidate.Identity.SignaturePayload,
+	}}
+	store.config.LaunchReady = false
+	store.config.AutomaticSuppressionEnabled = false
+	comparator.decision = SemanticDecision{
+		Decision: DecisionSuppress, Owner: OwnerDoctor,
+		WorkSignature: candidate.Identity.ExactSignatureHash,
+		Overlaps:      []uuid.UUID{memoryID, activeID}, Reason: "same work", Confidence: 0.95,
+		SemanticFingerprint: "semantic-candidate",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionHold || prepared.Status != ArbitrationStatusHeld {
+		t.Fatalf("mixed active/review overlap bypassed launch gate: %+v", prepared)
+	}
+}
+
+func TestArbitrationPrepareKeepsUnexpiredSnoozeAfterMaterialEvidenceChange(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	store.snapshot.ReviewMemory = []ReviewMemorySnapshot{{
+		ID: uuid.New(), Decision: "snoozed", ExactSignatureHash: candidate.Identity.ExactSignatureHash,
+		SignaturePayload:    candidate.Identity.SignaturePayload,
+		EvidenceFingerprint: "previous-evidence", SignatureVersion: SignatureVersionV1,
+		SnoozedUntil: time.Now().Add(time.Hour), Active: true,
+	}}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparator.calls != 0 || prepared.Decision != DecisionSuppress || prepared.Status != ArbitrationStatusResolved {
+		t.Fatalf("unexpired snooze was reopened: calls=%d prepared=%+v", comparator.calls, prepared)
 	}
 }
 
