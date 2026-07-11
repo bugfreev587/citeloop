@@ -374,6 +374,7 @@ func (c *migrationTestConn) Exec(ctx context.Context, sql string, _ ...any) (pgc
 	case strings.Contains(lower, "index concurrently"):
 		c.record("create-concurrent")
 		c.indexExists, c.indexValid = true, true
+		c.indexNotReady = false
 		if c.postCreateDefinition != "" {
 			c.indexDefinition = c.postCreateDefinition
 		} else {
@@ -490,6 +491,26 @@ func TestRunMigrationPassRecoversInvalidConcurrentIndex(t *testing.T) {
 	}
 	if !conn.boundedNonTxn {
 		t.Fatal("nontransactional index execution must have a deadline")
+	}
+}
+
+func TestRunMigrationPassRecoversExactInvalidNotReadyConcurrentIndex(t *testing.T) {
+	conn := &migrationTestConn{
+		indexExists:     true,
+		indexValid:      false,
+		indexNotReady:   true,
+		indexDefinition: "create index idx_safe on public.widgets using btree (id)",
+	}
+	migrationFS := fstest.MapFS{
+		"0001_index.sql": &fstest.MapFile{Data: []byte("-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id);")},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err != nil {
+		t.Fatalf("recover exact invalid/not-ready index: %v", err)
+	}
+	want := []string{"lock", "schema", "marker-check", "index-check", "drop-invalid", "create-concurrent", "index-check", "mark-nontransactional", "unlock"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected recovery order: got %v want %v", conn.events, want)
 	}
 }
 

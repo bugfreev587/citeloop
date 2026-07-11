@@ -209,6 +209,9 @@ func applyNontransactionalMigration(ctx context.Context, conn migrationConnectio
 		if err := validateMigrationIndexDefinition(state, spec); err != nil {
 			return err
 		}
+		if state.Valid && !state.Ready {
+			return fmt.Errorf("valid concurrent index %s is not ready", spec.IndexName)
+		}
 	}
 
 	switch {
@@ -308,9 +311,6 @@ func revalidateMigrationIndex(ctx context.Context, conn migrationConnection, spe
 }
 
 func validateMigrationIndexDefinition(state migrationIndexState, spec migrationSpec) error {
-	if !state.Ready {
-		return fmt.Errorf("index definition mismatch for %s: index is not ready", spec.IndexName)
-	}
 	if !state.TargetInCurrentSchema || state.TargetTable != spec.IndexSpec.Table {
 		return fmt.Errorf("index definition mismatch for %s: target table", spec.IndexName)
 	}
