@@ -2,6 +2,9 @@
 -- Tenant audit is append-only while its project exists. The explicit project
 -- hard-delete path erases the tenant and its audit rows through database cascades.
 
+set local lock_timeout = '5s';
+set local statement_timeout = '4min';
+
 create or replace function reject_doctor_append_only_mutation()
 returns trigger
 language plpgsql
@@ -302,3 +305,6 @@ alter table seo_doctor_findings
 alter table seo_doctor_runs
   add column if not exists healthy_coverage jsonb not null default '[]'::jsonb
     check (jsonb_typeof(healthy_coverage) = 'array');
+
+reset statement_timeout;
+reset lock_timeout;

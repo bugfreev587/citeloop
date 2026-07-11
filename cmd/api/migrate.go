@@ -19,6 +19,7 @@ import (
 
 const (
 	migrationAdvisoryLockKey         int64 = 0x436974654c6f6f70
+	transactionalMigrationTimeout          = 5 * time.Minute
 	nonTransactionalMigrationTimeout       = 2 * time.Minute
 	migrationUnlockTimeout                 = 5 * time.Second
 	nonTransactionalModeDirective          = "-- citeloop:migration-mode=nontransactional"
@@ -32,10 +33,11 @@ const (
 )
 
 type migrationSpec struct {
-	Name      string
-	SQL       string
-	Mode      migrationMode
-	IndexName string
+	Name            string
+	SQL             string
+	Mode            migrationMode
+	IndexName       string
+	IndexDefinition string
 }
 
 type migrationTx interface {
@@ -135,26 +137,29 @@ func runMigrationPass(ctx context.Context, conn migrationConnection, migrationFS
 }
 
 func applyTransactionalMigration(ctx context.Context, conn migrationConnection, spec migrationSpec) error {
-	tx, err := conn.BeginMigration(ctx)
+	migrationCtx, cancel := context.WithTimeout(ctx, transactionalMigrationTimeout)
+	defer cancel()
+
+	tx, err := conn.BeginMigration(migrationCtx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(migrationCtx)) }()
 
 	var applied bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from schema_migrations where name=$1)`, spec.Name).Scan(&applied); err != nil {
+	if err := tx.QueryRow(migrationCtx, `select exists(select 1 from schema_migrations where name=$1)`, spec.Name).Scan(&applied); err != nil {
 		return fmt.Errorf("recheck migration marker: %w", err)
 	}
 	if applied {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, spec.SQL); err != nil {
+	if _, err := tx.Exec(migrationCtx, spec.SQL); err != nil {
 		return fmt.Errorf("execute transactional migration: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `insert into schema_migrations(name) values($1)`, spec.Name); err != nil {
+	if _, err := tx.Exec(migrationCtx, `insert into schema_migrations(name) values($1)`, spec.Name); err != nil {
 		return fmt.Errorf("insert migration marker: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(migrationCtx); err != nil {
 		return fmt.Errorf("commit migration: %w", err)
 	}
 	return nil
@@ -172,17 +177,27 @@ func applyNontransactionalMigration(ctx context.Context, conn migrationConnectio
 		return nil
 	}
 
-	var valid bool
-	err := conn.QueryRow(migrationCtx, `
-		select i.indisvalid
-		from pg_class c
-		join pg_index i on i.indexrelid = c.oid
-		join pg_namespace n on n.oid = c.relnamespace
-		where n.nspname = current_schema() and c.relname = $1`, spec.IndexName).Scan(&valid)
+	state, err := inspectMigrationIndex(migrationCtx, conn, spec.IndexName)
+	if err != nil {
+		return err
+	}
+	if state.Exists {
+		if !state.IsIndex {
+			return fmt.Errorf("index definition mismatch for %s: same-name relation is not an index", spec.IndexName)
+		}
+		definition, err := canonicalIndexDefinition(state.Definition)
+		if err != nil {
+			return fmt.Errorf("index definition mismatch for %s: %w", spec.IndexName, err)
+		}
+		if definition != spec.IndexDefinition {
+			return fmt.Errorf("index definition mismatch for %s", spec.IndexName)
+		}
+	}
+
 	switch {
-	case err == nil && valid:
-		// A previous attempt may have committed the index and crashed before its marker.
-	case err == nil:
+	case state.Exists && state.Valid:
+		// A previous attempt may have committed the exact index and crashed before its marker.
+	case state.Exists:
 		identifier := pgx.Identifier{spec.IndexName}.Sanitize()
 		if _, err := conn.Exec(migrationCtx, "drop index concurrently "+identifier); err != nil {
 			return fmt.Errorf("drop invalid concurrent index: %w", err)
@@ -190,12 +205,16 @@ func applyNontransactionalMigration(ctx context.Context, conn migrationConnectio
 		if _, err := conn.Exec(migrationCtx, spec.SQL); err != nil {
 			return fmt.Errorf("execute concurrent index migration: %w", err)
 		}
-	case errors.Is(err, pgx.ErrNoRows):
+		if err := revalidateMigrationIndex(migrationCtx, conn, spec); err != nil {
+			return err
+		}
+	default:
 		if _, err := conn.Exec(migrationCtx, spec.SQL); err != nil {
 			return fmt.Errorf("execute concurrent index migration: %w", err)
 		}
-	default:
-		return fmt.Errorf("inspect concurrent index: %w", err)
+		if err := revalidateMigrationIndex(migrationCtx, conn, spec); err != nil {
+			return err
+		}
 	}
 
 	if _, err := conn.Exec(migrationCtx, `insert into schema_migrations(name) values($1)`, spec.Name); err != nil {
@@ -204,8 +223,55 @@ func applyNontransactionalMigration(ctx context.Context, conn migrationConnectio
 	return nil
 }
 
+type migrationIndexState struct {
+	Exists     bool
+	IsIndex    bool
+	Valid      bool
+	Definition string
+}
+
+func inspectMigrationIndex(ctx context.Context, conn migrationConnection, indexName string) (migrationIndexState, error) {
+	var state migrationIndexState
+	err := conn.QueryRow(ctx, `
+		select c.relkind in ('i','I'), coalesce(i.indisvalid, false),
+		       case when i.indexrelid is null then '' else pg_get_indexdef(c.oid) end
+		from pg_class c
+		left join pg_index i on i.indexrelid = c.oid
+		join pg_namespace n on n.oid = c.relnamespace
+		where n.nspname = current_schema() and c.relname = $1`, indexName).
+		Scan(&state.IsIndex, &state.Valid, &state.Definition)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return migrationIndexState{}, nil
+	}
+	if err != nil {
+		return migrationIndexState{}, fmt.Errorf("inspect concurrent index: %w", err)
+	}
+	state.Exists = true
+	return state, nil
+}
+
+func revalidateMigrationIndex(ctx context.Context, conn migrationConnection, spec migrationSpec) error {
+	state, err := inspectMigrationIndex(ctx, conn, spec.IndexName)
+	if err != nil {
+		return err
+	}
+	if !state.Exists || !state.IsIndex || !state.Valid {
+		return fmt.Errorf("created concurrent index %s is missing or invalid", spec.IndexName)
+	}
+	definition, err := canonicalIndexDefinition(state.Definition)
+	if err != nil || definition != spec.IndexDefinition {
+		return fmt.Errorf("index definition mismatch for %s after creation", spec.IndexName)
+	}
+	return nil
+}
+
 var migrationIndexNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var concurrentIndexStatementPattern = regexp.MustCompile(`(?is)^create\s+(?:unique\s+)?index\s+concurrently\s+if\s+not\s+exists\s+([a-z_][a-z0-9_]*)\s+on\s+.+;$`)
+var canonicalIndexStatementPattern = regexp.MustCompile(`(?is)^create\s+(unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)\s+on\s+(.+)$`)
+var simpleInPredicatePattern = regexp.MustCompile(`(?is)\b([a-z_][a-z0-9_.]*)\s+in\s*\(([^()]*)\)`)
+var indexTableSchemaPattern = regexp.MustCompile(`(?i)^[a-z_][a-z0-9_]*\.`)
+var btreeMethodPattern = regexp.MustCompile(`(?i)\s+using\s+btree\s+`)
+var textCastPattern = regexp.MustCompile(`(?i)::(?:text|character\s+varying)(?:\[\])?`)
 
 func parseMigrationSpec(name string, raw []byte) (migrationSpec, error) {
 	spec := migrationSpec{Name: name, SQL: string(raw), Mode: migrationModeTransactional}
@@ -258,7 +324,36 @@ func parseMigrationSpec(name string, raw []byte) (migrationSpec, error) {
 	if len(match) != 2 || match[1] != spec.IndexName {
 		return migrationSpec{}, fmt.Errorf("%s must contain exactly one CREATE INDEX CONCURRENTLY statement matching %q", name, spec.IndexName)
 	}
+	spec.IndexDefinition, err = canonicalIndexDefinition(executable)
+	if err != nil {
+		return migrationSpec{}, fmt.Errorf("canonicalize index definition in %s: %w", name, err)
+	}
 	return spec, nil
+}
+
+func canonicalIndexDefinition(sql string) (string, error) {
+	withoutComments := make([]string, 0)
+	for _, line := range strings.Split(sql, "\n") {
+		if comment := strings.Index(line, "--"); comment >= 0 {
+			line = line[:comment]
+		}
+		if strings.TrimSpace(line) != "" {
+			withoutComments = append(withoutComments, line)
+		}
+	}
+	definition := strings.TrimSpace(strings.TrimSuffix(strings.Join(withoutComments, "\n"), ";"))
+	definition = strings.ToLower(strings.ReplaceAll(definition, `"`, ""))
+	match := canonicalIndexStatementPattern.FindStringSubmatch(definition)
+	if len(match) != 4 {
+		return "", errors.New("unsupported index definition")
+	}
+	unique := match[1] != ""
+	remainder := indexTableSchemaPattern.ReplaceAllString(strings.TrimSpace(match[3]), "")
+	remainder = btreeMethodPattern.ReplaceAllString(remainder, " ")
+	remainder = textCastPattern.ReplaceAllString(remainder, "")
+	remainder = simpleInPredicatePattern.ReplaceAllString(remainder, `$1 = any (array[$2])`)
+	remainder = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "", "(", "", ")", "").Replace(remainder)
+	return fmt.Sprintf("unique=%t;name=%s;on=%s", unique, match[2], remainder), nil
 }
 
 func migrationExecutableSQL(sql string) (string, error) {
