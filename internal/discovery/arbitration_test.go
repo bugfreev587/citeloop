@@ -99,6 +99,28 @@ func TestArbitrationPrepareFailsClosedForLowConfidence(t *testing.T) {
 	}
 }
 
+func TestArbitrationPreparePreservesNonSemanticHoldState(t *testing.T) {
+	for _, status := range []CandidateStatus{StatusNeedsSpecification, StatusNeedsEvidence} {
+		t.Run(string(status), func(t *testing.T) {
+			store, comparator, candidate := arbitrationFixture(t)
+			candidate.Candidate.Status = status
+			candidate.Identity = Identity{}
+			store.candidate = candidate
+
+			prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Disposition != DispositionIncompleteSpecification || len(store.holds) != 1 {
+				t.Fatalf("prepared/holds = %+v/%+v", prepared, store.holds)
+			}
+			if store.holds[0].State != status {
+				t.Fatalf("review state = %q, want %q", store.holds[0].State, status)
+			}
+		})
+	}
+}
+
 func TestArbitrationPrepareFailsClosedForProviderFailure(t *testing.T) {
 	store, comparator, candidate := arbitrationFixture(t)
 	store.snapshot.ActiveWorks = []SnapshotWork{{
