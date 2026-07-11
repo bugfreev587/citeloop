@@ -1748,15 +1748,24 @@ func (q *Queries) RetryPublishArticle(ctx context.Context, arg RetryPublishArtic
 }
 
 const selectDueCanonical = `-- name: SelectDueCanonical :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
-where project_id = $1
-  and kind = 'canonical'
-  and (
-    status = 'approved'
-    or (status = 'publish_failed' and next_publish_retry_at is not null and next_publish_retry_at <= now())
+select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id from articles
+where articles.project_id = $1
+  and articles.kind = 'canonical'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = articles.project_id and authority.product = 'opportunities' and authority.write_fenced = true
   )
-  and scheduled_at is not null
-  and scheduled_at <= now()
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = articles.project_id and topic.id = articles.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and (
+    articles.status = 'approved'
+    or (articles.status = 'publish_failed' and articles.next_publish_retry_at is not null and articles.next_publish_retry_at <= now())
+  )
+  and articles.scheduled_at is not null
+  and articles.scheduled_at <= now()
 for update skip locked
 `
 
@@ -1824,17 +1833,26 @@ func (q *Queries) SelectDueCanonical(ctx context.Context, projectID uuid.UUID) (
 }
 
 const selectPublishReconcileCandidates = `-- name: SelectPublishReconcileCandidates :many
-select id, project_id, topic_id, kind, platform, content_md, seo_meta, geo_score, seo_score, qa_issues, qa_blocking, canonical_url, status, scheduled_at, reviewed_by, reviewed_at, published_at, publish_result, last_publish_error, publish_attempts, next_publish_retry_at, publish_phase, resolved_slug, publish_path, canonical_url_verified_at, last_publish_run_id, created_at, content_hash, repair_attempts, last_repair_at, repair_status, repair_failure_reason, requires_human_decision, human_decision_options, qa_feedback, recovery_attempts, publication_mode, source_url, external_url, verification_status, external_surface_id from articles
-where project_id = $1
-  and kind = 'canonical'
-  and (
-    (status in ('approved','publish_failed') and publish_result is not null)
-    or
-    status = 'pending_url_verification'
-    or
-    (status = 'published' and (canonical_url is null or canonical_url_verified_at is null or publish_result is null))
+select articles.id, articles.project_id, articles.topic_id, articles.kind, articles.platform, articles.content_md, articles.seo_meta, articles.geo_score, articles.seo_score, articles.qa_issues, articles.qa_blocking, articles.canonical_url, articles.status, articles.scheduled_at, articles.reviewed_by, articles.reviewed_at, articles.published_at, articles.publish_result, articles.last_publish_error, articles.publish_attempts, articles.next_publish_retry_at, articles.publish_phase, articles.resolved_slug, articles.publish_path, articles.canonical_url_verified_at, articles.last_publish_run_id, articles.created_at, articles.content_hash, articles.repair_attempts, articles.last_repair_at, articles.repair_status, articles.repair_failure_reason, articles.requires_human_decision, articles.human_decision_options, articles.qa_feedback, articles.recovery_attempts, articles.publication_mode, articles.source_url, articles.external_url, articles.verification_status, articles.external_surface_id from articles
+where articles.project_id = $1
+  and articles.kind = 'canonical'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = articles.project_id and authority.product = 'opportunities' and authority.write_fenced = true
   )
-order by created_at asc
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = articles.project_id and topic.id = articles.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and (
+    (articles.status in ('approved','publish_failed') and articles.publish_result is not null)
+    or
+    articles.status = 'pending_url_verification'
+    or
+    (articles.status = 'published' and (articles.canonical_url is null or articles.canonical_url_verified_at is null or articles.publish_result is null))
+  )
+order by articles.created_at asc
 `
 
 func (q *Queries) SelectPublishReconcileCandidates(ctx context.Context, projectID uuid.UUID) ([]Article, error) {
@@ -1904,6 +1922,15 @@ select v.id, v.project_id, v.topic_id, v.kind, v.platform, v.content_md, v.seo_m
 join articles c
   on c.topic_id = v.topic_id and c.kind = 'canonical'
 where v.kind = 'syndication_variant'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = v.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = v.project_id and topic.id = v.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
   and v.status = 'approved'
   and c.status = 'published'
   and c.canonical_url is not null

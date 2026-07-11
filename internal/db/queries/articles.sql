@@ -126,15 +126,24 @@ returning *;
 
 -- Publisher: canonical articles due for auto-publish (§5.6).
 -- name: SelectDueCanonical :many
-select * from articles
-where project_id = $1
-  and kind = 'canonical'
-  and (
-    status = 'approved'
-    or (status = 'publish_failed' and next_publish_retry_at is not null and next_publish_retry_at <= now())
+select articles.* from articles
+where articles.project_id = $1
+  and articles.kind = 'canonical'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = articles.project_id and authority.product = 'opportunities' and authority.write_fenced = true
   )
-  and scheduled_at is not null
-  and scheduled_at <= now()
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = articles.project_id and topic.id = articles.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and (
+    articles.status = 'approved'
+    or (articles.status = 'publish_failed' and articles.next_publish_retry_at is not null and articles.next_publish_retry_at <= now())
+  )
+  and articles.scheduled_at is not null
+  and articles.scheduled_at <= now()
 for update skip locked;
 
 -- name: PreparePublishAttempt :one
@@ -195,17 +204,26 @@ where id = $1
 returning *;
 
 -- name: SelectPublishReconcileCandidates :many
-select * from articles
-where project_id = $1
-  and kind = 'canonical'
-  and (
-    (status in ('approved','publish_failed') and publish_result is not null)
-    or
-    status = 'pending_url_verification'
-    or
-    (status = 'published' and (canonical_url is null or canonical_url_verified_at is null or publish_result is null))
+select articles.* from articles
+where articles.project_id = $1
+  and articles.kind = 'canonical'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = articles.project_id and authority.product = 'opportunities' and authority.write_fenced = true
   )
-order by created_at asc;
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = articles.project_id and topic.id = articles.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
+  and (
+    (articles.status in ('approved','publish_failed') and articles.publish_result is not null)
+    or
+    articles.status = 'pending_url_verification'
+    or
+    (articles.status = 'published' and (articles.canonical_url is null or articles.canonical_url_verified_at is null or articles.publish_result is null))
+  )
+order by articles.created_at asc;
 
 -- syndication unlock: variants whose canonical is published (§5.6).
 -- name: SelectUnlockableVariants :many
@@ -213,6 +231,15 @@ select v.* from articles v
 join articles c
   on c.topic_id = v.topic_id and c.kind = 'canonical'
 where v.kind = 'syndication_variant'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = v.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from topics topic join content_actions action on action.id = topic.source_content_action_id
+    join growth_opportunity_work_aliases alias on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where topic.project_id = v.project_id and topic.id = v.topic_id and alias.disposition in ('duplicate','doctor_merge')
+  )
   and v.status = 'approved'
   and c.status = 'published'
   and c.canonical_url is not null

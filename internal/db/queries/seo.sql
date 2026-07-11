@@ -848,6 +848,97 @@ select * from growth_opportunity_work_aliases
 where project_id = sqlc.arg(project_id)
   and legacy_opportunity_id = sqlc.arg(legacy_opportunity_id);
 
+-- name: GetGrowthExecutionChainForUpdate :one
+with locked_actions as materialized (
+  select action.* from content_actions action
+  where action.project_id = sqlc.arg(project_id)
+    and action.opportunity_id = sqlc.arg(source_opportunity_id)
+  order by action.id
+  for update of action
+), locked_topics as materialized (
+  select topic.* from topics topic
+  join locked_actions action on action.id = topic.source_content_action_id
+  where topic.project_id = sqlc.arg(project_id)
+  order by topic.id
+  for update of topic
+), locked_articles as materialized (
+  select article.* from articles article
+  where article.project_id = sqlc.arg(project_id)
+    and (
+      exists (select 1 from locked_topics topic where topic.id = article.topic_id)
+      or exists (select 1 from locked_actions action where action.target_article_id = article.id or action.draft_article_id = article.id)
+    )
+  order by article.id
+  for update of article
+), locked_applications as materialized (
+  select application.* from site_change_applications application
+  join locked_actions action on action.id = application.content_action_id
+  where application.project_id = sqlc.arg(project_id)
+  order by application.id
+  for update of application
+), locked_drafts as materialized (
+  select draft.* from page_update_drafts draft
+  join locked_actions action on action.id = draft.content_action_id
+  where draft.project_id = sqlc.arg(project_id)
+  order by draft.id
+  for update of draft
+), locked_measurements as materialized (
+  select measurement.* from action_measurements measurement
+  join locked_actions action on action.id = measurement.content_action_id
+  where measurement.project_id = sqlc.arg(project_id)
+  order by measurement.id
+  for update of measurement
+), locked_runs as materialized (
+  select run.* from generation_runs run
+  where run.project_id = sqlc.arg(project_id)
+    and run.input->>'topic' = any(
+      coalesce((select array_agg(topic.id::text) from locked_topics topic), array[]::text[])
+    )
+  order by run.id
+  for update of run
+)
+select
+  (select count(*)::bigint from locked_actions) as action_count,
+  (select count(*)::bigint from locked_actions source
+    join content_actions canonical
+      on canonical.project_id = source.project_id
+     and canonical.opportunity_id = sqlc.narg(canonical_opportunity_id)
+     and canonical.action_type = source.action_type
+     and canonical.id <> source.id) as conflicting_action_count,
+  jsonb_build_object(
+    'content_actions', coalesce((select jsonb_agg(to_jsonb(action) order by action.id) from locked_actions action), '[]'::jsonb),
+    'topics', coalesce((select jsonb_agg(to_jsonb(topic) order by topic.id) from locked_topics topic), '[]'::jsonb),
+    'articles', coalesce((select jsonb_agg(to_jsonb(article) order by article.id) from locked_articles article), '[]'::jsonb),
+    'site_change_applications', coalesce((select jsonb_agg(to_jsonb(application) order by application.id) from locked_applications application), '[]'::jsonb),
+    'page_update_drafts', coalesce((select jsonb_agg(to_jsonb(draft) order by draft.id) from locked_drafts draft), '[]'::jsonb),
+    'action_measurements', coalesce((select jsonb_agg(to_jsonb(measurement) order by measurement.id) from locked_measurements measurement), '[]'::jsonb),
+    'generation_runs', coalesce((select jsonb_agg(to_jsonb(run) order by run.id) from locked_runs run), '[]'::jsonb)
+  ) as execution_snapshot;
+
+-- name: RepointDuplicateGrowthContentActions :one
+with repointed as (
+  update content_actions action set opportunity_id = sqlc.arg(canonical_opportunity_id), updated_at = now()
+  where action.project_id = sqlc.arg(project_id)
+    and action.opportunity_id = sqlc.arg(source_opportunity_id)
+    and not exists (
+      select 1 from content_actions canonical
+      where canonical.project_id = action.project_id
+        and canonical.opportunity_id = sqlc.arg(canonical_opportunity_id)
+        and canonical.action_type = action.action_type
+        and canonical.id <> action.id
+    )
+  returning action.id
+)
+select count(*)::bigint as repointed_count,
+       coalesce(array_agg(repointed.id order by repointed.id), array[]::uuid[])::uuid[] as repointed_content_action_ids
+from repointed;
+
+-- name: RestoreGrowthContentActionRepoints :execrows
+update content_actions action set opportunity_id = sqlc.arg(source_opportunity_id), updated_at = now()
+where action.project_id = sqlc.arg(project_id)
+  and action.opportunity_id = sqlc.arg(canonical_opportunity_id)
+  and action.id = any(sqlc.arg(content_action_ids)::uuid[]);
+
 -- name: StartGrowthCutoverSession :one
 insert into growth_cutover_sessions
   (batch_id, project_id, fence_token, status)
@@ -894,6 +985,12 @@ order by sequence_number desc;
 -- name: FinishGrowthCutoverSession :one
 update growth_cutover_sessions
 set status = sqlc.arg(status), error = sqlc.narg(error), finished_at = now()
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and status = 'applying'
+returning *;
+
+-- name: SetGrowthCutoverSessionReviewRequired :one
+update growth_cutover_sessions set error = sqlc.arg(error)
 where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
   and status = 'applying'
 returning *;
@@ -1786,6 +1883,15 @@ returning *;
 select ca.* from content_actions ca
 where ca.project_id = sqlc.arg(project_id)
   and ca.status = 'measuring'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and (
     ca.published_at is null
     or ca.measurement_window = '{}'::jsonb
@@ -2010,6 +2116,15 @@ left join topics t
   on t.source_content_action_id = ca.id
 where ca.project_id = $1
   and ca.status = 'ready_for_review'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and t.id is null
   and coalesce(ca.work_type, '') <> 'fix_site_issue'
   and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (

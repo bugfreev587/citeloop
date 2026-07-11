@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
@@ -67,6 +68,9 @@ func (s *Service) EnsureProjectCutover(ctx context.Context, projectID uuid.UUID)
 		if err != nil {
 			return discovery.ErrWriterUnavailable
 		}
+		if session.Error != nil && strings.TrimSpace(*session.Error) != "" {
+			return fmt.Errorf("%w: Growth cutover review is required: %s", ErrGrowthHeld, *session.Error)
+		}
 		if session.StartedAt.Valid && time.Since(session.StartedAt.Time) < 5*time.Minute {
 			return discovery.ErrWriterUnavailable
 		}
@@ -91,6 +95,13 @@ func (s *Service) EnsureProjectCutover(ctx context.Context, projectID uuid.UUID)
 		if errors.As(err, &workErr) {
 			failedID = workErr.OpportunityID
 		}
+		var reviewErr *growthCutoverReviewError
+		if errors.As(err, &reviewErr) {
+			if holdErr := migration.holdGrowthCutoverForReview(ctx, session, reviewErr); holdErr != nil {
+				return fmt.Errorf("hold Growth cutover review: %w (original: %v)", holdErr, err)
+			}
+			return err
+		}
 		if rollbackErr := migration.rollbackGrowthCutover(ctx, session, err, failedID); rollbackErr != nil {
 			return fmt.Errorf("Growth cutover failed: %v; rollback failed: %w", err, rollbackErr)
 		}
@@ -103,6 +114,74 @@ func (s *Service) EnsureProjectCutover(ctx context.Context, projectID uuid.UUID)
 		return err
 	}
 	return nil
+}
+
+func (s *Service) holdGrowthCutoverForReview(ctx context.Context, session db.GrowthCutoverSession, review *growthCutoverReviewError) (resultErr error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	q := db.New(tx)
+	authority, err := q.LockProductWriterAuthority(ctx, db.LockProductWriterAuthorityParams{ProjectID: session.ProjectID, Product: "opportunities"})
+	if err != nil || authority.WriterAuthority != "canonical" || !authority.WriteFenced || !authority.FenceToken.Valid || authority.FenceToken.Bytes != session.FenceToken {
+		return discovery.ErrWriterUnavailable
+	}
+	entries, err := q.ListGrowthCutoverSessionEntries(ctx, db.ListGrowthCutoverSessionEntriesParams{ProjectID: session.ProjectID, BatchID: session.BatchID})
+	if err != nil {
+		return err
+	}
+	var entry db.GrowthCutoverSessionEntry
+	for _, candidate := range entries {
+		if candidate.OpportunityID == review.OpportunityID {
+			entry = candidate
+			break
+		}
+	}
+	if entry.OpportunityID == uuid.Nil {
+		return errors.New("reviewed Growth opportunity has no cutover journal entry")
+	}
+	now := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	reviewBatchID := uuid.New()
+	resultSnapshot, _ := json.Marshal(map[string]any{"status": "review_required", "reason": review.Reason, "cutover_batch_id": session.BatchID})
+	if _, err := q.CreateMigrationBatch(ctx, db.CreateMigrationBatchParams{
+		ID: reviewBatchID, ProjectID: session.ProjectID, Product: "opportunities", BatchKind: "forward", Status: "review_required",
+		SchemaVersion: "growth-execution-chain-v1", SourceCount: 1, MigratedCount: 0, ArchivedDuplicateCount: 0, ReviewCount: 1,
+		WriterAuthorityBefore: "legacy", WriterAuthorityAfter: "canonical", SourceSnapshot: review.Snapshot,
+		ResultSnapshot: resultSnapshot, InitiatedBy: "growth_cutover", StartedAt: session.StartedAt, FinishedAt: now,
+	}); err != nil {
+		return err
+	}
+	if _, err := q.AppendMigrationLedger(ctx, db.AppendMigrationLedgerParams{
+		ID: uuid.New(), ProjectID: session.ProjectID, MigrationBatchID: reviewBatchID, SequenceNumber: 1,
+		SourceObjectType: "seo_opportunity", SourceObjectID: review.OpportunityID,
+		CanonicalObjectType: "growth_execution_chain", Operation: "map", OperationVersion: "growth-execution-chain-v1",
+		CutoverPoint: "writer_fenced", RollbackEligibility: "eligible", BeforeHash: hashJSON(entry.BeforeSnapshot),
+		AfterHash: hashJSON(entry.AfterSnapshot), BeforeSnapshot: entry.BeforeSnapshot, AfterSnapshot: entry.AfterSnapshot,
+		InverseOperationVersion: "growth-execution-chain-v1", InverseOperation: entry.InverseOperation,
+		AppliedBy: "growth_cutover", AppliedAt: now,
+	}); err != nil {
+		return err
+	}
+	if _, err := q.CreateMigrationReviewItem(ctx, db.CreateMigrationReviewItemParams{
+		ID: uuid.New(), ProjectID: session.ProjectID, MigrationBatchID: reviewBatchID,
+		SourceObjectType: "seo_opportunity", SourceObjectID: review.OpportunityID,
+		ReasonCode: "growth_execution_chain_conflict", Reason: review.Reason,
+		SourceSnapshot: review.Snapshot, ProposedResolution: json.RawMessage(`{"action":"resolve or explicitly map execution descendants"}`),
+	}); err != nil {
+		return err
+	}
+	message := review.Reason
+	if _, err := q.SetGrowthCutoverSessionReviewRequired(ctx, db.SetGrowthCutoverSessionReviewRequiredParams{
+		Error: &message, ProjectID: session.ProjectID, BatchID: session.BatchID,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) startGrowthCutover(ctx context.Context, projectID uuid.UUID) (db.GrowthCutoverSession, error) {
@@ -464,6 +543,14 @@ func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.Pre
 		if err != nil {
 			return db.SeoOpportunity{}, err
 		}
+		chain, err := s.reconcileDuplicateExecutionChain(ctx, q, discovery.OwnerOpportunities, params.ProjectID, params.ID, pgUUID(canonicalBefore.ID))
+		if err != nil {
+			var review *growthCutoverReviewError
+			if errors.As(err, &review) {
+				return db.SeoOpportunity{}, s.persistExecutionChainReview(ctx, tx, q, prepared, params, review, canonicalBefore)
+			}
+			return db.SeoOpportunity{}, err
+		}
 		merged, err := q.MergeCanonicalGrowthOpportunityEvidence(ctx, db.MergeCanonicalGrowthOpportunityEvidenceParams{
 			ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0], Evidence: params.Evidence,
 			IncomingPriorityScore: params.PriorityScore, IncomingConfidence: params.Confidence,
@@ -483,9 +570,9 @@ func (s *Service) mergeExactEvidence(ctx context.Context, prepared discovery.Pre
 			return db.SeoOpportunity{}, discovery.ErrSnapshotStale
 		}
 		mergedID = alias.CanonicalOpportunityID.Bytes
-		beforeSnapshot, _ := json.Marshal(map[string]any{"duplicate": params, "canonical": canonicalBefore, "canonical_signature_evidence_fingerprint": signatureBefore.EvidenceFingerprint})
-		afterSnapshot, _ := json.Marshal(map[string]any{"alias": alias, "canonical": merged})
-		inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_duplicate_and_restore_canonical", "canonical": canonicalBefore})
+		beforeSnapshot, _ := json.Marshal(map[string]any{"duplicate": params, "canonical": canonicalBefore, "canonical_signature_evidence_fingerprint": signatureBefore.EvidenceFingerprint, "execution_chain": json.RawMessage(chain.Snapshot)})
+		afterSnapshot, _ := json.Marshal(map[string]any{"alias": alias, "canonical": merged, "repointed_content_action_ids": chain.RepointedActionIDs})
+		inverse, _ := json.Marshal(map[string]any{"operation": "tombstone_duplicate_and_restore_canonical", "canonical": canonicalBefore, "source_opportunity_id": params.ID, "canonical_opportunity_id": canonicalBefore.ID, "content_action_ids": chain.RepointedActionIDs})
 		if _, err := q.UpdateGrowthCutoverSessionEntryDecision(ctx, db.UpdateGrowthCutoverSessionEntryDecisionParams{
 			BatchID: s.cutoverBatchID, ProjectID: params.ProjectID, OpportunityID: params.ID,
 			ArbitrationDecisionID: pgUUID(prepared.ID), AiCallID: pgUUID(prepared.AICallID),
@@ -574,6 +661,15 @@ func (s *Service) mergeDoctorEvidence(ctx context.Context, prepared discovery.Pr
 	before, err := q.GetCanonicalSiteFixByWorkSignatureForUpdate(ctx, db.GetCanonicalSiteFixByWorkSignatureForUpdateParams{ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0]})
 	if err != nil {
 		return db.SeoOpportunity{}, err
+	}
+	if aliasLegacy {
+		if _, err := s.reconcileDuplicateExecutionChain(ctx, q, discovery.OwnerDoctor, params.ProjectID, params.ID, pgtype.UUID{}); err != nil {
+			var review *growthCutoverReviewError
+			if errors.As(err, &review) {
+				return db.SeoOpportunity{}, s.persistExecutionChainReview(ctx, tx, q, prepared, params, review, before)
+			}
+			return db.SeoOpportunity{}, err
+		}
 	}
 	merged, err := q.MergeCanonicalDoctorSiteFixEvidence(ctx, db.MergeCanonicalDoctorSiteFixEvidenceParams{
 		ProjectID: params.ProjectID, WorkSignatureID: prepared.OverlapWorkIDs[0], Evidence: params.Evidence,
@@ -700,6 +796,14 @@ func (s *Service) rollbackGrowthCutover(ctx context.Context, session db.GrowthCu
 			if err := json.Unmarshal(entry.BeforeSnapshot, &before); err != nil {
 				return fmt.Errorf("decode Growth rollback snapshot: %w", err)
 			}
+			var inverse struct {
+				SourceOpportunityID    uuid.UUID   `json:"source_opportunity_id"`
+				CanonicalOpportunityID uuid.UUID   `json:"canonical_opportunity_id"`
+				ContentActionIDs       []uuid.UUID `json:"content_action_ids"`
+			}
+			if err := json.Unmarshal(entry.InverseOperation, &inverse); err != nil {
+				return fmt.Errorf("decode Growth execution-chain inverse: %w", err)
+			}
 			canonicalEvidence := before.Canonical.Evidence
 			canonicalOpportunityID := pgUUID(before.Canonical.ID)
 			canonicalSiteFixID := pgUUID(before.CanonicalSiteFix.ID)
@@ -715,6 +819,15 @@ func (s *Service) rollbackGrowthCutover(ctx context.Context, session db.GrowthCu
 			})
 			if err != nil || removed != 1 {
 				return fmt.Errorf("rollback Growth duplicate %s: removed=%d err=%w", entry.OpportunityID, removed, err)
+			}
+			if len(inverse.ContentActionIDs) > 0 {
+				restored, err := q.RestoreGrowthContentActionRepoints(ctx, db.RestoreGrowthContentActionRepointsParams{
+					SourceOpportunityID: inverse.SourceOpportunityID, ProjectID: session.ProjectID,
+					CanonicalOpportunityID: inverse.CanonicalOpportunityID, ContentActionIds: inverse.ContentActionIDs,
+				})
+				if err != nil || restored != int64(len(inverse.ContentActionIDs)) {
+					return fmt.Errorf("restore Growth execution descendants %s: restored=%d want=%d err=%w", entry.OpportunityID, restored, len(inverse.ContentActionIDs), err)
+				}
 			}
 			continue
 		}

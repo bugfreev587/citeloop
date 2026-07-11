@@ -115,5 +115,76 @@ create trigger content_actions_reject_duplicate_growth
 before insert or update of opportunity_id on content_actions
 for each row execute function reject_duplicate_growth_content_action();
 
+create or replace function enforce_growth_execution_chain_fence()
+returns trigger language plpgsql as $$
+declare
+  project uuid;
+  source_action uuid;
+  fenced boolean;
+  token uuid;
+begin
+  project := new.project_id;
+  if tg_table_name = 'topics' then
+    source_action := new.source_content_action_id;
+  elsif tg_table_name = 'articles' then
+    select topic.source_content_action_id into source_action
+    from topics topic where topic.project_id = new.project_id and topic.id = new.topic_id;
+  elsif tg_table_name in ('site_change_applications','page_update_drafts','action_measurements') then
+    source_action := new.content_action_id;
+  elsif tg_table_name = 'generation_runs' and new.agent not in ('writer','qa','publisher') then
+    return new;
+  end if;
+
+  select authority.write_fenced, authority.fence_token into fenced, token
+  from product_writer_authority authority
+  where authority.project_id = project and authority.product = 'opportunities'
+  for share;
+  if fenced and token::text is distinct from current_setting('citeloop.growth_cutover_fence_token', true) then
+    raise exception 'Growth writer authority is fenced' using errcode = '55000';
+  end if;
+
+  if source_action is not null and exists (
+    select 1 from content_actions action
+    join growth_opportunity_work_aliases alias
+      on alias.project_id = action.project_id and alias.legacy_opportunity_id = action.opportunity_id
+    where action.project_id = project and action.id = source_action
+      and alias.disposition in ('duplicate','doctor_merge')
+  ) then
+    raise exception 'duplicate Growth execution chain is read-only' using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reject_duplicate_growth_topic_execution on topics;
+create trigger reject_duplicate_growth_topic_execution
+before insert or update on topics
+for each row execute function enforce_growth_execution_chain_fence();
+
+drop trigger if exists reject_duplicate_growth_article_execution on articles;
+create trigger reject_duplicate_growth_article_execution
+before insert or update on articles
+for each row execute function enforce_growth_execution_chain_fence();
+
+drop trigger if exists reject_duplicate_growth_generation_run on generation_runs;
+create trigger reject_duplicate_growth_generation_run
+before insert or update on generation_runs
+for each row execute function enforce_growth_execution_chain_fence();
+
+drop trigger if exists reject_duplicate_growth_site_change_execution on site_change_applications;
+create trigger reject_duplicate_growth_site_change_execution
+before insert or update on site_change_applications
+for each row execute function enforce_growth_execution_chain_fence();
+
+drop trigger if exists reject_duplicate_growth_page_draft_execution on page_update_drafts;
+create trigger reject_duplicate_growth_page_draft_execution
+before insert or update on page_update_drafts
+for each row execute function enforce_growth_execution_chain_fence();
+
+drop trigger if exists reject_duplicate_growth_measurement_execution on action_measurements;
+create trigger reject_duplicate_growth_measurement_execution
+before insert or update on action_measurements
+for each row execute function enforce_growth_execution_chain_fence();
+
 -- Authority remains legacy until a fenced application cutover has represented
 -- every active Growth row, written ledgers, and passed conservation.

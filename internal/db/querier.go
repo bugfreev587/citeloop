@@ -169,6 +169,7 @@ type Querier interface {
 	GetGEOPromptForProject(ctx context.Context, arg GetGEOPromptForProjectParams) (GeoPrompt, error)
 	GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error)
 	GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error)
+	GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
 	GetInventoryItem(ctx context.Context, id uuid.UUID) (ContentInventory, error)
 	GetLatestCanonicalSiteFixApplication(ctx context.Context, arg GetLatestCanonicalSiteFixApplicationParams) (SiteChangeApplication, error)
@@ -402,12 +403,14 @@ type Querier interface {
 	ReopenCanonicalSiteFix(ctx context.Context, arg ReopenCanonicalSiteFixParams) (ReopenCanonicalSiteFixRow, error)
 	ReopenCanonicalSiteFixApply(ctx context.Context, arg ReopenCanonicalSiteFixApplyParams) (SiteChangeApplication, error)
 	RepointApplicationToCanonicalSiteFix(ctx context.Context, arg RepointApplicationToCanonicalSiteFixParams) (SiteChangeApplication, error)
+	RepointDuplicateGrowthContentActions(ctx context.Context, arg RepointDuplicateGrowthContentActionsParams) (RepointDuplicateGrowthContentActionsRow, error)
 	RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Context, arg RepointLegacyApplicationsToCanonicalSiteFixParams) ([]SiteChangeApplication, error)
 	ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	ResolveLegacyObjectAlias(ctx context.Context, arg ResolveLegacyObjectAliasParams) (LegacyObjectAlias, error)
 	ResolveMigrationReviewItem(ctx context.Context, arg ResolveMigrationReviewItemParams) (MigrationReviewItem, error)
 	ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error
 	RestoreApplicationToLegacyContentAction(ctx context.Context, arg RestoreApplicationToLegacyContentActionParams) (SiteChangeApplication, error)
+	RestoreGrowthContentActionRepoints(ctx context.Context, arg RestoreGrowthContentActionRepointsParams) (int64, error)
 	RestoreLegacyApplicationFromLedger(ctx context.Context, arg RestoreLegacyApplicationFromLedgerParams) (SiteChangeApplication, error)
 	RestoreLegacyContentActionFromLedger(ctx context.Context, arg RestoreLegacyContentActionFromLedgerParams) (ContentAction, error)
 	RestoreLegacyOpportunityFromLedger(ctx context.Context, arg RestoreLegacyOpportunityFromLedgerParams) (SeoOpportunity, error)
@@ -440,6 +443,7 @@ type Querier interface {
 	SelectUnlockableVariants(ctx context.Context) ([]Article, error)
 	SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Article, error)
 	SetCanonicalSiteFixNextPollAt(ctx context.Context, arg SetCanonicalSiteFixNextPollAtParams) error
+	SetGrowthCutoverSessionReviewRequired(ctx context.Context, arg SetGrowthCutoverSessionReviewRequiredParams) (GrowthCutoverSession, error)
 	SetPublisherConnectionCredentialRef(ctx context.Context, arg SetPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	SetPublisherConnectionEnabled(ctx context.Context, arg SetPublisherConnectionEnabledParams) (PublisherConnection, error)
 	SetSiteChangePRNextNotifyAt(ctx context.Context, arg SetSiteChangePRNextNotifyAtParams) error

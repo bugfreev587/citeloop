@@ -1779,6 +1779,93 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 	return i, err
 }
 
+const getGrowthExecutionChainForUpdate = `-- name: GetGrowthExecutionChainForUpdate :one
+with locked_actions as materialized (
+  select action.id, action.project_id, action.opportunity_id, action.action_type, action.status, action.target_article_id, action.target_url, action.normalized_target_url, action.target_content_hash_before, action.target_content_hash_after, action.draft_article_id, action.baseline_window, action.measurement_window, action.published_at, action.outcome_summary, action.created_at, action.updated_at, action.asset_type, action.target_surface_id, action.risk_reasons, action.evidence_snapshot, action.input_snapshot, action.output_snapshot, action.diff_snapshot, action.review_required, action.approved_by, action.approved_at, action.verified_at, action.verification_snapshot, action.approval_source, action.routing_source, action.work_type, action.status_reason, action.canonical_site_fix_id, action.canonical_read_only, action.legacy_migration_batch_id, action.legacy_migration_disposition from content_actions action
+  where action.project_id = $2
+    and action.opportunity_id = $3
+  order by action.id
+  for update of action
+), locked_topics as materialized (
+  select topic.id, topic.project_id, topic.channel, topic.title, topic.target_keyword, topic.target_prompt, topic.angle, topic.format, topic.priority, topic.internal_links, topic.status, topic.scheduled_at, topic.created_at, topic.source_content_action_id, topic.recovery_attempts from topics topic
+  join locked_actions action on action.id = topic.source_content_action_id
+  where topic.project_id = $2
+  order by topic.id
+  for update of topic
+), locked_articles as materialized (
+  select article.id, article.project_id, article.topic_id, article.kind, article.platform, article.content_md, article.seo_meta, article.geo_score, article.seo_score, article.qa_issues, article.qa_blocking, article.canonical_url, article.status, article.scheduled_at, article.reviewed_by, article.reviewed_at, article.published_at, article.publish_result, article.last_publish_error, article.publish_attempts, article.next_publish_retry_at, article.publish_phase, article.resolved_slug, article.publish_path, article.canonical_url_verified_at, article.last_publish_run_id, article.created_at, article.content_hash, article.repair_attempts, article.last_repair_at, article.repair_status, article.repair_failure_reason, article.requires_human_decision, article.human_decision_options, article.qa_feedback, article.recovery_attempts, article.publication_mode, article.source_url, article.external_url, article.verification_status, article.external_surface_id from articles article
+  where article.project_id = $2
+    and (
+      exists (select 1 from locked_topics topic where topic.id = article.topic_id)
+      or exists (select 1 from locked_actions action where action.target_article_id = article.id or action.draft_article_id = article.id)
+    )
+  order by article.id
+  for update of article
+), locked_applications as materialized (
+  select application.id, application.project_id, application.source_opportunity_id, application.content_action_id, application.page_update_draft_id, application.application_kind, application.target_url, application.normalized_target_url, application.opportunity_key, application.publisher_connection_id, application.repo_full_name, application.base_branch, application.working_branch, application.base_commit_sha, application.head_commit_sha, application.source_file_path, application.source_file_paths, application.source_mapping_confidence, application.source_mapping_reason, application.base_file_sha, application.base_content_hash, application.proposed_content_hash, application.patch_snapshot, application.diff_snapshot, application.resolution_criteria, application.github_pr_number, application.github_pr_url, application.github_pr_state, application.deployment_snapshot, application.verification_snapshot, application.failure_reason, application.status, application.created_at, application.updated_at, application.pr_created_at, application.merged_at, application.deployed_at, application.verified_at, application.next_poll_at, application.next_notify_at, application.site_fix_id, application.pr_claim_token, application.pr_claim_expires_at, application.pr_claim_authority_fingerprint from site_change_applications application
+  join locked_actions action on action.id = application.content_action_id
+  where application.project_id = $2
+  order by application.id
+  for update of application
+), locked_drafts as materialized (
+  select draft.id, draft.project_id, draft.content_action_id, draft.target_url, draft.normalized_target_url, draft.opportunity_key, draft.target_article_id, draft.source_file_path, draft.base_content_hash, draft.proposed_content_md, draft.patch, draft.diff_snapshot, draft.qa_feedback, draft.resolution_criteria, draft.publisher_result, draft.verification_snapshot, draft.original_source_snapshot, draft.status, draft.approved_at, draft.applied_at, draft.verified_at, draft.created_at, draft.updated_at from page_update_drafts draft
+  join locked_actions action on action.id = draft.content_action_id
+  where draft.project_id = $2
+  order by draft.id
+  for update of draft
+), locked_measurements as materialized (
+  select measurement.id, measurement.project_id, measurement.content_action_id, measurement.article_id, measurement.checkpoint_day, measurement.window_start, measurement.window_end, measurement.seo_metrics, measurement.ga4_metrics, measurement.geo_metrics, measurement.execution_metrics, measurement.outcome_label, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.computed_at, measurement.created_at, measurement.updated_at from action_measurements measurement
+  join locked_actions action on action.id = measurement.content_action_id
+  where measurement.project_id = $2
+  order by measurement.id
+  for update of measurement
+), locked_runs as materialized (
+  select run.id, run.project_id, run.agent, run.input, run.output, run.model, run.tokens, run.cost_usd, run.status, run.error, run.created_at from generation_runs run
+  where run.project_id = $2
+    and run.input->>'topic' = any(
+      coalesce((select array_agg(topic.id::text) from locked_topics topic), array[]::text[])
+    )
+  order by run.id
+  for update of run
+)
+select
+  (select count(*)::bigint from locked_actions) as action_count,
+  (select count(*)::bigint from locked_actions source
+    join content_actions canonical
+      on canonical.project_id = source.project_id
+     and canonical.opportunity_id = $1
+     and canonical.action_type = source.action_type
+     and canonical.id <> source.id) as conflicting_action_count,
+  jsonb_build_object(
+    'content_actions', coalesce((select jsonb_agg(to_jsonb(action) order by action.id) from locked_actions action), '[]'::jsonb),
+    'topics', coalesce((select jsonb_agg(to_jsonb(topic) order by topic.id) from locked_topics topic), '[]'::jsonb),
+    'articles', coalesce((select jsonb_agg(to_jsonb(article) order by article.id) from locked_articles article), '[]'::jsonb),
+    'site_change_applications', coalesce((select jsonb_agg(to_jsonb(application) order by application.id) from locked_applications application), '[]'::jsonb),
+    'page_update_drafts', coalesce((select jsonb_agg(to_jsonb(draft) order by draft.id) from locked_drafts draft), '[]'::jsonb),
+    'action_measurements', coalesce((select jsonb_agg(to_jsonb(measurement) order by measurement.id) from locked_measurements measurement), '[]'::jsonb),
+    'generation_runs', coalesce((select jsonb_agg(to_jsonb(run) order by run.id) from locked_runs run), '[]'::jsonb)
+  ) as execution_snapshot
+`
+
+type GetGrowthExecutionChainForUpdateParams struct {
+	CanonicalOpportunityID pgtype.UUID `json:"canonical_opportunity_id"`
+	ProjectID              uuid.UUID   `json:"project_id"`
+	SourceOpportunityID    uuid.UUID   `json:"source_opportunity_id"`
+}
+
+type GetGrowthExecutionChainForUpdateRow struct {
+	ActionCount            int64           `json:"action_count"`
+	ConflictingActionCount int64           `json:"conflicting_action_count"`
+	ExecutionSnapshot      json.RawMessage `json:"execution_snapshot"`
+}
+
+func (q *Queries) GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getGrowthExecutionChainForUpdate, arg.CanonicalOpportunityID, arg.ProjectID, arg.SourceOpportunityID)
+	var i GetGrowthExecutionChainForUpdateRow
+	err := row.Scan(&i.ActionCount, &i.ConflictingActionCount, &i.ExecutionSnapshot)
+	return i, err
+}
+
 const getGrowthOpportunityWorkAlias = `-- name: GetGrowthOpportunityWorkAlias :one
 select project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at from growth_opportunity_work_aliases
 where project_id = $1
@@ -2885,6 +2972,15 @@ const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions 
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition from content_actions ca
 where ca.project_id = $1
   and ca.status = 'measuring'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and (
     ca.published_at is null
     or ca.measurement_window = '{}'::jsonb
@@ -4146,6 +4242,15 @@ left join topics t
   on t.source_content_action_id = ca.id
 where ca.project_id = $1
   and ca.status = 'ready_for_review'
+  and not exists (
+    select 1 from product_writer_authority authority
+    where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    where alias.project_id = ca.project_id and alias.legacy_opportunity_id = ca.opportunity_id
+      and alias.disposition in ('duplicate','doctor_merge')
+  )
   and t.id is null
   and coalesce(ca.work_type, '') <> 'fix_site_issue'
   and lower(coalesce(ca.asset_type, '') || ' ' || coalesce(ca.action_type, '')) not like any (
@@ -5422,6 +5527,43 @@ func (q *Queries) MergeCanonicalGrowthOpportunityEvidence(ctx context.Context, a
 	return i, err
 }
 
+const repointDuplicateGrowthContentActions = `-- name: RepointDuplicateGrowthContentActions :one
+with repointed as (
+  update content_actions action set opportunity_id = $1, updated_at = now()
+  where action.project_id = $2
+    and action.opportunity_id = $3
+    and not exists (
+      select 1 from content_actions canonical
+      where canonical.project_id = action.project_id
+        and canonical.opportunity_id = $1
+        and canonical.action_type = action.action_type
+        and canonical.id <> action.id
+    )
+  returning action.id
+)
+select count(*)::bigint as repointed_count,
+       coalesce(array_agg(repointed.id order by repointed.id), array[]::uuid[])::uuid[] as repointed_content_action_ids
+from repointed
+`
+
+type RepointDuplicateGrowthContentActionsParams struct {
+	CanonicalOpportunityID uuid.UUID `json:"canonical_opportunity_id"`
+	ProjectID              uuid.UUID `json:"project_id"`
+	SourceOpportunityID    uuid.UUID `json:"source_opportunity_id"`
+}
+
+type RepointDuplicateGrowthContentActionsRow struct {
+	RepointedCount            int64       `json:"repointed_count"`
+	RepointedContentActionIds []uuid.UUID `json:"repointed_content_action_ids"`
+}
+
+func (q *Queries) RepointDuplicateGrowthContentActions(ctx context.Context, arg RepointDuplicateGrowthContentActionsParams) (RepointDuplicateGrowthContentActionsRow, error) {
+	row := q.db.QueryRow(ctx, repointDuplicateGrowthContentActions, arg.CanonicalOpportunityID, arg.ProjectID, arg.SourceOpportunityID)
+	var i RepointDuplicateGrowthContentActionsRow
+	err := row.Scan(&i.RepointedCount, &i.RepointedContentActionIds)
+	return i, err
+}
+
 const resolveMissingSEODoctorFindings = `-- name: ResolveMissingSEODoctorFindings :exec
 update seo_doctor_findings set
   status = 'resolved',
@@ -5469,6 +5611,33 @@ func (q *Queries) ResolveMissingSEODoctorFindings(ctx context.Context, arg Resol
 		arg.AssessedGeoScopes,
 	)
 	return err
+}
+
+const restoreGrowthContentActionRepoints = `-- name: RestoreGrowthContentActionRepoints :execrows
+update content_actions action set opportunity_id = $1, updated_at = now()
+where action.project_id = $2
+  and action.opportunity_id = $3
+  and action.id = any($4::uuid[])
+`
+
+type RestoreGrowthContentActionRepointsParams struct {
+	SourceOpportunityID    uuid.UUID   `json:"source_opportunity_id"`
+	ProjectID              uuid.UUID   `json:"project_id"`
+	CanonicalOpportunityID uuid.UUID   `json:"canonical_opportunity_id"`
+	ContentActionIds       []uuid.UUID `json:"content_action_ids"`
+}
+
+func (q *Queries) RestoreGrowthContentActionRepoints(ctx context.Context, arg RestoreGrowthContentActionRepointsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, restoreGrowthContentActionRepoints,
+		arg.SourceOpportunityID,
+		arg.ProjectID,
+		arg.CanonicalOpportunityID,
+		arg.ContentActionIds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSEOOAuthToken = `-- name: RevokeSEOOAuthToken :one
@@ -5864,6 +6033,34 @@ func (q *Queries) SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) 
 	row := q.db.QueryRow(ctx, sEOTechnicalSummary, projectID)
 	var i SEOTechnicalSummaryRow
 	err := row.Scan(&i.CheckedUrls, &i.OkUrls, &i.AnomalyUrls)
+	return i, err
+}
+
+const setGrowthCutoverSessionReviewRequired = `-- name: SetGrowthCutoverSessionReviewRequired :one
+update growth_cutover_sessions set error = $1
+where project_id = $2 and batch_id = $3
+  and status = 'applying'
+returning batch_id, project_id, fence_token, status, started_at, finished_at, error
+`
+
+type SetGrowthCutoverSessionReviewRequiredParams struct {
+	Error     *string   `json:"error"`
+	ProjectID uuid.UUID `json:"project_id"`
+	BatchID   uuid.UUID `json:"batch_id"`
+}
+
+func (q *Queries) SetGrowthCutoverSessionReviewRequired(ctx context.Context, arg SetGrowthCutoverSessionReviewRequiredParams) (GrowthCutoverSession, error) {
+	row := q.db.QueryRow(ctx, setGrowthCutoverSessionReviewRequired, arg.Error, arg.ProjectID, arg.BatchID)
+	var i GrowthCutoverSession
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.FenceToken,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+	)
 	return i, err
 }
 

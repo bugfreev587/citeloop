@@ -11,7 +11,12 @@ func TestProjectCutoverIsFencedConservedLedgeredAndRollbackable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := string(raw)
+	helper, err := os.ReadFile("execution_chain.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceSource := string(raw)
+	source := serviceSource + string(helper)
 	for _, want := range []string{
 		"EnsureProjectCutover",
 		"FenceProductWriterAuthority",
@@ -75,5 +80,34 @@ func TestGrowthEvidenceMergeDispatchesToCanonicalOwner(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Fatalf("owner-aware evidence merge missing %q", want)
 		}
+	}
+}
+
+func TestDuplicateExecutionChainIsLockedBeforeAliasAndJournaled(t *testing.T) {
+	raw, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile("execution_chain.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceSource := string(raw)
+	source := serviceSource + string(helper)
+	for _, want := range []string{
+		"GetGrowthExecutionChainForUpdate",
+		"RepointDuplicateGrowthContentActions",
+		"holdGrowthCutoverForReview",
+		"repointed_content_action_ids",
+		"CreateDuplicateGrowthOpportunityAlias",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("execution-chain cutover missing %q", want)
+		}
+	}
+	lock := strings.Index(serviceSource, "reconcileDuplicateExecutionChain")
+	alias := strings.Index(serviceSource, "CreateDuplicateGrowthOpportunityAlias")
+	if lock < 0 || alias < 0 || lock > alias {
+		t.Fatal("duplicate alias can become visible before descendants are locked")
 	}
 }
