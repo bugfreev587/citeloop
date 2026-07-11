@@ -1,17 +1,23 @@
 -- Doctor-owned canonical Site Fixes and the audit-safe legacy cutover foundation.
+-- Tenant audit is append-only while its project exists. The explicit project
+-- hard-delete path erases the tenant and its audit rows through database cascades.
 
 create or replace function reject_doctor_append_only_mutation()
 returns trigger
 language plpgsql
 as $$
 begin
+  if tg_op = 'DELETE' and not exists (
+    select 1 from projects where id = old.project_id
+  ) then return old;
+  end if;
   raise exception '% is append-only', tg_table_name using errcode = '55000';
 end;
 $$;
 
 create table if not exists migration_batches (
   id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references projects(id) on delete restrict,
+  project_id uuid not null references projects(id) on delete cascade,
   product text not null default 'doctor' check (product in ('doctor','opportunities','shared')),
   batch_kind text not null check (batch_kind in ('dry_run','forward','rollback')),
   status text not null check (status in ('completed','review_required','failed','rolled_back')),
@@ -29,12 +35,11 @@ create table if not exists migration_batches (
   finished_at timestamptz not null,
   created_at timestamptz not null default now(),
   check (source_count = migrated_count + archived_duplicate_count + review_count),
-  check (finished_at >= started_at)
+  check (finished_at >= started_at),
+  unique (project_id, id)
 );
 
-create index if not exists idx_migration_batches_project_created
-  on migration_batches (project_id, created_at desc);
-
+drop trigger if exists migration_batches_immutable on migration_batches;
 create trigger migration_batches_immutable
 before update or delete on migration_batches
 for each row execute function reject_doctor_append_only_mutation();
@@ -115,24 +120,10 @@ create table if not exists site_fixes (
   updated_at timestamptz not null default now(),
   constraint fk_site_fixes_work_signature foreign key (work_signature_id)
     references work_signature_registry(id) on delete restrict deferrable initially deferred,
-  unique (project_id, candidate_id, supersedes_site_fix_id)
+  unique (project_id, id),
+  unique (project_id, candidate_id, id),
+  check (id <> supersedes_site_fix_id)
 );
-
-create unique index if not exists uniq_active_site_fix_work_signature
-  on site_fixes (project_id, work_signature_id)
-  where status in (
-    'proposed','approved','preparing','ready_to_apply','applying','awaiting_deploy',
-    'verifying','failed_retryable','reopened'
-  );
-
-create index if not exists idx_site_fixes_project_status
-  on site_fixes (project_id, status, updated_at desc);
-
-create index if not exists idx_site_fixes_doctor_finding
-  on site_fixes (project_id, doctor_finding_id, created_at desc);
-
-create index if not exists idx_site_fixes_candidate
-  on site_fixes (project_id, candidate_id);
 
 create table if not exists site_fix_verifications (
   id uuid primary key default gen_random_uuid(),
@@ -141,26 +132,29 @@ create table if not exists site_fix_verifications (
   attempt_number int not null check (attempt_number >= 1),
   evidence_read jsonb not null default '{}'::jsonb check (jsonb_typeof(evidence_read) = 'object'),
   acceptance_results jsonb not null default '[]'::jsonb check (jsonb_typeof(acceptance_results) = 'array'),
-  ai_call_id uuid references ai_call_records(id) on delete set null,
+  ai_call_id uuid references ai_call_records(id) on delete cascade,
   result text not null check (result in ('passed','failed','inconclusive','error')),
   retry_classification text not null check (retry_classification in ('not_applicable','retryable','retry_exhausted','terminal')),
   failure_reason text,
   attempted_at timestamptz not null,
   created_at timestamptz not null default now(),
-  unique (site_fix_id, attempt_number)
+  unique (site_fix_id, attempt_number),
+  check (
+    (result = 'passed' and retry_classification = 'not_applicable' and failure_reason is null)
+    or
+    (result <> 'passed' and retry_classification <> 'not_applicable')
+  )
 );
 
-create index if not exists idx_site_fix_verifications_fix_attempt
-  on site_fix_verifications (site_fix_id, attempt_number desc);
-
+drop trigger if exists site_fix_verifications_immutable on site_fix_verifications;
 create trigger site_fix_verifications_immutable
 before update or delete on site_fix_verifications
 for each row execute function reject_doctor_append_only_mutation();
 
 create table if not exists migration_ledger (
   id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references projects(id) on delete restrict,
-  migration_batch_id uuid not null references migration_batches(id) on delete restrict,
+  project_id uuid not null references projects(id) on delete cascade,
+  migration_batch_id uuid not null references migration_batches(id) on delete cascade,
   sequence_number int not null check (sequence_number >= 1),
   source_object_type text not null,
   source_object_id uuid not null,
@@ -187,25 +181,20 @@ create table if not exists migration_ledger (
   applied_at timestamptz not null,
   created_at timestamptz not null default now(),
   unique (migration_batch_id, sequence_number),
-  unique (migration_batch_id, source_object_type, source_object_id, operation)
+  unique (migration_batch_id, source_object_type, source_object_id, operation),
+  unique (project_id, migration_batch_id, id)
 );
 
-create index if not exists idx_migration_ledger_project_source
-  on migration_ledger (project_id, source_object_type, source_object_id, created_at desc);
-
-create index if not exists idx_migration_ledger_canonical
-  on migration_ledger (project_id, canonical_object_type, canonical_object_id)
-  where canonical_object_id is not null;
-
+drop trigger if exists migration_ledger_immutable on migration_ledger;
 create trigger migration_ledger_immutable
 before update or delete on migration_ledger
 for each row execute function reject_doctor_append_only_mutation();
 
 create table if not exists migration_rollback_events (
   id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references projects(id) on delete restrict,
-  migration_batch_id uuid not null references migration_batches(id) on delete restrict,
-  migration_ledger_id uuid references migration_ledger(id) on delete restrict,
+  project_id uuid not null references projects(id) on delete cascade,
+  migration_batch_id uuid not null references migration_batches(id) on delete cascade,
+  migration_ledger_id uuid references migration_ledger(id) on delete cascade,
   event_sequence int not null check (event_sequence >= 1),
   event_type text not null check (event_type in (
     'rollback_eligibility_assessed','rollback_started',
@@ -228,13 +217,7 @@ create table if not exists migration_rollback_events (
   check ((event_type = 'rollback_completed') = (rolled_back_at is not null))
 );
 
-create index if not exists idx_migration_rollback_events_batch_age
-  on migration_rollback_events (migration_batch_id, occurred_at);
-
-create index if not exists idx_migration_rollback_events_ledger
-  on migration_rollback_events (migration_ledger_id, occurred_at)
-  where migration_ledger_id is not null;
-
+drop trigger if exists migration_rollback_events_immutable on migration_rollback_events;
 create trigger migration_rollback_events_immutable
 before update or delete on migration_rollback_events
 for each row execute function reject_doctor_append_only_mutation();
@@ -242,7 +225,7 @@ for each row execute function reject_doctor_append_only_mutation();
 create table if not exists migration_review_items (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
-  migration_batch_id uuid not null references migration_batches(id) on delete restrict,
+  migration_batch_id uuid not null references migration_batches(id) on delete cascade,
   source_object_type text not null,
   source_object_id uuid not null,
   reason_code text not null,
@@ -255,16 +238,18 @@ create table if not exists migration_review_items (
   resolved_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (migration_batch_id, source_object_type, source_object_id)
+  unique (migration_batch_id, source_object_type, source_object_id),
+  check (
+    (status = 'pending' and resolution_snapshot is null and resolved_by is null and resolved_at is null)
+    or
+    (status in ('resolved','dismissed') and resolution_snapshot is not null and resolved_by is not null and resolved_at is not null)
+  )
 );
-
-create index if not exists idx_migration_review_items_project_status
-  on migration_review_items (project_id, status, created_at);
 
 create table if not exists legacy_object_aliases (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
-  migration_batch_id uuid not null references migration_batches(id) on delete restrict,
+  migration_batch_id uuid not null references migration_batches(id) on delete cascade,
   legacy_object_type text not null,
   legacy_object_id uuid not null,
   canonical_object_type text not null,
@@ -275,9 +260,6 @@ create table if not exists legacy_object_aliases (
   updated_at timestamptz not null default now(),
   unique (project_id, legacy_object_type, legacy_object_id)
 );
-
-create index if not exists idx_legacy_object_aliases_canonical
-  on legacy_object_aliases (project_id, canonical_object_type, canonical_object_id);
 
 -- Existing Page Update rows retain their Content Action source. Canonical Doctor
 -- applications use site_fix_id; the XOR is safe to validate for all legacy rows.
@@ -290,8 +272,6 @@ alter table site_change_applications
 alter table site_change_applications
   add constraint site_change_applications_exactly_one_source
   check (num_nonnulls(site_fix_id, content_action_id) = 1) not valid;
-alter table site_change_applications
-  validate constraint site_change_applications_exactly_one_source;
 
 -- Legacy site_fix applications may still point at their conserved Content Action;
 -- canonical site_fix applications point only at site_fixes.
@@ -304,28 +284,6 @@ alter table site_change_applications
     or
     (application_kind = 'site_fix' and num_nonnulls(site_fix_id, content_action_id) = 1)
   ) not valid;
-alter table site_change_applications
-  validate constraint site_change_applications_kind_source_consistency;
-
-create index if not exists idx_active_site_change_application_content_action
-  on site_change_applications (project_id, content_action_id)
-  where content_action_id is not null and status in (
-    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
-    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
-    'needs_follow_up','conflict','manual_apply_required'
-  );
-
-create unique index if not exists uniq_active_site_change_application_site_fix
-  on site_change_applications (project_id, site_fix_id)
-  where site_fix_id is not null and status in (
-    'draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open',
-    'github_pr_closed','github_pr_merged','deployment_pending','verification_pending',
-    'needs_follow_up','conflict','manual_apply_required'
-  );
-
-create index if not exists idx_site_change_applications_site_fix
-  on site_change_applications (project_id, site_fix_id, updated_at desc)
-  where site_fix_id is not null;
 
 -- Rollback history predates a required source, so keep source-less legacy rows
 -- while preventing a rollback from claiming both canonical source types.
@@ -336,12 +294,6 @@ alter table rollback_records
 alter table rollback_records
   add constraint rollback_records_at_most_one_source
   check (num_nonnulls(action_id, site_fix_id) <= 1) not valid;
-alter table rollback_records
-  validate constraint rollback_records_at_most_one_source;
-
-create index if not exists idx_rollback_records_site_fix_id
-  on rollback_records (site_fix_id)
-  where site_fix_id is not null;
 
 alter table seo_doctor_findings
   add column if not exists finding_kind text not null default 'broken'
@@ -350,34 +302,3 @@ alter table seo_doctor_findings
 alter table seo_doctor_runs
   add column if not exists healthy_coverage jsonb not null default '[]'::jsonb
     check (jsonb_typeof(healthy_coverage) = 'array');
-
-alter table seo_doctor_runs
-  drop constraint if exists seo_doctor_runs_trigger_check;
-alter table seo_doctor_runs
-  add constraint seo_doctor_runs_trigger_check
-  check (trigger in ('onboarding','manual','weekly','post_publish','migration'));
-
--- Canonical and migration discovery runs are durable production provenance.
-alter table discovery_shadow_runs
-  drop constraint if exists discovery_shadow_runs_mode_check;
-alter table discovery_shadow_runs
-  add constraint discovery_shadow_runs_mode_check
-  check (mode in ('shadow','canonical','migration'));
-
-alter table discovery_candidates
-  drop constraint if exists discovery_candidates_shadow_run_id_fkey;
-alter table discovery_candidates
-  add constraint discovery_candidates_shadow_run_id_fkey foreign key (shadow_run_id)
-  references discovery_shadow_runs(id) on delete restrict;
-
-alter table work_signature_registry
-  drop constraint if exists work_signature_registry_shadow_run_id_fkey;
-alter table work_signature_registry
-  add constraint work_signature_registry_shadow_run_id_fkey foreign key (shadow_run_id)
-  references discovery_shadow_runs(id) on delete restrict;
-
-alter table work_signature_registry
-  drop constraint if exists work_signature_registry_candidate_id_fkey;
-alter table work_signature_registry
-  add constraint work_signature_registry_candidate_id_fkey foreign key (candidate_id)
-  references discovery_candidates(id) on delete restrict;

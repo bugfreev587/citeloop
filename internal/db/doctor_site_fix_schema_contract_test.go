@@ -162,7 +162,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		"mode in ('shadow','canonical','migration')",
 		"constraint discovery_candidates_shadow_run_restrict_fk",
 		"foreign key (shadow_run_id) references discovery_shadow_runs(id)",
-		"on delete restrict not valid",
+		"on delete no action deferrable initially deferred not valid",
 		"constraint work_signature_registry_shadow_run_restrict_fk",
 	)
 	for _, statement := range strings.Split(migration, ";") {
@@ -260,9 +260,9 @@ func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 	})
 
 	t.Run("candidate provenance cannot cascade", func(t *testing.T) {
-		candidateFK := regexp.MustCompile(`(?s)constraint work_signature_registry_candidate_project_fk\s+foreign key \(project_id, candidate_id\)\s+references discovery_candidates\(project_id, id\)\s+on delete restrict`).MatchString(migration)
+		candidateFK := regexp.MustCompile(`(?s)constraint work_signature_registry_candidate_project_fk\s+foreign key \(project_id, candidate_id\)\s+references discovery_candidates\(project_id, id\)\s+on delete no action deferrable initially deferred`).MatchString(migration)
 		if !candidateFK {
-			t.Error("work signature candidate provenance must be project-consistent and ON DELETE RESTRICT")
+			t.Error("candidate provenance must reject direct deletion but defer during project hard delete")
 		}
 		requireSQL(t, migration, "drop constraint if exists work_signature_registry_candidate_id_fkey")
 	})

@@ -171,6 +171,7 @@ func TestDoctorSiteFixRelationshipMigrationContracts(t *testing.T) {
 			t.Error("append-only verifications cannot use ON DELETE SET NULL")
 		}
 		requireDoctorMigrationSQL(t, add, "on delete cascade")
+		requireDoctorMigrationSQL(t, add, "on delete no action deferrable initially deferred")
 	})
 
 	t.Run("ddl is recoverably rerunnable and metadata is consistent", func(t *testing.T) {
