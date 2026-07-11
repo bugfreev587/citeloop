@@ -1,7 +1,10 @@
 package seo
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -130,6 +133,7 @@ func TestDoctorConsumesAuthoritativeCrawlerAccessEvidence(t *testing.T) {
 		PageUrl:           "https://example.com/blocked",
 		NormalizedPageUrl: "/blocked",
 		TargetUserAgent:   "OAI-SearchBot",
+		EvidenceType:      "robots_static",
 		RobotsState:       "disallowed",
 		AccessState:       "blocked",
 		Confidence:        "high",
@@ -146,6 +150,8 @@ func TestDoctorConsumesAuthoritativeCrawlerAccessEvidence(t *testing.T) {
 	inferred := snapshot
 	inferred.PageUrl = "https://example.com/inferred"
 	inferred.NormalizedPageUrl = "/inferred"
+	inferred.EvidenceType = "honest_probe"
+	inferred.AccessState = "challenge"
 	inferred.Confidence = "medium"
 	inferred.Inferred = true
 	if got := doctorFindingCandidatesFromCrawlerAccess(uuid.New(), []db.AiCrawlerAccessSnapshot{inferred}); len(got) != 0 {
@@ -178,9 +184,45 @@ func TestDoctorPersistenceContractsWriteFindingKindAndHealthyCoverage(t *testing
 	}
 }
 
+func TestProductionTechnicalAndGEOEvidenceCanProduceCompleteHealthyCoverage(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			_, _ = w.Write([]byte("User-agent: OAI-SearchBot\nAllow: /\n"))
+		case "/sitemap.xml":
+			_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/healthy</loc></url></urlset>`))
+		default:
+			_, _ = w.Write([]byte(`<!doctype html><html><head><title>Healthy page</title><meta name="description" content="Healthy description"><link rel="canonical" href="` + server.URL + `/healthy"><script type="application/ld+json">{"name":"Healthy"}</script></head><body><h1>Healthy page</h1><a href="/about">About</a></body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	pageURL := server.URL + "/healthy"
+	result := (Service{HTTPClient: server.Client()}).checkURL(context.Background(), pageURL, server.URL)
+	params := technicalCheckParams(uuid.New(), uuid.New(), pageURL, pageURL, pgtype.UUID{}, nil, false, result)
+	if params.RobotsStatus == nil || *params.RobotsStatus != "index" || params.SitemapStatus == nil || *params.SitemapStatus != "present" {
+		t.Fatalf("production mapping robots=%v sitemap=%v result=%+v", params.RobotsStatus, params.SitemapStatus, result)
+	}
+	check := technicalCheckFromParams(params)
+
+	snapshots := []db.AiCrawlerAccessSnapshot{{PageUrl: pageURL, NormalizedPageUrl: pageURL, EvidenceType: "robots_static", RobotsState: "allowed", AccessState: "allowed", Confidence: "high", Inferred: true}}
+	coverage := buildDoctorHealthyCoverage([]db.TechnicalCheck{check}, snapshots)
+	if !doctorCoverageComplete(coverage) {
+		t.Fatalf("coverage should be complete healthy: %#v", coverage)
+	}
+	if findings := doctorFindingCandidatesFromChecks(uuid.New(), []db.TechnicalCheck{check}); len(findings) != 0 {
+		t.Fatalf("healthy production check emitted findings: %#v", findings)
+	}
+}
+
 func fullyCheckedDoctorPage(url string, status *int32, present *string, links *int32, details map[string]any) db.TechnicalCheck {
 	raw, _ := json.Marshal(details)
 	return db.TechnicalCheck{PageUrl: url, NormalizedPageUrl: url, HttpStatus: status, CanonicalStatus: present, RobotsStatus: present, TitleStatus: present, MetaDescriptionStatus: present, H1Status: present, StructuredDataStatus: present, SitemapStatus: present, InternalLinkCount: links, RawDetails: raw}
+}
+
+func technicalCheckFromParams(params db.UpsertTechnicalCheckParams) db.TechnicalCheck {
+	return db.TechnicalCheck{PageUrl: params.PageUrl, NormalizedPageUrl: params.NormalizedPageUrl, HttpStatus: params.HttpStatus, CanonicalStatus: params.CanonicalStatus, RobotsStatus: params.RobotsStatus, TitleStatus: params.TitleStatus, MetaDescriptionStatus: params.MetaDescriptionStatus, H1Status: params.H1Status, StructuredDataStatus: params.StructuredDataStatus, SitemapStatus: params.SitemapStatus, InternalLinkCount: params.InternalLinkCount, OutboundLinkCount: params.OutboundLinkCount, RawDetails: params.RawDetails}
 }
 
 func coverageByCheck(values []doctorCheckCoverage) map[string]doctorCheckCoverage {

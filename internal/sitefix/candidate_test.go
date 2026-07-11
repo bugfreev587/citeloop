@@ -92,6 +92,35 @@ func TestCandidateMaterializerFailsClosedForIncompleteOrHealthyFinding(t *testin
 	}
 }
 
+func TestCandidateMaterializerAcceptsEveryEmittedActionableDoctorFinding(t *testing.T) {
+	issues := []string{
+		"broken_url", "soft_404", "noindex", "robots_blocked", "canonical_missing", "structured_data_missing",
+		"title_missing", "meta_description_missing", "h1_missing", "important_page_missing_from_sitemap",
+		"internal_link_gap", "unsafe_mdx_detected", "geo_crawler_access_blocked", "metadata_readability",
+		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+	}
+	for _, issueType := range issues {
+		t.Run(issueType, func(t *testing.T) {
+			finding := canonicalFinding(uuid.New(), uuid.New())
+			finding.IssueType = issueType
+			if strings.Contains("metadata_readability duplicate_metadata_template supported_fact_extractability source_association entity_naming_consistency", issueType) {
+				finding.FindingKind = "optimization"
+			}
+			store := &candidateStoreStub{candidateID: uuid.New()}
+			got, err := newCandidateMaterializer(store).Materialize(context.Background(), finding)
+			if err != nil {
+				t.Fatalf("Materialize: %v", err)
+			}
+			if got.Candidate.Status != discovery.StatusIdentityReady || got.Candidate.SuggestedOwner != discovery.OwnerDoctor || got.Candidate.VerificationMode != discovery.VerificationImmediate || got.Candidate.ArtifactIntent != discovery.ArtifactRepairExistingSurface {
+				t.Fatalf("materialized candidate = %+v", got.Candidate)
+			}
+			if !meaningfulJSON(finding.AcceptanceTests) {
+				t.Fatal("actionable finding must carry materializable acceptance criteria")
+			}
+		})
+	}
+}
+
 func TestCandidateMaterializerSnapshotIdentityIsStableAndComplete(t *testing.T) {
 	projectID, findingID := uuid.New(), uuid.New()
 	finding := canonicalFinding(projectID, findingID)

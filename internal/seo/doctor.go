@@ -784,7 +784,7 @@ func doctorFindingCandidatesFromCrawlerAccess(projectID uuid.UUID, snapshots []d
 	out := make([]doctorFindingCandidate, 0)
 	seen := map[string]bool{}
 	for _, snapshot := range snapshots {
-		if !strings.EqualFold(snapshot.RobotsState, "disallowed") || !strings.EqualFold(snapshot.Confidence, "high") || seen[snapshot.NormalizedPageUrl] {
+		if !strings.EqualFold(snapshot.EvidenceType, "robots_static") || !strings.EqualFold(snapshot.RobotsState, "disallowed") || !strings.EqualFold(snapshot.Confidence, "high") || seen[snapshot.NormalizedPageUrl] {
 			continue
 		}
 		seen[snapshot.NormalizedPageUrl] = true
@@ -1116,7 +1116,8 @@ func buildDoctorHealthyCoverage(checks []db.TechnicalCheck, crawlerAccess []db.A
 		coverage := doctorCheckCoverage{Check: "geo_crawler_access", CheckedURLs: []string{}, PassedURLs: []string{}, FailedURLs: []string{}, SkippedURLs: []string{}}
 		for _, snapshot := range crawlerAccess {
 			url := snapshot.PageUrl
-			if !strings.EqualFold(snapshot.Confidence, "high") || snapshot.Inferred {
+			authoritativeRobots := strings.EqualFold(snapshot.EvidenceType, "robots_static") && strings.EqualFold(snapshot.Confidence, "high")
+			if !authoritativeRobots && (!strings.EqualFold(snapshot.Confidence, "high") || snapshot.Inferred) {
 				coverage.SkippedURLs = append(coverage.SkippedURLs, url)
 				continue
 			}

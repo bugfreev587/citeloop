@@ -25,3 +25,23 @@ func TestCanonicalDoctorAuthorityRejectsGuardedAutopilotTechnicalAction(t *testi
 		t.Fatal("legacy authority should remain readable/executable during the migration window")
 	}
 }
+
+func TestCitationFactExpansionRoutesToImprovePage(t *testing.T) {
+	opportunity := db.SeoOpportunity{Type: "citation_fact_expansion"}
+	if got := workTypeForOpportunity(opportunity); got != WorkTypeImprovePage {
+		t.Fatalf("work type = %q, want %q", got, WorkTypeImprovePage)
+	}
+}
+
+func TestCanonicalAuthorityRejectsEveryEmittedDoctorTechnicalType(t *testing.T) {
+	canonical := db.ProductWriterAuthority{Product: "doctor", WriterAuthority: "canonical"}
+	for _, opportunityType := range []string{
+		"geo_crawler_access_blocked", "meta_description_missing", "h1_missing", "important_page_missing_from_sitemap",
+		"unsafe_mdx_detected", "metadata_readability", "duplicate_metadata_template", "supported_fact_extractability",
+		"source_association", "entity_naming_consistency",
+	} {
+		if legacyTechnicalAutopilotAllowed(canonical, db.SeoOpportunity{Type: opportunityType}, AutopilotPlanAction{}) {
+			t.Fatalf("canonical authority allowed legacy technical type %q", opportunityType)
+		}
+	}
+}

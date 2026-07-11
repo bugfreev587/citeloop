@@ -62,3 +62,25 @@ func TestAuditorUsesHonestProbeUserAgent(t *testing.T) {
 		t.Fatalf("result = %+v, want high-confidence inferred robots disallow", results[0])
 	}
 }
+
+func TestAuditorMarksAllowedHealthyProbeAsAuthoritativeRobotsEvidence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			_, _ = w.Write([]byte("User-agent: OAI-SearchBot\nAllow: /\n"))
+			return
+		}
+		_, _ = w.Write([]byte("<html><body>healthy extractable page</body></html>"))
+	}))
+	defer server.Close()
+
+	results := (Auditor{HTTPClient: server.Client()}).Audit(context.Background(), AuditRequest{
+		SiteURL: server.URL, URLs: []string{server.URL + "/page"}, TargetUserAgents: []string{"OAI-SearchBot"},
+	})
+	if len(results) != 1 {
+		t.Fatalf("results = %#v", results)
+	}
+	result := results[0]
+	if result.EvidenceType != EvidenceRobotsStatic || result.RobotsState != RobotsAllowed || result.Confidence != ConfidenceHigh || !result.Inferred {
+		t.Fatalf("allowed result = %+v, want authoritative inferred robots_static", result)
+	}
+}

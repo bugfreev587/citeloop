@@ -208,7 +208,7 @@ func TestMigrationAcceptanceTestsUseExecutableTypedFamilies(t *testing.T) {
 
 func TestMigrationAcceptanceTestsRequireEvidenceOutsidePageVerifierScope(t *testing.T) {
 	projectID := uuid.New()
-	for _, opportunityType := range []string{"soft_404", "orphan_page", "internal_link_gap", "redirect_chain", "robots_blocked", "title_too_long", "canonical_mismatch"} {
+	for _, opportunityType := range []string{"soft_404", "orphan_page", "internal_link_gap", "redirect_chain", "title_too_long", "canonical_mismatch"} {
 		row := fixtureLegacyOpportunity(projectID, opportunityType, "https://example.com/a", `{"issue":"`+opportunityType+`"}`)
 		row.ApplicationIDs = nil
 		report, err := ClassifyLegacyTechnicalActions(projectID, "legacy", []LegacyTechnicalAction{row})
@@ -422,6 +422,45 @@ func TestMigrationPersistenceContracts(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration queries missing %q", want)
+		}
+	}
+}
+
+func TestForwardMigrationExpandsLegacyDoctorTechnicalPredicate(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0060_expand_legacy_doctor_technical_predicate.sql")
+	if err != nil {
+		t.Fatalf("read forward predicate migration: %v", err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"create or replace function is_legacy_doctor_technical_opportunity",
+		"geo_crawler_access_blocked", "meta_description_missing", "metadata_description", "h1_missing",
+		"important_page_missing_from_sitemap", "unsafe_mdx_detected", "metadata_readability",
+		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("forward predicate migration missing %q", want)
+		}
+	}
+	queryRaw, err := os.ReadFile("../db/queries/site_fixes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(string(queryRaw)), "and is_legacy_doctor_technical_opportunity(o.type, o.evidence)") {
+		t.Fatal("migration selection must use the expanded database predicate")
+	}
+}
+
+func TestExpandedLegacyDoctorTypesAreMigratable(t *testing.T) {
+	projectID := uuid.New()
+	for _, opportunityType := range []string{
+		"geo_crawler_access_blocked", "meta_description_missing", "metadata_description", "h1_missing",
+		"important_page_missing_from_sitemap", "unsafe_mdx_detected", "metadata_readability",
+		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+	} {
+		row := fixtureLegacyOpportunity(projectID, opportunityType, "https://example.com/page", `{"issue":"`+opportunityType+`"}`)
+		if _, _, reason := canonicalLegacyMigrationIdentity(row); reason != "" {
+			t.Fatalf("%s not migratable: %s", opportunityType, reason)
 		}
 	}
 }

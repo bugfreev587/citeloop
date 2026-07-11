@@ -133,6 +133,10 @@ func doctorWorkSpec(issueType string) (legacyWorkSpec, bool) {
 		return immediateSpec("metadata.title", "add", "title"), true
 	case "title_duplicate", "duplicate_title", "title_too_long", "title_invalid", "metadata_title":
 		return immediateSpec("metadata.title", "update", "title"), true
+	case "meta_description_missing", "metadata_description":
+		return immediateSpec("metadata.description", "add", "meta_description"), true
+	case "h1_missing":
+		return immediateSpec("content.heading", "add", "h1"), true
 	case "canonical_missing":
 		return immediateSpec("url.canonical", "add", "canonical"), true
 	case "canonical_mismatch", "canonical_invalid", "canonical_multiple":
@@ -143,10 +147,22 @@ func doctorWorkSpec(issueType string) (legacyWorkSpec, bool) {
 		return immediateSpec("availability.http", "update", "http_response"), true
 	case "internal_link_gap", "zero_internal_links", "broken_internal_link", "orphan_page":
 		return immediateSpec("links.internal", "add", "internal_link"), true
+	case "important_page_missing_from_sitemap", "sitemap_update":
+		return immediateSpec("discovery.sitemap", "add", "sitemap_entry"), true
+	case "geo_crawler_access_blocked":
+		return immediateSpec("indexability.ai_crawler", "update", "robots"), true
+	case "unsafe_mdx_detected":
+		return immediateSpec("rendering.template", "update", "unsafe_output"), true
+	case "metadata_readability", "duplicate_metadata_template":
+		return immediateSpec("metadata.title", "update", "title"), true
+	case "supported_fact_extractability", "citation_readiness_structure":
+		return immediateSpec("content.evidence", "move", "answer_block"), true
+	case "source_association":
+		return immediateSpec("content.evidence", "update", "source_association"), true
+	case "entity_naming_consistency":
+		return immediateSpec("content.entity", "update", "entity_name"), true
 	case "ga4_missing", "tracking_missing", "measurement_readiness":
 		return immediateSpec("measurement.instrumentation", "update", "tracking"), true
-	case "citation_readiness_structure":
-		return immediateSpec("content.evidence", "move", "answer_block"), true
 	default:
 		return legacyWorkSpec{}, false
 	}
@@ -164,6 +180,8 @@ func opportunityWorkSpec(opportunityType string) (legacyWorkSpec, bool) {
 		return delayedSpec("content.evidence", "update", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
 	case "thin_evidence_page":
 		return delayedSpec("content.evidence", "add", "evidence_block", ArtifactUpdateExistingContent, "ai_citation"), true
+	case "citation_fact_expansion":
+		return delayedSpec("content.evidence", "add", "supported_fact", ArtifactUpdateExistingContent, "ai_citation"), true
 	case "gsc_query_gap", "query_gap", "striking_distance", "gsc_striking_distance_query":
 		return delayedQuerySpec("content.query", "update", "page_content", ArtifactUpdateExistingContent, "search_visibility"), true
 	case "content_decay", "content_decay_refresh", "gsc_content_decay":

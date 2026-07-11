@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -107,6 +108,7 @@ type TechnicalResult struct {
 	MetaDescriptionStatus string         `json:"meta_description_status"`
 	H1Status              string         `json:"h1_status"`
 	StructuredDataStatus  string         `json:"structured_data_status"`
+	SitemapStatus         string         `json:"sitemap_status"`
 	InternalLinkCount     int32          `json:"internal_link_count"`
 	OutboundLinkCount     int32          `json:"outbound_link_count"`
 	RawDetails            map[string]any `json:"raw_details"`
@@ -1244,7 +1246,14 @@ func (s Service) recordTechnicalCheck(
 	} else if check.HTTPStatus != nil {
 		status = "http_error"
 	}
-	_, err = s.Q.UpsertTechnicalCheck(ctx, db.UpsertTechnicalCheckParams{
+	_, err = s.Q.UpsertTechnicalCheck(ctx, technicalCheckParams(
+		projectID, runID, rawURL, normalized, articleID, contentHash, unsafeMDX, check,
+	))
+	return normalized, status, err
+}
+
+func technicalCheckParams(projectID, runID uuid.UUID, rawURL, normalized string, articleID pgtype.UUID, contentHash *string, unsafeMDX bool, check TechnicalResult) db.UpsertTechnicalCheckParams {
+	return db.UpsertTechnicalCheckParams{
 		ProjectID:             projectID,
 		RunID:                 runID,
 		PageUrl:               rawURL,
@@ -1257,13 +1266,13 @@ func (s Service) recordTechnicalCheck(
 		MetaDescriptionStatus: strPtr(check.MetaDescriptionStatus),
 		H1Status:              strPtr(check.H1Status),
 		StructuredDataStatus:  strPtr(check.StructuredDataStatus),
+		SitemapStatus:         strPtr(check.SitemapStatus),
 		InternalLinkCount:     &check.InternalLinkCount,
 		OutboundLinkCount:     &check.OutboundLinkCount,
 		ContentHash:           contentHash,
 		UnsafeMdxDetected:     unsafeMDX,
 		RawDetails:            mustJSON(check.RawDetails),
-	})
-	return normalized, status, err
+	}
 }
 
 func (s Service) ensureProperty(ctx context.Context, projectID uuid.UUID, siteURL string) (db.SeoProperty, error) {
@@ -1322,11 +1331,12 @@ func (s Service) checkURL(ctx context.Context, rawURL, siteURL string) Technical
 	return TechnicalResult{
 		HTTPStatus:            &status,
 		CanonicalStatus:       presenceStatus(htmlLower, `rel=["']canonical["']`),
-		RobotsStatus:          robotsStatus(htmlLower),
+		RobotsStatus:          robotsStatus(htmlLower, res.Header.Values("X-Robots-Tag")...),
 		TitleStatus:           presenceStatus(htmlLower, `<title`),
 		MetaDescriptionStatus: presenceStatus(htmlLower, `name=["']description["']`),
 		H1Status:              presenceStatus(htmlLower, `<h1`),
 		StructuredDataStatus:  presenceStatus(htmlLower, `application/ld\+json`),
+		SitemapStatus:         checkSitemapStatus(ctx, client, siteURL, rawURL),
 		InternalLinkCount:     countLinks(htmlLower, siteURL, true),
 		OutboundLinkCount:     countLinks(htmlLower, siteURL, false),
 		RawDetails:            rawDetails,
@@ -1571,6 +1581,7 @@ func failedTechnicalResult(err error) TechnicalResult {
 		MetaDescriptionStatus: "unknown",
 		H1Status:              "unknown",
 		StructuredDataStatus:  "unknown",
+		SitemapStatus:         "unknown",
 		RawDetails:            map[string]any{"error": err.Error()},
 	}
 }
@@ -1583,12 +1594,81 @@ func presenceStatus(html, pattern string) string {
 	return "missing"
 }
 
-func robotsStatus(html string) string {
+func robotsStatus(html string, headerValues ...string) string {
+	for _, value := range headerValues {
+		if strings.Contains(strings.ToLower(value), "noindex") {
+			return "noindex"
+		}
+	}
 	if strings.Contains(html, "noindex") {
 		return "noindex"
 	}
 	if strings.Contains(html, `name="robots"`) || strings.Contains(html, `name='robots'`) {
 		return "present"
+	}
+	return "index"
+}
+
+func checkSitemapStatus(ctx context.Context, client *http.Client, siteURL, pageURL string) string {
+	base, err := url.Parse(strings.TrimSpace(siteURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "unknown"
+	}
+	sitemapURL := base.ResolveReference(&url.URL{Path: "/sitemap.xml"}).String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sitemapURL, nil)
+	if err != nil {
+		return "unknown"
+	}
+	req.Header.Set("User-Agent", "CiteLoop SEO technical checker")
+	res, err := client.Do(req)
+	if err != nil {
+		return "unknown"
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "unknown"
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return "unknown"
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return "unknown"
+	}
+	want, err := NormalizeURL(pageURL, siteURL, URLNormalizationConfig{})
+	if err != nil {
+		return "unknown"
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(body)))
+	sitemapIndex := false
+	for {
+		token, decodeErr := decoder.Token()
+		if decodeErr == io.EOF {
+			break
+		}
+		if decodeErr != nil {
+			return "unknown"
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(start.Name.Local) {
+		case "sitemapindex":
+			sitemapIndex = true
+		case "loc":
+			var location string
+			if decoder.DecodeElement(&location, &start) != nil {
+				return "unknown"
+			}
+			normalized, normalizeErr := NormalizeURL(strings.TrimSpace(location), siteURL, URLNormalizationConfig{})
+			if normalizeErr == nil && normalized == want {
+				return "present"
+			}
+		}
+	}
+	if sitemapIndex {
+		return "unknown"
 	}
 	return "missing"
 }

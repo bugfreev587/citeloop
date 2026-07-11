@@ -854,6 +854,8 @@ func migrationAcceptanceTests(candidate discovery.Candidate, legacy LegacyTechni
 			switch issue {
 			case "noindex", "noindex_conflict", "robots_noindex":
 				return []map[string]any{{"type": "noindex_absent", "target": target}}
+			case "geo_crawler_access_blocked", "robots_blocked", "robots_conflict":
+				return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "an authoritative crawler-access check reports the target is allowed by the deployed robots policy"}}
 			default:
 				return nil
 			}
@@ -864,6 +866,9 @@ func migrationAcceptanceTests(candidate discovery.Candidate, legacy LegacyTechni
 			}
 			if issue == "title_missing" || issue == "missing_title" {
 				return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered document has exactly one non-empty title element"}}
+			}
+			if issue == "metadata_readability" || issue == "duplicate_metadata_template" {
+				return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered title is readable and unique for the existing page intent"}}
 			}
 			return nil
 		case "http_response":
@@ -892,6 +897,20 @@ func migrationAcceptanceTests(candidate discovery.Candidate, legacy LegacyTechni
 				return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered page contains at least one crawlable same-site internal link"}}
 			}
 			return nil
+		case "meta_description":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered document has exactly one non-empty meta description"}}
+		case "h1":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered document has exactly one non-empty primary heading"}}
+		case "sitemap_entry":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the exact canonical target URL appears as a loc entry in an authoritative sitemap"}}
+		case "unsafe_output":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the rendered output contains no unsafe MDX or template script payload"}}
+		case "answer_block":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the existing preserved propositions are present in a self-contained extractable answer block"}}
+		case "source_association":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "each preserved proposition retains its visible source association without adding facts"}}
+		case "entity_name":
+			return []map[string]any{{"type": "content_evidence_present", "target": target, "expected": "the established entity name is consistent across the rendered page metadata and content"}}
 		default:
 			return nil
 		}

@@ -5,6 +5,7 @@ package sitefix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -110,6 +111,59 @@ func TestPostgresMigrationConservationMatrixAndRollbackBlocker(t *testing.T) {
 	}
 	if _, err := service.Rollback(ctx, projectID, second.BatchID, second.ResultSnapshotHash, "integration"); !errors.Is(err, ErrMigrationRollbackBlocked) {
 		t.Fatalf("rollback blocker err=%v", err)
+	}
+}
+
+func TestPostgresExpandedTechnicalPredicateSelectsAndFencesEveryDoctorType(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	projectID := uuid.New()
+	if _, err := pool.Exec(ctx, `insert into projects(id,owner_id,name,slug,config) values($1,'predicate-matrix','predicate matrix',$2,'{}')`, projectID, "predicate-matrix-"+projectID.String()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `update product_writer_authority set writer_authority='legacy',write_fenced=false where project_id=$1 and product='doctor'`, projectID)
+		_, _ = pool.Exec(context.Background(), `delete from projects where id=$1`, projectID)
+	})
+	types := []string{
+		"geo_crawler_access_blocked", "meta_description_missing", "metadata_description", "h1_missing",
+		"important_page_missing_from_sitemap", "unsafe_mdx_detected", "metadata_readability",
+		"duplicate_metadata_template", "supported_fact_extractability", "source_association", "entity_naming_consistency",
+	}
+	for i, opportunityType := range types {
+		page := fmt.Sprintf("https://example.com/%d", i)
+		evidence := fmt.Sprintf(`{"issue":%q}`, opportunityType)
+		if _, err := pool.Exec(ctx, `insert into seo_opportunities(project_id,type,status,page_url,normalized_page_url,evidence) values($1,$2,'open',$3,$3,$4)`, projectID, opportunityType, page, evidence); err != nil {
+			t.Fatalf("legacy insert %s: %v", opportunityType, err)
+		}
+	}
+	dry, err := NewMigrationService(NewPostgresMigrationStore(pool)).DryRun(ctx, projectID, "integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dry.SourceCount != len(types) {
+		t.Fatalf("selected source count = %d, want %d; report=%+v", dry.SourceCount, len(types), dry)
+	}
+	if dry.MigratedCount != len(types) || dry.ReviewCount != 0 {
+		t.Fatalf("expanded types are not migration-ready: %+v", dry)
+	}
+	if _, err := pool.Exec(ctx, `update product_writer_authority set writer_authority='canonical',authority_changed_at=now(),updated_at=now() where project_id=$1 and product='doctor'`, projectID); err != nil {
+		t.Fatal(err)
+	}
+	for i, opportunityType := range types {
+		page := fmt.Sprintf("https://example.com/new-%d", i)
+		evidence := fmt.Sprintf(`{"issue":%q}`, opportunityType)
+		if _, err := pool.Exec(ctx, `insert into seo_opportunities(project_id,type,status,page_url,normalized_page_url,evidence) values($1,$2,'open',$3,$3,$4)`, projectID, opportunityType, page, evidence); err == nil {
+			t.Fatalf("canonical writer fence allowed %s", opportunityType)
+		}
 	}
 }
 

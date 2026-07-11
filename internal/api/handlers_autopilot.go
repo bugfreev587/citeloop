@@ -28,6 +28,9 @@ var legacyDoctorTechnicalOpportunityTypes = map[string]bool{
 	"metadata_title": true, "meta_description_missing": true, "metadata_description": true, "h1_missing": true,
 	"internal_link_gap": true, "zero_internal_links": true, "broken_internal_link": true,
 	"orphan_page": true, "important_page_missing_from_sitemap": true, "sitemap_update": true,
+	"geo_crawler_access_blocked": true, "unsafe_mdx_detected": true, "metadata_readability": true,
+	"duplicate_metadata_template": true, "supported_fact_extractability": true,
+	"source_association": true, "entity_naming_consistency": true,
 }
 
 type AutopilotReadinessGate struct {

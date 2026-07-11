@@ -118,6 +118,33 @@ func TestCheckURLProducesCitationReadinessEvidenceForDoctor(t *testing.T) {
 	}
 }
 
+func TestCheckSitemapStatusRequiresExactLocationMatch(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<urlset><url><loc>` + server.URL + `/foobar</loc></url></urlset>`))
+	}))
+	defer server.Close()
+	if got := checkSitemapStatus(context.Background(), server.Client(), server.URL, server.URL+"/foo"); got != "missing" {
+		t.Fatalf("prefix-only sitemap match = %q, want missing", got)
+	}
+}
+
+func TestCheckURLHonorsXRobotsTagNoindex(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sitemap.xml" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		_, _ = w.Write([]byte("<html><head><title>Header robots</title></head><body><h1>Header robots</h1></body></html>"))
+	}))
+	defer server.Close()
+	result := (Service{HTTPClient: server.Client()}).checkURL(context.Background(), server.URL+"/page", server.URL)
+	if result.RobotsStatus != "noindex" {
+		t.Fatalf("robots status = %q, want noindex from X-Robots-Tag", result.RobotsStatus)
+	}
+}
+
 func TestGA4IntegrationFailureRequiresReconnectForInsufficientScope(t *testing.T) {
 	err := errors.New(`google api status 403: { "error": { "code": 403, "message": "Request had insufficient authentication scopes.", "status": "PERMISSION_DENIED", "details": [ { "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT" } ] } }`)
 
