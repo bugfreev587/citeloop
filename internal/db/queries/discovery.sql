@@ -476,3 +476,66 @@ select * from discovery_semantic_evaluations
 where project_id = sqlc.arg(project_id)
 order by created_at desc
 limit 1;
+
+-- name: GetEnforcedWorkSignatureForReservedWork :one
+select * from work_signature_registry
+where project_id = sqlc.arg(project_id)
+  and mode = 'enforced'
+  and reserved_work_type = sqlc.arg(reserved_work_type)
+  and reserved_work_id = sqlc.arg(reserved_work_id)
+order by created_at desc
+limit 1;
+
+-- name: MarkCanonicalWorkSignatureMigrationRolledBack :one
+with signature_snapshot as materialized (
+  select w.id, w.project_id, w.status as expected_status,
+         w.conflict_bucket_keys
+  from work_signature_registry w
+  where w.project_id = sqlc.arg(project_id)
+    and w.id = sqlc.arg(id)
+    and w.mode = 'enforced'
+    and w.active = true
+    and w.reserved_work_type = 'site_fix'
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from signature_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_signature as materialized (
+  select w.id, w.project_id
+  from work_signature_registry w
+  join signature_snapshot s on s.id = w.id and s.project_id = w.project_id
+  where w.mode = 'enforced'
+    and w.active = true
+    and w.status = s.expected_status
+    and w.reserved_work_type = 'site_fix'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_signature)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update work_signature_registry w
+set status = 'cancelled', active = false, updated_at = now()
+from locked_signature locked
+where w.id = locked.id
+  and w.project_id = locked.project_id
+  and w.active = true
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning w.*;

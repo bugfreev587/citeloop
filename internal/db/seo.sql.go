@@ -114,7 +114,7 @@ update seo_doctor_runs set
   updated_at = now(),
   finished_at = $8
 where id = $9 and project_id = $10
-returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage
 `
 
 type CompleteSEODoctorRunParams struct {
@@ -166,6 +166,7 @@ func (q *Queries) CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODocto
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -506,13 +507,13 @@ where status in (
     else excluded.status
   end,
   updated_at = now()
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
 `
 
 type CreateOrReuseSiteChangeApplicationParams struct {
 	ProjectID               uuid.UUID       `json:"project_id"`
 	SourceOpportunityID     pgtype.UUID     `json:"source_opportunity_id"`
-	ContentActionID         uuid.UUID       `json:"content_action_id"`
+	ContentActionID         pgtype.UUID     `json:"content_action_id"`
 	PageUpdateDraftID       pgtype.UUID     `json:"page_update_draft_id"`
 	ApplicationKind         string          `json:"application_kind"`
 	TargetUrl               string          `json:"target_url"`
@@ -607,6 +608,7 @@ func (q *Queries) CreateOrReuseSiteChangeApplication(ctx context.Context, arg Cr
 		&i.VerifiedAt,
 		&i.NextPollAt,
 		&i.NextNotifyAt,
+		&i.SiteFixID,
 	)
 	return i, err
 }
@@ -701,7 +703,7 @@ values (
   $8,
   $9
 )
-returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage
 `
 
 type CreateSEODoctorRunParams struct {
@@ -751,6 +753,7 @@ func (q *Queries) CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRun
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -919,7 +922,7 @@ update seo_doctor_findings set
   status = 'dismissed',
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind
 `
 
 type DismissSEODoctorFindingParams struct {
@@ -957,6 +960,7 @@ func (q *Queries) DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoc
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FindingKind,
 	)
 	return i, err
 }
@@ -973,7 +977,7 @@ update seo_doctor_runs set
   updated_at = now(),
   finished_at = $8
 where id = $9 and project_id = $10
-returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage
 `
 
 type FailSEODoctorRunParams struct {
@@ -1025,6 +1029,7 @@ func (q *Queries) FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunPara
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -1077,7 +1082,7 @@ func (q *Queries) FinishSEORun(ctx context.Context, arg FinishSEORunParams) (Seo
 }
 
 const getActiveSEODoctorRun = `-- name: GetActiveSEODoctorRun :one
-select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage from seo_doctor_runs
 where project_id = $1
   and status in ('queued','running')
 order by created_at desc
@@ -1109,6 +1114,7 @@ func (q *Queries) GetActiveSEODoctorRun(ctx context.Context, projectID uuid.UUID
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -1148,7 +1154,7 @@ func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOA
 }
 
 const getActiveSiteChangeApplicationByOpportunityKey = `-- name: GetActiveSiteChangeApplicationByOpportunityKey :one
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
 where project_id = $1
   and opportunity_key = $2
   and status in (
@@ -1218,6 +1224,7 @@ func (q *Queries) GetActiveSiteChangeApplicationByOpportunityKey(ctx context.Con
 		&i.VerifiedAt,
 		&i.NextPollAt,
 		&i.NextNotifyAt,
+		&i.SiteFixID,
 	)
 	return i, err
 }
@@ -1511,7 +1518,7 @@ func (q *Queries) GetResultsActionRow(ctx context.Context, arg GetResultsActionR
 }
 
 const getSEODoctorFinding = `-- name: GetSEODoctorFinding :one
-select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where id = $1 and project_id = $2
 `
 
@@ -1550,12 +1557,13 @@ func (q *Queries) GetSEODoctorFinding(ctx context.Context, arg GetSEODoctorFindi
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FindingKind,
 	)
 	return i, err
 }
 
 const getSEODoctorRun = `-- name: GetSEODoctorRun :one
-select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage from seo_doctor_runs
 where id = $1 and project_id = $2
 `
 
@@ -1589,6 +1597,7 @@ func (q *Queries) GetSEODoctorRun(ctx context.Context, arg GetSEODoctorRunParams
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -1662,7 +1671,7 @@ func (q *Queries) GetSEOPropertyForProject(ctx context.Context, projectID uuid.U
 }
 
 const getSiteChangeApplicationForProject = `-- name: GetSiteChangeApplicationForProject :one
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
 where id = $1 and project_id = $2
 `
 
@@ -1715,6 +1724,7 @@ func (q *Queries) GetSiteChangeApplicationForProject(ctx context.Context, arg Ge
 		&i.VerifiedAt,
 		&i.NextPollAt,
 		&i.NextNotifyAt,
+		&i.SiteFixID,
 	)
 	return i, err
 }
@@ -1767,7 +1777,7 @@ func (q *Queries) InsertSEORun(ctx context.Context, arg InsertSEORunParams) (Seo
 }
 
 const latestCompletedSEODoctorRun = `-- name: LatestCompletedSEODoctorRun :one
-select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage from seo_doctor_runs
 where project_id = $1
   and status = 'completed'
 order by finished_at desc nulls last, updated_at desc
@@ -1799,12 +1809,13 @@ func (q *Queries) LatestCompletedSEODoctorRun(ctx context.Context, projectID uui
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
 
 const latestSEODoctorRun = `-- name: LatestSEODoctorRun :one
-select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at from seo_doctor_runs
+select id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage from seo_doctor_runs
 where project_id = $1
 order by created_at desc
 limit 1
@@ -1835,6 +1846,7 @@ func (q *Queries) LatestSEODoctorRun(ctx context.Context, projectID uuid.UUID) (
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -1846,7 +1858,7 @@ update seo_doctor_findings set
   linked_content_action_id = $2,
   updated_at = now()
 where id = $3 and project_id = $4
-returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind
 `
 
 type LinkSEODoctorFindingToActionParams struct {
@@ -1891,6 +1903,7 @@ func (q *Queries) LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEOD
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FindingKind,
 	)
 	return i, err
 }
@@ -2216,7 +2229,7 @@ func (q *Queries) ListLatestTechnicalChecks(ctx context.Context, arg ListLatestT
 }
 
 const listMergedSiteChangeApplicationsForVerification = `-- name: ListMergedSiteChangeApplicationsForVerification :many
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
 where project_id = $1
   and status = 'github_pr_merged'
 order by merged_at asc nulls first
@@ -2272,6 +2285,7 @@ func (q *Queries) ListMergedSiteChangeApplicationsForVerification(ctx context.Co
 			&i.VerifiedAt,
 			&i.NextPollAt,
 			&i.NextNotifyAt,
+			&i.SiteFixID,
 		); err != nil {
 			return nil, err
 		}
@@ -2284,7 +2298,7 @@ func (q *Queries) ListMergedSiteChangeApplicationsForVerification(ctx context.Co
 }
 
 const listOpenSiteChangePRApplications = `-- name: ListOpenSiteChangePRApplications :many
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
 where project_id = $1
   and status = 'github_pr_open'
   and github_pr_number is not null
@@ -2341,6 +2355,7 @@ func (q *Queries) ListOpenSiteChangePRApplications(ctx context.Context, projectI
 			&i.VerifiedAt,
 			&i.NextPollAt,
 			&i.NextNotifyAt,
+			&i.SiteFixID,
 		); err != nil {
 			return nil, err
 		}
@@ -2722,7 +2737,7 @@ func (q *Queries) ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
 }
 
 const listSEODoctorFindingsForRun = `-- name: ListSEODoctorFindingsForRun :many
-select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
   and run_id = $2
 order by
@@ -2776,6 +2791,7 @@ func (q *Queries) ListSEODoctorFindingsForRun(ctx context.Context, arg ListSEODo
 			&i.ResolvedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.FindingKind,
 		); err != nil {
 			return nil, err
 		}
@@ -4036,7 +4052,7 @@ update site_change_applications set
   next_notify_at = now() + interval '12 hours',
   updated_at = now()
 where id = $7 and project_id = $8
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
 `
 
 type MarkSiteChangeApplicationGitHubPRParams struct {
@@ -4103,6 +4119,7 @@ func (q *Queries) MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg Mar
 		&i.VerifiedAt,
 		&i.NextPollAt,
 		&i.NextNotifyAt,
+		&i.SiteFixID,
 	)
 	return i, err
 }
@@ -4119,7 +4136,7 @@ update site_change_applications set
   verified_at = case when $1 = 'verified' then coalesce(verified_at, now()) else verified_at end,
   updated_at = now()
 where id = $6 and project_id = $7
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
 `
 
 type MarkSiteChangeApplicationStatusParams struct {
@@ -4184,6 +4201,7 @@ func (q *Queries) MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkS
 		&i.VerifiedAt,
 		&i.NextPollAt,
 		&i.NextNotifyAt,
+		&i.SiteFixID,
 	)
 	return i, err
 }
@@ -4877,7 +4895,7 @@ update seo_doctor_runs set
   started_at = coalesce(started_at, $10),
   updated_at = now()
 where id = $11 and project_id = $12
-returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at
+returning id, project_id, trigger, status, stage, progress_percent, message, block_reason, pages_discovered, pages_fetched, pages_checked, issues_found, health_score, input_snapshot, output_summary, error, created_by_user_id, started_at, updated_at, finished_at, created_at, healthy_coverage
 `
 
 type UpdateSEODoctorRunProgressParams struct {
@@ -4933,6 +4951,7 @@ func (q *Queries) UpdateSEODoctorRunProgress(ctx context.Context, arg UpdateSEOD
 		&i.UpdatedAt,
 		&i.FinishedAt,
 		&i.CreatedAt,
+		&i.HealthyCoverage,
 	)
 	return i, err
 }
@@ -5322,7 +5341,7 @@ on conflict (project_id, finding_key) where status = 'active' do update set
   last_seen_at = excluded.last_seen_at,
   resolved_at = null,
   updated_at = now()
-returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at
+returning id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind
 `
 
 type UpsertSEODoctorFindingParams struct {
@@ -5399,6 +5418,7 @@ func (q *Queries) UpsertSEODoctorFinding(ctx context.Context, arg UpsertSEODocto
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FindingKind,
 	)
 	return i, err
 }

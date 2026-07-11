@@ -1190,7 +1190,7 @@ func (s *Server) applyPageUpdateDraftViaGitHubPR(ctx context.Context, projectID 
 	app, err := s.Q.CreateOrReuseSiteChangeApplication(ctx, db.CreateOrReuseSiteChangeApplicationParams{
 		ProjectID:               projectID,
 		SourceOpportunityID:     pgtype.UUID{Bytes: action.OpportunityID, Valid: true},
-		ContentActionID:         action.ID,
+		ContentActionID:         pgtype.UUID{Bytes: action.ID, Valid: true},
 		PageUpdateDraftID:       pgtype.UUID{Bytes: claimed.ID, Valid: true},
 		ApplicationKind:         "page_update",
 		TargetUrl:               claimed.TargetUrl,
@@ -1394,7 +1394,7 @@ func (s *Server) createSiteFixGitHubPRForAction(ctx context.Context, projectID u
 	app, err := s.Q.CreateOrReuseSiteChangeApplication(ctx, db.CreateOrReuseSiteChangeApplicationParams{
 		ProjectID:               projectID,
 		SourceOpportunityID:     pgtype.UUID{Bytes: action.OpportunityID, Valid: true},
-		ContentActionID:         action.ID,
+		ContentActionID:         pgtype.UUID{Bytes: action.ID, Valid: true},
 		PageUpdateDraftID:       pgtype.UUID{},
 		ApplicationKind:         "site_fix",
 		TargetUrl:               targetURL,

@@ -558,6 +558,101 @@ type InternalLinkEdge struct {
 	LastSeenAt          pgtype.Timestamptz `json:"last_seen_at"`
 }
 
+type LegacyObjectAlias struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	MigrationBatchID    uuid.UUID          `json:"migration_batch_id"`
+	LegacyObjectType    string             `json:"legacy_object_type"`
+	LegacyObjectID      uuid.UUID          `json:"legacy_object_id"`
+	CanonicalObjectType string             `json:"canonical_object_type"`
+	CanonicalObjectID   uuid.UUID          `json:"canonical_object_id"`
+	AliasState          string             `json:"alias_state"`
+	ProvenanceSnapshot  json.RawMessage    `json:"provenance_snapshot"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MigrationBatch struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	Product                string             `json:"product"`
+	BatchKind              string             `json:"batch_kind"`
+	Status                 string             `json:"status"`
+	SchemaVersion          string             `json:"schema_version"`
+	SourceCount            int32              `json:"source_count"`
+	MigratedCount          int32              `json:"migrated_count"`
+	ArchivedDuplicateCount int32              `json:"archived_duplicate_count"`
+	ReviewCount            int32              `json:"review_count"`
+	WriterAuthorityBefore  string             `json:"writer_authority_before"`
+	WriterAuthorityAfter   string             `json:"writer_authority_after"`
+	SourceSnapshot         json.RawMessage    `json:"source_snapshot"`
+	ResultSnapshot         json.RawMessage    `json:"result_snapshot"`
+	InitiatedBy            string             `json:"initiated_by"`
+	StartedAt              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type MigrationLedger struct {
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	MigrationBatchID        uuid.UUID          `json:"migration_batch_id"`
+	SequenceNumber          int32              `json:"sequence_number"`
+	SourceObjectType        string             `json:"source_object_type"`
+	SourceObjectID          uuid.UUID          `json:"source_object_id"`
+	CanonicalObjectType     string             `json:"canonical_object_type"`
+	CanonicalObjectID       pgtype.UUID        `json:"canonical_object_id"`
+	Operation               string             `json:"operation"`
+	OperationVersion        string             `json:"operation_version"`
+	CutoverPoint            string             `json:"cutover_point"`
+	RollbackEligibility     string             `json:"rollback_eligibility"`
+	BeforeHash              string             `json:"before_hash"`
+	AfterHash               string             `json:"after_hash"`
+	BeforeSnapshot          json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot           json.RawMessage    `json:"after_snapshot"`
+	InverseOperationVersion string             `json:"inverse_operation_version"`
+	InverseOperation        json.RawMessage    `json:"inverse_operation"`
+	AppliedBy               string             `json:"applied_by"`
+	AppliedAt               pgtype.Timestamptz `json:"applied_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+type MigrationReviewItem struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	MigrationBatchID   uuid.UUID          `json:"migration_batch_id"`
+	SourceObjectType   string             `json:"source_object_type"`
+	SourceObjectID     uuid.UUID          `json:"source_object_id"`
+	ReasonCode         string             `json:"reason_code"`
+	Reason             string             `json:"reason"`
+	SourceSnapshot     json.RawMessage    `json:"source_snapshot"`
+	ProposedResolution json.RawMessage    `json:"proposed_resolution"`
+	Status             string             `json:"status"`
+	ResolutionSnapshot []byte             `json:"resolution_snapshot"`
+	ResolvedBy         *string            `json:"resolved_by"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MigrationRollbackEvent struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	MigrationBatchID    uuid.UUID          `json:"migration_batch_id"`
+	MigrationLedgerID   pgtype.UUID        `json:"migration_ledger_id"`
+	EventSequence       int32              `json:"event_sequence"`
+	EventType           string             `json:"event_type"`
+	RollbackEligibility string             `json:"rollback_eligibility"`
+	CutoverPoint        string             `json:"cutover_point"`
+	Reason              string             `json:"reason"`
+	ForwardFixReference *string            `json:"forward_fix_reference"`
+	EventSnapshot       json.RawMessage    `json:"event_snapshot"`
+	EventVersion        string             `json:"event_version"`
+	OccurredAt          pgtype.Timestamptz `json:"occurred_at"`
+	RolledBackAt        pgtype.Timestamptz `json:"rolled_back_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
 type NotificationChannel struct {
 	ID         uuid.UUID          `json:"id"`
 	ProjectID  pgtype.UUID        `json:"project_id"`
@@ -654,6 +749,19 @@ type ProductProfile struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProductWriterAuthority struct {
+	ProjectID          uuid.UUID          `json:"project_id"`
+	Product            string             `json:"product"`
+	WriterAuthority    string             `json:"writer_authority"`
+	WriteFenced        bool               `json:"write_fenced"`
+	FenceToken         pgtype.UUID        `json:"fence_token"`
+	FencedBy           *string            `json:"fenced_by"`
+	FencedAt           pgtype.Timestamptz `json:"fenced_at"`
+	AuthorityChangedAt pgtype.Timestamptz `json:"authority_changed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Project struct {
 	ID        uuid.UUID          `json:"id"`
 	OwnerID   string             `json:"owner_id"`
@@ -717,6 +825,7 @@ type RollbackRecord struct {
 	Reason            *string            `json:"reason"`
 	PerformedBy       *string            `json:"performed_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	SiteFixID         pgtype.UUID        `json:"site_fix_id"`
 }
 
 type SafeModeEvent struct {
@@ -826,6 +935,7 @@ type SeoDoctorFinding struct {
 	ResolvedAt            pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	FindingKind           string             `json:"finding_kind"`
 }
 
 type SeoDoctorRun struct {
@@ -850,6 +960,7 @@ type SeoDoctorRun struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	HealthyCoverage json.RawMessage    `json:"healthy_coverage"`
 }
 
 type SeoExperiment struct {
@@ -1032,7 +1143,7 @@ type SiteChangeApplication struct {
 	ID                      uuid.UUID          `json:"id"`
 	ProjectID               uuid.UUID          `json:"project_id"`
 	SourceOpportunityID     pgtype.UUID        `json:"source_opportunity_id"`
-	ContentActionID         uuid.UUID          `json:"content_action_id"`
+	ContentActionID         pgtype.UUID        `json:"content_action_id"`
 	PageUpdateDraftID       pgtype.UUID        `json:"page_update_draft_id"`
 	ApplicationKind         string             `json:"application_kind"`
 	TargetUrl               string             `json:"target_url"`
@@ -1069,6 +1180,50 @@ type SiteChangeApplication struct {
 	VerifiedAt              pgtype.Timestamptz `json:"verified_at"`
 	NextPollAt              pgtype.Timestamptz `json:"next_poll_at"`
 	NextNotifyAt            pgtype.Timestamptz `json:"next_notify_at"`
+	SiteFixID               pgtype.UUID        `json:"site_fix_id"`
+}
+
+type SiteFix struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SiteFixVerification struct {
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	SiteFixID           uuid.UUID          `json:"site_fix_id"`
+	AttemptNumber       int32              `json:"attempt_number"`
+	EvidenceRead        json.RawMessage    `json:"evidence_read"`
+	AcceptanceResults   json.RawMessage    `json:"acceptance_results"`
+	AiCallID            pgtype.UUID        `json:"ai_call_id"`
+	Result              string             `json:"result"`
+	RetryClassification string             `json:"retry_classification"`
+	FailureReason       *string            `json:"failure_reason"`
+	AttemptedAt         pgtype.Timestamptz `json:"attempted_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type TechnicalCheck struct {

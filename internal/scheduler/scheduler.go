@@ -1614,6 +1614,10 @@ func siteFixPRCreatedAt(app db.SiteChangeApplication) time.Time {
 }
 
 func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, reason string) error {
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
 		ID:                   app.ID,
 		ProjectID:            p.ID,
@@ -1637,7 +1641,7 @@ func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Que
 		"follow_up_reason":           reason,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1697,6 +1701,10 @@ func (s *Scheduler) githubTokenForProject(ctx context.Context, q publisherConnec
 }
 
 func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, pr publisher.GitHubPRState) error {
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	merged := "merged"
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
 		ID:                   app.ID,
@@ -1721,7 +1729,7 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 		"target_url":                 app.TargetUrl,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1741,6 +1749,10 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 }
 
 func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
+	contentActionID, err := legacyApplicationContentActionID(app)
+	if err != nil {
+		return err
+	}
 	closedState := "closed"
 	reason := "pull request was closed without merging"
 	if _, err := q.MarkSiteChangeApplicationStatus(ctx, db.MarkSiteChangeApplicationStatusParams{
@@ -1766,7 +1778,7 @@ func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p
 		"target_url":                 app.TargetUrl,
 	}))
 	if _, err := q.MarkContentActionSiteFixPRResult(ctx, db.MarkContentActionSiteFixPRResultParams{
-		ID:              app.ContentActionID,
+		ID:              contentActionID,
 		ProjectID:       p.ID,
 		PublisherResult: result,
 	}); err != nil {
@@ -1774,6 +1786,13 @@ func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p
 	}
 	s.Log.Info("site fix PR closed without merge", "project", p.ID, "application", app.ID, "pr_url", stringPtrValue(app.GithubPrUrl))
 	return nil
+}
+
+func legacyApplicationContentActionID(app db.SiteChangeApplication) (uuid.UUID, error) {
+	if !app.ContentActionID.Valid {
+		return uuid.Nil, fmt.Errorf("legacy Site Change application %s has no Content Action source", app.ID)
+	}
+	return uuid.UUID(app.ContentActionID.Bytes), nil
 }
 
 func (s *Scheduler) publishForProject(ctx context.Context, p db.Project) error {

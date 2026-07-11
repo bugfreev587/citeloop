@@ -757,6 +757,51 @@ func (q *Queries) GetDiscoveryReviewItem(ctx context.Context, arg GetDiscoveryRe
 	return i, err
 }
 
+const getEnforcedWorkSignatureForReservedWork = `-- name: GetEnforcedWorkSignatureForReservedWork :one
+select id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint from work_signature_registry
+where project_id = $1
+  and mode = 'enforced'
+  and reserved_work_type = $2
+  and reserved_work_id = $3
+order by created_at desc
+limit 1
+`
+
+type GetEnforcedWorkSignatureForReservedWorkParams struct {
+	ProjectID        uuid.UUID   `json:"project_id"`
+	ReservedWorkType *string     `json:"reserved_work_type"`
+	ReservedWorkID   pgtype.UUID `json:"reserved_work_id"`
+}
+
+func (q *Queries) GetEnforcedWorkSignatureForReservedWork(ctx context.Context, arg GetEnforcedWorkSignatureForReservedWorkParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, getEnforcedWorkSignatureForReservedWork, arg.ProjectID, arg.ReservedWorkType, arg.ReservedWorkID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
+	)
+	return i, err
+}
+
 const getLatestDiscoverySemanticEvaluation = `-- name: GetLatestDiscoverySemanticEvaluation :one
 select id, project_id, dataset_version, confidence_threshold, duplicate_safety_recall_target, false_suppression_rate_target, total_cases, duplicate_safety_cases, distinct_cases, duplicate_safety_recall, false_suppression_rate, comparator_coverage, automated_disposition_coverage, hold_rate, threshold_backlog, weekly_ops_capacity, launch_ready, automatic_suppression_enabled, blockers, evaluated_by, created_at from discovery_semantic_evaluations
 where project_id = $1
@@ -948,7 +993,7 @@ func (q *Queries) InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnf
 }
 
 const listActiveDoctorFindingsForDiscoveryShadow = `-- name: ListActiveDoctorFindingsForDiscoveryShadow :many
-select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at from seo_doctor_findings
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
   and status in ('active','dismissed','converted')
 order by created_at asc
@@ -990,6 +1035,7 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 			&i.ResolvedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.FindingKind,
 		); err != nil {
 			return nil, err
 		}
@@ -1598,6 +1644,95 @@ func (q *Queries) MarkArbitrationDecisionReserved(ctx context.Context, arg MarkA
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markCanonicalWorkSignatureMigrationRolledBack = `-- name: MarkCanonicalWorkSignatureMigrationRolledBack :one
+with signature_snapshot as materialized (
+  select w.id, w.project_id, w.status as expected_status,
+         w.conflict_bucket_keys
+  from work_signature_registry w
+  where w.project_id = $1
+    and w.id = $2
+    and w.mode = 'enforced'
+    and w.active = true
+    and w.reserved_work_type = 'site_fix'
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from signature_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1
+  order by b.bucket_key
+  for update of b
+), locked_signature as materialized (
+  select w.id, w.project_id
+  from work_signature_registry w
+  join signature_snapshot s on s.id = w.id and s.project_id = w.project_id
+  where w.mode = 'enforced'
+    and w.active = true
+    and w.status = s.expected_status
+    and w.reserved_work_type = 'site_fix'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_signature)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update work_signature_registry w
+set status = 'cancelled', active = false, updated_at = now()
+from locked_signature locked
+where w.id = locked.id
+  and w.project_id = locked.project_id
+  and w.active = true
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning w.id, w.project_id, w.candidate_id, w.shadow_run_id, w.mode, w.status, w.active, w.exact_signature_hash, w.signature_payload, w.semantic_fingerprint, w.conflict_bucket_keys, w.signature_version, w.owner, w.source_object_type, w.source_object_id, w.created_at, w.updated_at, w.arbitration_decision_id, w.reserved_work_type, w.reserved_work_id, w.evidence_fingerprint
+`
+
+type MarkCanonicalWorkSignatureMigrationRolledBackParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkCanonicalWorkSignatureMigrationRolledBack(ctx context.Context, arg MarkCanonicalWorkSignatureMigrationRolledBackParams) (WorkSignatureRegistry, error) {
+	row := q.db.QueryRow(ctx, markCanonicalWorkSignatureMigrationRolledBack, arg.ProjectID, arg.ID)
+	var i WorkSignatureRegistry
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ShadowRunID,
+		&i.Mode,
+		&i.Status,
+		&i.Active,
+		&i.ExactSignatureHash,
+		&i.SignaturePayload,
+		&i.SemanticFingerprint,
+		&i.ConflictBucketKeys,
+		&i.SignatureVersion,
+		&i.Owner,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
 	)
 	return i, err
 }
