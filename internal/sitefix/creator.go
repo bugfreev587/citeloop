@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if work.ProjectID == uuid.Nil || work.CandidateID == uuid.Nil || work.DecisionID == uuid.Nil || work.WorkSignatureID == uuid.Nil {
 		return discovery.WorkReference{}, ErrIncompleteCandidate
 	}
-	candidate, err := q.GetDiscoveryCandidateForReview(ctx, db.GetDiscoveryCandidateForReviewParams{
+	candidate, err := q.GetDiscoveryCandidateForArbitration(ctx, db.GetDiscoveryCandidateForArbitrationParams{
 		ProjectID: work.ProjectID, CandidateID: work.CandidateID,
 	})
 	if err != nil {
@@ -62,8 +63,11 @@ func (Creator) CreateInTransaction(ctx context.Context, q *db.Queries, work disc
 	if finding.ProjectID != work.ProjectID {
 		return discovery.WorkReference{}, ErrProjectMismatch
 	}
-	if finding.ID != findingID || normalizeFamily(finding.IssueType) != normalizeFamily(candidate.IssueOrHypothesisFamily) {
+	if finding.ID != findingID {
 		return discovery.WorkReference{}, ErrCandidateFindingMismatch
+	}
+	if err := validateLockedFindingSnapshot(candidate, finding); err != nil {
+		return discovery.WorkReference{}, err
 	}
 	if finding.FindingKind == "healthy" {
 		return discovery.WorkReference{}, ErrHealthyFinding
@@ -137,12 +141,14 @@ func validateDoctorCandidate(candidate db.DiscoveryCandidate) (uuid.UUID, error)
 	var mutations []discovery.Mutation
 	var targets []string
 	var buckets []string
+	var evidenceIDs []string
 	var signaturePayload struct {
 		SignatureVersion string `json:"signature_version"`
 	}
 	if json.Unmarshal(candidate.ProposedMutations, &mutations) != nil || len(mutations) == 0 ||
 		json.Unmarshal(candidate.NormalizedTargetSet, &targets) != nil || len(targets) == 0 ||
 		json.Unmarshal(candidate.ConflictBucketKeys, &buckets) != nil || len(buckets) == 0 ||
+		json.Unmarshal(candidate.EvidenceIds, &evidenceIDs) != nil || len(evidenceIDs) == 0 ||
 		json.Unmarshal(candidate.SignaturePayload, &signaturePayload) != nil || signaturePayload.SignatureVersion != discovery.SignatureVersionV1 {
 		return uuid.Nil, ErrIncompleteCandidate
 	}
@@ -164,7 +170,7 @@ func validateDoctorCandidate(candidate db.DiscoveryCandidate) (uuid.UUID, error)
 }
 
 func canonicalPayloads(candidate db.DiscoveryCandidate, finding db.SeoDoctorFinding) (json.RawMessage, json.RawMessage, json.RawMessage, json.RawMessage, error) {
-	if len(finding.Evidence) == 0 || string(finding.Evidence) == "null" {
+	if !meaningfulJSON(finding.Evidence) {
 		return nil, nil, nil, nil, fmt.Errorf("%w: finding evidence is required", ErrIncompleteCandidate)
 	}
 	var findingEvidence any = map[string]any{}
@@ -205,6 +211,74 @@ func canonicalPayloads(candidate db.DiscoveryCandidate, finding db.SeoDoctorFind
 	return evidence, proposed, candidate.NormalizedTargetSet, finding.AcceptanceTests, nil
 }
 
-func normalizeFamily(value string) string {
-	return strings.NewReplacer("-", "_", " ", "_").Replace(strings.ToLower(strings.TrimSpace(value)))
+func validateLockedFindingSnapshot(locked db.DiscoveryCandidate, finding db.SeoDoctorFinding) error {
+	projected := discovery.ProjectDoctorFinding(finding)
+	if projected.Status != discovery.StatusIdentityReady || projected.SuggestedOwner != discovery.OwnerDoctor || len(projected.EvidenceIDs) == 0 {
+		return discovery.ErrSnapshotStale
+	}
+	identity, err := discovery.BuildIdentity(projected)
+	if err != nil {
+		return discovery.ErrSnapshotStale
+	}
+	snapshotFingerprint, err := doctorFindingSnapshotFingerprint(finding, projected, identity)
+	if err != nil {
+		return fmt.Errorf("%w: fingerprint locked finding: %v", discovery.ErrSnapshotStale, err)
+	}
+	if locked.ShadowRunID != canonicalRunID(finding.ProjectID, finding.ID, snapshotFingerprint) ||
+		locked.ProjectID != projected.ProjectID ||
+		locked.SourceKind != string(projected.SourceKind) ||
+		locked.SourceObjectType != projected.SourceObjectType ||
+		locked.SourceObjectID != projected.SourceObjectID ||
+		locked.TargetKind != projected.TargetKind ||
+		locked.IssueOrHypothesisFamily != projected.IssueOrHypothesisFamily ||
+		locked.ChangeFamily != projected.ChangeFamily ||
+		locked.ArtifactIntent != string(projected.ArtifactIntent) ||
+		valueOrEmpty(locked.IntendedSlugOrCanonical) != projected.IntendedSlugOrCanonical ||
+		locked.PrimarySuccessMetric != projected.PrimarySuccessMetric ||
+		locked.VerificationMode != string(projected.VerificationMode) ||
+		locked.EvidenceFingerprint != projected.EvidenceFingerprint ||
+		locked.SuggestedOwner != string(projected.SuggestedOwner) ||
+		locked.CandidateSchemaVersion != projected.CandidateSchemaVersion ||
+		locked.Status != string(projected.Status) ||
+		locked.HoldReason != nil ||
+		locked.ExactSignatureHash == nil || *locked.ExactSignatureHash != identity.ExactSignatureHash ||
+		!sameJSON(locked.NormalizedTargetSet, projected.NormalizedTargetSet) ||
+		!sameJSON(locked.ProposedMutations, projected.ProposedMutations) ||
+		!sameJSON(locked.TopicEntityIdentity, projected.TopicEntityIdentity) ||
+		!sameJSON(locked.AudienceIdentity, projected.AudienceIdentity) ||
+		!sameJSON(locked.EvidenceIds, projected.EvidenceIDs) ||
+		!sameJSON(locked.SignaturePayload, identity.SignaturePayload) ||
+		!sameJSON(locked.ConflictBucketKeys, identity.ConflictBucketKeys) ||
+		!sameConfidence(locked.Confidence, projected.Confidence) {
+		return discovery.ErrSnapshotStale
+	}
+	return nil
+}
+
+func sameJSON(stored json.RawMessage, expected any) bool {
+	var left any
+	if json.Unmarshal(stored, &left) != nil {
+		return false
+	}
+	raw, err := json.Marshal(expected)
+	if err != nil {
+		return false
+	}
+	var right any
+	if json.Unmarshal(raw, &right) != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func sameConfidence(stored pgtype.Numeric, expected float64) bool {
+	value, err := stored.Float64Value()
+	return err == nil && value.Valid && value.Float64 == expected
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

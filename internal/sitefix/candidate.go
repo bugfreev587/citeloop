@@ -2,7 +2,11 @@ package sitefix
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
@@ -13,10 +17,11 @@ import (
 // Materialization deliberately has no semantic-provider dependency; provider
 // comparison remains in arbitration Phase A, outside database transactions.
 type CanonicalCandidate struct {
-	ID        uuid.UUID
-	RunID     uuid.UUID
-	Candidate discovery.Candidate
-	Identity  discovery.Identity
+	ID                  uuid.UUID
+	RunID               uuid.UUID
+	SnapshotFingerprint string
+	Candidate           discovery.Candidate
+	Identity            discovery.Identity
 }
 
 type candidateStore interface {
@@ -48,15 +53,22 @@ func (m *CandidateMaterializer) Materialize(ctx context.Context, finding db.SeoD
 	if finding.FindingKind == "healthy" {
 		return CanonicalCandidate{}, ErrHealthyFinding
 	}
+	if !meaningfulJSON(finding.Evidence) || finding.RunID == uuid.Nil {
+		return CanonicalCandidate{}, ErrIncompleteCandidate
+	}
 	candidate := discovery.ProjectDoctorFinding(finding)
-	if candidate.Status != discovery.StatusIdentityReady || candidate.SuggestedOwner != discovery.OwnerDoctor {
+	if candidate.Status != discovery.StatusIdentityReady || candidate.SuggestedOwner != discovery.OwnerDoctor || len(candidate.EvidenceIDs) == 0 {
 		return CanonicalCandidate{}, ErrIncompleteCandidate
 	}
 	identity, err := discovery.BuildIdentity(candidate)
 	if err != nil || identity.ExactSignatureHash == "" || len(identity.ConflictBucketKeys) == 0 {
 		return CanonicalCandidate{}, fmt.Errorf("%w: %v", ErrIncompleteCandidate, err)
 	}
-	runID := canonicalRunID(finding.ProjectID, finding.ID)
+	snapshotFingerprint, err := doctorFindingSnapshotFingerprint(finding, candidate, identity)
+	if err != nil {
+		return CanonicalCandidate{}, fmt.Errorf("fingerprint Doctor candidate snapshot: %w", err)
+	}
+	runID := canonicalRunID(finding.ProjectID, finding.ID, snapshotFingerprint)
 	if err := m.store.EnsureRun(ctx, runID, finding.ProjectID, "canonical"); err != nil {
 		return CanonicalCandidate{}, fmt.Errorf("ensure canonical discovery run: %w", err)
 	}
@@ -75,13 +87,73 @@ func (m *CandidateMaterializer) Materialize(ctx context.Context, finding db.SeoD
 	if err := m.store.CompleteRun(ctx, runID, finding.ProjectID); err != nil {
 		return CanonicalCandidate{}, fmt.Errorf("complete canonical discovery run: %w", err)
 	}
-	return CanonicalCandidate{ID: candidateID, RunID: runID, Candidate: candidate, Identity: identity}, nil
+	return CanonicalCandidate{
+		ID: candidateID, RunID: runID, SnapshotFingerprint: snapshotFingerprint,
+		Candidate: candidate, Identity: identity,
+	}, nil
 }
 
 var errNilCandidateID = fmt.Errorf("canonical candidate persistence returned a nil id")
 
-func canonicalRunID(projectID, findingID uuid.UUID) uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("citeloop:canonical-doctor-candidate:"+projectID.String()+":"+findingID.String()+":"+discovery.CandidateSchemaVersionV1+":"+discovery.SignatureVersionV1))
+func canonicalRunID(projectID, findingID uuid.UUID, snapshotFingerprint string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("citeloop:canonical-doctor-candidate:"+projectID.String()+":"+findingID.String()+":"+discovery.CandidateSchemaVersionV1+":"+discovery.SignatureVersionV1+":"+snapshotFingerprint))
+}
+
+func doctorFindingSnapshotFingerprint(finding db.SeoDoctorFinding, candidate discovery.Candidate, identity discovery.Identity) (string, error) {
+	payload := struct {
+		ProjectID             uuid.UUID
+		FindingID             uuid.UUID
+		FindingRunID          uuid.UUID
+		FindingStatus         string
+		FindingKind           string
+		Evidence              json.RawMessage
+		FixIntent             string
+		DeveloperInstructions string
+		LikelyFilesOrSurfaces json.RawMessage
+		AcceptanceTests       json.RawMessage
+		Candidate             discovery.Candidate
+		ExactSignatureHash    string
+		SignaturePayload      json.RawMessage
+		ConflictBucketKeys    []string
+	}{
+		ProjectID: finding.ProjectID, FindingID: finding.ID, FindingRunID: finding.RunID,
+		FindingStatus: finding.Status, FindingKind: finding.FindingKind,
+		Evidence: finding.Evidence, FixIntent: finding.FixIntent,
+		DeveloperInstructions: finding.DeveloperInstructions,
+		LikelyFilesOrSurfaces: finding.LikelyFilesOrSurfaces,
+		AcceptanceTests:       finding.AcceptanceTests, Candidate: candidate,
+		ExactSignatureHash: identity.ExactSignatureHash,
+		SignaturePayload:   identity.SignaturePayload,
+		ConflictBucketKeys: identity.ConflictBucketKeys,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func meaningfulJSON(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	case string:
+		return strings.TrimSpace(typed) != ""
+	default:
+		return true
+	}
 }
 
 type postgresCandidateStore struct {

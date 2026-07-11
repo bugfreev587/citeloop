@@ -67,6 +67,16 @@ func TestCandidateMaterializerFailsClosedForIncompleteOrHealthyFinding(t *testin
 			f.IssueType = "unknown_future_detector"
 			return f
 		}(), wantErr: ErrIncompleteCandidate},
+		{name: "empty evidence object", finding: func() db.SeoDoctorFinding {
+			f := canonicalFinding(uuid.New(), uuid.New())
+			f.Evidence = json.RawMessage(`{}`)
+			return f
+		}(), wantErr: ErrIncompleteCandidate},
+		{name: "missing evidence id", finding: func() db.SeoDoctorFinding {
+			f := canonicalFinding(uuid.New(), uuid.New())
+			f.RunID = uuid.Nil
+			return f
+		}(), wantErr: ErrIncompleteCandidate},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -80,6 +90,58 @@ func TestCandidateMaterializerFailsClosedForIncompleteOrHealthyFinding(t *testin
 			}
 		})
 	}
+}
+
+func TestCandidateMaterializerSnapshotIdentityIsStableAndComplete(t *testing.T) {
+	projectID, findingID := uuid.New(), uuid.New()
+	finding := canonicalFinding(projectID, findingID)
+	firstStore := &candidateStoreStub{candidateID: uuid.New()}
+	first, err := newCandidateMaterializer(firstStore).Materialize(context.Background(), finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryStore := &candidateStoreStub{candidateID: first.ID}
+	retry, err := newCandidateMaterializer(retryStore).Materialize(context.Background(), finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.RunID != first.RunID || retry.ID != first.ID {
+		t.Fatalf("same snapshot changed identity: first=%+v retry=%+v", first, retry)
+	}
+
+	mutations := []func(*db.SeoDoctorFinding){
+		func(f *db.SeoDoctorFinding) { f.FixIntent += " revised" },
+		func(f *db.SeoDoctorFinding) { f.DeveloperInstructions += " revised" },
+		func(f *db.SeoDoctorFinding) { f.LikelyFilesOrSurfaces = json.RawMessage(`["other.tsx"]`) },
+		func(f *db.SeoDoctorFinding) { f.AcceptanceTests = json.RawMessage(`[{"type":"canonical_present"}]`) },
+		func(f *db.SeoDoctorFinding) { f.Evidence = json.RawMessage(`{"canonical":"wrong"}`) },
+	}
+	for i, mutate := range mutations {
+		changed := finding
+		mutate(&changed)
+		store := &candidateStoreStub{candidateID: uuid.New()}
+		got, err := newCandidateMaterializer(store).Materialize(context.Background(), changed)
+		if err != nil {
+			t.Fatalf("mutation %d: %v", i, err)
+		}
+		if got.RunID == first.RunID || got.ID == first.ID {
+			t.Fatalf("mutation %d reused old snapshot identity", i)
+		}
+	}
+}
+
+func TestCandidateMaterializerCompletionFailureLeavesCandidateInvisible(t *testing.T) {
+	finding := canonicalFinding(uuid.New(), uuid.New())
+	store := &candidateStoreStub{candidateID: uuid.New(), completeErr: errors.New("completion failed")}
+	_, err := newCandidateMaterializer(store).Materialize(context.Background(), finding)
+	if err == nil || !strings.Contains(err.Error(), "completion failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if store.saveCalls != 1 || store.completeRunCalls != 1 {
+		t.Fatalf("save/complete calls = %d/%d", store.saveCalls, store.completeRunCalls)
+	}
+	// The database contract separately requires arbitration reads to join a
+	// completed canonical run, so this persisted candidate remains invisible.
 }
 
 func TestCandidateMaterializerDoesNotPublishCandidateBeforeBucketsExist(t *testing.T) {
@@ -110,6 +172,7 @@ type candidateStoreStub struct {
 	completeRunCalls int
 	bucketErr        error
 	operations       []string
+	completeErr      error
 }
 
 func (s *candidateStoreStub) EnsureRun(_ context.Context, runID, _ uuid.UUID, mode string) error {
@@ -146,7 +209,7 @@ func (s *candidateStoreStub) CompleteRun(_ context.Context, runID, _ uuid.UUID) 
 	}
 	s.completeRunCalls++
 	s.operations = append(s.operations, "complete_run")
-	return nil
+	return s.completeErr
 }
 
 func canonicalFinding(projectID, findingID uuid.UUID) db.SeoDoctorFinding {

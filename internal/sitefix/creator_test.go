@@ -20,7 +20,7 @@ func TestCreatorCreatesCanonicalDoctorSiteFix(t *testing.T) {
 	projectID, findingID, candidateID, signatureID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	finding := canonicalFinding(projectID, findingID)
 	storage := &creatorDBStub{
-		candidate: canonicalDiscoveryCandidate(projectID, candidateID, findingID),
+		candidate: canonicalDiscoveryCandidateForFinding(finding, candidateID),
 		finding:   finding,
 	}
 	q := db.New(storage)
@@ -64,7 +64,7 @@ func TestCreatorCreatesCanonicalDoctorSiteFix(t *testing.T) {
 func TestCreatorRejectsInvalidDoctorWork(t *testing.T) {
 	baseProject, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
 	baseFinding := canonicalFinding(baseProject, findingID)
-	baseCandidate := canonicalDiscoveryCandidate(baseProject, candidateID, findingID)
+	baseCandidate := canonicalDiscoveryCandidateForFinding(baseFinding, candidateID)
 
 	tests := []struct {
 		name    string
@@ -86,8 +86,11 @@ func TestCreatorRejectsInvalidDoctorWork(t *testing.T) {
 		{name: "blank mutation field", owner: discovery.OwnerDoctor, mutate: func(c *db.DiscoveryCandidate, _ *db.SeoDoctorFinding, _ *db.SiteFix) {
 			c.ProposedMutations = json.RawMessage(`[{"operation":"add","field":""}]`)
 		}, wantErr: ErrIncompleteCandidate},
-		{name: "missing finding evidence", owner: discovery.OwnerDoctor, mutate: func(_ *db.DiscoveryCandidate, f *db.SeoDoctorFinding, _ *db.SiteFix) { f.Evidence = nil }, wantErr: ErrIncompleteCandidate},
-		{name: "healthy finding", owner: discovery.OwnerDoctor, mutate: func(_ *db.DiscoveryCandidate, f *db.SeoDoctorFinding, _ *db.SiteFix) { f.FindingKind = "healthy" }, wantErr: ErrHealthyFinding},
+		{name: "empty evidence ids", owner: discovery.OwnerDoctor, mutate: func(c *db.DiscoveryCandidate, _ *db.SeoDoctorFinding, _ *db.SiteFix) {
+			c.EvidenceIds = json.RawMessage(`[]`)
+		}, wantErr: ErrIncompleteCandidate},
+		{name: "missing finding evidence after preparation", owner: discovery.OwnerDoctor, mutate: func(_ *db.DiscoveryCandidate, f *db.SeoDoctorFinding, _ *db.SiteFix) { f.Evidence = nil }, wantErr: discovery.ErrSnapshotStale},
+		{name: "finding became healthy after preparation", owner: discovery.OwnerDoctor, mutate: func(_ *db.DiscoveryCandidate, f *db.SeoDoctorFinding, _ *db.SiteFix) { f.FindingKind = "healthy" }, wantErr: discovery.ErrSnapshotStale},
 		{name: "project mismatch", owner: discovery.OwnerDoctor, mutate: func(c *db.DiscoveryCandidate, _ *db.SeoDoctorFinding, _ *db.SiteFix) { c.ProjectID = uuid.New() }, wantErr: ErrProjectMismatch},
 		{name: "candidate finding mismatch", owner: discovery.OwnerDoctor, mutate: func(c *db.DiscoveryCandidate, _ *db.SeoDoctorFinding, _ *db.SiteFix) {
 			c.SourceObjectID = uuid.NewString()
@@ -128,9 +131,10 @@ func TestCreatorRejectsInvalidDoctorWork(t *testing.T) {
 func TestCreatorLinksInactivePredecessorAsRevision(t *testing.T) {
 	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
 	predecessorID := uuid.New()
+	finding := canonicalFinding(projectID, findingID)
 	storage := &creatorDBStub{
-		candidate:   canonicalDiscoveryCandidate(projectID, candidateID, findingID),
-		finding:     canonicalFinding(projectID, findingID),
+		candidate:   canonicalDiscoveryCandidateForFinding(finding, candidateID),
+		finding:     finding,
 		predecessor: &db.SiteFix{ID: predecessorID, ProjectID: projectID, DoctorFindingID: findingID, Status: "failed_terminal"},
 	}
 	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
@@ -145,21 +149,112 @@ func TestCreatorLinksInactivePredecessorAsRevision(t *testing.T) {
 	}
 }
 
-func canonicalDiscoveryCandidate(projectID, candidateID, findingID uuid.UUID) db.DiscoveryCandidate {
-	exact := "exact-doctor-canonical"
+func TestCreatorRejectsStaleFindingSnapshot(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	original := canonicalFinding(projectID, findingID)
+	candidate := canonicalDiscoveryCandidateForFinding(original, candidateID)
+
+	mutations := []func(*db.SeoDoctorFinding){
+		func(f *db.SeoDoctorFinding) { f.FixIntent += " revised" },
+		func(f *db.SeoDoctorFinding) { f.DeveloperInstructions += " revised" },
+		func(f *db.SeoDoctorFinding) { f.LikelyFilesOrSurfaces = json.RawMessage(`["other.tsx"]`) },
+		func(f *db.SeoDoctorFinding) { f.AcceptanceTests = json.RawMessage(`[{"type":"canonical_present"}]`) },
+		func(f *db.SeoDoctorFinding) { f.Evidence = json.RawMessage(`{"canonical":"changed"}`) },
+		func(f *db.SeoDoctorFinding) { f.NormalizedUrls = json.RawMessage(`["https://example.com/other"]`) },
+		func(f *db.SeoDoctorFinding) { f.IssueType = "canonical_mismatch" },
+	}
+	for i, mutate := range mutations {
+		finding := original
+		mutate(&finding)
+		storage := &creatorDBStub{candidate: candidate, finding: finding}
+		_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+			ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(), WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+		})
+		if !errors.Is(err, discovery.ErrSnapshotStale) {
+			t.Fatalf("mutation %d error = %v, want ErrSnapshotStale", i, err)
+		}
+		if storage.createCalls != 0 {
+			t.Fatalf("mutation %d inserted a Site Fix", i)
+		}
+	}
+}
+
+func TestCreatorRejectsShadowOrMismatchedCanonicalCandidate(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	finding := canonicalFinding(projectID, findingID)
+	base := canonicalDiscoveryCandidateForFinding(finding, candidateID)
+	tests := []struct {
+		name   string
+		mutate func(*db.DiscoveryCandidate)
+	}{
+		{name: "shadow run provenance", mutate: func(c *db.DiscoveryCandidate) { c.ShadowRunID = uuid.New() }},
+		{name: "targets", mutate: func(c *db.DiscoveryCandidate) {
+			c.NormalizedTargetSet = json.RawMessage(`["https://example.com/other"]`)
+		}},
+		{name: "change family", mutate: func(c *db.DiscoveryCandidate) { c.ChangeFamily = "url.redirect" }},
+		{name: "mutations", mutate: func(c *db.DiscoveryCandidate) {
+			c.ProposedMutations = json.RawMessage(`[{"operation":"update","field":"canonical"}]`)
+		}},
+		{name: "evidence fingerprint", mutate: func(c *db.DiscoveryCandidate) { c.EvidenceFingerprint = "other" }},
+		{name: "evidence ids", mutate: func(c *db.DiscoveryCandidate) { c.EvidenceIds = json.RawMessage(`["other"]`) }},
+		{name: "exact signature", mutate: func(c *db.DiscoveryCandidate) { value := "other"; c.ExactSignatureHash = &value }},
+		{name: "signature payload", mutate: func(c *db.DiscoveryCandidate) {
+			c.SignaturePayload = json.RawMessage(`{"signature_version":"work-signature-v1","other":true}`)
+		}},
+		{name: "bucket keys", mutate: func(c *db.DiscoveryCandidate) { c.ConflictBucketKeys = json.RawMessage(`["other"]`) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := base
+			tt.mutate(&candidate)
+			storage := &creatorDBStub{candidate: candidate, finding: finding}
+			_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+				ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(), WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+			})
+			if !errors.Is(err, discovery.ErrSnapshotStale) {
+				t.Fatalf("error = %v, want ErrSnapshotStale", err)
+			}
+			if storage.createCalls != 0 {
+				t.Fatal("mismatched candidate inserted a Site Fix")
+			}
+		})
+	}
+}
+
+func canonicalDiscoveryCandidateForFinding(finding db.SeoDoctorFinding, candidateID uuid.UUID) db.DiscoveryCandidate {
+	candidate := discovery.ProjectDoctorFinding(finding)
+	identity, err := discovery.BuildIdentity(candidate)
+	if err != nil {
+		panic(err)
+	}
+	snapshot, err := doctorFindingSnapshotFingerprint(finding, candidate, identity)
+	if err != nil {
+		panic(err)
+	}
+	targets, _ := json.Marshal(candidate.NormalizedTargetSet)
+	mutations, _ := json.Marshal(candidate.ProposedMutations)
+	topics, _ := json.Marshal(candidate.TopicEntityIdentity)
+	audience, _ := json.Marshal(candidate.AudienceIdentity)
+	evidenceIDs, _ := json.Marshal(candidate.EvidenceIDs)
+	buckets, _ := json.Marshal(identity.ConflictBucketKeys)
+	exact := identity.ExactSignatureHash
+	var confidence pgtype.Numeric
+	if err := confidence.Scan("1.0000"); err != nil {
+		panic(err)
+	}
 	return db.DiscoveryCandidate{
-		ID: candidateID, ProjectID: projectID, ShadowRunID: uuid.New(), SourceKind: string(discovery.SourceDoctor),
-		SourceObjectType: "seo_doctor_finding", SourceObjectID: findingID.String(), TargetKind: "page",
-		NormalizedTargetSet:     json.RawMessage(`["https://example.com/pricing"]`),
-		IssueOrHypothesisFamily: "canonical_missing", ChangeFamily: "url.canonical",
-		ProposedMutations: json.RawMessage(`[{"operation":"add","field":"canonical"}]`),
-		ArtifactIntent:    string(discovery.ArtifactRepairExistingSurface), TopicEntityIdentity: json.RawMessage(`[]`),
-		AudienceIdentity: json.RawMessage(`[]`), PrimarySuccessMetric: "acceptance_test_pass",
-		VerificationMode: string(discovery.VerificationImmediate), EvidenceIds: json.RawMessage(`[]`),
-		EvidenceFingerprint: "evidence-v1", SuggestedOwner: string(discovery.OwnerDoctor),
-		CandidateSchemaVersion: discovery.CandidateSchemaVersionV1, Status: string(discovery.StatusIdentityReady),
-		ExactSignatureHash: &exact, SignaturePayload: json.RawMessage(`{"signature_version":"work-signature-v1"}`),
-		ConflictBucketKeys: json.RawMessage(`["target:pricing:url"]`), CandidateVersion: 1,
+		ID: candidateID, ProjectID: finding.ProjectID,
+		ShadowRunID: canonicalRunID(finding.ProjectID, finding.ID, snapshot), SourceKind: string(candidate.SourceKind),
+		SourceObjectType: candidate.SourceObjectType, SourceObjectID: candidate.SourceObjectID, TargetKind: candidate.TargetKind,
+		NormalizedTargetSet: targets, IssueOrHypothesisFamily: candidate.IssueOrHypothesisFamily, ChangeFamily: candidate.ChangeFamily,
+		ProposedMutations: mutations, ArtifactIntent: string(candidate.ArtifactIntent), TopicEntityIdentity: topics,
+		AudienceIdentity: audience, PrimarySuccessMetric: candidate.PrimarySuccessMetric,
+		VerificationMode: string(candidate.VerificationMode), EvidenceIds: evidenceIDs,
+		EvidenceFingerprint: candidate.EvidenceFingerprint, SuggestedOwner: string(candidate.SuggestedOwner),
+		Confidence:             confidence,
+		CandidateSchemaVersion: candidate.CandidateSchemaVersion, Status: string(candidate.Status),
+		ExactSignatureHash: &exact, SignaturePayload: identity.SignaturePayload,
+		ConflictBucketKeys: buckets, CandidateVersion: 1,
 	}
 }
 

@@ -100,7 +100,49 @@ do update set
   exact_signature_hash = excluded.exact_signature_hash,
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
-  candidate_version = discovery_candidates.candidate_version + 1,
+  candidate_version = discovery_candidates.candidate_version + case when (
+    discovery_candidates.target_kind,
+    discovery_candidates.normalized_target_set,
+    discovery_candidates.issue_or_hypothesis_family,
+    discovery_candidates.change_family,
+    discovery_candidates.proposed_mutations,
+    discovery_candidates.artifact_intent,
+    discovery_candidates.intended_slug_or_canonical,
+    discovery_candidates.topic_entity_identity,
+    discovery_candidates.audience_identity,
+    discovery_candidates.primary_success_metric,
+    discovery_candidates.verification_mode,
+    discovery_candidates.evidence_ids,
+    discovery_candidates.evidence_fingerprint,
+    discovery_candidates.suggested_owner,
+    discovery_candidates.confidence,
+    discovery_candidates.status,
+    discovery_candidates.hold_reason,
+    discovery_candidates.exact_signature_hash,
+    discovery_candidates.signature_payload,
+    discovery_candidates.conflict_bucket_keys
+  ) is distinct from (
+    excluded.target_kind,
+    excluded.normalized_target_set,
+    excluded.issue_or_hypothesis_family,
+    excluded.change_family,
+    excluded.proposed_mutations,
+    excluded.artifact_intent,
+    excluded.intended_slug_or_canonical,
+    excluded.topic_entity_identity,
+    excluded.audience_identity,
+    excluded.primary_success_metric,
+    excluded.verification_mode,
+    excluded.evidence_ids,
+    excluded.evidence_fingerprint,
+    excluded.suggested_owner,
+    excluded.confidence,
+    excluded.status,
+    excluded.hold_reason,
+    excluded.exact_signature_hash,
+    excluded.signature_payload,
+    excluded.conflict_bucket_keys
+  ) then 1 else 0 end,
   updated_at = now()
 returning *;
 
@@ -115,7 +157,7 @@ values
    sqlc.arg(signature_payload)::jsonb, sqlc.arg(conflict_bucket_keys)::jsonb,
    sqlc.arg(signature_version), sqlc.narg(owner), sqlc.arg(source_object_type),
    sqlc.arg(source_object_id))
-on conflict (candidate_id, mode) do update set
+on conflict (candidate_id) where mode in ('shadow') do update set
   shadow_run_id = excluded.shadow_run_id,
   status = 'shadow_observed',
   exact_signature_hash = excluded.exact_signature_hash,
@@ -372,10 +414,16 @@ where project_id = sqlc.arg(project_id)
 for update;
 
 -- name: LockDiscoveryCandidateForReserve :one
-select * from discovery_candidates
-where project_id = sqlc.arg(project_id)
-  and id = sqlc.arg(candidate_id)
-for update;
+select candidate.*
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = sqlc.arg(project_id)
+  and candidate.id = sqlc.arg(candidate_id)
+  and run.mode = 'canonical'
+  and run.status = 'completed'
+for update of candidate, run;
 
 -- name: GetSEODoctorFindingForSiteFixForUpdate :one
 select * from seo_doctor_findings
@@ -391,6 +439,7 @@ join discovery_shadow_runs run
  and run.project_id = candidate.project_id
 where candidate.project_id = sqlc.arg(project_id)
   and candidate.id = sqlc.arg(candidate_id)
+  and run.mode = 'canonical'
   and run.status = 'completed';
 
 -- name: LockConflictBucketsForReserve :many

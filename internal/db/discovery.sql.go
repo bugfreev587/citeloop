@@ -776,6 +776,7 @@ join discovery_shadow_runs run
  and run.project_id = candidate.project_id
 where candidate.project_id = $1
   and candidate.id = $2
+  and run.mode = 'canonical'
   and run.status = 'completed'
 `
 
@@ -1713,10 +1714,16 @@ func (q *Queries) LockConflictBucketsForReserve(ctx context.Context, arg LockCon
 }
 
 const lockDiscoveryCandidateForReserve = `-- name: LockDiscoveryCandidateForReserve :one
-select id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version from discovery_candidates
-where project_id = $1
-  and id = $2
-for update
+select candidate.id, candidate.project_id, candidate.shadow_run_id, candidate.source_kind, candidate.source_object_type, candidate.source_object_id, candidate.target_kind, candidate.normalized_target_set, candidate.issue_or_hypothesis_family, candidate.change_family, candidate.proposed_mutations, candidate.artifact_intent, candidate.intended_slug_or_canonical, candidate.topic_entity_identity, candidate.audience_identity, candidate.primary_success_metric, candidate.verification_mode, candidate.evidence_ids, candidate.evidence_fingerprint, candidate.suggested_owner, candidate.confidence, candidate.candidate_schema_version, candidate.status, candidate.hold_reason, candidate.exact_signature_hash, candidate.signature_payload, candidate.conflict_bucket_keys, candidate.created_at, candidate.updated_at, candidate.candidate_version
+from discovery_candidates candidate
+join discovery_shadow_runs run
+  on run.id = candidate.shadow_run_id
+ and run.project_id = candidate.project_id
+where candidate.project_id = $1
+  and candidate.id = $2
+  and run.mode = 'canonical'
+  and run.status = 'completed'
+for update of candidate, run
 `
 
 type LockDiscoveryCandidateForReserveParams struct {
@@ -2188,7 +2195,49 @@ do update set
   exact_signature_hash = excluded.exact_signature_hash,
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
-  candidate_version = discovery_candidates.candidate_version + 1,
+  candidate_version = discovery_candidates.candidate_version + case when (
+    discovery_candidates.target_kind,
+    discovery_candidates.normalized_target_set,
+    discovery_candidates.issue_or_hypothesis_family,
+    discovery_candidates.change_family,
+    discovery_candidates.proposed_mutations,
+    discovery_candidates.artifact_intent,
+    discovery_candidates.intended_slug_or_canonical,
+    discovery_candidates.topic_entity_identity,
+    discovery_candidates.audience_identity,
+    discovery_candidates.primary_success_metric,
+    discovery_candidates.verification_mode,
+    discovery_candidates.evidence_ids,
+    discovery_candidates.evidence_fingerprint,
+    discovery_candidates.suggested_owner,
+    discovery_candidates.confidence,
+    discovery_candidates.status,
+    discovery_candidates.hold_reason,
+    discovery_candidates.exact_signature_hash,
+    discovery_candidates.signature_payload,
+    discovery_candidates.conflict_bucket_keys
+  ) is distinct from (
+    excluded.target_kind,
+    excluded.normalized_target_set,
+    excluded.issue_or_hypothesis_family,
+    excluded.change_family,
+    excluded.proposed_mutations,
+    excluded.artifact_intent,
+    excluded.intended_slug_or_canonical,
+    excluded.topic_entity_identity,
+    excluded.audience_identity,
+    excluded.primary_success_metric,
+    excluded.verification_mode,
+    excluded.evidence_ids,
+    excluded.evidence_fingerprint,
+    excluded.suggested_owner,
+    excluded.confidence,
+    excluded.status,
+    excluded.hold_reason,
+    excluded.exact_signature_hash,
+    excluded.signature_payload,
+    excluded.conflict_bucket_keys
+  ) then 1 else 0 end,
   updated_at = now()
 returning id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version
 `
@@ -2372,7 +2421,7 @@ values
    $5::jsonb, $6::jsonb,
    $7, $8, $9,
    $10)
-on conflict (candidate_id, mode) do update set
+on conflict (candidate_id) where mode in ('shadow') do update set
   shadow_run_id = excluded.shadow_run_id,
   status = 'shadow_observed',
   exact_signature_hash = excluded.exact_signature_hash,
