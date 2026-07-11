@@ -288,6 +288,15 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 	}
 }
 
+func TestLegacyTechnicalMigrationTreatsMissingApplicationAsNotDeployed(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	query := namedSQL(t, siteFixes, "ListLegacyTechnicalActionsForMigration")
+	requireQuerySQL(t, query,
+		"coalesce((latest_app.deployed_at is not null or latest_app.status in ('verification_pending','verified')), false)::boolean as deployment_observed",
+		"coalesce((latest_app.verified_at is not null or latest_app.status = 'verified'), false)::boolean as verification_passed",
+	)
+}
+
 func TestCanonicalSiteFixListDetailsAreBoundedAndBatchReadable(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	list := namedSQL(t, siteFixes, "ListCanonicalSiteFixes")

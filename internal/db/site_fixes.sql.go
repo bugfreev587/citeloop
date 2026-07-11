@@ -4155,8 +4155,8 @@ select
   ,a.diff_snapshot::jsonb as diff_snapshot
   ,coalesce(latest_app.status, '')::text as application_status
   ,(latest_app.github_pr_number is not null or latest_app.github_pr_url is not null)::boolean as has_pull_request
-  ,(latest_app.deployed_at is not null or latest_app.status in ('verification_pending','verified'))::boolean as deployment_observed
-  ,(latest_app.verified_at is not null or latest_app.status = 'verified')::boolean as verification_passed
+  ,coalesce((latest_app.deployed_at is not null or latest_app.status in ('verification_pending','verified')), false)::boolean as deployment_observed
+  ,coalesce((latest_app.verified_at is not null or latest_app.status = 'verified'), false)::boolean as verification_passed
 from content_actions a
 join seo_opportunities o on o.id = a.opportunity_id and o.project_id = a.project_id
 left join site_change_applications app
