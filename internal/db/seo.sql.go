@@ -2165,6 +2165,73 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 	return items, nil
 }
 
+const listCurrentSEODoctorFindings = `-- name: ListCurrentSEODoctorFindings :many
+select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
+where project_id = $1
+  and (run_id = $2 or status = 'active')
+order by
+  case severity
+    when 'P0' then 0
+    when 'P1' then 1
+    when 'P2' then 2
+    else 3
+  end,
+  updated_at desc
+`
+
+type ListCurrentSEODoctorFindingsParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	RunID     uuid.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListCurrentSEODoctorFindings(ctx context.Context, arg ListCurrentSEODoctorFindingsParams) ([]SeoDoctorFinding, error) {
+	rows, err := q.db.Query(ctx, listCurrentSEODoctorFindings, arg.ProjectID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeoDoctorFinding
+	for rows.Next() {
+		var i SeoDoctorFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.RunID,
+			&i.FindingKey,
+			&i.Severity,
+			&i.Category,
+			&i.IssueType,
+			&i.Status,
+			&i.AffectedUrls,
+			&i.NormalizedUrls,
+			&i.Evidence,
+			&i.WhyItMatters,
+			&i.FixIntent,
+			&i.DeveloperInstructions,
+			&i.LikelyFilesOrSurfaces,
+			&i.AcceptanceTests,
+			&i.RiskLevel,
+			&i.ReviewRequired,
+			&i.AutofixEligible,
+			&i.LinkedOpportunityID,
+			&i.LinkedContentActionID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FindingKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions :many
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition from content_actions ca
 where ca.project_id = $1
@@ -2894,7 +2961,7 @@ func (q *Queries) ListSEOAssetTypes(ctx context.Context) ([]SeoAssetType, error)
 const listSEODoctorFindingsForRun = `-- name: ListSEODoctorFindingsForRun :many
 select id, project_id, run_id, finding_key, severity, category, issue_type, status, affected_urls, normalized_urls, evidence, why_it_matters, fix_intent, developer_instructions, likely_files_or_surfaces, acceptance_tests, risk_level, review_required, autofix_eligible, linked_opportunity_id, linked_content_action_id, first_seen_at, last_seen_at, resolved_at, created_at, updated_at, finding_kind from seo_doctor_findings
 where project_id = $1
-  and (run_id = $2 or status = 'active')
+  and run_id = $2
 order by
   case severity
     when 'P0' then 0

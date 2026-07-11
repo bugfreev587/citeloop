@@ -230,6 +230,7 @@ type Querier interface {
 	ListCanonicalSiteFixes(ctx context.Context, arg ListCanonicalSiteFixesParams) ([]SiteFix, error)
 	ListCanonicalSiteFixesForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListContentActions(ctx context.Context, arg ListContentActionsParams) ([]ContentAction, error)
+	ListCurrentSEODoctorFindings(ctx context.Context, arg ListCurrentSEODoctorFindingsParams) ([]SeoDoctorFinding, error)
 	ListDeadWorkflowEventsForProject(ctx context.Context, arg ListDeadWorkflowEventsForProjectParams) ([]WorkflowEvent, error)
 	ListDiscoveryReviewItems(ctx context.Context, arg ListDiscoveryReviewItemsParams) ([]DiscoveryReviewItem, error)
 	ListDiscoverySemanticGoldCases(ctx context.Context, arg ListDiscoverySemanticGoldCasesParams) ([]DiscoverySemanticGoldCase, error)

@@ -188,7 +188,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 	if run.Status == "completed" {
-		return s.DoctorReport(ctx, run.ProjectID, run.ID)
+		return s.currentDoctorReport(ctx, run)
 	}
 
 	startedAt := pgtype.Timestamptz{Time: s.now(), Valid: true}
@@ -316,7 +316,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		}
 	}
 
-	visibleFindings, err := s.Q.ListSEODoctorFindingsForRun(ctx, db.ListSEODoctorFindingsForRunParams{ProjectID: run.ProjectID, RunID: run.ID})
+	visibleFindings, err := s.Q.ListCurrentSEODoctorFindings(ctx, db.ListCurrentSEODoctorFindingsParams{ProjectID: run.ProjectID, RunID: run.ID})
 	if err != nil {
 		return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not read active Doctor findings.", err)
 	}
@@ -352,7 +352,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	if err != nil {
 		return DoctorReport{}, err
 	}
-	return s.DoctorReport(ctx, run.ProjectID, run.ID)
+	return s.currentDoctorReport(ctx, run)
 }
 
 func doctorAssessedResolutionScopes(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
@@ -473,7 +473,7 @@ func (s Service) DoctorLatest(ctx context.Context, projectID uuid.UUID) (DoctorR
 	if err != nil {
 		return DoctorReport{}, err
 	}
-	return s.DoctorReport(ctx, projectID, run.ID)
+	return s.currentDoctorReport(ctx, run)
 }
 
 func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (DoctorReport, error) {
@@ -488,6 +488,18 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 	if err != nil {
 		return DoctorReport{}, err
 	}
+	return doctorReportFromRows(run, findings), nil
+}
+
+func (s Service) currentDoctorReport(ctx context.Context, run db.SeoDoctorRun) (DoctorReport, error) {
+	findings, err := s.Q.ListCurrentSEODoctorFindings(ctx, db.ListCurrentSEODoctorFindingsParams{ProjectID: run.ProjectID, RunID: run.ID})
+	if err != nil {
+		return DoctorReport{}, err
+	}
+	return doctorReportFromRows(run, findings), nil
+}
+
+func doctorReportFromRows(run db.SeoDoctorRun, findings []db.SeoDoctorFinding) DoctorReport {
 	candidates := doctorCandidatesFromRows(findings)
 	score := 100
 	if run.HealthScore != nil {
@@ -506,7 +518,7 @@ func (s Service) DoctorReport(ctx context.Context, projectID, runID uuid.UUID) (
 		Run:      run,
 		Findings: nonNilSlice(findings),
 		Human:    human,
-	}, nil
+	}
 }
 
 func (s Service) DismissDoctorFinding(ctx context.Context, projectID, findingID uuid.UUID) (db.SeoDoctorFinding, error) {

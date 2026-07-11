@@ -442,6 +442,19 @@ where project_id = sqlc.arg(project_id)
 -- name: ListSEODoctorFindingsForRun :many
 select * from seo_doctor_findings
 where project_id = $1
+  and run_id = $2
+order by
+  case severity
+    when 'P0' then 0
+    when 'P1' then 1
+    when 'P2' then 2
+    else 3
+  end,
+  updated_at desc;
+
+-- name: ListCurrentSEODoctorFindings :many
+select * from seo_doctor_findings
+where project_id = $1
   and (run_id = $2 or status = 'active')
 order by
   case severity

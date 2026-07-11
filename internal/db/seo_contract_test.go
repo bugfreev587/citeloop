@@ -229,12 +229,16 @@ func TestResolveMissingDoctorFindingsIsSourceAware(t *testing.T) {
 }
 
 func TestDoctorRunFindingsIncludePreservedActiveFindingsWithoutUnionDuplicates(t *testing.T) {
-	query := strings.ToLower(listSEODoctorFindingsForRun)
-	if !strings.Contains(query, "run_id = $2 or status = 'active'") {
-		t.Fatalf("current Doctor report must include preserved active older findings: %s", query)
+	historicalQuery := strings.ToLower(listSEODoctorFindingsForRun)
+	if !strings.Contains(historicalQuery, "and run_id = $2") || strings.Contains(historicalQuery, "or status = 'active'") {
+		t.Fatalf("historical Doctor report must remain strictly run-scoped: %s", historicalQuery)
 	}
-	if strings.Contains(query, " union ") {
-		t.Fatalf("current Doctor report should not duplicate current active findings through UNION: %s", query)
+	currentQuery := strings.ToLower(listCurrentSEODoctorFindings)
+	if !strings.Contains(currentQuery, "run_id = $2 or status = 'active'") {
+		t.Fatalf("current Doctor report must include preserved active older findings: %s", currentQuery)
+	}
+	if strings.Contains(currentQuery, " union ") {
+		t.Fatalf("current Doctor report should not duplicate current active findings through UNION: %s", currentQuery)
 	}
 }
 
