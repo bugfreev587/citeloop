@@ -551,6 +551,13 @@ func parseSupportedPredicate(sql string) ([]supportedIndexPredicate, error) {
 				})
 				continue
 			}
+			booleanLiteral := strings.ToLower(strings.TrimSpace(match[2]))
+			if booleanLiteral == "true" || booleanLiteral == "false" {
+				predicates = append(predicates, supportedIndexPredicate{
+					Column: strings.ToLower(match[1]), Kind: "boolean-equality", Values: []string{booleanLiteral},
+				})
+				continue
+			}
 		}
 		var match []string
 		if candidate := inPredicatePattern.FindStringSubmatch(term); len(candidate) == 3 {
@@ -559,7 +566,7 @@ func parseSupportedPredicate(sql string) ([]supportedIndexPredicate, error) {
 			match = candidate
 		}
 		if len(match) != 3 {
-			return nil, errors.New("only IS NOT NULL and literal IN predicates joined by AND are supported")
+			return nil, errors.New("only IS NOT NULL, boolean equality, and literal IN predicates joined by AND are supported")
 		}
 		values, err := parseSQLStringList(match[2])
 		if err != nil || len(values) == 0 {

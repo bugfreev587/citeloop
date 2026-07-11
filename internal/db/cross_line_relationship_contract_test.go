@@ -2,6 +2,7 @@ package db
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,36 @@ func TestCanonicalGrowthCutoverConservesLegacyAndFencesNewBypass(t *testing.T) {
 	guardSQL := strings.ToLower(growthOpportunityExecutionGuard)
 	if strings.Contains(guardSQL, "canonical_growth = false") {
 		t.Fatalf("canonical authority execution guard lets unreserved legacy work bypass: %s", guardSQL)
+	}
+}
+
+func TestCanonicalGrowthLegacyLookupIndexUsesRecoverableConcurrentMigration(t *testing.T) {
+	baseRaw, err := os.ReadFile("../migrations/0063_canonical_growth_writer_cutover.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexRaw, err := os.ReadFile(filepath.Join("..", "migrations", "0064_canonical_growth_legacy_index.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := strings.ToLower(string(baseRaw))
+	index := strings.ToLower(string(indexRaw))
+	if strings.Contains(base, "idx_seo_opportunities_legacy_growth_migration") {
+		t.Fatal("populated seo_opportunities index must not be built in transactional cutover migration")
+	}
+	for _, want := range []string{
+		"-- citeloop:migration-mode=nontransactional",
+		"-- citeloop:index=idx_seo_opportunities_legacy_growth_migration",
+		"create index concurrently if not exists idx_seo_opportunities_legacy_growth_migration",
+		"on seo_opportunities (project_id, created_at, id)",
+		"where canonical_growth = false",
+		"status in ('open','accepted','converted','snoozed','watching')",
+	} {
+		if !strings.Contains(index, want) {
+			t.Errorf("canonical Growth index migration missing %q", want)
+		}
+	}
+	if got := strings.Count(index, "create "); got != 1 {
+		t.Fatalf("concurrent index migration must contain one CREATE statement, got %d", got)
 	}
 }

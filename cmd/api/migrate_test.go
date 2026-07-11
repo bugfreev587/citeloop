@@ -125,6 +125,7 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0059_03_opportunity_canonical_site_fix_index.sql":     "idx_seo_opportunities_canonical_site_fix",
 		"0059_04_work_review_legacy_state_index.sql":           "idx_work_review_memory_legacy_state",
 		"0059_05_active_legacy_alias_index.sql":                "uniq_active_legacy_object_alias",
+		"0064_canonical_growth_legacy_index.sql":               "idx_seo_opportunities_legacy_growth_migration",
 	}
 	actualConcurrent := make(map[string]struct{})
 	entries, err := fs.ReadDir(migrations.FS, ".")
@@ -212,6 +213,57 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 	} {
 		if !strings.Contains(baseSQL, want) {
 			t.Errorf("0048 migration missing %q", want)
+		}
+	}
+}
+
+func TestCanonicalGrowthLegacyIndexMigrationRecoversInvalidIndex(t *testing.T) {
+	raw, err := fs.ReadFile(migrations.FS, "0064_canonical_growth_legacy_index.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := "create index idx_seo_opportunities_legacy_growth_migration on seo_opportunities using btree (project_id, created_at, id) where canonical_growth = false and status in ('open', 'accepted', 'converted', 'snoozed', 'watching')"
+	conn := &migrationTestConn{
+		indexExists:          true,
+		indexValid:           false,
+		indexDefinition:      definition,
+		postCreateDefinition: definition,
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	migrationFS := fstest.MapFS{
+		"0064_canonical_growth_legacy_index.sql": &fstest.MapFile{Data: raw},
+	}
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock", "schema", "marker-check", "index-check", "drop-invalid", "create-concurrent", "index-check", "mark-nontransactional", "unlock"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected canonical Growth index recovery order: got %v want %v", conn.events, want)
+	}
+}
+
+func TestPhaseTwoMigrationOrderingKeepsDDLBeforeIndexAndValidationAfterAdd(t *testing.T) {
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := make(map[string]int)
+	for index, entry := range entries {
+		positions[entry.Name()] = index
+	}
+	ordered := []string{
+		"0063_canonical_growth_writer_cutover.sql",
+		"0064_canonical_growth_legacy_index.sql",
+		"0065_fix_grounding_verification_stage.sql",
+		"0066_validate_fix_grounding_verification_stage.sql",
+	}
+	for index, name := range ordered {
+		position, ok := positions[name]
+		if !ok {
+			t.Fatalf("ordered migration %s is not embedded", name)
+		}
+		if index > 0 && position <= positions[ordered[index-1]] {
+			t.Fatalf("migration %s must run after %s", name, ordered[index-1])
 		}
 	}
 }

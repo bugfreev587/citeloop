@@ -51,11 +51,6 @@ create table if not exists growth_cutover_session_entries (
   unique (batch_id, opportunity_id)
 );
 
-create index if not exists idx_seo_opportunities_legacy_growth_migration
-  on seo_opportunities (project_id, created_at, id)
-  where canonical_growth = false
-    and status in ('open','accepted','converted','snoozed','watching');
-
 create or replace function enforce_legacy_growth_read_only_after_cutover()
 returns trigger language plpgsql as $$
 declare
