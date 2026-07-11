@@ -144,6 +144,8 @@ type ProjectConfig struct {
 	// keeps its own deterministic schedule so processed opportunities never
 	// depend on LLM availability.
 	AIDiscoveryAutomation string `json:"ai_discovery_automation"`
+	DoctorAIEnabled       bool   `json:"doctor_ai_enabled"`
+	DoctorAIRunPolicy     string `json:"doctor_ai_run_policy"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
@@ -159,6 +161,20 @@ const (
 	PublishModeScheduled = "scheduled"
 	PublishModeAuto      = "auto"
 	PublishModeManual    = "manual"
+)
+
+const (
+	DoctorAIRunPolicyManualOnly = "manual_only"
+	DoctorAIRunPolicyOnDemand   = "on_demand"
+	DoctorAIRunPolicyAutomatic  = "automatic"
+)
+
+type DoctorAITrigger string
+
+const (
+	DoctorAITriggerApplyUser             DoctorAITrigger = "apply_user"
+	DoctorAITriggerVerificationUser      DoctorAITrigger = "verification_user"
+	DoctorAITriggerVerificationScheduler DoctorAITrigger = "verification_scheduler"
 )
 
 // Opportunity finding source values.
@@ -190,6 +206,8 @@ func Default() ProjectConfig {
 		AutoAdvanceEnabled:          false,
 		OpportunityFindingSourceMix: OpportunityFindingSourceAll,
 		AIDiscoveryAutomation:       AIDiscoveryAutomationSemiAutomatic,
+		DoctorAIEnabled:             false,
+		DoctorAIRunPolicy:           DoctorAIRunPolicyManualOnly,
 		PublishMode:                 PublishModeManual,
 		PublishIntervalDays:         2,
 		Crawl: CrawlConfig{
@@ -201,6 +219,22 @@ func Default() ProjectConfig {
 			RespectRobots:    true,
 			SitemapURLCap:    2000,
 		},
+	}
+}
+
+func (c ProjectConfig) AllowsDoctorAI(trigger DoctorAITrigger) bool {
+	if !c.DoctorAIEnabled {
+		return false
+	}
+	switch trigger {
+	case DoctorAITriggerApplyUser:
+		return c.DoctorAIRunPolicy == DoctorAIRunPolicyManualOnly || c.DoctorAIRunPolicy == DoctorAIRunPolicyOnDemand || c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
+	case DoctorAITriggerVerificationUser:
+		return c.DoctorAIRunPolicy == DoctorAIRunPolicyManualOnly || c.DoctorAIRunPolicy == DoctorAIRunPolicyOnDemand || c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
+	case DoctorAITriggerVerificationScheduler:
+		return c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
+	default:
+		return false
 	}
 }
 
@@ -258,6 +292,12 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	case AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual:
 	default:
 		c.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
+	}
+	switch c.DoctorAIRunPolicy {
+	case DoctorAIRunPolicyManualOnly, DoctorAIRunPolicyOnDemand, DoctorAIRunPolicyAutomatic:
+	default:
+		c.DoctorAIEnabled = false
+		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
 	}
 	return c, nil
 }

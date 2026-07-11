@@ -597,20 +597,24 @@ func (q *Queries) FailDiscoveryShadowRun(ctx context.Context, arg FailDiscoveryS
 const finishAICallRecord = `-- name: FinishAICallRecord :one
 update ai_call_records set
   status = $1,
-  error_code = $2,
-  prompt_tokens = $3,
-  completion_tokens = $4,
-  total_tokens = $5,
-  cost_usd = $6,
+  provider = coalesce($2, provider),
+  model = coalesce($3, model),
+  error_code = $4,
+  prompt_tokens = $5,
+  completion_tokens = $6,
+  total_tokens = $7,
+  cost_usd = $8,
   finished_at = now(),
   updated_at = now()
-where id = $7
-  and project_id = $8
+where id = $9
+  and project_id = $10
 returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
 `
 
 type FinishAICallRecordParams struct {
 	Status           string         `json:"status"`
+	ResolvedProvider *string        `json:"resolved_provider"`
+	ResolvedModel    *string        `json:"resolved_model"`
 	ErrorCode        *string        `json:"error_code"`
 	PromptTokens     int32          `json:"prompt_tokens"`
 	CompletionTokens int32          `json:"completion_tokens"`
@@ -623,6 +627,8 @@ type FinishAICallRecordParams struct {
 func (q *Queries) FinishAICallRecord(ctx context.Context, arg FinishAICallRecordParams) (AiCallRecord, error) {
 	row := q.db.QueryRow(ctx, finishAICallRecord,
 		arg.Status,
+		arg.ResolvedProvider,
+		arg.ResolvedModel,
 		arg.ErrorCode,
 		arg.PromptTokens,
 		arg.CompletionTokens,
@@ -631,6 +637,155 @@ func (q *Queries) FinishAICallRecord(ctx context.Context, arg FinishAICallRecord
 		arg.ID,
 		arg.ProjectID,
 	)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finishAICallRecordIfRunning = `-- name: FinishAICallRecordIfRunning :one
+update ai_call_records set
+  status = 'failed', error_code = $1, finished_at = now(), updated_at = now()
+where id = $2 and project_id = $3 and status = 'running'
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
+`
+
+type FinishAICallRecordIfRunningParams struct {
+	ErrorCode *string   `json:"error_code"`
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) FinishAICallRecordIfRunning(ctx context.Context, arg FinishAICallRecordIfRunningParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, finishAICallRecordIfRunning, arg.ErrorCode, arg.ID, arg.ProjectID)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finishCanonicalAICallFenced = `-- name: FinishCanonicalAICallFenced :one
+update ai_call_records set
+  status = case when status = 'running' then $1 else status end,
+  error_code = case when status = 'running' then $2 else error_code end,
+  provider = coalesce($3, provider),
+  model = coalesce($4, model),
+  prompt_tokens = $5,
+  completion_tokens = $6,
+  total_tokens = $7,
+  cost_usd = $8,
+  finished_at = coalesce(finished_at, now()),
+  updated_at = now()
+where id = $9 and project_id = $10
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at
+`
+
+type FinishCanonicalAICallFencedParams struct {
+	Status           string         `json:"status"`
+	ErrorCode        *string        `json:"error_code"`
+	ResolvedProvider *string        `json:"resolved_provider"`
+	ResolvedModel    *string        `json:"resolved_model"`
+	PromptTokens     int32          `json:"prompt_tokens"`
+	CompletionTokens int32          `json:"completion_tokens"`
+	TotalTokens      int32          `json:"total_tokens"`
+	CostUsd          pgtype.Numeric `json:"cost_usd"`
+	ID               uuid.UUID      `json:"id"`
+	ProjectID        uuid.UUID      `json:"project_id"`
+}
+
+func (q *Queries) FinishCanonicalAICallFenced(ctx context.Context, arg FinishCanonicalAICallFencedParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, finishCanonicalAICallFenced,
+		arg.Status,
+		arg.ErrorCode,
+		arg.ResolvedProvider,
+		arg.ResolvedModel,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.TotalTokens,
+		arg.CostUsd,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i AiCallRecord
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.RunID,
+		&i.Stage,
+		&i.LinkedObjectType,
+		&i.LinkedObjectID,
+		&i.Provider,
+		&i.Model,
+		&i.PromptVersion,
+		&i.RequestFingerprint,
+		&i.Status,
+		&i.ErrorCode,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.TotalTokens,
+		&i.CostUsd,
+		&i.ParentCallID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getAICallRecord = `-- name: GetAICallRecord :one
+select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at from ai_call_records where id = $1 and project_id = $2
+`
+
+type GetAICallRecordParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetAICallRecord(ctx context.Context, arg GetAICallRecordParams) (AiCallRecord, error) {
+	row := q.db.QueryRow(ctx, getAICallRecord, arg.ID, arg.ProjectID)
 	var i AiCallRecord
 	err := row.Scan(
 		&i.ID,

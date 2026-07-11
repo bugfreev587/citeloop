@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -155,9 +156,13 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad project id")
 		return
 	}
-	var cfg config.ProjectConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	if !json.Valid(raw) {
+		writeErr(w, 400, "invalid project config")
 		return
 	}
 	previousCfg := config.Default()
@@ -168,6 +173,20 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		previousCfg = parsed
+	} else {
+		writeErr(w, http.StatusNotFound, "project not found")
+		return
+	}
+	cfg := previousCfg
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if normalized, err := config.Parse(cfg.JSON()); err == nil {
+		cfg = normalized
+	} else {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	p, err := s.Q.UpdateProjectConfigForOwner(r.Context(), db.UpdateProjectConfigForOwnerParams{
 		ID: id, Config: cfg.JSON(), OwnerID: s.ownerID(r),

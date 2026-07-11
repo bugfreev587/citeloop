@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -35,6 +37,27 @@ func TestDoctorSiteFixCreationHasSingleWriter(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("deprecated Doctor alias still uses legacy writer %s", forbidden)
 		}
+	}
+}
+
+func TestOnDemandAuthorizationIsClaimedBeforeLifecycleMutation(t *testing.T) {
+	raw, err := os.ReadFile("handlers_site_fixes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := functionSource(t, string(raw), "func (s *postgresDoctorSiteFixLifecycleService) RequestVerification", "func (s *postgresDoctorSiteFixLifecycleService) Terminate")
+	claim := strings.Index(body, "ClaimDoctorAIOnDemandTrigger")
+	manual := strings.Index(body, "MarkCanonicalSiteFixManualApplied")
+	reopen := strings.Index(body, "ReopenCanonicalSiteFix")
+	if claim < 0 || manual < 0 || reopen < 0 || claim > manual || claim > reopen || !strings.Contains(body, "BeginTx") || !strings.Contains(body, "tx.Commit") {
+		t.Fatalf("on-demand claim must share a transaction and precede lifecycle mutations")
+	}
+	legal := strings.Index(body, "legalLifecycle")
+	if legal < 0 || legal > claim {
+		t.Fatal("invalid lifecycle must be rejected before claiming an authorization marker")
+	}
+	if !strings.Contains(body, `marker.Status == "superseded"`) {
+		t.Fatal("a superseded request id must be rejected as already handled")
 	}
 }
 
@@ -767,23 +790,118 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		}
 	})
 
-	t.Run("apply and verify are explicit fail closed Task 5 handoffs", func(t *testing.T) {
+	t.Run("apply and verify use canonical lifecycle service", func(t *testing.T) {
 		service := &doctorSiteFixServiceStub{}
+		lifecycle := &doctorSiteFixLifecycleServiceStub{
+			applyResult:  sitefix.ApplyResult{SiteFix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "applying"}},
+			verifyResult: DoctorSiteFixVerificationRequest{SiteFix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "awaiting_deploy"}},
+		}
+		applyResponse := serveSiteFixLifecycleRequest(t, service, lifecycle, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/apply")
+		if applyResponse.Code != http.StatusOK {
+			t.Fatalf("apply status = %d, body = %s", applyResponse.Code, applyResponse.Body.String())
+		}
+		verifyResponse := serveSiteFixLifecycleRequest(t, service, lifecycle, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/verify")
+		if verifyResponse.Code != http.StatusAccepted {
+			t.Fatalf("verify status = %d, body = %s", verifyResponse.Code, verifyResponse.Body.String())
+		}
+		if lifecycle.applyProject != projectID || lifecycle.applyFix != fixID || lifecycle.verifyProject != projectID || lifecycle.verifyFix != fixID {
+			t.Fatalf("lifecycle scope = %+v", lifecycle)
+		}
+	})
+
+	t.Run("verify carries a durable on-demand AI request identity", func(t *testing.T) {
+		requestID := uuid.New()
+		lifecycle := &doctorSiteFixLifecycleServiceStub{verifyResult: DoctorSiteFixVerificationRequest{SiteFix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "awaiting_deploy"}}}
+		server := &Server{SiteFixes: &doctorSiteFixServiceStub{}, SiteFixLifecycle: lifecycle}
+		body := strings.NewReader(`{"ai_review_request_id":"` + requestID.String() + `"}`)
+		request := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/verify", body)
+		response := httptest.NewRecorder()
+		server.Router().ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("verify status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if lifecycle.verifyInput.AIReviewRequestID == nil || *lifecycle.verifyInput.AIReviewRequestID != requestID {
+			t.Fatalf("on-demand request identity was not preserved: %+v", lifecycle.verifyInput)
+		}
+	})
+
+	t.Run("canonical lifecycle CAS conflicts return 409", func(t *testing.T) {
+		lifecycle := &doctorSiteFixLifecycleServiceStub{applyErr: sitefix.ErrLifecycleConflict, verifyErr: sitefix.ErrLifecycleConflict}
 		for _, action := range []string{"apply", "verify"} {
-			response := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/"+action)
-			if response.Code != http.StatusNotImplemented {
-				t.Fatalf("%s status = %d, body = %s", action, response.Code, response.Body.String())
-			}
-			if !strings.Contains(response.Body.String(), "canonical Site Fix") {
-				t.Fatalf("%s body = %s", action, response.Body.String())
+			response := serveSiteFixLifecycleRequest(t, &doctorSiteFixServiceStub{}, lifecycle, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/"+action)
+			if response.Code != http.StatusConflict {
+				t.Fatalf("%s status=%d body=%s", action, response.Code, response.Body.String())
 			}
 		}
 	})
 }
 
+func TestDoctorSiteFixManualEvidenceRequiresAuthenticatedStructuredAttestation(t *testing.T) {
+	tests := []json.RawMessage{json.RawMessage(`{"type":"canonical_present"}`), json.RawMessage(`"manual visual check"`)}
+	rawTests, _ := json.Marshal(tests)
+	results := make([]DoctorSiteFixManualAcceptanceResult, len(tests))
+	for i, test := range tests {
+		sum := sha256.Sum256(test)
+		results[i] = DoctorSiteFixManualAcceptanceResult{Index: i, TestFingerprint: fmt.Sprintf("sha256:%x", sum[:]), Status: "passed", Evidence: json.RawMessage(`{"observed":"reviewed production artifact"}`)}
+	}
+	fix := db.SiteFix{AcceptanceTests: rawTests}
+	app := db.SiteChangeApplication{TargetUrl: "https://example.com/page"}
+	valid := DoctorSiteFixManualEvidence{HumanConfirmed: true, TargetURL: app.TargetUrl, AcceptanceResults: results}
+	if _, err := validateDoctorSiteFixManualEvidence(fix, app, valid); err != nil {
+		t.Fatalf("valid manual evidence rejected: %v", err)
+	}
+	invalid := valid
+	invalid.HumanConfirmed = false
+	if _, err := validateDoctorSiteFixManualEvidence(fix, app, invalid); !errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid) {
+		t.Fatalf("unconfirmed evidence error=%v", err)
+	}
+	invalid = valid
+	invalid.AcceptanceResults[0].TestFingerprint = "sha256:wrong"
+	if _, err := validateDoctorSiteFixManualEvidence(fix, app, invalid); !errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid) {
+		t.Fatalf("wrong fingerprint error=%v", err)
+	}
+}
+
+func TestCanonicalGitHubApplyOnlySupportsTypedMetadataMutationFamily(t *testing.T) {
+	metadata := db.SiteFix{ProposedFix: json.RawMessage(`{"mutations":[{"field":"title","operation":"replace"},{"field":"meta_description","operation":"update"}]}`)}
+	if got := canonicalSiteFixPRMutationFamily(metadata); got != "metadata_rewrite" {
+		t.Fatalf("metadata family=%q", got)
+	}
+	for _, raw := range []string{
+		`{"mutations":[{"field":"canonical","operation":"replace"}]}`,
+		`{"mutations":[{"field":"body","operation":"add"}]}`,
+		`{}`,
+	} {
+		if got := canonicalSiteFixPRMutationFamily(db.SiteFix{ProposedFix: json.RawMessage(raw)}); got != "" {
+			t.Fatalf("unsupported %s classified %q", raw, got)
+		}
+	}
+}
+
+func TestDoctorAIProviderAuthorityMustBeExplicit(t *testing.T) {
+	defaultCfg, _ := config.Parse(json.RawMessage(`{}`))
+	disabledCfg, _ := config.Parse(json.RawMessage(`{"doctor_ai_enabled":false,"doctor_ai_run_policy":"manual_only"}`))
+	if defaultCfg.AllowsDoctorAI(config.DoctorAITriggerApplyUser) || disabledCfg.AllowsDoctorAI(config.DoctorAITriggerApplyUser) {
+		t.Fatal("Doctor provider authority must default off")
+	}
+	enabledCfg, _ := config.Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"manual_only"}`))
+	if !enabledCfg.AllowsDoctorAI(config.DoctorAITriggerApplyUser) {
+		t.Fatal("explicit Doctor provider authority was ignored")
+	}
+}
+
 func serveSiteFixRequest(t *testing.T, service DoctorSiteFixService, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	server := &Server{SiteFixes: service}
+	request := httptest.NewRequest(method, path, nil)
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	return response
+}
+
+func serveSiteFixLifecycleRequest(t *testing.T, service DoctorSiteFixService, lifecycle DoctorSiteFixLifecycleService, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	server := &Server{SiteFixes: service, SiteFixLifecycle: lifecycle}
 	request := httptest.NewRequest(method, path, nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -809,6 +927,38 @@ type doctorSiteFixServiceStub struct {
 	approveErr     error
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
+}
+
+type doctorSiteFixLifecycleServiceStub struct {
+	applyResult      sitefix.ApplyResult
+	applyErr         error
+	applyProject     uuid.UUID
+	applyFix         uuid.UUID
+	verifyResult     DoctorSiteFixVerificationRequest
+	verifyErr        error
+	verifyProject    uuid.UUID
+	verifyFix        uuid.UUID
+	verifyInput      DoctorSiteFixVerificationInput
+	terminateResult  DoctorSiteFixVerificationRequest
+	terminateErr     error
+	terminateProject uuid.UUID
+	terminateFix     uuid.UUID
+}
+
+func (s *doctorSiteFixLifecycleServiceStub) Apply(_ context.Context, projectID, fixID uuid.UUID) (sitefix.ApplyResult, error) {
+	s.applyProject, s.applyFix = projectID, fixID
+	return s.applyResult, s.applyErr
+}
+
+func (s *doctorSiteFixLifecycleServiceStub) RequestVerification(_ context.Context, projectID, fixID uuid.UUID, input DoctorSiteFixVerificationInput) (DoctorSiteFixVerificationRequest, error) {
+	s.verifyProject, s.verifyFix = projectID, fixID
+	s.verifyInput = input
+	return s.verifyResult, s.verifyErr
+}
+
+func (s *doctorSiteFixLifecycleServiceStub) Terminate(_ context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixVerificationRequest, error) {
+	s.terminateProject, s.terminateFix = projectID, fixID
+	return s.terminateResult, s.terminateErr
 }
 
 type durableDoctorSiteFixPreparationManager struct {

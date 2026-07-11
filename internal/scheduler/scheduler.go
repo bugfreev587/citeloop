@@ -71,6 +71,7 @@ type Scheduler struct {
 	now                      func() time.Time
 	alert                    func(projectID uuid.UUID, msg string)
 	httpClient               *http.Client
+	siteFixVerifier          canonicalSiteFixPageVerifier
 	seoRunnerFactory         func(q *db.Queries) seoRunner
 	NotificationSecret       string
 	ResendAPIKey             string
@@ -1465,10 +1466,15 @@ func (s *Scheduler) TickSiteFixReconcile(ctx context.Context) {
 }
 
 func (s *Scheduler) reconcileSiteChangePRsForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	apps, err := q.ListOpenSiteChangePRApplications(ctx, p.ID)
+	canonicalApps, err := q.ListCanonicalSiteFixPRsForReconciliation(ctx, p.ID)
 	if err != nil {
 		return err
 	}
+	legacyApps, err := q.ListOpenSiteChangePRApplications(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	apps := append(canonicalApps, legacyApps...)
 	if len(apps) == 0 {
 		return nil
 	}
@@ -1614,6 +1620,13 @@ func siteFixPRCreatedAt(app db.SiteChangeApplication) time.Time {
 }
 
 func (s *Scheduler) markSiteChangePRNeedsFollowUp(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, reason string) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		_, err := q.MarkCanonicalSiteFixApplyFailure(ctx, db.MarkCanonicalSiteFixApplyFailureParams{
+			ProjectID: p.ID, SiteFixID: app.SiteFixID, ApplicationID: app.ID,
+			FailureReason: &reason,
+		})
+		return err
+	}
 	contentActionID, err := legacyApplicationContentActionID(app)
 	if err != nil {
 		return err
@@ -1701,6 +1714,20 @@ func (s *Scheduler) githubTokenForProject(ctx context.Context, q publisherConnec
 }
 
 func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication, pr publisher.GitHubPRState) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		mergedAt := s.currentTime()
+		if pr.MergedAt != nil {
+			mergedAt = pr.MergedAt.UTC()
+		}
+		if _, err := q.MarkCanonicalSiteFixPRMerged(ctx, db.MarkCanonicalSiteFixPRMergedParams{
+			SiteFixID: uuid.UUID(app.SiteFixID.Bytes), ProjectID: p.ID,
+			ApplicationID: app.ID, ObservedMergedAt: pgutil.TS(mergedAt),
+		}); err != nil {
+			return err
+		}
+		s.Log.Info("canonical Doctor Site Fix PR merged; awaiting deployment", "project", p.ID, "site_fix", uuid.UUID(app.SiteFixID.Bytes), "application", app.ID)
+		return nil
+	}
 	contentActionID, err := legacyApplicationContentActionID(app)
 	if err != nil {
 		return err
@@ -1749,6 +1776,15 @@ func (s *Scheduler) markSiteChangePRMerged(ctx context.Context, q *db.Queries, p
 }
 
 func (s *Scheduler) markSiteChangePRClosed(ctx context.Context, q *db.Queries, p db.Project, app db.SiteChangeApplication) error {
+	if app.SiteFixID.Valid && !app.ContentActionID.Valid {
+		reason := "pull request was closed without merging"
+		closedState := "closed"
+		_, err := q.MarkCanonicalSiteFixApplyFailure(ctx, db.MarkCanonicalSiteFixApplyFailureParams{
+			ProjectID: p.ID, SiteFixID: app.SiteFixID, ApplicationID: app.ID,
+			ObservedGithubPrState: &closedState, FailureReason: &reason,
+		})
+		return err
+	}
 	contentActionID, err := legacyApplicationContentActionID(app)
 	if err != nil {
 		return err

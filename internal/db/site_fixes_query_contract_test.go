@@ -52,6 +52,9 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 		"MarkCanonicalSiteFixPreparing",
 		"MarkCanonicalSiteFixReadyToApply",
 		"ClaimCanonicalSiteFixApplying",
+		"ClaimCanonicalSiteFixGitHubPR",
+		"FailCanonicalSiteFixGitHubPRClaim",
+		"ReopenCanonicalSiteFixApply",
 		"MarkCanonicalSiteFixApplied",
 		"MarkCanonicalSiteFixAwaitingDeploy",
 		"MarkCanonicalSiteFixVerifying",
@@ -285,6 +288,47 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 	}
 }
 
+func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	claim := namedSQL(t, siteFixes, "ClaimCanonicalSiteFixGitHubPR")
+	requireQuerySQL(t, claim, "status = 'creating_pr'", "pr_claim_token", "pr_claim_expires_at", "authority_changed_at", "app.status = 'ready_for_pr'", "app.pr_claim_expires_at <= clock_timestamp()")
+	mark := namedSQL(t, siteFixes, "MarkCanonicalSiteFixGitHubPR")
+	requireQuerySQL(t, mark, "writer_authority = 'canonical'", "write_fenced = false", "status = 'creating_pr'", "pr_claim_token = sqlc.arg(pr_claim_token)", "pr_claim_expires_at > clock_timestamp()", "pr_claim_authority_fingerprint = (select fingerprint from authority)")
+	fail := namedSQL(t, siteFixes, "FailCanonicalSiteFixGitHubPRClaim")
+	requireQuerySQL(t, fail, "status = 'needs_follow_up'", "pr_claim_token = sqlc.arg(pr_claim_token)")
+	reopen := namedSQL(t, siteFixes, "ReopenCanonicalSiteFixApply")
+	requireQuerySQL(t, reopen, "app.status = 'needs_follow_up'", "status = 'ready_for_pr'", "sf.status = 'applying'", "w.status = 'executing'")
+	renew := namedSQL(t, siteFixes, "RenewCanonicalSiteFixGitHubPRClaim")
+	requireQuerySQL(t, renew, "pr_claim_expires_at", "pr_claim_token = sqlc.arg(pr_claim_token)", "pr_claim_authority_fingerprint = (select fingerprint from authority)")
+	ddlRaw, err := os.ReadFile(filepath.Join("..", "migrations", "0057_01_site_fix_pr_claims.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ddl := strings.ToLower(string(ddlRaw))
+	for _, required := range []string{"status <> 'creating_pr'", "status = 'creating_pr'", "not valid", "validate constraint site_change_applications_pr_claim_check", "orphan_count > 10000"} {
+		if !strings.Contains(ddl, required) {
+			t.Errorf("PR claim DDL missing %q", required)
+		}
+	}
+}
+
+func TestCanonicalApplyFailureNeverEntersVerificationRetryLifecycle(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	applyFailure := namedSQL(t, siteFixes, "MarkCanonicalSiteFixApplyFailure")
+	requireQuerySQL(t, applyFailure, "sf.status = 'applying'", "w.status = 'executing'", "a.status = 'github_pr_open'", "status = 'needs_follow_up'")
+	for _, forbidden := range []string{"update site_fixes", "failed_retryable", "retry_count =", "update work_signature_registry"} {
+		if strings.Contains(applyFailure, forbidden) {
+			t.Errorf("apply failure must not mutate verification lifecycle; found %q", forbidden)
+		}
+	}
+}
+
+func TestCanonicalUserTerminationSupportsNoApplication(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	terminate := namedSQL(t, siteFixes, "TerminateCanonicalSiteFixByUser")
+	requireQuerySQL(t, terminate, "left join lateral", "a.id as application_id", "e.application_id is null", "for update of sf, w", "update work_conflict_buckets", "status = 'failed_terminal'", "active = false")
+}
+
 func TestCanonicalSiteFixTransitionStatePairs(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 
@@ -389,6 +433,8 @@ func TestDoctorVerificationStopsAtVerified(t *testing.T) {
 		"status = 'failed_retryable'",
 		"retry_count = retry_count + 1",
 		"retry_count < sf.max_retries",
+		"sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy'",
+		"a.status in ('deployment_pending','verification_pending','needs_follow_up')",
 		"active = true",
 	)
 	reopenSQL := namedSQL(t, siteFixes, "ReopenCanonicalSiteFix")
@@ -399,6 +445,72 @@ func TestDoctorVerificationStopsAtVerified(t *testing.T) {
 	requireQuerySQL(t, supersedeSQL, "status = 'superseded'", "active = false")
 	rollbackSQL := namedSQL(t, siteFixes, "MarkCanonicalSiteFixMigrationRolledBack")
 	requireQuerySQL(t, rollbackSQL, "status = 'migration_rolled_back'", "active = false")
+}
+
+func TestDoctorAIOnDemandTriggerIsPersistentAndExactlyOnce(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	claim := namedSQL(t, siteFixes, "ClaimDoctorAIOnDemandTrigger")
+	requireQuerySQL(t, claim,
+		"insert into doctor_ai_on_demand_triggers",
+		"on conflict (request_id) do nothing",
+		"doctor_ai_enabled",
+		"('manual_only','on_demand','automatic')",
+		"site_fix_id = sqlc.arg(site_fix_id)",
+	)
+	requireQuerySQL(t, claim, "marker.status in ('pending','processing')", "marker.status = 'consumed' and marker.lifecycle_applied_at is null")
+	processing := namedSQL(t, siteFixes, "ClaimDoctorAIOnDemandProcessing")
+	requireQuerySQL(t, processing,
+		"status = 'processing'",
+		"for update of marker skip locked",
+		"processing_token",
+		"processing_expires_at <= clock_timestamp()",
+		"doctor_ai_enabled",
+		"('manual_only','on_demand','automatic')",
+	)
+	start := namedSQL(t, siteFixes, "StartDoctorAIOnDemandCall")
+	requireQuerySQL(t, start, "insert into ai_call_records", "ai_call_id", "processing_token", "processing_expires_at > clock_timestamp()", "for update of marker")
+	consume := namedSQL(t, siteFixes, "ConsumeDoctorAIOnDemandProcessing")
+	requireQuerySQL(t, consume,
+		"status = 'consumed'", "result_snapshot", "processing_token = sqlc.arg(processing_token)", "ai_call_id = sqlc.arg(ai_call_id)",
+		"doctor_ai_enabled", "doctor_ai_run_policy", "sf.status in ('awaiting_deploy','verifying','reopened')",
+	)
+	namedSQL(t, siteFixes, "GetDoctorAIOnDemandConsumedResult")
+	namedSQL(t, siteFixes, "MarkDoctorAIOnDemandLifecycleApplied")
+	reject := namedSQL(t, siteFixes, "RejectDoctorAIOnDemandTriggersForSiteFix")
+	requireQuerySQL(t, reject,
+		"status = 'rejected'", "marker.status in ('pending','processing')", "marker.status = 'consumed' and marker.lifecycle_applied_at is null", "lifecycle_applied_at = now()",
+		"processing_token = null", "processing_expires_at = null", "call.status = 'running'", "status = 'failed'",
+		"when marker.status = 'consumed' then marker.result_snapshot",
+	)
+	supersede := namedSQL(t, siteFixes, "SupersedeDoctorAIOnDemandSiblingTriggers")
+	requireQuerySQL(t, supersede,
+		"status = 'superseded'", "marker.status in ('pending','processing')", "marker.status = 'consumed' and marker.lifecycle_applied_at is null", "marker.request_id <> sqlc.arg(applied_request_id)",
+		"call.status = 'running'", "status = 'failed'",
+		"when marker.status = 'consumed' then marker.result_snapshot",
+	)
+	unauthorized := namedSQL(t, siteFixes, "RejectUnauthorizedDoctorAIOnDemandTriggers")
+	requireQuerySQL(t, unauthorized, "marker.status = 'consumed' and marker.lifecycle_applied_at is null")
+	consumed := namedSQL(t, siteFixes, "ListDoctorAIOnDemandConsumedUnapplied")
+	requireQuerySQL(t, consumed,
+		"site_fix_verifications", "verification.ai_call_id = marker.ai_call_id", "has_lifecycle_reference",
+	)
+	unreferenced := namedSQL(t, siteFixes, "RejectDoctorAIOnDemandConsumedWithoutLifecycleReference")
+	requireQuerySQL(t, unreferenced,
+		"marker.status = 'consumed'", "status = 'rejected'", "lifecycle_completed_without_this_ai_result",
+		"not exists", "site_fix_verifications",
+	)
+	namedSQL(t, siteFixes, "ListRejectedDoctorAIRunningCalls")
+
+	migration, err := os.ReadFile(filepath.Join("..", "migrations", "0056_doctor_ai_on_demand_triggers.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := strings.ToLower(string(migration))
+	for _, required := range []string{"request_id uuid primary key", "status in ('pending','processing','consumed','rejected','superseded')", "processing_token", "processing_expires_at", "ai_call_id", "result_snapshot", "rejection_reason", "lifecycle_applied_at", "foreign key (project_id, site_fix_id)"} {
+		if !strings.Contains(schema, required) {
+			t.Errorf("on-demand trigger schema missing %q", required)
+		}
+	}
 }
 
 func TestLegacyApplicationWriterRejectsMissingContentAction(t *testing.T) {

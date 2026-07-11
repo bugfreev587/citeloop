@@ -1157,6 +1157,8 @@ select * from site_change_applications
 where project_id = sqlc.arg(project_id)
   and status = 'github_pr_open'
   and github_pr_number is not null
+  and content_action_id is not null
+  and site_fix_id is null
 order by updated_at asc;
 
 -- name: GetActiveSiteChangeApplicationByOpportunityKey :one
@@ -1200,6 +1202,8 @@ returning *;
 select * from site_change_applications
 where project_id = sqlc.arg(project_id)
   and status = 'github_pr_merged'
+  and content_action_id is not null
+  and site_fix_id is null
 order by merged_at asc nulls first;
 
 -- name: SetSiteChangePRNextPollAt :exec

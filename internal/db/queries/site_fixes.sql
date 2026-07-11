@@ -1027,6 +1027,23 @@ with eligible as materialized (
     and sf.project_id = sqlc.arg(project_id)
     and sf.status in ('verifying','failed_retryable','reopened')
   returning sf.*
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix verified without this AI result') end,
+      rejection_reason = 'site fix verified without this AI result', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from verified_fix sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'verified', active = false, updated_at = now()
@@ -1043,18 +1060,24 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'reopened' and w.status = 'reopened')
+	  or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
     )
     and sf.retry_count < sf.max_retries
+	and a.status in ('deployment_pending','verification_pending','needs_follow_up')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1111,6 +1134,16 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), retryable_application as (
+  update site_change_applications a
+  set status = 'needs_follow_up',
+      verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+      failure_reason = sqlc.arg(failure_reason), updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = sqlc.arg(project_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id) and a.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'failed_retryable',
@@ -1119,13 +1152,31 @@ with eligible as materialized (
       failure_reason = sqlc.arg(failure_reason),
       updated_at = now()
   from locked_work e
+  join retryable_application a on a.site_fix_id = e.id
   where sf.id = e.id
     and sf.project_id = sqlc.arg(project_id)
-    and sf.status in ('verifying','reopened')
+	and sf.status in ('awaiting_deploy','verifying','reopened')
     and sf.retry_count < sf.max_retries
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.*
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','verification attempt completed without this AI result') end,
+      rejection_reason = 'verification attempt completed without this AI result', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'failed_retryable', active = true, updated_at = now()
@@ -1142,13 +1193,18 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
+    and a.status = 'needs_follow_up'
     and sf.status = 'failed_retryable'
     and w.status = 'failed_retryable'
     and sf.retry_count <= sf.max_retries
@@ -1208,10 +1264,20 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), reopened_application as (
+  update site_change_applications a
+  set status = 'verification_pending', failure_reason = null, updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = sqlc.arg(project_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id) and a.content_action_id is null
+    and a.status = 'needs_follow_up'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'reopened', failure_reason = null, updated_at = now()
   from locked_work e
+  join reopened_application a on a.site_fix_id = e.id
   where sf.id = e.id
     and sf.status = 'failed_retryable'
     and sf.retry_count <= sf.max_retries
@@ -1234,19 +1300,26 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
       or (sf.status = 'reopened' and w.status = 'reopened')
+	  or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+	  or (sf.status = 'applying' and w.status = 'executing')
     )
     and (sf.retry_count >= sf.max_retries or sqlc.arg(force_terminal)::boolean)
+	and a.status in ('draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open','manual_apply_required','deployment_pending','verification_pending','needs_follow_up')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1303,6 +1376,17 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), terminal_application as (
+  update site_change_applications a
+  set status = 'failed', verification_snapshot = sqlc.arg(verification_snapshot)::jsonb,
+      failure_reason = sqlc.arg(failure_reason),
+	  pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+	  updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = sqlc.arg(project_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id) and a.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'failed_terminal',
@@ -1310,12 +1394,30 @@ with eligible as materialized (
       failure_reason = sqlc.arg(failure_reason),
       updated_at = now()
   from locked_work e
+  join terminal_application a on a.site_fix_id = e.id
   where sf.id = e.id
-    and sf.status in ('verifying','failed_retryable','reopened')
+	and sf.status in ('applying','awaiting_deploy','verifying','failed_retryable','reopened')
     and (sf.retry_count >= sf.max_retries or sqlc.arg(force_terminal)::boolean)
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.*
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix reached terminal verification state') end,
+      rejection_reason = 'site fix reached terminal verification state', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'failed_terminal', active = false, updated_at = now()
@@ -1325,6 +1427,98 @@ with eligible as materialized (
 )
 select transitioned.* from transitioned
 cross join signature_transition;
+
+-- name: TerminateCanonicalSiteFixByUser :one
+with authority as materialized (
+  select pwa.project_id from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  left join lateral (
+    select app.id from site_change_applications app
+    where app.project_id = sf.project_id and app.site_fix_id = sf.id and app.content_action_id is null
+    order by app.updated_at desc limit 1
+  ) a on true
+  where sf.project_id = sqlc.arg(project_id) and sf.id = sqlc.arg(site_fix_id)
+    and (
+      (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+      or (sf.status = 'approved' and w.status = 'approved')
+      or (sf.status = 'preparing' and w.status = 'preparing')
+      or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+      or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+      or (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
+    and w.mode = 'enforced' and w.active = true and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id from work_conflict_buckets b join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id) order by b.bucket_key for update of b
+), locked_application as materialized (
+  select app.id from site_change_applications app join eligible e on e.application_id = app.id
+  where app.project_id = e.project_id and app.site_fix_id = e.id and app.content_action_id is null
+  for update of app
+), locked_work as materialized (
+  select e.* from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status and w.status = e.expected_signature_status
+    and w.active = e.expected_signature_active and w.mode = 'enforced'
+    and w.conflict_bucket_keys = e.conflict_bucket_keys and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and (e.application_id is null or exists (select 1 from locked_application app where app.id = e.application_id))
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked where b.id = locked.id and exists (select 1 from locked_work)
+  returning b.id
+), failed_application as (
+  update site_change_applications app
+  set status = 'failed', failure_reason = sqlc.arg(failure_reason),
+      pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null, updated_at = now()
+  from locked_work e where e.application_id is not null and app.id = e.application_id
+    and app.project_id = e.project_id and app.site_fix_id = e.id and app.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning app.id
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected', result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix terminated') end,
+      rejection_reason = 'site fix terminated', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from locked_work e
+  where marker.project_id = e.project_id and marker.site_fix_id = e.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.request_id, marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
+), transitioned as (
+  update site_fixes sf set status = 'failed_terminal', failure_reason = sqlc.arg(failure_reason),
+      verification_snapshot = sqlc.arg(verification_snapshot)::jsonb, updated_at = now()
+  from locked_work e where sf.id = e.id and sf.project_id = e.project_id
+    and sf.status = e.expected_fix_status
+    and (e.application_id is null or exists (select 1 from failed_application app where app.id = e.application_id))
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning sf.*
+), signature_transition as (
+  update work_signature_registry w set status = 'failed_terminal', active = false, updated_at = now()
+  from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
+)
+select transitioned.* from transitioned cross join signature_transition;
 
 -- name: SupersedeCanonicalSiteFix :one
 with eligible as materialized (
@@ -1421,6 +1615,23 @@ with eligible as materialized (
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.*
+), superseded_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'superseded',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason','site fix superseded') end,
+      rejection_reason = 'site fix superseded', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from superseded_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'superseded', active = false, updated_at = now()
@@ -1528,6 +1739,23 @@ with eligible as materialized (
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.*
+), superseded_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'superseded',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason','site fix migration rolled back') end,
+      rejection_reason = 'site fix migration rolled back', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from superseded_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'cancelled', active = false, updated_at = now()
@@ -1774,9 +2002,10 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and a.id = sqlc.arg(application_id)
-    and sf.status = 'awaiting_deploy'
-    and w.status = 'awaiting_deploy'
-    and a.status = 'deployment_pending'
+    and (
+      (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy' and a.status = 'deployment_pending')
+      or (sf.status = 'reopened' and w.status = 'reopened' and a.status = 'verification_pending')
+    )
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1845,7 +2074,7 @@ with eligible as materialized (
     and a.project_id = sqlc.arg(project_id)
     and a.site_fix_id = sqlc.arg(site_fix_id)
     and a.content_action_id is null
-    and a.status = 'deployment_pending'
+    and a.status in ('deployment_pending','verification_pending')
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning a.site_fix_id
@@ -1858,7 +2087,7 @@ with eligible as materialized (
   from deployed_application a
   where sf.id = a.site_fix_id
     and sf.project_id = sqlc.arg(project_id)
-    and sf.status = 'awaiting_deploy'
+    and sf.status in ('awaiting_deploy','reopened')
   returning sf.*
 ), signature_transition as (
   update work_signature_registry w
@@ -2139,3 +2368,663 @@ with eligible as materialized (
 )
 select transitioned.* from transitioned
 cross join signature_transition;
+
+-- name: GetCanonicalSiteFixApplication :one
+select * from site_change_applications
+where project_id = sqlc.arg(project_id)
+  and id = sqlc.arg(application_id)
+  and site_fix_id = sqlc.arg(site_fix_id)
+  and site_fix_id is not null
+  and content_action_id is null;
+
+-- name: GetLatestCanonicalSiteFixApplication :one
+select * from site_change_applications
+where project_id = sqlc.arg(project_id)
+  and site_fix_id = sqlc.arg(site_fix_id)
+  and site_fix_id is not null
+  and content_action_id is null
+order by updated_at desc
+limit 1;
+
+-- name: SetCanonicalSiteFixNextPollAt :exec
+update site_change_applications set next_poll_at = sqlc.arg(next_poll_at), updated_at = now()
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(application_id)
+  and site_fix_id = sqlc.arg(site_fix_id) and site_fix_id is not null
+  and content_action_id is null;
+
+-- name: ClaimDoctorAIOnDemandTrigger :one
+with authorized as materialized (
+  select p.id,
+         case
+		   when p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+             then p.config->>'doctor_ai_run_policy'
+           else 'manual_only'
+         end as run_policy
+  from projects p
+  join site_fixes sf on sf.project_id = p.id and sf.id = sqlc.arg(site_fix_id)
+  where p.id = sqlc.arg(project_id)
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+	and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+	and (
+	  sf.status in ('awaiting_deploy','verifying','reopened','failed_retryable')
+	  or (sf.status = 'applying' and exists (
+	    select 1 from site_change_applications app
+	    where app.project_id = sf.project_id and app.site_fix_id = sf.id
+	      and app.content_action_id is null and app.status = 'manual_apply_required'
+	  ))
+	)
+), inserted as (
+  insert into doctor_ai_on_demand_triggers (
+    request_id, project_id, site_fix_id, trigger_kind, requested_policy
+  )
+  select sqlc.arg(request_id), authorized.id, sqlc.arg(site_fix_id),
+         'verification_user', authorized.run_policy
+  from authorized
+  on conflict (request_id) do nothing
+  returning *
+)
+select * from inserted
+union all
+select marker.* from doctor_ai_on_demand_triggers marker
+join authorized on authorized.id = marker.project_id
+where marker.request_id = sqlc.arg(request_id)
+  and marker.project_id = sqlc.arg(project_id)
+  and marker.site_fix_id = sqlc.arg(site_fix_id)
+  and marker.trigger_kind = 'verification_user'
+	and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+limit 1;
+
+-- name: GetDoctorAIOnDemandTrigger :one
+select * from doctor_ai_on_demand_triggers marker
+where marker.request_id = sqlc.arg(request_id)
+  and marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id);
+
+-- name: ClaimDoctorAIOnDemandProcessing :one
+with eligible as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = sqlc.arg(project_id)
+    and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and marker.trigger_kind = 'verification_user'
+	and (marker.status = 'pending' or (marker.status = 'processing' and marker.processing_expires_at <= clock_timestamp()))
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+	and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  order by marker.requested_at, marker.request_id
+  for update of marker skip locked
+  limit 1
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'processing', processing_token = sqlc.arg(processing_token),
+	processing_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int)
+from eligible
+where marker.request_id = eligible.request_id
+	and (marker.status = 'pending' or (marker.status = 'processing' and marker.processing_expires_at <= clock_timestamp()))
+returning marker.*;
+
+-- name: StartDoctorAIOnDemandCall :one
+with eligible as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and marker.request_id = sqlc.arg(request_id) and marker.status = 'processing'
+    and marker.processing_token = sqlc.arg(processing_token)
+    and marker.processing_expires_at > clock_timestamp() and marker.ai_call_id is null
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+    and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  for update of marker
+), started as (
+  insert into ai_call_records(project_id,stage,linked_object_type,linked_object_id,provider,model,prompt_version,request_fingerprint,status)
+  select sqlc.arg(project_id),'verification','site_fix',sqlc.arg(site_fix_id),
+         sqlc.arg(provider),sqlc.arg(model),sqlc.arg(prompt_version),sqlc.arg(request_fingerprint),'running'
+  from eligible
+  returning id
+)
+update doctor_ai_on_demand_triggers marker
+set ai_call_id = started.id
+from eligible, started
+where marker.request_id = eligible.request_id
+returning marker.*;
+
+-- name: ConsumeDoctorAIOnDemandProcessing :one
+with authorized as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and marker.request_id = sqlc.arg(request_id) and marker.status = 'processing'
+    and marker.processing_token = sqlc.arg(processing_token)
+    and marker.ai_call_id = sqlc.arg(ai_call_id)
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+    and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  for update of marker
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'consumed', processing_token = null, processing_expires_at = null,
+    result_snapshot = sqlc.arg(result_snapshot)::jsonb, consumed_at = now()
+from authorized
+where marker.request_id = authorized.request_id
+returning marker.*;
+
+-- name: GetDoctorAIOnDemandConsumedResult :one
+select * from doctor_ai_on_demand_triggers marker
+where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+  and marker.status = 'consumed' and marker.lifecycle_applied_at is null
+order by marker.consumed_at, marker.request_id
+limit 1;
+
+-- name: GetDoctorAIOnDemandActive :one
+select * from doctor_ai_on_demand_triggers marker
+where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+  and marker.status in ('pending','processing')
+order by marker.requested_at, marker.request_id
+limit 1;
+
+-- name: ListDoctorAIOnDemandActiveSiteFixes :many
+select distinct marker.site_fix_id
+from doctor_ai_on_demand_triggers marker
+where marker.project_id = sqlc.arg(project_id)
+  and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+order by marker.site_fix_id;
+
+-- name: MarkDoctorAIOnDemandLifecycleApplied :one
+update doctor_ai_on_demand_triggers marker
+set lifecycle_applied_at = now()
+where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+  and marker.request_id = sqlc.arg(request_id) and marker.status = 'consumed'
+  and marker.ai_call_id = sqlc.arg(ai_call_id) and marker.lifecycle_applied_at is null
+returning marker.*;
+
+-- name: RejectDoctorAIOnDemandTriggersForSiteFix :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else sqlc.arg(result_snapshot)::jsonb end,
+    rejection_reason = sqlc.arg(rejection_reason), consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+    processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.*;
+
+-- name: SupersedeDoctorAIOnDemandSiblingTriggers :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+    and marker.request_id <> sqlc.arg(applied_request_id)
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'superseded',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason',sqlc.arg(rejection_reason)::text) end,
+    rejection_reason = sqlc.arg(rejection_reason), consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+    processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.*;
+
+-- name: RejectUnauthorizedDoctorAIOnDemandTriggers :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+    and (
+      lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) <> 'true'
+      or coalesce(p.config->>'doctor_ai_run_policy', '') not in ('manual_only','on_demand','automatic')
+      or sf.status not in ('awaiting_deploy','verifying','reopened')
+    )
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_authority_revoked'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','Doctor AI policy or lifecycle authority was revoked') end,
+    rejection_reason = 'Doctor AI policy or lifecycle authority was revoked',
+    consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(), processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.*;
+
+-- name: ListDoctorAIOnDemandConsumedUnapplied :many
+select marker.request_id, marker.project_id, marker.site_fix_id, marker.ai_call_id,
+  exists (
+    select 1 from site_fix_verifications verification
+    where verification.project_id = marker.project_id
+      and verification.site_fix_id = marker.site_fix_id
+      and verification.ai_call_id = marker.ai_call_id
+  ) as has_lifecycle_reference
+from doctor_ai_on_demand_triggers marker
+join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+where marker.project_id = sqlc.arg(project_id) and marker.status = 'consumed'
+  and marker.lifecycle_applied_at is null
+  and sf.status in ('verified','failed_terminal','superseded','migration_rolled_back')
+order by marker.consumed_at, marker.request_id;
+
+-- name: RejectDoctorAIOnDemandConsumedWithoutLifecycleReference :one
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected', rejection_reason = 'lifecycle_completed_without_this_ai_result',
+    result_snapshot = jsonb_set(marker.result_snapshot, '{rejection_reason}', '"lifecycle_completed_without_this_ai_result"'::jsonb, true),
+    lifecycle_applied_at = now()
+where marker.project_id = sqlc.arg(project_id) and marker.site_fix_id = sqlc.arg(site_fix_id)
+  and marker.request_id = sqlc.arg(request_id) and marker.ai_call_id = sqlc.arg(ai_call_id)
+  and marker.status = 'consumed' and marker.lifecycle_applied_at is null
+  and not exists (
+    select 1 from site_fix_verifications verification
+    where verification.project_id = marker.project_id
+      and verification.site_fix_id = marker.site_fix_id
+      and verification.ai_call_id = marker.ai_call_id
+  )
+returning marker.*;
+
+-- name: ListRejectedDoctorAIRunningCalls :many
+select marker.ai_call_id
+from doctor_ai_on_demand_triggers marker
+join ai_call_records call on call.project_id = marker.project_id and call.id = marker.ai_call_id
+where marker.project_id = sqlc.arg(project_id)
+  and marker.status in ('rejected','superseded') and call.status = 'running'
+order by marker.request_id;
+
+-- name: ListCanonicalSiteFixPRsForReconciliation :many
+select a.* from site_change_applications a
+join site_fixes sf
+  on sf.id = a.site_fix_id and sf.project_id = a.project_id
+where a.project_id = sqlc.arg(project_id)
+  and a.site_fix_id is not null
+  and a.content_action_id is null
+  and a.status = 'github_pr_open'
+  and sf.status = 'applying'
+order by a.updated_at asc;
+
+-- name: ListCanonicalSiteFixesForVerification :many
+select a.* from site_change_applications a
+join site_fixes sf
+  on sf.id = a.site_fix_id and sf.project_id = a.project_id
+where a.project_id = sqlc.arg(project_id)
+  and a.site_fix_id is not null
+  and a.content_action_id is null
+  and a.status in ('deployment_pending','verification_pending','needs_follow_up')
+  and sf.status in ('awaiting_deploy','verifying','failed_retryable','reopened')
+order by a.updated_at asc;
+
+-- name: MarkCanonicalSiteFixGitHubPR :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set publisher_connection_id = sqlc.arg(publisher_connection_id),
+    repo_full_name = sqlc.arg(repo_full_name),
+    base_branch = sqlc.arg(base_branch),
+    working_branch = sqlc.arg(working_branch),
+    base_commit_sha = sqlc.narg(base_commit_sha),
+    head_commit_sha = sqlc.arg(head_commit_sha),
+    source_file_path = sqlc.arg(source_file_path),
+    base_file_sha = sqlc.arg(base_file_sha),
+    proposed_content_hash = sqlc.narg(proposed_content_hash),
+    github_pr_number = sqlc.arg(github_pr_number),
+    github_pr_url = sqlc.arg(github_pr_url),
+    github_pr_state = sqlc.arg(github_pr_state),
+    status = 'github_pr_open',
+    pr_created_at = coalesce(pr_created_at, now()),
+    failure_reason = null,
+    pr_claim_token = null,
+    pr_claim_expires_at = null,
+    pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id)
+  and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id)
+  and app.site_fix_id is not null
+  and app.content_action_id is null
+  and app.status = 'creating_pr'
+  and app.pr_claim_token = sqlc.arg(pr_claim_token)
+  and app.pr_claim_expires_at > clock_timestamp()
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning *;
+
+-- name: ClaimCanonicalSiteFixGitHubPR :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'creating_pr',
+    pr_claim_token = sqlc.arg(pr_claim_token),
+    pr_claim_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int),
+    pr_claim_authority_fingerprint = (select fingerprint from authority),
+    failure_reason = null,
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id)
+  and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id)
+  and app.site_fix_id is not null and app.content_action_id is null
+  and (app.status = 'ready_for_pr' or (app.status = 'creating_pr' and app.pr_claim_expires_at <= clock_timestamp()))
+  and exists (
+    select 1 from site_fixes sf
+    join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+    where sf.project_id = app.project_id and sf.id = app.site_fix_id
+      and sf.status = 'applying' and w.status = 'executing' and w.active = true and w.mode = 'enforced'
+  )
+  and exists (select 1 from authority)
+returning app.*;
+
+-- name: FailCanonicalSiteFixGitHubPRClaim :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'needs_follow_up', failure_reason = sqlc.arg(failure_reason),
+    pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id) and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id) and app.site_fix_id is not null and app.content_action_id is null
+  and app.status = 'creating_pr' and app.pr_claim_token = sqlc.arg(pr_claim_token)
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.*;
+
+-- name: RenewCanonicalSiteFixGitHubPRClaim :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set pr_claim_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int),
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id) and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id) and app.content_action_id is null
+  and app.status = 'creating_pr' and app.pr_claim_token = sqlc.arg(pr_claim_token)
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.*;
+
+-- name: ReopenCanonicalSiteFixApply :one
+with authority as materialized (
+  select pwa.project_id from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'ready_for_pr', failure_reason = null,
+    pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id) and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id) and app.site_fix_id is not null and app.content_action_id is null
+  and app.status = 'needs_follow_up'
+  and exists (
+    select 1 from site_fixes sf
+    join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+    where sf.project_id = app.project_id and sf.id = app.site_fix_id
+      and sf.status = 'applying' and w.status = 'executing' and w.active = true and w.mode = 'enforced'
+  )
+  and exists (select 1 from authority)
+returning app.*;
+
+-- name: MarkCanonicalSiteFixManualHandoff :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id)
+    and product = 'doctor' and writer_authority = 'canonical' and write_fenced = false
+  for update
+)
+update site_change_applications
+set status = 'manual_apply_required', failure_reason = sqlc.arg(failure_reason), updated_at = now()
+where site_change_applications.project_id = sqlc.arg(project_id) and site_change_applications.id = sqlc.arg(application_id)
+  and site_change_applications.site_fix_id = sqlc.arg(site_fix_id) and site_change_applications.site_fix_id is not null
+  and site_change_applications.content_action_id is null and site_change_applications.status = 'ready_for_pr'
+  and exists (select 1 from authority)
+returning site_change_applications.*;
+
+-- name: MarkCanonicalSiteFixPRMerged :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id) and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id,
+         a.status as expected_application_status
+  from site_fixes sf
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = sqlc.arg(site_fix_id)
+    and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
+    and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'github_pr_open'
+    and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select a.id
+  from site_change_applications a
+  join eligible e on e.application_id = a.id
+  where a.project_id = e.project_id
+    and a.site_fix_id = e.id and a.content_action_id is null
+    and a.status = e.expected_application_status
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of a
+), locked_work as materialized (
+  select e.*
+  from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w
+    on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status
+    and w.status = e.expected_signature_status and w.active = e.expected_signature_active
+    and w.mode = 'enforced' and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application a where a.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), merged_application as (
+  update site_change_applications
+  set status = 'deployment_pending', github_pr_state = 'merged',
+      merged_at = coalesce(site_change_applications.merged_at, now()),
+      next_poll_at = now() + interval '3 minutes',
+      failure_reason = null, updated_at = now()
+  from locked_work e
+  where site_change_applications.id = e.application_id and site_change_applications.project_id = sqlc.arg(project_id)
+    and site_change_applications.site_fix_id = sqlc.arg(site_fix_id) and site_change_applications.content_action_id is null
+    and site_change_applications.status = 'github_pr_open'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning site_change_applications.site_fix_id
+), transitioned as (
+  update site_fixes
+  set status = 'awaiting_deploy', applied_at = coalesce(site_fixes.applied_at, sqlc.arg(observed_merged_at)::timestamptz),
+      failure_reason = null, updated_at = now()
+  from merged_application a
+  where site_fixes.id = a.site_fix_id and site_fixes.project_id = sqlc.arg(project_id)
+    and site_fixes.status = 'applying'
+  returning site_fixes.*
+), signature_transition as (
+  update work_signature_registry w
+  set status = 'awaiting_deploy', active = true, updated_at = now()
+  from transitioned sf
+  where w.id = sf.work_signature_id and w.project_id = sf.project_id
+  returning w.id
+)
+select transitioned.* from transitioned cross join signature_transition;
+
+-- name: MarkCanonicalSiteFixManualApplied :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id) and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id,
+         a.status as expected_application_status
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = sqlc.arg(site_fix_id) and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id) and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'manual_apply_required' and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id) order by b.bucket_key for update of b
+), locked_application as materialized (
+  select a.id from site_change_applications a join eligible e on e.application_id = a.id
+  where a.project_id = e.project_id and a.site_fix_id = e.id and a.content_action_id is null
+    and a.status = e.expected_application_status
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of a
+), locked_work as materialized (
+  select e.* from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status and w.status = e.expected_signature_status
+    and w.active = e.expected_signature_active and w.mode = 'enforced'
+    and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application a where a.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked where b.id = locked.id and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), applied_application as (
+  update site_change_applications a
+  set status = 'deployment_pending', deployment_snapshot = sqlc.arg(deployment_snapshot)::jsonb,
+      merged_at = coalesce(a.merged_at, sqlc.arg(manual_applied_at)),
+      next_poll_at = sqlc.arg(manual_applied_at), failure_reason = null, updated_at = now()
+  from locked_work e where a.id = e.application_id and a.project_id = sqlc.arg(project_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id) and a.content_action_id is null
+    and a.status = 'manual_apply_required'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
+), transitioned as (
+  update site_fixes sf set status = 'awaiting_deploy',
+      applied_at = coalesce(sf.applied_at, sqlc.arg(manual_applied_at)), failure_reason = null, updated_at = now()
+  from applied_application a where sf.id = a.site_fix_id and sf.project_id = sqlc.arg(project_id)
+    and sf.status = 'applying' returning sf.*
+), signature_transition as (
+  update work_signature_registry w set status = 'awaiting_deploy', active = true, updated_at = now()
+  from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
+)
+select transitioned.* from transitioned cross join signature_transition;
+
+-- name: MarkCanonicalSiteFixApplyFailure :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id) and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select a.id
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = sqlc.arg(site_fix_id) and sf.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id) and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'github_pr_open' and exists (select 1 from authority)
+  for update of a
+)
+update site_change_applications a
+set status = 'needs_follow_up',
+    github_pr_state = coalesce(sqlc.narg(observed_github_pr_state)::text, a.github_pr_state),
+    failure_reason = sqlc.arg(failure_reason), updated_at = now()
+from eligible
+where a.id = eligible.id and a.project_id = sqlc.arg(project_id)
+  and a.site_fix_id = sqlc.arg(site_fix_id) and a.content_action_id is null
+  and a.status = 'github_pr_open'
+returning a.*;

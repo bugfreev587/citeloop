@@ -123,6 +123,7 @@ func TestCanonicalDoctorSiteFixRoutes(t *testing.T) {
 		{name: "approve", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/approve"},
 		{name: "apply", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/apply"},
 		{name: "verify", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/verify"},
+		{name: "terminate", method: http.MethodPost, path: "/api/projects/{projectID}/doctor/site-fixes/{fixID}/terminate"},
 	}
 	registered := make(map[string]bool)
 	if err := chi.Walk(router.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
@@ -147,6 +148,7 @@ func TestCanonicalDoctorSiteFixRoutes(t *testing.T) {
 		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/approve",
 		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/apply",
 		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/verify",
+		"POST /api/projects/{projectID}/seo/doctor/site-fixes/{fixID}/terminate",
 	} {
 		if registered[route] {
 			t.Fatalf("legacy /seo/doctor mount must not duplicate canonical successor route: %s", route)

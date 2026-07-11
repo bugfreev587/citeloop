@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/sitefix"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -24,6 +28,9 @@ import (
 var ErrDoctorSiteFixTransitionConflict = errors.New("canonical Site Fix transition conflict")
 var ErrDoctorSiteFixCrossLineOwnership = errors.New("Doctor candidate is owned by Opportunities")
 var ErrDoctorSiteFixCreateBusy = errors.New("Doctor Site Fix creation is busy")
+var ErrDoctorSiteFixManualEvidenceInvalid = errors.New("Doctor Site Fix manual verification evidence is invalid")
+var ErrDoctorAIVerificationNotAuthorized = errors.New("Doctor AI verification is not authorized for this request")
+var ErrDoctorAIRequestAlreadyHandled = errors.New("Doctor AI verification request was already applied; use a new request id")
 var errDoctorSiteFixPreparationReclaim = errors.New("Doctor Site Fix preparation lease must be reclaimed")
 var errDoctorSiteFixPreparationLost = errors.New("Doctor Site Fix preparation lease was lost")
 
@@ -65,6 +72,284 @@ type DoctorSiteFixService interface {
 	List(context.Context, uuid.UUID, *string) ([]db.SiteFix, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (db.SiteFix, error)
 	Approve(context.Context, uuid.UUID, uuid.UUID, time.Time) (db.SiteFix, error)
+}
+
+type DoctorSiteFixVerificationRequest struct {
+	SiteFix     db.SiteFix               `json:"site_fix"`
+	Application db.SiteChangeApplication `json:"application"`
+}
+
+type DoctorSiteFixVerificationInput struct {
+	ManualEvidence    *DoctorSiteFixManualEvidence `json:"manual_evidence,omitempty"`
+	AIReviewRequestID *uuid.UUID                   `json:"ai_review_request_id,omitempty"`
+}
+
+type DoctorSiteFixManualEvidence struct {
+	HumanConfirmed    bool                                  `json:"human_confirmed"`
+	TargetURL         string                                `json:"target_url"`
+	AcceptanceResults []DoctorSiteFixManualAcceptanceResult `json:"acceptance_results"`
+}
+
+type DoctorSiteFixManualAcceptanceResult struct {
+	Index           int             `json:"index"`
+	TestFingerprint string          `json:"test_fingerprint"`
+	Status          string          `json:"status"`
+	Evidence        json.RawMessage `json:"evidence"`
+}
+
+type DoctorSiteFixLifecycleService interface {
+	Apply(context.Context, uuid.UUID, uuid.UUID) (sitefix.ApplyResult, error)
+	RequestVerification(context.Context, uuid.UUID, uuid.UUID, DoctorSiteFixVerificationInput) (DoctorSiteFixVerificationRequest, error)
+	Terminate(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixVerificationRequest, error)
+}
+
+type postgresDoctorSiteFixLifecycleService struct {
+	pool  *pgxpool.Pool
+	q     *db.Queries
+	apply sitefix.ApplyService
+}
+
+func (s *postgresDoctorSiteFixLifecycleService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (sitefix.ApplyResult, error) {
+	project, err := s.q.GetProject(ctx, projectID)
+	if err != nil {
+		return sitefix.ApplyResult{}, err
+	}
+	projectConfig, err := config.Parse(project.Config)
+	if err != nil {
+		return sitefix.ApplyResult{}, err
+	}
+	service := s.apply
+	if !projectConfig.AllowsDoctorAI(config.DoctorAITriggerApplyUser) {
+		service.Generator = sitefix.DeterministicApplicationGenerator{}
+	}
+	return service.Apply(ctx, projectID, fixID)
+}
+
+func (s *postgresDoctorSiteFixLifecycleService) RequestVerification(ctx context.Context, projectID, fixID uuid.UUID, input DoctorSiteFixVerificationInput) (DoctorSiteFixVerificationRequest, error) {
+	if input.ManualEvidence != nil && input.AIReviewRequestID != nil {
+		return DoctorSiteFixVerificationRequest{}, ErrDoctorSiteFixManualEvidenceInvalid
+	}
+	if input.AIReviewRequestID != nil && *input.AIReviewRequestID == uuid.Nil {
+		return DoctorSiteFixVerificationRequest{}, ErrDoctorAIVerificationNotAuthorized
+	}
+	fix, err := s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	app, err := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	if input.ManualEvidence != nil {
+		if _, err := validateDoctorSiteFixManualEvidence(fix, app, *input.ManualEvidence); err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+	}
+	legalLifecycle := fix.Status == "awaiting_deploy" || fix.Status == "verifying" || fix.Status == "reopened" || fix.Status == "failed_retryable" || (fix.Status == "applying" && app.Status == "manual_apply_required")
+	if !legalLifecycle {
+		return DoctorSiteFixVerificationRequest{}, fmt.Errorf("%w: cannot verify from %s", sitefix.ErrLifecycleConflict, fix.Status)
+	}
+	if input.AIReviewRequestID != nil {
+		if s.pool == nil {
+			return DoctorSiteFixVerificationRequest{}, errors.New("canonical Site Fix database unavailable")
+		}
+		tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		defer tx.Rollback(ctx)
+		q := db.New(tx)
+		if _, err := q.ClaimDoctorAIOnDemandTrigger(ctx, db.ClaimDoctorAIOnDemandTriggerParams{RequestID: *input.AIReviewRequestID, ProjectID: projectID, SiteFixID: fixID}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				if marker, markerErr := q.GetDoctorAIOnDemandTrigger(ctx, db.GetDoctorAIOnDemandTriggerParams{RequestID: *input.AIReviewRequestID, ProjectID: projectID, SiteFixID: fixID}); markerErr == nil && (marker.Status == "rejected" || marker.Status == "superseded" || (marker.Status == "consumed" && marker.LifecycleAppliedAt.Valid)) {
+					return DoctorSiteFixVerificationRequest{}, ErrDoctorAIRequestAlreadyHandled
+				}
+				return DoctorSiteFixVerificationRequest{}, ErrDoctorAIVerificationNotAuthorized
+			}
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		if fix.Status == "applying" {
+			now := time.Now().UTC()
+			if _, err := q.MarkCanonicalSiteFixManualApplied(ctx, db.MarkCanonicalSiteFixManualAppliedParams{
+				ProjectID: projectID, SiteFixID: fix.ID, ApplicationID: app.ID,
+				DeploymentSnapshot: json.RawMessage(`{"source":"manual_confirmation"}`), ManualAppliedAt: pgutil.TS(now),
+			}); err != nil {
+				return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+			}
+		}
+		if fix.Status == "failed_retryable" {
+			if _, err := q.ReopenCanonicalSiteFix(ctx, db.ReopenCanonicalSiteFixParams{SiteFixID: fixID, ProjectID: projectID, ApplicationID: app.ID}); err != nil {
+				return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		fix, err = s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		app, err = s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+	}
+	if input.AIReviewRequestID == nil && fix.Status == "applying" && app.Status == "manual_apply_required" {
+		if err := s.markManualApplicationAwaitingDeploy(ctx, fix, app); err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		fix, err = s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		app, err = s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+	}
+	if input.AIReviewRequestID == nil && fix.Status == "failed_retryable" {
+		if _, err := s.q.ReopenCanonicalSiteFix(ctx, db.ReopenCanonicalSiteFixParams{SiteFixID: fixID, ProjectID: projectID, ApplicationID: app.ID}); err != nil {
+			return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+		}
+		fix, err = s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+		app, err = s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+		if err != nil {
+			return DoctorSiteFixVerificationRequest{}, err
+		}
+	}
+	if fix.Status != "awaiting_deploy" && fix.Status != "verifying" && fix.Status != "reopened" {
+		return DoctorSiteFixVerificationRequest{}, fmt.Errorf("%w: cannot verify from %s", sitefix.ErrLifecycleConflict, fix.Status)
+	}
+	if !app.SiteFixID.Valid || app.ContentActionID.Valid {
+		return DoctorSiteFixVerificationRequest{}, errors.New("canonical Site Fix application source is invalid")
+	}
+	if input.ManualEvidence != nil {
+		return s.verifyWithAuthenticatedManualEvidence(ctx, fix, app, *input.ManualEvidence)
+	}
+	if err := s.q.SetCanonicalSiteFixNextPollAt(ctx, db.SetCanonicalSiteFixNextPollAtParams{ApplicationID: app.ID, ProjectID: projectID, SiteFixID: app.SiteFixID, NextPollAt: pgutil.TS(time.Now().UTC())}); err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	return DoctorSiteFixVerificationRequest{SiteFix: fix, Application: app}, nil
+}
+
+func (s *postgresDoctorSiteFixLifecycleService) Terminate(ctx context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixVerificationRequest, error) {
+	fix, err := s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	app, appErr := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+	if appErr != nil && !errors.Is(appErr, pgx.ErrNoRows) {
+		return DoctorSiteFixVerificationRequest{}, appErr
+	}
+	if fix.Status == "failed_terminal" {
+		return DoctorSiteFixVerificationRequest{SiteFix: fix, Application: app}, nil
+	}
+	reason := "terminated by user"
+	snapshot := mustJSONLocal(map[string]any{"source": "user_termination", "terminated_at": time.Now().UTC().Format(time.RFC3339)})
+	if _, err := s.q.TerminateCanonicalSiteFixByUser(ctx, db.TerminateCanonicalSiteFixByUserParams{
+		ProjectID: projectID, SiteFixID: fix.ID, VerificationSnapshot: snapshot, FailureReason: &reason,
+	}); err != nil {
+		return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+	}
+	fix, err = s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	app, appErr = s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}})
+	if appErr != nil && !errors.Is(appErr, pgx.ErrNoRows) {
+		return DoctorSiteFixVerificationRequest{}, appErr
+	}
+	return DoctorSiteFixVerificationRequest{SiteFix: fix, Application: app}, nil
+}
+
+func (s *postgresDoctorSiteFixLifecycleService) verifyWithAuthenticatedManualEvidence(ctx context.Context, fix db.SiteFix, app db.SiteChangeApplication, evidence DoctorSiteFixManualEvidence) (DoctorSiteFixVerificationRequest, error) {
+	results, err := validateDoctorSiteFixManualEvidence(fix, app, evidence)
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	if s.pool == nil {
+		return DoctorSiteFixVerificationRequest{}, errors.New("canonical Site Fix database unavailable")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := db.New(tx)
+	now := time.Now().UTC()
+	deployment := mustJSONLocal(map[string]any{"source": "authenticated_manual_evidence", "target_url": evidence.TargetURL, "observed_at": now.Format(time.RFC3339)})
+	if fix.Status == "awaiting_deploy" || fix.Status == "reopened" {
+		if _, err := q.MarkCanonicalSiteFixVerifying(ctx, db.MarkCanonicalSiteFixVerifyingParams{
+			SiteFixID: fix.ID, ProjectID: fix.ProjectID, ApplicationID: app.ID,
+			DeploymentSnapshot: deployment, DeployedAt: pgutil.TS(now),
+		}); err != nil {
+			return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+		}
+	}
+	snapshot := mustJSONLocal(map[string]any{"source": "authenticated_manual_evidence", "human_confirmed": true, "target_url": evidence.TargetURL, "acceptance_results": json.RawMessage(results), "verified_at": now.Format(time.RFC3339)})
+	if _, err := q.AppendCanonicalSiteFixVerification(ctx, db.AppendCanonicalSiteFixVerificationParams{
+		ID: uuid.New(), ProjectID: fix.ProjectID, SiteFixID: fix.ID, AttemptNumber: fix.RetryCount + 1,
+		EvidenceRead:      mustJSONLocal(map[string]any{"source": "authenticated_manual_evidence", "target_url": evidence.TargetURL}),
+		AcceptanceResults: results, Result: "passed", RetryClassification: "not_applicable", AttemptedAt: pgutil.TS(now),
+	}); err != nil {
+		return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+	}
+	if _, err := q.MarkCanonicalSiteFixVerified(ctx, db.MarkCanonicalSiteFixVerifiedParams{
+		SiteFixID: fix.ID, ProjectID: fix.ProjectID, ApplicationID: app.ID,
+		DeploymentSnapshot: deployment, VerificationSnapshot: snapshot, VerifiedAt: pgutil.TS(now),
+	}); err != nil {
+		return DoctorSiteFixVerificationRequest{}, canonicalDoctorLifecycleTransitionError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	verifiedFix, err := s.q.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fix.ID, ProjectID: fix.ProjectID})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	verifiedApp, err := s.q.GetLatestCanonicalSiteFixApplication(ctx, db.GetLatestCanonicalSiteFixApplicationParams{ProjectID: fix.ProjectID, SiteFixID: pgtype.UUID{Bytes: fix.ID, Valid: true}})
+	if err != nil {
+		return DoctorSiteFixVerificationRequest{}, err
+	}
+	return DoctorSiteFixVerificationRequest{SiteFix: verifiedFix, Application: verifiedApp}, nil
+}
+
+func validateDoctorSiteFixManualEvidence(fix db.SiteFix, app db.SiteChangeApplication, evidence DoctorSiteFixManualEvidence) (json.RawMessage, error) {
+	if !evidence.HumanConfirmed || strings.TrimSpace(evidence.TargetURL) == "" || strings.TrimSpace(evidence.TargetURL) != strings.TrimSpace(app.TargetUrl) {
+		return nil, ErrDoctorSiteFixManualEvidenceInvalid
+	}
+	var tests []json.RawMessage
+	if json.Unmarshal(fix.AcceptanceTests, &tests) != nil || len(tests) == 0 || len(evidence.AcceptanceResults) != len(tests) {
+		return nil, ErrDoctorSiteFixManualEvidenceInvalid
+	}
+	seen := make(map[int]bool, len(tests))
+	for _, result := range evidence.AcceptanceResults {
+		if result.Index < 0 || result.Index >= len(tests) || seen[result.Index] || result.Status != "passed" {
+			return nil, ErrDoctorSiteFixManualEvidenceInvalid
+		}
+		sum := sha256.Sum256(tests[result.Index])
+		if !strings.EqualFold(result.TestFingerprint, fmt.Sprintf("sha256:%x", sum[:])) {
+			return nil, ErrDoctorSiteFixManualEvidenceInvalid
+		}
+		var detail map[string]any
+		if json.Unmarshal(result.Evidence, &detail) != nil || len(detail) == 0 {
+			return nil, ErrDoctorSiteFixManualEvidenceInvalid
+		}
+		seen[result.Index] = true
+	}
+	return json.Marshal(evidence.AcceptanceResults)
+}
+
+func (s *postgresDoctorSiteFixLifecycleService) markManualApplicationAwaitingDeploy(ctx context.Context, fix db.SiteFix, app db.SiteChangeApplication) error {
+	now := time.Now().UTC()
+	_, err := s.q.MarkCanonicalSiteFixManualApplied(ctx, db.MarkCanonicalSiteFixManualAppliedParams{
+		ProjectID: fix.ProjectID, SiteFixID: fix.ID, ApplicationID: app.ID,
+		DeploymentSnapshot: json.RawMessage(`{"source":"manual_confirmation"}`), ManualAppliedAt: pgutil.TS(now),
+	})
+	return canonicalDoctorLifecycleTransitionError(err)
 }
 
 type doctorSiteFixPreparationClaim struct {
@@ -636,6 +921,23 @@ func (s *Server) doctorSiteFixService() DoctorSiteFixService {
 	return NewDoctorSiteFixService(s.Pool, s.Q, s.LLM, s.Env.TokenGateModel)
 }
 
+func (s *Server) doctorSiteFixLifecycleService() DoctorSiteFixLifecycleService {
+	if s.SiteFixLifecycle != nil {
+		return s.SiteFixLifecycle
+	}
+	if s.Pool == nil || s.Q == nil {
+		return nil
+	}
+	return &postgresDoctorSiteFixLifecycleService{
+		pool: s.Pool,
+		q:    s.Q,
+		apply: sitefix.ApplyService{
+			Store:     sitefix.PostgresApplyStore{Pool: s.Pool, Q: s.Q},
+			Generator: sitefix.LLMApplicationGenerator{Provider: s.LLM, Model: s.Env.TokenGateModel},
+		},
+	}
+}
+
 func (s *Server) createDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 	projectID, findingID, ok := s.seoDoctorIDs(w, r, "findingID")
 	if !ok {
@@ -722,18 +1024,277 @@ func (s *Server) approveDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) applyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
-	siteFixTask5Handoff(w, r, s)
+	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
+	if !ok {
+		return
+	}
+	service := s.doctorSiteFixLifecycleService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix lifecycle service unavailable")
+		return
+	}
+	result, err := service.Apply(r.Context(), projectID, fixID)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	if result.Application.Status == "needs_follow_up" && result.SiteFix.Status == "applying" {
+		result.Application, err = s.Q.ReopenCanonicalSiteFixApply(r.Context(), db.ReopenCanonicalSiteFixApplyParams{
+			ProjectID: projectID, ApplicationID: result.Application.ID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+		})
+		if err != nil {
+			s.writeDoctorSiteFixError(w, canonicalDoctorLifecycleTransitionError(err))
+			return
+		}
+	}
+	if result.Application.Status == "ready_for_pr" || result.Application.Status == "creating_pr" {
+		result, err = s.openCanonicalSiteFixGitHubPR(r.Context(), result)
+		if err != nil {
+			s.writeDoctorSiteFixError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefix.ApplyResult) (sitefix.ApplyResult, error) {
+	if s.Q == nil {
+		return result, errors.New("canonical Site Fix database unavailable")
+	}
+	if canonicalSiteFixPRMutationFamily(result.SiteFix) != "metadata_rewrite" {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "this mutation family does not have a deterministic GitHub patch adapter")
+	}
+	var paths []string
+	if json.Unmarshal(result.Application.SourceFilePaths, &paths) != nil || len(paths) != 1 {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "an exact single source file was not available")
+	}
+	sourcePath := strings.TrimSpace(paths[0])
+	if sourcePath == "" || strings.HasPrefix(sourcePath, "/") || strings.Contains(sourcePath, "..") || strings.Contains(sourcePath, "\\") {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "the generated source path was not safe")
+	}
+	conn, err := s.Q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{ProjectID: result.SiteFix.ProjectID, Kind: publisher.ConnectionKindGitHubNextJS})
+	if err != nil {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "no connected GitHub publisher was available")
+	}
+	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
+	if err != nil {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "the GitHub publisher configuration was invalid")
+	}
+	if target, ok := publisher.GitHubNextJSTargetForSiteURL(result.Application.TargetUrl); ok {
+		cfg.Branch, cfg.BaseURL = target.Branch, target.BaseURL
+	}
+	assetType := "metadata_rewrite"
+	pseudoSourceAction := db.ContentAction{TargetUrl: &result.Application.TargetUrl, NormalizedTargetUrl: &result.Application.NormalizedTargetUrl, AssetType: &assetType}
+	allowedSource := false
+	for _, mapping := range siteFixMetadataRewriteSourceCandidates(pseudoSourceAction, cfg) {
+		if mapping.SourceFilePath == sourcePath {
+			allowedSource = true
+			break
+		}
+	}
+	if !allowedSource {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "the generated source path did not match the deterministic target mapping")
+	}
+	token, err := s.publisherConnectionToken(ctx, result.SiteFix.ProjectID, conn)
+	if err != nil || strings.TrimSpace(token) == "" {
+		return s.fallbackCanonicalSiteFixManualApply(ctx, result, "the GitHub publisher credential was unavailable")
+	}
+	client := publisher.NewGitHubPRClient(token, cfg.Repo, cfg.Branch, s.Log)
+	shortID := strings.ReplaceAll(result.SiteFix.ID.String()[:12], "-", "")
+	workingBranch := "citeloop/doctor-site-fix-" + shortID
+	claimToken := uuid.New()
+	claimed, err := s.Q.ClaimCanonicalSiteFixGitHubPR(ctx, db.ClaimCanonicalSiteFixGitHubPRParams{
+		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 300,
+		ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+		SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+	})
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return result, err
+		}
+		app, loadErr := s.Q.GetCanonicalSiteFixApplication(ctx, db.GetCanonicalSiteFixApplicationParams{ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID, SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true}})
+		if loadErr != nil {
+			return result, canonicalDoctorLifecycleTransitionError(loadErr)
+		}
+		result.Application = app
+		if app.Status == "github_pr_open" || app.Status == "creating_pr" {
+			return result, nil
+		}
+		return result, sitefix.ErrLifecycleConflict
+	}
+	result.Application = claimed
+	renewClaim := func(callCtx context.Context) error {
+		_, renewErr := s.Q.RenewCanonicalSiteFixGitHubPRClaim(callCtx, db.RenewCanonicalSiteFixGitHubPRClaimParams{
+			LeaseTtlSeconds: 300, ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+			SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true}, PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+		})
+		return canonicalDoctorLifecycleTransitionError(renewErr)
+	}
+	client.BeforeMutation = renewClaim
+	if existingPR, found, reconcileErr := client.FindPullRequestByHead(ctx, workingBranch); reconcileErr != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, reconcileErr)
+	} else if found {
+		if err := renewClaim(ctx); err != nil {
+			return result, err
+		}
+		prNumber := int32(existingPR.Number)
+		app, err := s.Q.MarkCanonicalSiteFixGitHubPR(ctx, db.MarkCanonicalSiteFixGitHubPRParams{
+			PublisherConnectionID: pgtype.UUID{Bytes: conn.ID, Valid: true}, RepoFullName: &cfg.Repo,
+			BaseBranch: &cfg.Branch, WorkingBranch: &workingBranch, HeadCommitSha: emptyStringPointer(existingPR.HeadCommitSHA),
+			SourceFilePath: &sourcePath, GithubPrNumber: &prNumber, GithubPrUrl: &existingPR.URL, GithubPrState: &existingPR.State,
+			ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+			SiteFixID:    pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+		})
+		if err != nil {
+			return result, canonicalDoctorLifecycleTransitionError(err)
+		}
+		result.Application = app
+		return result, nil
+	}
+	baseContent, baseFileSHA, err := client.ReadFile(ctx, sourcePath, cfg.Branch)
+	if err != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("the exact source file could not be read"))
+	}
+	pseudoAction := db.ContentAction{DiffSnapshot: result.Application.PatchSnapshot, OutputSnapshot: result.Application.DiffSnapshot}
+	proposedContent, err := siteFixMetadataRewriteContent(baseContent, pseudoAction)
+	if err != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("the generated change could not be applied to the exact source"))
+	}
+	if proposedContent == baseContent {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("the exact source already contains the proposed change; production verification is required"))
+	}
+	pr, err := client.CreatePageUpdatePR(ctx, publisher.GitHubPRInput{
+		SourcePath: sourcePath, WorkingBranch: workingBranch, BaseFileSHA: baseFileSHA,
+		ProposedContentMD: proposedContent, CommitMessage: "fix: apply CiteLoop Doctor Site Fix",
+		Title: "Apply CiteLoop Doctor Site Fix", Body: "Applies the approved Doctor Site Fix for " + result.Application.TargetUrl + ".\n\nMerging this PR moves the fix to awaiting deployment; verification runs separately.",
+	})
+	if err != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("GitHub PR creation failed; retry apply after checking the publisher connection"))
+	}
+	prNumber := int32(pr.Number)
+	proposedHash := pageUpdateContentHash(proposedContent)
+	if err := renewClaim(ctx); err != nil {
+		return result, err
+	}
+	app, err := s.Q.MarkCanonicalSiteFixGitHubPR(ctx, db.MarkCanonicalSiteFixGitHubPRParams{
+		PublisherConnectionID: pgtype.UUID{Bytes: conn.ID, Valid: true}, RepoFullName: &cfg.Repo,
+		BaseBranch: &cfg.Branch, WorkingBranch: &workingBranch, HeadCommitSha: &pr.HeadCommitSHA,
+		SourceFilePath: &sourcePath, BaseFileSha: &pr.BaseFileSHA, ProposedContentHash: &proposedHash,
+		GithubPrNumber: &prNumber, GithubPrUrl: &pr.URL, GithubPrState: &pr.State,
+		ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+		SiteFixID:    pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+	})
+	if err != nil {
+		return result, canonicalDoctorLifecycleTransitionError(err)
+	}
+	result.Application = app
+	return result, nil
+}
+
+func (s *Server) failCanonicalSiteFixPRClaim(ctx context.Context, result sitefix.ApplyResult, claimToken uuid.UUID, cause error) (sitefix.ApplyResult, error) {
+	reason := cause.Error()
+	app, err := s.Q.FailCanonicalSiteFixGitHubPRClaim(ctx, db.FailCanonicalSiteFixGitHubPRClaimParams{
+		FailureReason: &reason, ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+		SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true}, PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+	})
+	if err != nil {
+		return result, errors.Join(cause, canonicalDoctorLifecycleTransitionError(err))
+	}
+	result.Application = app
+	return result, cause
+}
+
+func canonicalSiteFixPRMutationFamily(fix db.SiteFix) string {
+	var payload struct {
+		Mutations []struct {
+			Field     string `json:"field"`
+			Operation string `json:"operation"`
+		} `json:"mutations"`
+	}
+	if json.Unmarshal(fix.ProposedFix, &payload) != nil || len(payload.Mutations) == 0 {
+		return ""
+	}
+	for _, mutation := range payload.Mutations {
+		field := strings.ToLower(strings.TrimSpace(mutation.Field))
+		op := strings.ToLower(strings.TrimSpace(mutation.Operation))
+		if (field != "title" && field != "meta_description") || (op != "add" && op != "replace" && op != "update") {
+			return ""
+		}
+	}
+	return "metadata_rewrite"
+}
+
+func emptyStringPointer(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	value = strings.TrimSpace(value)
+	return &value
+}
+
+func canonicalDoctorLifecycleTransitionError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: canonical state changed concurrently", sitefix.ErrLifecycleConflict)
+	}
+	return err
+}
+
+func (s *Server) fallbackCanonicalSiteFixManualApply(ctx context.Context, result sitefix.ApplyResult, reason string) (sitefix.ApplyResult, error) {
+	app, err := s.Q.MarkCanonicalSiteFixManualHandoff(ctx, db.MarkCanonicalSiteFixManualHandoffParams{
+		ProjectID: result.SiteFix.ProjectID, SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		ApplicationID: result.Application.ID, FailureReason: &reason,
+	})
+	if err != nil {
+		return result, canonicalDoctorLifecycleTransitionError(err)
+	}
+	result.Application = app
+	return result, nil
 }
 
 func (s *Server) verifyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
-	siteFixTask5Handoff(w, r, s)
-}
-
-func siteFixTask5Handoff(w http.ResponseWriter, r *http.Request, s *Server) {
-	if _, _, ok := s.seoDoctorIDs(w, r, "fixID"); !ok {
+	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
+	if !ok {
 		return
 	}
-	writeErr(w, http.StatusNotImplemented, "canonical Site Fix apply/verify is not enabled until the Task 5 lifecycle cutover")
+	service := s.doctorSiteFixLifecycleService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix lifecycle service unavailable")
+		return
+	}
+	var input DoctorSiteFixVerificationInput
+	if r.Body != nil {
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "invalid verification request")
+			return
+		}
+	}
+	result, err := service.RequestVerification(r.Context(), projectID, fixID, input)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) terminateDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
+	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
+	if !ok {
+		return
+	}
+	service := s.doctorSiteFixLifecycleService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix lifecycle service unavailable")
+		return
+	}
+	result, err := service.Terminate(r.Context(), projectID, fixID)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) writeDoctorSiteFixError(w http.ResponseWriter, err error) {
@@ -754,6 +1315,14 @@ func (s *Server) writeDoctorSiteFixError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrDoctorSiteFixCreateBusy), errors.Is(err, errDoctorSiteFixPreparationLost), errors.Is(err, errDoctorSiteFixPreparationReclaim):
 		writeErr(w, http.StatusConflict, "Another equivalent Doctor Site Fix request is still being evaluated")
 	case errors.Is(err, discovery.ErrWriterUnavailable), errors.Is(err, discovery.ErrSnapshotStale), errors.Is(err, sitefix.ErrActivePredecessor), errors.Is(err, ErrDoctorSiteFixTransitionConflict):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, sitefix.ErrLifecycleConflict):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid):
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, ErrDoctorAIVerificationNotAuthorized):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrDoctorAIRequestAlreadyHandled):
 		writeErr(w, http.StatusConflict, err.Error())
 	default:
 		if s != nil && s.Log != nil {

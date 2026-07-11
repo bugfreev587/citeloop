@@ -127,37 +127,43 @@ func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, m
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return CompletionResp{}, err
+		return CompletionResp{Provider: "tokengate", Model: model}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return CompletionResp{}, &openAIChatHTTPError{status: resp.StatusCode, raw: raw}
-	}
 	var cr openAIChatResp
+	_ = json.Unmarshal(raw, &cr)
+	ledger := openAICompletionLedger(cr, model)
+	if resp.StatusCode >= 400 {
+		return ledger, &openAIChatHTTPError{status: resp.StatusCode, raw: raw}
+	}
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return CompletionResp{}, err
+		return CompletionResp{Provider: "tokengate", Model: model}, err
 	}
 	if cr.Error != nil {
-		return CompletionResp{}, fmt.Errorf("tokengate chat completions: %s", cr.Error.Message)
+		return ledger, fmt.Errorf("tokengate chat completions: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
 		return CompletionResp{}, fmt.Errorf("tokengate chat completions returned no choices")
 	}
+	ledger.Text = cr.Choices[0].Message.Content
+	return ledger, nil
+}
+
+func openAICompletionLedger(cr openAIChatResp, requestedModel string) CompletionResp {
 	tokens := cr.Usage.TotalTokens
 	if tokens == 0 {
 		tokens = cr.Usage.PromptTokens + cr.Usage.CompletionTokens
 	}
 	respModel := cr.Model
 	if respModel == "" {
-		respModel = model
+		respModel = requestedModel
 	}
 	return CompletionResp{
-		Text:    cr.Choices[0].Message.Content,
-		Model:   respModel,
-		Tokens:  tokens,
-		CostUSD: estimateOpenAIChatCost(respModel, cr.Usage.PromptTokens, cr.Usage.CompletionTokens),
-	}, nil
+		Provider: "tokengate", Model: respModel,
+		PromptTokens: cr.Usage.PromptTokens, CompletionTokens: cr.Usage.CompletionTokens,
+		Tokens: tokens, CostUSD: estimateOpenAIChatCost(respModel, cr.Usage.PromptTokens, cr.Usage.CompletionTokens),
+	}
 }
 
 type openAIChatHTTPError struct {

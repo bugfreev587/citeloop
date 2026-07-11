@@ -507,7 +507,7 @@ where status in (
     else excluded.status
   end,
   updated_at = now()
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
 `
 
 type CreateOrReuseSiteChangeApplicationParams struct {
@@ -609,6 +609,9 @@ func (q *Queries) CreateOrReuseSiteChangeApplication(ctx context.Context, arg Cr
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -1154,7 +1157,7 @@ func (q *Queries) GetActiveSEOOAuthToken(ctx context.Context, arg GetActiveSEOOA
 }
 
 const getActiveSiteChangeApplicationByOpportunityKey = `-- name: GetActiveSiteChangeApplicationByOpportunityKey :one
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
 where project_id = $1
   and opportunity_key = $2
   and status in (
@@ -1225,6 +1228,9 @@ func (q *Queries) GetActiveSiteChangeApplicationByOpportunityKey(ctx context.Con
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -1671,7 +1677,7 @@ func (q *Queries) GetSEOPropertyForProject(ctx context.Context, projectID uuid.U
 }
 
 const getSiteChangeApplicationForProject = `-- name: GetSiteChangeApplicationForProject :one
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
 where id = $1 and project_id = $2
 `
 
@@ -1725,6 +1731,9 @@ func (q *Queries) GetSiteChangeApplicationForProject(ctx context.Context, arg Ge
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -2229,9 +2238,11 @@ func (q *Queries) ListLatestTechnicalChecks(ctx context.Context, arg ListLatestT
 }
 
 const listMergedSiteChangeApplicationsForVerification = `-- name: ListMergedSiteChangeApplicationsForVerification :many
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
 where project_id = $1
   and status = 'github_pr_merged'
+  and content_action_id is not null
+  and site_fix_id is null
 order by merged_at asc nulls first
 `
 
@@ -2286,6 +2297,9 @@ func (q *Queries) ListMergedSiteChangeApplicationsForVerification(ctx context.Co
 			&i.NextPollAt,
 			&i.NextNotifyAt,
 			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
 		); err != nil {
 			return nil, err
 		}
@@ -2298,10 +2312,12 @@ func (q *Queries) ListMergedSiteChangeApplicationsForVerification(ctx context.Co
 }
 
 const listOpenSiteChangePRApplications = `-- name: ListOpenSiteChangePRApplications :many
-select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id from site_change_applications
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
 where project_id = $1
   and status = 'github_pr_open'
   and github_pr_number is not null
+  and content_action_id is not null
+  and site_fix_id is null
 order by updated_at asc
 `
 
@@ -2356,6 +2372,9 @@ func (q *Queries) ListOpenSiteChangePRApplications(ctx context.Context, projectI
 			&i.NextPollAt,
 			&i.NextNotifyAt,
 			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
 		); err != nil {
 			return nil, err
 		}
@@ -4052,7 +4071,7 @@ update site_change_applications set
   next_notify_at = now() + interval '12 hours',
   updated_at = now()
 where id = $7 and project_id = $8
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
 `
 
 type MarkSiteChangeApplicationGitHubPRParams struct {
@@ -4120,6 +4139,9 @@ func (q *Queries) MarkSiteChangeApplicationGitHubPR(ctx context.Context, arg Mar
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -4136,7 +4158,7 @@ update site_change_applications set
   verified_at = case when $1 = 'verified' then coalesce(verified_at, now()) else verified_at end,
   updated_at = now()
 where id = $6 and project_id = $7
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
 `
 
 type MarkSiteChangeApplicationStatusParams struct {
@@ -4202,6 +4224,9 @@ func (q *Queries) MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkS
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }

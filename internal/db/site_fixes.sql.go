@@ -564,6 +564,251 @@ func (q *Queries) ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCa
 	return i, err
 }
 
+const claimCanonicalSiteFixGitHubPR = `-- name: ClaimCanonicalSiteFixGitHubPR :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $3 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'creating_pr',
+    pr_claim_token = $1,
+    pr_claim_expires_at = clock_timestamp() + make_interval(secs => $2::int),
+    pr_claim_authority_fingerprint = (select fingerprint from authority),
+    failure_reason = null,
+    updated_at = now()
+where app.project_id = $3
+  and app.id = $4
+  and app.site_fix_id = $5
+  and app.site_fix_id is not null and app.content_action_id is null
+  and (app.status = 'ready_for_pr' or (app.status = 'creating_pr' and app.pr_claim_expires_at <= clock_timestamp()))
+  and exists (
+    select 1 from site_fixes sf
+    join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+    where sf.project_id = app.project_id and sf.id = app.site_fix_id
+      and sf.status = 'applying' and w.status = 'executing' and w.active = true and w.mode = 'enforced'
+  )
+  and exists (select 1 from authority)
+returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+`
+
+type ClaimCanonicalSiteFixGitHubPRParams struct {
+	PrClaimToken    pgtype.UUID `json:"pr_claim_token"`
+	LeaseTtlSeconds int32       `json:"lease_ttl_seconds"`
+	ProjectID       uuid.UUID   `json:"project_id"`
+	ApplicationID   uuid.UUID   `json:"application_id"`
+	SiteFixID       pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) ClaimCanonicalSiteFixGitHubPR(ctx context.Context, arg ClaimCanonicalSiteFixGitHubPRParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, claimCanonicalSiteFixGitHubPR,
+		arg.PrClaimToken,
+		arg.LeaseTtlSeconds,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const claimDoctorAIOnDemandProcessing = `-- name: ClaimDoctorAIOnDemandProcessing :one
+with eligible as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = $3
+    and marker.site_fix_id = $4
+    and marker.trigger_kind = 'verification_user'
+	and (marker.status = 'pending' or (marker.status = 'processing' and marker.processing_expires_at <= clock_timestamp()))
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+	and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  order by marker.requested_at, marker.request_id
+  for update of marker skip locked
+  limit 1
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'processing', processing_token = $1,
+	processing_expires_at = clock_timestamp() + make_interval(secs => $2::int)
+from eligible
+where marker.request_id = eligible.request_id
+	and (marker.status = 'pending' or (marker.status = 'processing' and marker.processing_expires_at <= clock_timestamp()))
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type ClaimDoctorAIOnDemandProcessingParams struct {
+	ProcessingToken pgtype.UUID `json:"processing_token"`
+	LeaseTtlSeconds int32       `json:"lease_ttl_seconds"`
+	ProjectID       uuid.UUID   `json:"project_id"`
+	SiteFixID       uuid.UUID   `json:"site_fix_id"`
+}
+
+func (q *Queries) ClaimDoctorAIOnDemandProcessing(ctx context.Context, arg ClaimDoctorAIOnDemandProcessingParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, claimDoctorAIOnDemandProcessing,
+		arg.ProcessingToken,
+		arg.LeaseTtlSeconds,
+		arg.ProjectID,
+		arg.SiteFixID,
+	)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
+const claimDoctorAIOnDemandTrigger = `-- name: ClaimDoctorAIOnDemandTrigger :one
+with authorized as materialized (
+  select p.id,
+         case
+		   when p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+             then p.config->>'doctor_ai_run_policy'
+           else 'manual_only'
+         end as run_policy
+  from projects p
+  join site_fixes sf on sf.project_id = p.id and sf.id = $1
+  where p.id = $2
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+	and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+	and (
+	  sf.status in ('awaiting_deploy','verifying','reopened','failed_retryable')
+	  or (sf.status = 'applying' and exists (
+	    select 1 from site_change_applications app
+	    where app.project_id = sf.project_id and app.site_fix_id = sf.id
+	      and app.content_action_id is null and app.status = 'manual_apply_required'
+	  ))
+	)
+), inserted as (
+  insert into doctor_ai_on_demand_triggers (
+    request_id, project_id, site_fix_id, trigger_kind, requested_policy
+  )
+  select $3, authorized.id, $1,
+         'verification_user', authorized.run_policy
+  from authorized
+  on conflict (request_id) do nothing
+  returning request_id, project_id, site_fix_id, trigger_kind, requested_policy, status, processing_token, processing_expires_at, ai_call_id, result_snapshot, rejection_reason, requested_at, consumed_at, lifecycle_applied_at
+)
+select request_id, project_id, site_fix_id, trigger_kind, requested_policy, status, processing_token, processing_expires_at, ai_call_id, result_snapshot, rejection_reason, requested_at, consumed_at, lifecycle_applied_at from inserted
+union all
+select marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at from doctor_ai_on_demand_triggers marker
+join authorized on authorized.id = marker.project_id
+where marker.request_id = $3
+  and marker.project_id = $2
+  and marker.site_fix_id = $1
+  and marker.trigger_kind = 'verification_user'
+	and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+limit 1
+`
+
+type ClaimDoctorAIOnDemandTriggerParams struct {
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	RequestID uuid.UUID `json:"request_id"`
+}
+
+type ClaimDoctorAIOnDemandTriggerRow struct {
+	RequestID           uuid.UUID          `json:"request_id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
+	SiteFixID           uuid.UUID          `json:"site_fix_id"`
+	TriggerKind         string             `json:"trigger_kind"`
+	RequestedPolicy     string             `json:"requested_policy"`
+	Status              string             `json:"status"`
+	ProcessingToken     pgtype.UUID        `json:"processing_token"`
+	ProcessingExpiresAt pgtype.Timestamptz `json:"processing_expires_at"`
+	AiCallID            pgtype.UUID        `json:"ai_call_id"`
+	ResultSnapshot      []byte             `json:"result_snapshot"`
+	RejectionReason     *string            `json:"rejection_reason"`
+	RequestedAt         pgtype.Timestamptz `json:"requested_at"`
+	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
+	LifecycleAppliedAt  pgtype.Timestamptz `json:"lifecycle_applied_at"`
+}
+
+func (q *Queries) ClaimDoctorAIOnDemandTrigger(ctx context.Context, arg ClaimDoctorAIOnDemandTriggerParams) (ClaimDoctorAIOnDemandTriggerRow, error) {
+	row := q.db.QueryRow(ctx, claimDoctorAIOnDemandTrigger, arg.SiteFixID, arg.ProjectID, arg.RequestID)
+	var i ClaimDoctorAIOnDemandTriggerRow
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
 const claimDoctorSiteFixPreparationLease = `-- name: ClaimDoctorSiteFixPreparationLease :one
 with claimed as (
   insert into doctor_site_fix_preparation_leases (
@@ -727,6 +972,67 @@ func (q *Queries) CompleteDoctorSiteFixPreparationLease(ctx context.Context, arg
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const consumeDoctorAIOnDemandProcessing = `-- name: ConsumeDoctorAIOnDemandProcessing :one
+with authorized as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = $2 and marker.site_fix_id = $3
+    and marker.request_id = $4 and marker.status = 'processing'
+    and marker.processing_token = $5
+    and marker.ai_call_id = $6
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+    and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  for update of marker
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'consumed', processing_token = null, processing_expires_at = null,
+    result_snapshot = $1::jsonb, consumed_at = now()
+from authorized
+where marker.request_id = authorized.request_id
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type ConsumeDoctorAIOnDemandProcessingParams struct {
+	ResultSnapshot  json.RawMessage `json:"result_snapshot"`
+	ProjectID       uuid.UUID       `json:"project_id"`
+	SiteFixID       uuid.UUID       `json:"site_fix_id"`
+	RequestID       uuid.UUID       `json:"request_id"`
+	ProcessingToken pgtype.UUID     `json:"processing_token"`
+	AiCallID        pgtype.UUID     `json:"ai_call_id"`
+}
+
+func (q *Queries) ConsumeDoctorAIOnDemandProcessing(ctx context.Context, arg ConsumeDoctorAIOnDemandProcessingParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, consumeDoctorAIOnDemandProcessing,
+		arg.ResultSnapshot,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.RequestID,
+		arg.ProcessingToken,
+		arg.AiCallID,
+	)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
 	)
 	return i, err
 }
@@ -922,7 +1228,7 @@ where work.id = $3
   )
   and (select count(*) from bumped) =
       (select count(*) from expected_keys)
-returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
 `
 
 type CreateCanonicalSiteFixApplicationParams struct {
@@ -1000,6 +1306,9 @@ func (q *Queries) CreateCanonicalSiteFixApplication(ctx context.Context, arg Cre
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -1386,6 +1695,93 @@ func (q *Queries) CreateMigrationReviewItem(ctx context.Context, arg CreateMigra
 	return i, err
 }
 
+const failCanonicalSiteFixGitHubPRClaim = `-- name: FailCanonicalSiteFixGitHubPRClaim :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $2 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'needs_follow_up', failure_reason = $1,
+    pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = $2 and app.id = $3
+  and app.site_fix_id = $4 and app.site_fix_id is not null and app.content_action_id is null
+  and app.status = 'creating_pr' and app.pr_claim_token = $5
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+`
+
+type FailCanonicalSiteFixGitHubPRClaimParams struct {
+	FailureReason *string     `json:"failure_reason"`
+	ProjectID     uuid.UUID   `json:"project_id"`
+	ApplicationID uuid.UUID   `json:"application_id"`
+	SiteFixID     pgtype.UUID `json:"site_fix_id"`
+	PrClaimToken  pgtype.UUID `json:"pr_claim_token"`
+}
+
+func (q *Queries) FailCanonicalSiteFixGitHubPRClaim(ctx context.Context, arg FailCanonicalSiteFixGitHubPRClaimParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, failCanonicalSiteFixGitHubPRClaim,
+		arg.FailureReason,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+		arg.PrClaimToken,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const failDoctorSiteFixPreparationLease = `-- name: FailDoctorSiteFixPreparationLease :one
 update doctor_site_fix_preparation_leases
 set status = 'failed', result_expires_at = null, completed_at = null,
@@ -1573,6 +1969,73 @@ func (q *Queries) GetCanonicalSiteFix(ctx context.Context, arg GetCanonicalSiteF
 	return i, err
 }
 
+const getCanonicalSiteFixApplication = `-- name: GetCanonicalSiteFixApplication :one
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
+where project_id = $1
+  and id = $2
+  and site_fix_id = $3
+  and site_fix_id is not null
+  and content_action_id is null
+`
+
+type GetCanonicalSiteFixApplicationParams struct {
+	ProjectID     uuid.UUID   `json:"project_id"`
+	ApplicationID uuid.UUID   `json:"application_id"`
+	SiteFixID     pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) GetCanonicalSiteFixApplication(ctx context.Context, arg GetCanonicalSiteFixApplicationParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, getCanonicalSiteFixApplication, arg.ProjectID, arg.ApplicationID, arg.SiteFixID)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const getCanonicalSiteFixByWorkSignature = `-- name: GetCanonicalSiteFixByWorkSignature :one
 select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
 where project_id = $1
@@ -1750,6 +2213,110 @@ func (q *Queries) GetCompletedDoctorSiteFixPreparationDecision(ctx context.Conte
 	return i, err
 }
 
+const getDoctorAIOnDemandActive = `-- name: GetDoctorAIOnDemandActive :one
+select request_id, project_id, site_fix_id, trigger_kind, requested_policy, status, processing_token, processing_expires_at, ai_call_id, result_snapshot, rejection_reason, requested_at, consumed_at, lifecycle_applied_at from doctor_ai_on_demand_triggers marker
+where marker.project_id = $1 and marker.site_fix_id = $2
+  and marker.status in ('pending','processing')
+order by marker.requested_at, marker.request_id
+limit 1
+`
+
+type GetDoctorAIOnDemandActiveParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) GetDoctorAIOnDemandActive(ctx context.Context, arg GetDoctorAIOnDemandActiveParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, getDoctorAIOnDemandActive, arg.ProjectID, arg.SiteFixID)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
+const getDoctorAIOnDemandConsumedResult = `-- name: GetDoctorAIOnDemandConsumedResult :one
+select request_id, project_id, site_fix_id, trigger_kind, requested_policy, status, processing_token, processing_expires_at, ai_call_id, result_snapshot, rejection_reason, requested_at, consumed_at, lifecycle_applied_at from doctor_ai_on_demand_triggers marker
+where marker.project_id = $1 and marker.site_fix_id = $2
+  and marker.status = 'consumed' and marker.lifecycle_applied_at is null
+order by marker.consumed_at, marker.request_id
+limit 1
+`
+
+type GetDoctorAIOnDemandConsumedResultParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) GetDoctorAIOnDemandConsumedResult(ctx context.Context, arg GetDoctorAIOnDemandConsumedResultParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, getDoctorAIOnDemandConsumedResult, arg.ProjectID, arg.SiteFixID)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
+const getDoctorAIOnDemandTrigger = `-- name: GetDoctorAIOnDemandTrigger :one
+select request_id, project_id, site_fix_id, trigger_kind, requested_policy, status, processing_token, processing_expires_at, ai_call_id, result_snapshot, rejection_reason, requested_at, consumed_at, lifecycle_applied_at from doctor_ai_on_demand_triggers marker
+where marker.request_id = $1
+  and marker.project_id = $2 and marker.site_fix_id = $3
+`
+
+type GetDoctorAIOnDemandTriggerParams struct {
+	RequestID uuid.UUID `json:"request_id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) GetDoctorAIOnDemandTrigger(ctx context.Context, arg GetDoctorAIOnDemandTriggerParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, getDoctorAIOnDemandTrigger, arg.RequestID, arg.ProjectID, arg.SiteFixID)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
 const getDoctorSiteFixPreparationLease = `-- name: GetDoctorSiteFixPreparationLease :one
 select project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at from doctor_site_fix_preparation_leases
 where project_id = $1
@@ -1781,6 +2348,73 @@ func (q *Queries) GetDoctorSiteFixPreparationLease(ctx context.Context, arg GetD
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const getLatestCanonicalSiteFixApplication = `-- name: GetLatestCanonicalSiteFixApplication :one
+select id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint from site_change_applications
+where project_id = $1
+  and site_fix_id = $2
+  and site_fix_id is not null
+  and content_action_id is null
+order by updated_at desc
+limit 1
+`
+
+type GetLatestCanonicalSiteFixApplicationParams struct {
+	ProjectID uuid.UUID   `json:"project_id"`
+	SiteFixID pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) GetLatestCanonicalSiteFixApplication(ctx context.Context, arg GetLatestCanonicalSiteFixApplicationParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, getLatestCanonicalSiteFixApplication, arg.ProjectID, arg.SiteFixID)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -1902,6 +2536,83 @@ func (q *Queries) InvalidateDoctorSiteFixPreparationLease(ctx context.Context, a
 	return i, err
 }
 
+const listCanonicalSiteFixPRsForReconciliation = `-- name: ListCanonicalSiteFixPRsForReconciliation :many
+select a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint from site_change_applications a
+join site_fixes sf
+  on sf.id = a.site_fix_id and sf.project_id = a.project_id
+where a.project_id = $1
+  and a.site_fix_id is not null
+  and a.content_action_id is null
+  and a.status = 'github_pr_open'
+  and sf.status = 'applying'
+order by a.updated_at asc
+`
+
+func (q *Queries) ListCanonicalSiteFixPRsForReconciliation(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixPRsForReconciliation, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCanonicalSiteFixVerifications = `-- name: ListCanonicalSiteFixVerifications :many
 select id, project_id, site_fix_id, attempt_number, evidence_read, acceptance_results, ai_call_id, result, retry_classification, failure_reason, attempted_at, created_at from site_fix_verifications
 where project_id = $1
@@ -1998,6 +2709,190 @@ func (q *Queries) ListCanonicalSiteFixes(ctx context.Context, arg ListCanonicalS
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCanonicalSiteFixesForVerification = `-- name: ListCanonicalSiteFixesForVerification :many
+select a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint from site_change_applications a
+join site_fixes sf
+  on sf.id = a.site_fix_id and sf.project_id = a.project_id
+where a.project_id = $1
+  and a.site_fix_id is not null
+  and a.content_action_id is null
+  and a.status in ('deployment_pending','verification_pending','needs_follow_up')
+  and sf.status in ('awaiting_deploy','verifying','failed_retryable','reopened')
+order by a.updated_at asc
+`
+
+func (q *Queries) ListCanonicalSiteFixesForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listCanonicalSiteFixesForVerification, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDoctorAIOnDemandActiveSiteFixes = `-- name: ListDoctorAIOnDemandActiveSiteFixes :many
+select distinct marker.site_fix_id
+from doctor_ai_on_demand_triggers marker
+where marker.project_id = $1
+  and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+order by marker.site_fix_id
+`
+
+func (q *Queries) ListDoctorAIOnDemandActiveSiteFixes(ctx context.Context, projectID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listDoctorAIOnDemandActiveSiteFixes, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var site_fix_id uuid.UUID
+		if err := rows.Scan(&site_fix_id); err != nil {
+			return nil, err
+		}
+		items = append(items, site_fix_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDoctorAIOnDemandConsumedUnapplied = `-- name: ListDoctorAIOnDemandConsumedUnapplied :many
+select marker.request_id, marker.project_id, marker.site_fix_id, marker.ai_call_id,
+  exists (
+    select 1 from site_fix_verifications verification
+    where verification.project_id = marker.project_id
+      and verification.site_fix_id = marker.site_fix_id
+      and verification.ai_call_id = marker.ai_call_id
+  ) as has_lifecycle_reference
+from doctor_ai_on_demand_triggers marker
+join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+where marker.project_id = $1 and marker.status = 'consumed'
+  and marker.lifecycle_applied_at is null
+  and sf.status in ('verified','failed_terminal','superseded','migration_rolled_back')
+order by marker.consumed_at, marker.request_id
+`
+
+type ListDoctorAIOnDemandConsumedUnappliedRow struct {
+	RequestID             uuid.UUID   `json:"request_id"`
+	ProjectID             uuid.UUID   `json:"project_id"`
+	SiteFixID             uuid.UUID   `json:"site_fix_id"`
+	AiCallID              pgtype.UUID `json:"ai_call_id"`
+	HasLifecycleReference bool        `json:"has_lifecycle_reference"`
+}
+
+func (q *Queries) ListDoctorAIOnDemandConsumedUnapplied(ctx context.Context, projectID uuid.UUID) ([]ListDoctorAIOnDemandConsumedUnappliedRow, error) {
+	rows, err := q.db.Query(ctx, listDoctorAIOnDemandConsumedUnapplied, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDoctorAIOnDemandConsumedUnappliedRow
+	for rows.Next() {
+		var i ListDoctorAIOnDemandConsumedUnappliedRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.AiCallID,
+			&i.HasLifecycleReference,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRejectedDoctorAIRunningCalls = `-- name: ListRejectedDoctorAIRunningCalls :many
+select marker.ai_call_id
+from doctor_ai_on_demand_triggers marker
+join ai_call_records call on call.project_id = marker.project_id and call.id = marker.ai_call_id
+where marker.project_id = $1
+  and marker.status in ('rejected','superseded') and call.status = 'running'
+order by marker.request_id
+`
+
+func (q *Queries) ListRejectedDoctorAIRunningCalls(ctx context.Context, projectID uuid.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listRejectedDoctorAIRunningCalls, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var ai_call_id pgtype.UUID
+		if err := rows.Scan(&ai_call_id); err != nil {
+			return nil, err
+		}
+		items = append(items, ai_call_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2319,6 +3214,101 @@ func (q *Queries) MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanon
 	return i, err
 }
 
+const markCanonicalSiteFixApplyFailure = `-- name: MarkCanonicalSiteFixApplyFailure :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = $3 and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select a.id
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = $4 and sf.project_id = $3
+    and a.id = $5 and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'github_pr_open' and exists (select 1 from authority)
+  for update of a
+)
+update site_change_applications a
+set status = 'needs_follow_up',
+    github_pr_state = coalesce($1::text, a.github_pr_state),
+    failure_reason = $2, updated_at = now()
+from eligible
+where a.id = eligible.id and a.project_id = $3
+  and a.site_fix_id = $4 and a.content_action_id is null
+  and a.status = 'github_pr_open'
+returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint
+`
+
+type MarkCanonicalSiteFixApplyFailureParams struct {
+	ObservedGithubPrState *string     `json:"observed_github_pr_state"`
+	FailureReason         *string     `json:"failure_reason"`
+	ProjectID             uuid.UUID   `json:"project_id"`
+	SiteFixID             pgtype.UUID `json:"site_fix_id"`
+	ApplicationID         uuid.UUID   `json:"application_id"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixApplyFailure(ctx context.Context, arg MarkCanonicalSiteFixApplyFailureParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, markCanonicalSiteFixApplyFailure,
+		arg.ObservedGithubPrState,
+		arg.FailureReason,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.ApplicationID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const markCanonicalSiteFixAwaitingDeploy = `-- name: MarkCanonicalSiteFixAwaitingDeploy :one
 with eligible as materialized (
   select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
@@ -2497,6 +3487,362 @@ func (q *Queries) MarkCanonicalSiteFixAwaitingDeploy(ctx context.Context, arg Ma
 	return i, err
 }
 
+const markCanonicalSiteFixGitHubPR = `-- name: MarkCanonicalSiteFixGitHubPR :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $13 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set publisher_connection_id = $1,
+    repo_full_name = $2,
+    base_branch = $3,
+    working_branch = $4,
+    base_commit_sha = $5,
+    head_commit_sha = $6,
+    source_file_path = $7,
+    base_file_sha = $8,
+    proposed_content_hash = $9,
+    github_pr_number = $10,
+    github_pr_url = $11,
+    github_pr_state = $12,
+    status = 'github_pr_open',
+    pr_created_at = coalesce(pr_created_at, now()),
+    failure_reason = null,
+    pr_claim_token = null,
+    pr_claim_expires_at = null,
+    pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = $13
+  and app.id = $14
+  and app.site_fix_id = $15
+  and app.site_fix_id is not null
+  and app.content_action_id is null
+  and app.status = 'creating_pr'
+  and app.pr_claim_token = $16
+  and app.pr_claim_expires_at > clock_timestamp()
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning id, project_id, source_opportunity_id, content_action_id, page_update_draft_id, application_kind, target_url, normalized_target_url, opportunity_key, publisher_connection_id, repo_full_name, base_branch, working_branch, base_commit_sha, head_commit_sha, source_file_path, source_file_paths, source_mapping_confidence, source_mapping_reason, base_file_sha, base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot, resolution_criteria, github_pr_number, github_pr_url, github_pr_state, deployment_snapshot, verification_snapshot, failure_reason, status, created_at, updated_at, pr_created_at, merged_at, deployed_at, verified_at, next_poll_at, next_notify_at, site_fix_id, pr_claim_token, pr_claim_expires_at, pr_claim_authority_fingerprint
+`
+
+type MarkCanonicalSiteFixGitHubPRParams struct {
+	PublisherConnectionID pgtype.UUID `json:"publisher_connection_id"`
+	RepoFullName          *string     `json:"repo_full_name"`
+	BaseBranch            *string     `json:"base_branch"`
+	WorkingBranch         *string     `json:"working_branch"`
+	BaseCommitSha         *string     `json:"base_commit_sha"`
+	HeadCommitSha         *string     `json:"head_commit_sha"`
+	SourceFilePath        *string     `json:"source_file_path"`
+	BaseFileSha           *string     `json:"base_file_sha"`
+	ProposedContentHash   *string     `json:"proposed_content_hash"`
+	GithubPrNumber        *int32      `json:"github_pr_number"`
+	GithubPrUrl           *string     `json:"github_pr_url"`
+	GithubPrState         *string     `json:"github_pr_state"`
+	ProjectID             uuid.UUID   `json:"project_id"`
+	ApplicationID         uuid.UUID   `json:"application_id"`
+	SiteFixID             pgtype.UUID `json:"site_fix_id"`
+	PrClaimToken          pgtype.UUID `json:"pr_claim_token"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCanonicalSiteFixGitHubPRParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, markCanonicalSiteFixGitHubPR,
+		arg.PublisherConnectionID,
+		arg.RepoFullName,
+		arg.BaseBranch,
+		arg.WorkingBranch,
+		arg.BaseCommitSha,
+		arg.HeadCommitSha,
+		arg.SourceFilePath,
+		arg.BaseFileSha,
+		arg.ProposedContentHash,
+		arg.GithubPrNumber,
+		arg.GithubPrUrl,
+		arg.GithubPrState,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+		arg.PrClaimToken,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const markCanonicalSiteFixManualApplied = `-- name: MarkCanonicalSiteFixManualApplied :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = $1 and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id,
+         a.status as expected_application_status
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = $2 and sf.project_id = $1
+    and a.id = $3 and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'manual_apply_required' and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1 order by b.bucket_key for update of b
+), locked_application as materialized (
+  select a.id from site_change_applications a join eligible e on e.application_id = a.id
+  where a.project_id = e.project_id and a.site_fix_id = e.id and a.content_action_id is null
+    and a.status = e.expected_application_status
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of a
+), locked_work as materialized (
+  select e.id, e.project_id, e.work_signature_id, e.conflict_bucket_keys, e.expected_fix_status, e.expected_signature_status, e.expected_signature_active, e.application_id, e.expected_application_status from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status and w.status = e.expected_signature_status
+    and w.active = e.expected_signature_active and w.mode = 'enforced'
+    and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application a where a.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked where b.id = locked.id and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), applied_application as (
+  update site_change_applications a
+  set status = 'deployment_pending', deployment_snapshot = $4::jsonb,
+      merged_at = coalesce(a.merged_at, $5),
+      next_poll_at = $5, failure_reason = null, updated_at = now()
+  from locked_work e where a.id = e.application_id and a.project_id = $1
+    and a.site_fix_id = $2 and a.content_action_id is null
+    and a.status = 'manual_apply_required'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
+), transitioned as (
+  update site_fixes sf set status = 'awaiting_deploy',
+      applied_at = coalesce(sf.applied_at, $5), failure_reason = null, updated_at = now()
+  from applied_application a where sf.id = a.site_fix_id and sf.project_id = $1
+    and sf.status = 'applying' returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), signature_transition as (
+  update work_signature_registry w set status = 'awaiting_deploy', active = true, updated_at = now()
+  from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
+)
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at from transitioned cross join signature_transition
+`
+
+type MarkCanonicalSiteFixManualAppliedParams struct {
+	ProjectID          uuid.UUID          `json:"project_id"`
+	SiteFixID          uuid.UUID          `json:"site_fix_id"`
+	ApplicationID      uuid.UUID          `json:"application_id"`
+	DeploymentSnapshot json.RawMessage    `json:"deployment_snapshot"`
+	ManualAppliedAt    pgtype.Timestamptz `json:"manual_applied_at"`
+}
+
+type MarkCanonicalSiteFixManualAppliedRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixManualApplied(ctx context.Context, arg MarkCanonicalSiteFixManualAppliedParams) (MarkCanonicalSiteFixManualAppliedRow, error) {
+	row := q.db.QueryRow(ctx, markCanonicalSiteFixManualApplied,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.ApplicationID,
+		arg.DeploymentSnapshot,
+		arg.ManualAppliedAt,
+	)
+	var i MarkCanonicalSiteFixManualAppliedRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markCanonicalSiteFixManualHandoff = `-- name: MarkCanonicalSiteFixManualHandoff :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = $2
+    and product = 'doctor' and writer_authority = 'canonical' and write_fenced = false
+  for update
+)
+update site_change_applications
+set status = 'manual_apply_required', failure_reason = $1, updated_at = now()
+where site_change_applications.project_id = $2 and site_change_applications.id = $3
+  and site_change_applications.site_fix_id = $4 and site_change_applications.site_fix_id is not null
+  and site_change_applications.content_action_id is null and site_change_applications.status = 'ready_for_pr'
+  and exists (select 1 from authority)
+returning site_change_applications.id, site_change_applications.project_id, site_change_applications.source_opportunity_id, site_change_applications.content_action_id, site_change_applications.page_update_draft_id, site_change_applications.application_kind, site_change_applications.target_url, site_change_applications.normalized_target_url, site_change_applications.opportunity_key, site_change_applications.publisher_connection_id, site_change_applications.repo_full_name, site_change_applications.base_branch, site_change_applications.working_branch, site_change_applications.base_commit_sha, site_change_applications.head_commit_sha, site_change_applications.source_file_path, site_change_applications.source_file_paths, site_change_applications.source_mapping_confidence, site_change_applications.source_mapping_reason, site_change_applications.base_file_sha, site_change_applications.base_content_hash, site_change_applications.proposed_content_hash, site_change_applications.patch_snapshot, site_change_applications.diff_snapshot, site_change_applications.resolution_criteria, site_change_applications.github_pr_number, site_change_applications.github_pr_url, site_change_applications.github_pr_state, site_change_applications.deployment_snapshot, site_change_applications.verification_snapshot, site_change_applications.failure_reason, site_change_applications.status, site_change_applications.created_at, site_change_applications.updated_at, site_change_applications.pr_created_at, site_change_applications.merged_at, site_change_applications.deployed_at, site_change_applications.verified_at, site_change_applications.next_poll_at, site_change_applications.next_notify_at, site_change_applications.site_fix_id, site_change_applications.pr_claim_token, site_change_applications.pr_claim_expires_at, site_change_applications.pr_claim_authority_fingerprint
+`
+
+type MarkCanonicalSiteFixManualHandoffParams struct {
+	FailureReason *string     `json:"failure_reason"`
+	ProjectID     uuid.UUID   `json:"project_id"`
+	ApplicationID uuid.UUID   `json:"application_id"`
+	SiteFixID     pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixManualHandoff(ctx context.Context, arg MarkCanonicalSiteFixManualHandoffParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, markCanonicalSiteFixManualHandoff,
+		arg.FailureReason,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const markCanonicalSiteFixMigrationRolledBack = `-- name: MarkCanonicalSiteFixMigrationRolledBack :one
 with eligible as materialized (
   select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
@@ -2594,6 +3940,23 @@ with eligible as materialized (
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), superseded_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'superseded',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason','site fix migration rolled back') end,
+      rejection_reason = 'site fix migration rolled back', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from superseded_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'cancelled', active = false, updated_at = now()
@@ -2648,6 +4011,174 @@ func (q *Queries) MarkCanonicalSiteFixMigrationRolledBack(ctx context.Context, a
 		arg.Reason,
 	)
 	var i MarkCanonicalSiteFixMigrationRolledBackRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markCanonicalSiteFixPRMerged = `-- name: MarkCanonicalSiteFixPRMerged :one
+with authority as materialized (
+  select product_writer_authority.project_id from product_writer_authority
+  where product_writer_authority.project_id = $1 and product = 'doctor'
+    and writer_authority = 'canonical' and write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id,
+         a.status as expected_application_status
+  from site_fixes sf
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
+  where sf.id = $2
+    and sf.project_id = $1
+    and a.id = $3
+    and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and a.status = 'github_pr_open'
+    and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select a.id
+  from site_change_applications a
+  join eligible e on e.application_id = a.id
+  where a.project_id = e.project_id
+    and a.site_fix_id = e.id and a.content_action_id is null
+    and a.status = e.expected_application_status
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of a
+), locked_work as materialized (
+  select e.id, e.project_id, e.work_signature_id, e.conflict_bucket_keys, e.expected_fix_status, e.expected_signature_status, e.expected_signature_active, e.application_id, e.expected_application_status
+  from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w
+    on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status
+    and w.status = e.expected_signature_status and w.active = e.expected_signature_active
+    and w.mode = 'enforced' and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application a where a.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), merged_application as (
+  update site_change_applications
+  set status = 'deployment_pending', github_pr_state = 'merged',
+      merged_at = coalesce(site_change_applications.merged_at, now()),
+      next_poll_at = now() + interval '3 minutes',
+      failure_reason = null, updated_at = now()
+  from locked_work e
+  where site_change_applications.id = e.application_id and site_change_applications.project_id = $1
+    and site_change_applications.site_fix_id = $2 and site_change_applications.content_action_id is null
+    and site_change_applications.status = 'github_pr_open'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning site_change_applications.site_fix_id
+), transitioned as (
+  update site_fixes
+  set status = 'awaiting_deploy', applied_at = coalesce(site_fixes.applied_at, $4::timestamptz),
+      failure_reason = null, updated_at = now()
+  from merged_application a
+  where site_fixes.id = a.site_fix_id and site_fixes.project_id = $1
+    and site_fixes.status = 'applying'
+  returning site_fixes.id, site_fixes.project_id, site_fixes.doctor_finding_id, site_fixes.candidate_id, site_fixes.work_signature_id, site_fixes.supersedes_site_fix_id, site_fixes.status, site_fixes.finding_kind, site_fixes.target_urls, site_fixes.evidence_snapshot, site_fixes.proposed_fix, site_fixes.acceptance_tests, site_fixes.verification_snapshot, site_fixes.failure_reason, site_fixes.retry_count, site_fixes.max_retries, site_fixes.legacy_opportunity_id, site_fixes.legacy_content_action_id, site_fixes.migration_batch_id, site_fixes.approved_at, site_fixes.applied_at, site_fixes.deployed_at, site_fixes.verified_at, site_fixes.created_at, site_fixes.updated_at
+), signature_transition as (
+  update work_signature_registry w
+  set status = 'awaiting_deploy', active = true, updated_at = now()
+  from transitioned sf
+  where w.id = sf.work_signature_id and w.project_id = sf.project_id
+  returning w.id
+)
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at from transitioned cross join signature_transition
+`
+
+type MarkCanonicalSiteFixPRMergedParams struct {
+	ProjectID        uuid.UUID          `json:"project_id"`
+	SiteFixID        uuid.UUID          `json:"site_fix_id"`
+	ApplicationID    uuid.UUID          `json:"application_id"`
+	ObservedMergedAt pgtype.Timestamptz `json:"observed_merged_at"`
+}
+
+type MarkCanonicalSiteFixPRMergedRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixPRMerged(ctx context.Context, arg MarkCanonicalSiteFixPRMergedParams) (MarkCanonicalSiteFixPRMergedRow, error) {
+	row := q.db.QueryRow(ctx, markCanonicalSiteFixPRMerged,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.ApplicationID,
+		arg.ObservedMergedAt,
+	)
+	var i MarkCanonicalSiteFixPRMergedRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -2998,18 +4529,24 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = $1
     and sf.project_id = $2
+    and a.id = $3
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'reopened' and w.status = 'reopened')
+	  or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
     )
     and sf.retry_count < sf.max_retries
+	and a.status in ('deployment_pending','verification_pending','needs_follow_up')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -3066,21 +4603,49 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), retryable_application as (
+  update site_change_applications a
+  set status = 'needs_follow_up',
+      verification_snapshot = $4::jsonb,
+      failure_reason = $5, updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = $2
+    and a.site_fix_id = $1 and a.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'failed_retryable',
       retry_count = retry_count + 1,
-      verification_snapshot = $3::jsonb,
-      failure_reason = $4,
+      verification_snapshot = $4::jsonb,
+      failure_reason = $5,
       updated_at = now()
   from locked_work e
+  join retryable_application a on a.site_fix_id = e.id
   where sf.id = e.id
     and sf.project_id = $2
-    and sf.status in ('verifying','reopened')
+	and sf.status in ('awaiting_deploy','verifying','reopened')
     and sf.retry_count < sf.max_retries
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','verification attempt completed without this AI result') end,
+      rejection_reason = 'verification attempt completed without this AI result', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'failed_retryable', active = true, updated_at = now()
@@ -3095,6 +4660,7 @@ cross join signature_transition
 type MarkCanonicalSiteFixRetryableParams struct {
 	SiteFixID            uuid.UUID       `json:"site_fix_id"`
 	ProjectID            uuid.UUID       `json:"project_id"`
+	ApplicationID        uuid.UUID       `json:"application_id"`
 	VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
 	FailureReason        *string         `json:"failure_reason"`
 }
@@ -3131,6 +4697,7 @@ func (q *Queries) MarkCanonicalSiteFixRetryable(ctx context.Context, arg MarkCan
 	row := q.db.QueryRow(ctx, markCanonicalSiteFixRetryable,
 		arg.SiteFixID,
 		arg.ProjectID,
+		arg.ApplicationID,
 		arg.VerificationSnapshot,
 		arg.FailureReason,
 	)
@@ -3274,6 +4841,23 @@ with eligible as materialized (
     and sf.project_id = $2
     and sf.status in ('verifying','failed_retryable','reopened')
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix verified without this AI result') end,
+      rejection_reason = 'site fix verified without this AI result', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from verified_fix sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'verified', active = false, updated_at = now()
@@ -3379,9 +4963,10 @@ with eligible as materialized (
   where sf.id = $1
     and sf.project_id = $2
     and a.id = $3
-    and sf.status = 'awaiting_deploy'
-    and w.status = 'awaiting_deploy'
-    and a.status = 'deployment_pending'
+    and (
+      (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy' and a.status = 'deployment_pending')
+      or (sf.status = 'reopened' and w.status = 'reopened' and a.status = 'verification_pending')
+    )
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -3450,7 +5035,7 @@ with eligible as materialized (
     and a.project_id = $2
     and a.site_fix_id = $1
     and a.content_action_id is null
-    and a.status = 'deployment_pending'
+    and a.status in ('deployment_pending','verification_pending')
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning a.site_fix_id
@@ -3463,7 +5048,7 @@ with eligible as materialized (
   from deployed_application a
   where sf.id = a.site_fix_id
     and sf.project_id = $2
-    and sf.status = 'awaiting_deploy'
+    and sf.status in ('awaiting_deploy','reopened')
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
 ), signature_transition as (
   update work_signature_registry w
@@ -3551,6 +5136,248 @@ func (q *Queries) MarkCanonicalSiteFixVerifying(ctx context.Context, arg MarkCan
 	return i, err
 }
 
+const markDoctorAIOnDemandLifecycleApplied = `-- name: MarkDoctorAIOnDemandLifecycleApplied :one
+update doctor_ai_on_demand_triggers marker
+set lifecycle_applied_at = now()
+where marker.project_id = $1 and marker.site_fix_id = $2
+  and marker.request_id = $3 and marker.status = 'consumed'
+  and marker.ai_call_id = $4 and marker.lifecycle_applied_at is null
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type MarkDoctorAIOnDemandLifecycleAppliedParams struct {
+	ProjectID uuid.UUID   `json:"project_id"`
+	SiteFixID uuid.UUID   `json:"site_fix_id"`
+	RequestID uuid.UUID   `json:"request_id"`
+	AiCallID  pgtype.UUID `json:"ai_call_id"`
+}
+
+func (q *Queries) MarkDoctorAIOnDemandLifecycleApplied(ctx context.Context, arg MarkDoctorAIOnDemandLifecycleAppliedParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, markDoctorAIOnDemandLifecycleApplied,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.RequestID,
+		arg.AiCallID,
+	)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
+const rejectDoctorAIOnDemandConsumedWithoutLifecycleReference = `-- name: RejectDoctorAIOnDemandConsumedWithoutLifecycleReference :one
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected', rejection_reason = 'lifecycle_completed_without_this_ai_result',
+    result_snapshot = jsonb_set(marker.result_snapshot, '{rejection_reason}', '"lifecycle_completed_without_this_ai_result"'::jsonb, true),
+    lifecycle_applied_at = now()
+where marker.project_id = $1 and marker.site_fix_id = $2
+  and marker.request_id = $3 and marker.ai_call_id = $4
+  and marker.status = 'consumed' and marker.lifecycle_applied_at is null
+  and not exists (
+    select 1 from site_fix_verifications verification
+    where verification.project_id = marker.project_id
+      and verification.site_fix_id = marker.site_fix_id
+      and verification.ai_call_id = marker.ai_call_id
+  )
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type RejectDoctorAIOnDemandConsumedWithoutLifecycleReferenceParams struct {
+	ProjectID uuid.UUID   `json:"project_id"`
+	SiteFixID uuid.UUID   `json:"site_fix_id"`
+	RequestID uuid.UUID   `json:"request_id"`
+	AiCallID  pgtype.UUID `json:"ai_call_id"`
+}
+
+func (q *Queries) RejectDoctorAIOnDemandConsumedWithoutLifecycleReference(ctx context.Context, arg RejectDoctorAIOnDemandConsumedWithoutLifecycleReferenceParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, rejectDoctorAIOnDemandConsumedWithoutLifecycleReference,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.RequestID,
+		arg.AiCallID,
+	)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
+	)
+	return i, err
+}
+
+const rejectDoctorAIOnDemandTriggersForSiteFix = `-- name: RejectDoctorAIOnDemandTriggersForSiteFix :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  where marker.project_id = $3 and marker.site_fix_id = $4
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = $3 and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else $1::jsonb end,
+    rejection_reason = $2, consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+    processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type RejectDoctorAIOnDemandTriggersForSiteFixParams struct {
+	ResultSnapshot  json.RawMessage `json:"result_snapshot"`
+	RejectionReason *string         `json:"rejection_reason"`
+	ProjectID       uuid.UUID       `json:"project_id"`
+	SiteFixID       uuid.UUID       `json:"site_fix_id"`
+}
+
+func (q *Queries) RejectDoctorAIOnDemandTriggersForSiteFix(ctx context.Context, arg RejectDoctorAIOnDemandTriggersForSiteFixParams) ([]DoctorAiOnDemandTrigger, error) {
+	rows, err := q.db.Query(ctx, rejectDoctorAIOnDemandTriggersForSiteFix,
+		arg.ResultSnapshot,
+		arg.RejectionReason,
+		arg.ProjectID,
+		arg.SiteFixID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DoctorAiOnDemandTrigger
+	for rows.Next() {
+		var i DoctorAiOnDemandTrigger
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.TriggerKind,
+			&i.RequestedPolicy,
+			&i.Status,
+			&i.ProcessingToken,
+			&i.ProcessingExpiresAt,
+			&i.AiCallID,
+			&i.ResultSnapshot,
+			&i.RejectionReason,
+			&i.RequestedAt,
+			&i.ConsumedAt,
+			&i.LifecycleAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rejectUnauthorizedDoctorAIOnDemandTriggers = `-- name: RejectUnauthorizedDoctorAIOnDemandTriggers :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = $1 and marker.site_fix_id = $2
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+    and (
+      lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) <> 'true'
+      or coalesce(p.config->>'doctor_ai_run_policy', '') not in ('manual_only','on_demand','automatic')
+      or sf.status not in ('awaiting_deploy','verifying','reopened')
+    )
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_authority_revoked'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = $1 and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'rejected',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','Doctor AI policy or lifecycle authority was revoked') end,
+    rejection_reason = 'Doctor AI policy or lifecycle authority was revoked',
+    consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(), processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type RejectUnauthorizedDoctorAIOnDemandTriggersParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) RejectUnauthorizedDoctorAIOnDemandTriggers(ctx context.Context, arg RejectUnauthorizedDoctorAIOnDemandTriggersParams) ([]DoctorAiOnDemandTrigger, error) {
+	rows, err := q.db.Query(ctx, rejectUnauthorizedDoctorAIOnDemandTriggers, arg.ProjectID, arg.SiteFixID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DoctorAiOnDemandTrigger
+	for rows.Next() {
+		var i DoctorAiOnDemandTrigger
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.TriggerKind,
+			&i.RequestedPolicy,
+			&i.Status,
+			&i.ProcessingToken,
+			&i.ProcessingExpiresAt,
+			&i.AiCallID,
+			&i.ResultSnapshot,
+			&i.RejectionReason,
+			&i.RequestedAt,
+			&i.ConsumedAt,
+			&i.LifecycleAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const releaseProductWriterFence = `-- name: ReleaseProductWriterFence :one
 update product_writer_authority
 set write_fenced = false,
@@ -3589,19 +5416,110 @@ func (q *Queries) ReleaseProductWriterFence(ctx context.Context, arg ReleaseProd
 	return i, err
 }
 
+const renewCanonicalSiteFixGitHubPRClaim = `-- name: RenewCanonicalSiteFixGitHubPRClaim :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $2 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set pr_claim_expires_at = clock_timestamp() + make_interval(secs => $1::int),
+    updated_at = now()
+where app.project_id = $2 and app.id = $3
+  and app.site_fix_id = $4 and app.content_action_id is null
+  and app.status = 'creating_pr' and app.pr_claim_token = $5
+  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+`
+
+type RenewCanonicalSiteFixGitHubPRClaimParams struct {
+	LeaseTtlSeconds int32       `json:"lease_ttl_seconds"`
+	ProjectID       uuid.UUID   `json:"project_id"`
+	ApplicationID   uuid.UUID   `json:"application_id"`
+	SiteFixID       pgtype.UUID `json:"site_fix_id"`
+	PrClaimToken    pgtype.UUID `json:"pr_claim_token"`
+}
+
+func (q *Queries) RenewCanonicalSiteFixGitHubPRClaim(ctx context.Context, arg RenewCanonicalSiteFixGitHubPRClaimParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, renewCanonicalSiteFixGitHubPRClaim,
+		arg.LeaseTtlSeconds,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+		arg.PrClaimToken,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const reopenCanonicalSiteFix = `-- name: ReopenCanonicalSiteFix :one
 with eligible as materialized (
   select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = $1
     and sf.project_id = $2
+    and a.id = $3
+    and a.status = 'needs_follow_up'
     and sf.status = 'failed_retryable'
     and w.status = 'failed_retryable'
     and sf.retry_count <= sf.max_retries
@@ -3661,10 +5579,20 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), reopened_application as (
+  update site_change_applications a
+  set status = 'verification_pending', failure_reason = null, updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = $2
+    and a.site_fix_id = $1 and a.content_action_id is null
+    and a.status = 'needs_follow_up'
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'reopened', failure_reason = null, updated_at = now()
   from locked_work e
+  join reopened_application a on a.site_fix_id = e.id
   where sf.id = e.id
     and sf.status = 'failed_retryable'
     and sf.retry_count <= sf.max_retries
@@ -3683,8 +5611,9 @@ cross join signature_transition
 `
 
 type ReopenCanonicalSiteFixParams struct {
-	SiteFixID uuid.UUID `json:"site_fix_id"`
-	ProjectID uuid.UUID `json:"project_id"`
+	SiteFixID     uuid.UUID `json:"site_fix_id"`
+	ProjectID     uuid.UUID `json:"project_id"`
+	ApplicationID uuid.UUID `json:"application_id"`
 }
 
 type ReopenCanonicalSiteFixRow struct {
@@ -3716,7 +5645,7 @@ type ReopenCanonicalSiteFixRow struct {
 }
 
 func (q *Queries) ReopenCanonicalSiteFix(ctx context.Context, arg ReopenCanonicalSiteFixParams) (ReopenCanonicalSiteFixRow, error) {
-	row := q.db.QueryRow(ctx, reopenCanonicalSiteFix, arg.SiteFixID, arg.ProjectID)
+	row := q.db.QueryRow(ctx, reopenCanonicalSiteFix, arg.SiteFixID, arg.ProjectID, arg.ApplicationID)
 	var i ReopenCanonicalSiteFixRow
 	err := row.Scan(
 		&i.ID,
@@ -3744,6 +5673,88 @@ func (q *Queries) ReopenCanonicalSiteFix(ctx context.Context, arg ReopenCanonica
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const reopenCanonicalSiteFixApply = `-- name: ReopenCanonicalSiteFixApply :one
+with authority as materialized (
+  select pwa.project_id from product_writer_authority pwa
+  where pwa.project_id = $1 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set status = 'ready_for_pr', failure_reason = null,
+    pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+    updated_at = now()
+where app.project_id = $1 and app.id = $2
+  and app.site_fix_id = $3 and app.site_fix_id is not null and app.content_action_id is null
+  and app.status = 'needs_follow_up'
+  and exists (
+    select 1 from site_fixes sf
+    join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+    where sf.project_id = app.project_id and sf.id = app.site_fix_id
+      and sf.status = 'applying' and w.status = 'executing' and w.active = true and w.mode = 'enforced'
+  )
+  and exists (select 1 from authority)
+returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+`
+
+type ReopenCanonicalSiteFixApplyParams struct {
+	ProjectID     uuid.UUID   `json:"project_id"`
+	ApplicationID uuid.UUID   `json:"application_id"`
+	SiteFixID     pgtype.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) ReopenCanonicalSiteFixApply(ctx context.Context, arg ReopenCanonicalSiteFixApplyParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, reopenCanonicalSiteFixApply, arg.ProjectID, arg.ApplicationID, arg.SiteFixID)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -3850,7 +5861,7 @@ where a.id = locked.id
   and work.id = $1
   and (select count(*) from bumped) =
       (select count(*) from expected_keys)
-returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id
+returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint
 `
 
 type RepointApplicationToCanonicalSiteFixParams struct {
@@ -3910,6 +5921,9 @@ func (q *Queries) RepointApplicationToCanonicalSiteFix(ctx context.Context, arg 
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }
@@ -4104,7 +6118,7 @@ where a.id = locked.id
   and work.id = $3
   and (select count(*) from bumped) =
       (select count(*) from expected_keys)
-returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id
+returning a.id, a.project_id, a.source_opportunity_id, a.content_action_id, a.page_update_draft_id, a.application_kind, a.target_url, a.normalized_target_url, a.opportunity_key, a.publisher_connection_id, a.repo_full_name, a.base_branch, a.working_branch, a.base_commit_sha, a.head_commit_sha, a.source_file_path, a.source_file_paths, a.source_mapping_confidence, a.source_mapping_reason, a.base_file_sha, a.base_content_hash, a.proposed_content_hash, a.patch_snapshot, a.diff_snapshot, a.resolution_criteria, a.github_pr_number, a.github_pr_url, a.github_pr_state, a.deployment_snapshot, a.verification_snapshot, a.failure_reason, a.status, a.created_at, a.updated_at, a.pr_created_at, a.merged_at, a.deployed_at, a.verified_at, a.next_poll_at, a.next_notify_at, a.site_fix_id, a.pr_claim_token, a.pr_claim_expires_at, a.pr_claim_authority_fingerprint
 `
 
 type RestoreApplicationToLegacyContentActionParams struct {
@@ -4164,6 +6178,103 @@ func (q *Queries) RestoreApplicationToLegacyContentAction(ctx context.Context, a
 		&i.NextPollAt,
 		&i.NextNotifyAt,
 		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
+const setCanonicalSiteFixNextPollAt = `-- name: SetCanonicalSiteFixNextPollAt :exec
+update site_change_applications set next_poll_at = $1, updated_at = now()
+where project_id = $2 and id = $3
+  and site_fix_id = $4 and site_fix_id is not null
+  and content_action_id is null
+`
+
+type SetCanonicalSiteFixNextPollAtParams struct {
+	NextPollAt    pgtype.Timestamptz `json:"next_poll_at"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	ApplicationID uuid.UUID          `json:"application_id"`
+	SiteFixID     pgtype.UUID        `json:"site_fix_id"`
+}
+
+func (q *Queries) SetCanonicalSiteFixNextPollAt(ctx context.Context, arg SetCanonicalSiteFixNextPollAtParams) error {
+	_, err := q.db.Exec(ctx, setCanonicalSiteFixNextPollAt,
+		arg.NextPollAt,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+	)
+	return err
+}
+
+const startDoctorAIOnDemandCall = `-- name: StartDoctorAIOnDemandCall :one
+with eligible as materialized (
+  select marker.request_id
+  from doctor_ai_on_demand_triggers marker
+  join projects p on p.id = marker.project_id
+  join site_fixes sf on sf.project_id = marker.project_id and sf.id = marker.site_fix_id
+  where marker.project_id = $1 and marker.site_fix_id = $2
+    and marker.request_id = $3 and marker.status = 'processing'
+    and marker.processing_token = $4
+    and marker.processing_expires_at > clock_timestamp() and marker.ai_call_id is null
+    and lower(coalesce(p.config->>'doctor_ai_enabled', 'false')) = 'true'
+    and p.config->>'doctor_ai_run_policy' in ('manual_only','on_demand','automatic')
+    and sf.status in ('awaiting_deploy','verifying','reopened')
+  for update of marker
+), started as (
+  insert into ai_call_records(project_id,stage,linked_object_type,linked_object_id,provider,model,prompt_version,request_fingerprint,status)
+  select $1,'verification','site_fix',$2,
+         $5,$6,$7,$8,'running'
+  from eligible
+  returning id
+)
+update doctor_ai_on_demand_triggers marker
+set ai_call_id = started.id
+from eligible, started
+where marker.request_id = eligible.request_id
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type StartDoctorAIOnDemandCallParams struct {
+	ProjectID          uuid.UUID   `json:"project_id"`
+	SiteFixID          uuid.UUID   `json:"site_fix_id"`
+	RequestID          uuid.UUID   `json:"request_id"`
+	ProcessingToken    pgtype.UUID `json:"processing_token"`
+	Provider           string      `json:"provider"`
+	Model              string      `json:"model"`
+	PromptVersion      string      `json:"prompt_version"`
+	RequestFingerprint string      `json:"request_fingerprint"`
+}
+
+func (q *Queries) StartDoctorAIOnDemandCall(ctx context.Context, arg StartDoctorAIOnDemandCallParams) (DoctorAiOnDemandTrigger, error) {
+	row := q.db.QueryRow(ctx, startDoctorAIOnDemandCall,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.RequestID,
+		arg.ProcessingToken,
+		arg.Provider,
+		arg.Model,
+		arg.PromptVersion,
+		arg.RequestFingerprint,
+	)
+	var i DoctorAiOnDemandTrigger
+	err := row.Scan(
+		&i.RequestID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.TriggerKind,
+		&i.RequestedPolicy,
+		&i.Status,
+		&i.ProcessingToken,
+		&i.ProcessingExpiresAt,
+		&i.AiCallID,
+		&i.ResultSnapshot,
+		&i.RejectionReason,
+		&i.RequestedAt,
+		&i.ConsumedAt,
+		&i.LifecycleAppliedAt,
 	)
 	return i, err
 }
@@ -4263,6 +6374,23 @@ with eligible as materialized (
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), superseded_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'superseded',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason','site fix superseded') end,
+      rejection_reason = 'site fix superseded', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from superseded_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'superseded', active = false, updated_at = now()
@@ -4341,6 +6469,81 @@ func (q *Queries) SupersedeCanonicalSiteFix(ctx context.Context, arg SupersedeCa
 	return i, err
 }
 
+const supersedeDoctorAIOnDemandSiblingTriggers = `-- name: SupersedeDoctorAIOnDemandSiblingTriggers :many
+with locked_markers as materialized (
+  select marker.request_id, marker.ai_call_id, marker.status
+  from doctor_ai_on_demand_triggers marker
+  where marker.project_id = $2 and marker.site_fix_id = $3
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+    and marker.request_id <> $4
+  order by marker.request_id
+  for update of marker
+), finished_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from locked_markers marker
+  where call.project_id = $2 and call.id = marker.ai_call_id
+    and call.status = 'running'
+  returning call.id
+)
+update doctor_ai_on_demand_triggers marker
+set status = 'superseded',
+    result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','superseded','reason',$1::text) end,
+    rejection_reason = $1, consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+    processing_token = null, processing_expires_at = null
+from locked_markers locked
+where marker.request_id = locked.request_id
+returning marker.request_id, marker.project_id, marker.site_fix_id, marker.trigger_kind, marker.requested_policy, marker.status, marker.processing_token, marker.processing_expires_at, marker.ai_call_id, marker.result_snapshot, marker.rejection_reason, marker.requested_at, marker.consumed_at, marker.lifecycle_applied_at
+`
+
+type SupersedeDoctorAIOnDemandSiblingTriggersParams struct {
+	RejectionReason  *string   `json:"rejection_reason"`
+	ProjectID        uuid.UUID `json:"project_id"`
+	SiteFixID        uuid.UUID `json:"site_fix_id"`
+	AppliedRequestID uuid.UUID `json:"applied_request_id"`
+}
+
+func (q *Queries) SupersedeDoctorAIOnDemandSiblingTriggers(ctx context.Context, arg SupersedeDoctorAIOnDemandSiblingTriggersParams) ([]DoctorAiOnDemandTrigger, error) {
+	rows, err := q.db.Query(ctx, supersedeDoctorAIOnDemandSiblingTriggers,
+		arg.RejectionReason,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.AppliedRequestID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DoctorAiOnDemandTrigger
+	for rows.Next() {
+		var i DoctorAiOnDemandTrigger
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.TriggerKind,
+			&i.RequestedPolicy,
+			&i.Status,
+			&i.ProcessingToken,
+			&i.ProcessingExpiresAt,
+			&i.AiCallID,
+			&i.ResultSnapshot,
+			&i.RejectionReason,
+			&i.RequestedAt,
+			&i.ConsumedAt,
+			&i.LifecycleAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const switchProductWriterAuthority = `-- name: SwitchProductWriterAuthority :one
 update product_writer_authority
 set writer_authority = $1,
@@ -4394,19 +6597,26 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = $1
     and sf.project_id = $2
+    and a.id = $3
     and (
       (sf.status = 'verifying' and w.status = 'verifying')
       or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
       or (sf.status = 'reopened' and w.status = 'reopened')
+	  or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+	  or (sf.status = 'applying' and w.status = 'executing')
     )
-    and (sf.retry_count >= sf.max_retries or $3::boolean)
+    and (sf.retry_count >= sf.max_retries or $4::boolean)
+	and a.status in ('draft_ready','source_mapping_required','ready_for_pr','creating_pr','github_pr_open','manual_apply_required','deployment_pending','verification_pending','needs_follow_up')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -4463,19 +6673,48 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), terminal_application as (
+  update site_change_applications a
+  set status = 'failed', verification_snapshot = $5::jsonb,
+      failure_reason = $6,
+	  pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+	  updated_at = now()
+  from locked_work e
+  where a.id = e.application_id and a.project_id = $2
+    and a.site_fix_id = $1 and a.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'failed_terminal',
-      verification_snapshot = $4::jsonb,
-      failure_reason = $5,
+      verification_snapshot = $5::jsonb,
+      failure_reason = $6,
       updated_at = now()
   from locked_work e
+  join terminal_application a on a.site_fix_id = e.id
   where sf.id = e.id
-    and sf.status in ('verifying','failed_retryable','reopened')
-    and (sf.retry_count >= sf.max_retries or $3::boolean)
+	and sf.status in ('applying','awaiting_deploy','verifying','failed_retryable','reopened')
+    and (sf.retry_count >= sf.max_retries or $4::boolean)
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected',
+      result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix reached terminal verification state') end,
+      rejection_reason = 'site fix reached terminal verification state', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from transitioned sf
+  where marker.project_id = sf.project_id and marker.site_fix_id = sf.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
 ), signature_transition as (
   update work_signature_registry w
   set status = 'failed_terminal', active = false, updated_at = now()
@@ -4490,6 +6729,7 @@ cross join signature_transition
 type TerminalizeCanonicalSiteFixParams struct {
 	SiteFixID            uuid.UUID       `json:"site_fix_id"`
 	ProjectID            uuid.UUID       `json:"project_id"`
+	ApplicationID        uuid.UUID       `json:"application_id"`
 	ForceTerminal        bool            `json:"force_terminal"`
 	VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
 	FailureReason        *string         `json:"failure_reason"`
@@ -4527,11 +6767,178 @@ func (q *Queries) TerminalizeCanonicalSiteFix(ctx context.Context, arg Terminali
 	row := q.db.QueryRow(ctx, terminalizeCanonicalSiteFix,
 		arg.SiteFixID,
 		arg.ProjectID,
+		arg.ApplicationID,
 		arg.ForceTerminal,
 		arg.VerificationSnapshot,
 		arg.FailureReason,
 	)
 	var i TerminalizeCanonicalSiteFixRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const terminateCanonicalSiteFixByUser = `-- name: TerminateCanonicalSiteFixByUser :one
+with authority as materialized (
+  select pwa.project_id from product_writer_authority pwa
+  where pwa.project_id = $1 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status, w.status as expected_signature_status,
+         w.active as expected_signature_active, a.id as application_id
+  from site_fixes sf
+  join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  left join lateral (
+    select app.id from site_change_applications app
+    where app.project_id = sf.project_id and app.site_fix_id = sf.id and app.content_action_id is null
+    order by app.updated_at desc limit 1
+  ) a on true
+  where sf.project_id = $1 and sf.id = $2
+    and (
+      (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+      or (sf.status = 'approved' and w.status = 'approved')
+      or (sf.status = 'preparing' and w.status = 'preparing')
+      or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+      or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+      or (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
+    and w.mode = 'enforced' and w.active = true and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id from work_conflict_buckets b join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1 order by b.bucket_key for update of b
+), locked_application as materialized (
+  select app.id from site_change_applications app join eligible e on e.application_id = app.id
+  where app.project_id = e.project_id and app.site_fix_id = e.id and app.content_action_id is null
+  for update of app
+), locked_work as materialized (
+  select e.id, e.project_id, e.work_signature_id, e.conflict_bucket_keys, e.expected_fix_status, e.expected_signature_status, e.expected_signature_active, e.application_id from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status and w.status = e.expected_signature_status
+    and w.active = e.expected_signature_active and w.mode = 'enforced'
+    and w.conflict_bucket_keys = e.conflict_bucket_keys and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and (e.application_id is null or exists (select 1 from locked_application app where app.id = e.application_id))
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked where b.id = locked.id and exists (select 1 from locked_work)
+  returning b.id
+), failed_application as (
+  update site_change_applications app
+  set status = 'failed', failure_reason = $3,
+      pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null, updated_at = now()
+  from locked_work e where e.application_id is not null and app.id = e.application_id
+    and app.project_id = e.project_id and app.site_fix_id = e.id and app.content_action_id is null
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning app.id
+), rejected_markers as (
+  update doctor_ai_on_demand_triggers marker
+  set status = 'rejected', result_snapshot = case when marker.status = 'consumed' then marker.result_snapshot else jsonb_build_object('decision','rejected','reason','site fix terminated') end,
+      rejection_reason = 'site fix terminated', consumed_at = coalesce(marker.consumed_at, now()), lifecycle_applied_at = now(),
+      processing_token = null, processing_expires_at = null
+  from locked_work e
+  where marker.project_id = e.project_id and marker.site_fix_id = e.id
+    and (marker.status in ('pending','processing') or (marker.status = 'consumed' and marker.lifecycle_applied_at is null))
+  returning marker.request_id, marker.ai_call_id, marker.project_id
+), finished_ai_calls as (
+  update ai_call_records call
+  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+      finished_at = coalesce(call.finished_at, now()), updated_at = now()
+  from rejected_markers marker
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  returning call.id
+), transitioned as (
+  update site_fixes sf set status = 'failed_terminal', failure_reason = $3,
+      verification_snapshot = $4::jsonb, updated_at = now()
+  from locked_work e where sf.id = e.id and sf.project_id = e.project_id
+    and sf.status = e.expected_fix_status
+    and (e.application_id is null or exists (select 1 from failed_application app where app.id = e.application_id))
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at
+), signature_transition as (
+  update work_signature_registry w set status = 'failed_terminal', active = false, updated_at = now()
+  from transitioned sf where w.id = sf.work_signature_id and w.project_id = sf.project_id returning w.id
+)
+select transitioned.id, transitioned.project_id, transitioned.doctor_finding_id, transitioned.candidate_id, transitioned.work_signature_id, transitioned.supersedes_site_fix_id, transitioned.status, transitioned.finding_kind, transitioned.target_urls, transitioned.evidence_snapshot, transitioned.proposed_fix, transitioned.acceptance_tests, transitioned.verification_snapshot, transitioned.failure_reason, transitioned.retry_count, transitioned.max_retries, transitioned.legacy_opportunity_id, transitioned.legacy_content_action_id, transitioned.migration_batch_id, transitioned.approved_at, transitioned.applied_at, transitioned.deployed_at, transitioned.verified_at, transitioned.created_at, transitioned.updated_at from transitioned cross join signature_transition
+`
+
+type TerminateCanonicalSiteFixByUserParams struct {
+	ProjectID            uuid.UUID       `json:"project_id"`
+	SiteFixID            uuid.UUID       `json:"site_fix_id"`
+	FailureReason        *string         `json:"failure_reason"`
+	VerificationSnapshot json.RawMessage `json:"verification_snapshot"`
+}
+
+type TerminateCanonicalSiteFixByUserRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID       uuid.UUID          `json:"work_signature_id"`
+	SupersedesSiteFixID   pgtype.UUID        `json:"supersedes_site_fix_id"`
+	Status                string             `json:"status"`
+	FindingKind           string             `json:"finding_kind"`
+	TargetUrls            json.RawMessage    `json:"target_urls"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	ProposedFix           json.RawMessage    `json:"proposed_fix"`
+	AcceptanceTests       json.RawMessage    `json:"acceptance_tests"`
+	VerificationSnapshot  json.RawMessage    `json:"verification_snapshot"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryCount            int32              `json:"retry_count"`
+	MaxRetries            int32              `json:"max_retries"`
+	LegacyOpportunityID   pgtype.UUID        `json:"legacy_opportunity_id"`
+	LegacyContentActionID pgtype.UUID        `json:"legacy_content_action_id"`
+	MigrationBatchID      pgtype.UUID        `json:"migration_batch_id"`
+	ApprovedAt            pgtype.Timestamptz `json:"approved_at"`
+	AppliedAt             pgtype.Timestamptz `json:"applied_at"`
+	DeployedAt            pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) TerminateCanonicalSiteFixByUser(ctx context.Context, arg TerminateCanonicalSiteFixByUserParams) (TerminateCanonicalSiteFixByUserRow, error) {
+	row := q.db.QueryRow(ctx, terminateCanonicalSiteFixByUser,
+		arg.ProjectID,
+		arg.SiteFixID,
+		arg.FailureReason,
+		arg.VerificationSnapshot,
+	)
+	var i TerminateCanonicalSiteFixByUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,

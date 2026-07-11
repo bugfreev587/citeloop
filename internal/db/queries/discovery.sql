@@ -235,6 +235,8 @@ returning *;
 -- name: FinishAICallRecord :one
 update ai_call_records set
   status = sqlc.arg(status),
+  provider = coalesce(sqlc.narg(resolved_provider), provider),
+  model = coalesce(sqlc.narg(resolved_model), model),
   error_code = sqlc.narg(error_code),
   prompt_tokens = sqlc.arg(prompt_tokens),
   completion_tokens = sqlc.arg(completion_tokens),
@@ -245,6 +247,30 @@ update ai_call_records set
 where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id)
 returning *;
+
+-- name: FinishAICallRecordIfRunning :one
+update ai_call_records set
+  status = 'failed', error_code = sqlc.arg(error_code), finished_at = now(), updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id) and status = 'running'
+returning *;
+
+-- name: FinishCanonicalAICallFenced :one
+update ai_call_records set
+  status = case when status = 'running' then sqlc.arg(status) else status end,
+  error_code = case when status = 'running' then sqlc.narg(error_code) else error_code end,
+  provider = coalesce(sqlc.narg(resolved_provider), provider),
+  model = coalesce(sqlc.narg(resolved_model), model),
+  prompt_tokens = sqlc.arg(prompt_tokens),
+  completion_tokens = sqlc.arg(completion_tokens),
+  total_tokens = sqlc.arg(total_tokens),
+  cost_usd = sqlc.arg(cost_usd),
+  finished_at = coalesce(finished_at, now()),
+  updated_at = now()
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: GetAICallRecord :one
+select * from ai_call_records where id = sqlc.arg(id) and project_id = sqlc.arg(project_id);
 
 -- name: CreateArbitrationDecision :one
 insert into discovery_arbitration_decisions

@@ -176,6 +176,44 @@ func TestParseNormalizesInvalidOpportunityFindingSettings(t *testing.T) {
 	}
 }
 
+func TestDoctorAIPolicyDefaultsOffAndRoutesTriggers(t *testing.T) {
+	cfg, err := Parse(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
+		t.Fatalf("default Doctor AI config=%+v", cfg)
+	}
+	for _, policy := range []string{DoctorAIRunPolicyManualOnly, DoctorAIRunPolicyOnDemand, DoctorAIRunPolicyAutomatic} {
+		cfg.DoctorAIEnabled, cfg.DoctorAIRunPolicy = true, policy
+		if !cfg.AllowsDoctorAI(DoctorAITriggerApplyUser) {
+			t.Fatalf("policy %s must allow explicit apply", policy)
+		}
+		wantAutomatic := policy == DoctorAIRunPolicyAutomatic
+		if got := cfg.AllowsDoctorAI(DoctorAITriggerVerificationScheduler); got != wantAutomatic {
+			t.Fatalf("policy %s scheduler=%v want %v", policy, got, wantAutomatic)
+		}
+		if !cfg.AllowsDoctorAI(DoctorAITriggerVerificationUser) {
+			t.Fatalf("verification user must be explicit for persisted policy %q", policy)
+		}
+	}
+}
+
+func TestDoctorAIPolicyRoundTripsAndNormalizesInvalid(t *testing.T) {
+	cfg, err := Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"on_demand"}`))
+	if err != nil || !cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyOnDemand {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+	roundTrip, err := Parse(cfg.JSON())
+	if err != nil || !roundTrip.DoctorAIEnabled || roundTrip.DoctorAIRunPolicy != DoctorAIRunPolicyOnDemand {
+		t.Fatalf("roundtrip=%+v err=%v", roundTrip, err)
+	}
+	invalid, _ := Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"always"}`))
+	if invalid.DoctorAIEnabled || invalid.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
+		t.Fatalf("invalid authority must fail closed: %+v", invalid)
+	}
+}
+
 // Regression: an explicit buffer_days:0 must be honored, not coerced to default.
 func TestParseExplicitZeroBuffer(t *testing.T) {
 	c, err := Parse(json.RawMessage(`{"buffer_days":0}`))

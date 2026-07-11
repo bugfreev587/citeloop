@@ -41,6 +41,7 @@ func (s *Server) registerCanonicalDoctorSiteFixRoutes(r chi.Router, prefix strin
 	r.Post(prefix+"/site-fixes/{fixID}/approve", s.approveDoctorSiteFix)
 	r.Post(prefix+"/site-fixes/{fixID}/apply", s.applyDoctorSiteFix)
 	r.Post(prefix+"/site-fixes/{fixID}/verify", s.verifyDoctorSiteFix)
+	r.Post(prefix+"/site-fixes/{fixID}/terminate", s.terminateDoctorSiteFix)
 }
 
 func (s *Server) getSEODoctor(w http.ResponseWriter, r *http.Request) {
