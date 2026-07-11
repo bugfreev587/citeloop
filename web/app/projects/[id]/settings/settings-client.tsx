@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
-  AIDiscoveryAutomation,
   AutopilotReadiness,
   defaultProjectConfig,
+  DoctorAIRunPolicy,
   GSCConnection,
   GitHubNextJSPublisherInput,
   GithubIntegrationStatus,
@@ -14,7 +14,7 @@ import {
   NotificationDelivery,
   NotificationEvent,
   NotificationSubscription,
-  OpportunityFindingSourceMix,
+  GrowthAIRunPolicy,
   PublisherConnection,
   ProjectConfig,
   SafeModeEvent,
@@ -313,7 +313,7 @@ type SettingsTabId =
   | "activity"
   | "search-console"
   | "publisher"
-  | "opportunity-finding"
+  | "ai-assistance"
   | "crawl"
   | "notifications";
 
@@ -322,7 +322,7 @@ const settingsTabs: Array<{ id: SettingsTabId; title: string }> = [
   { id: "automation", title: "Automation" },
   { id: "search-console", title: "Google connection" },
   { id: "publisher", title: "Publisher connection" },
-  { id: "opportunity-finding", title: "Opportunity Finding" },
+  { id: "ai-assistance", title: "AI assistance" },
   { id: "notifications", title: "Notifications" },
   { id: "crawl", title: "Crawl config" },
   { id: "activity", title: "Activity Log" },
@@ -339,7 +339,8 @@ const settingsAnchorToTab: Record<string, SettingsTabId> = {
   activity: "activity",
   "search-console": "search-console",
   publisher: "publisher",
-  "opportunity-finding": "opportunity-finding",
+  "ai-assistance": "ai-assistance",
+  "opportunity-finding": "ai-assistance",
   crawl: "crawl",
   notifications: "notifications",
 };
@@ -373,34 +374,8 @@ const defaultPolicyDraft: PolicyDraft = {
   safe_mode_enabled: false,
 };
 
-const opportunityFindingModes: Array<{
-  value: OpportunityFindingSourceMix;
-  label: string;
-  summary: string;
-  detail: string;
-}> = [
-  {
-    value: "all",
-    label: "All",
-    summary: "Signal Scan + AI Discovery",
-    detail: "Run deterministic site/search scans and keep AI Discovery eligible.",
-  },
-  {
-    value: "signal_scan",
-    label: "Signal Scan",
-    summary: "GSC, crawl, profile signals",
-    detail: "Use existing product, crawl, and Search Console evidence only.",
-  },
-  {
-    value: "ai_discovery",
-    label: "AI Discovery",
-    summary: "AI-led public discovery",
-    detail: "Focus the finding workflow on AI Discovery settings and review.",
-  },
-];
-
-const aiDiscoveryAutomations: Array<{
-  value: AIDiscoveryAutomation;
+const doctorAIRunPolicies: Array<{
+  value: DoctorAIRunPolicy;
   label: string;
   summary: string;
   detail: string;
@@ -408,20 +383,52 @@ const aiDiscoveryAutomations: Array<{
   {
     value: "automatic",
     label: "Automatic",
-    summary: "Runs on schedule",
-    detail: "AI Discovery can run without a manual trigger when the project is eligible.",
+    summary: "Run approved Doctor AI work automatically",
+    detail: "Doctor may call the configured AI provider for eligible diagnosis, fix, and verification work without another click.",
   },
   {
-    value: "semi_automatic",
-    label: "Semi-automatic",
-    summary: "Finds first, waits for review",
-    detail: "AI Discovery can prepare findings, then waits before entering the loop.",
+    value: "on_demand",
+    label: "On demand",
+    summary: "Recommend AI, then wait",
+    detail: "Doctor can recommend AI assistance, but a user action is required before a provider call.",
   },
   {
-    value: "manual",
-    label: "Manual",
-    summary: "Run only when requested",
-    detail: "Opportunities shows a Run button instead of scheduling AI Discovery automatically.",
+    value: "manual_only",
+    label: "Manual only",
+    summary: "Only explicit user requests",
+    detail: "Doctor calls the provider only from an explicit action you take.",
+  },
+];
+
+const growthAIRunPolicies: Array<{
+  value: GrowthAIRunPolicy;
+  label: string;
+  summary: string;
+  detail: string;
+}> = [
+  {
+    value: "scheduled_and_event",
+    label: "Automatic",
+    summary: "Scheduled and approved events",
+    detail: "Opportunities may call AI on schedule and after eligible context, publish, or measurement events.",
+  },
+  {
+    value: "scheduled_only",
+    label: "Scheduled only",
+    summary: "Keep legacy scheduled authority",
+    detail: "AI can run during scheduled Opportunity Finding, but events cannot start new provider calls.",
+  },
+  {
+    value: "on_demand_recommended",
+    label: "On demand",
+    summary: "Recommend AI, then wait",
+    detail: "Opportunities can recommend an AI run, but waits for a user action before spending tokens.",
+  },
+  {
+    value: "manual_only",
+    label: "Manual only",
+    summary: "Only explicit user requests",
+    detail: "Opportunities calls the provider only when you explicitly request a run.",
   },
 ];
 
@@ -533,6 +540,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [activeEventsChannel, setActiveEventsChannel] = useState<NotificationChannel | null>(null);
   const [eventSelection, setEventSelection] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [aiAuthorityBusy, setAIAuthorityBusy] = useState<"doctor" | "growth" | null>(null);
   const [gscBusy, setGSCBusy] = useState<string | null>(null);
   const [ga4Busy, setGA4Busy] = useState(false);
   const [notificationBusy, setNotificationBusy] = useState<string | null>(null);
@@ -910,6 +918,48 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Settings save failed", detail: friendlyError(e.message), tone: "red" });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveDoctorAIAuthority() {
+    setAIAuthorityBusy("doctor");
+    setMessage(null);
+    try {
+      const saved = await api.updateConfig(projectId, {
+        doctor_ai_enabled: config.doctor_ai_enabled,
+        doctor_ai_run_policy: config.doctor_ai_run_policy,
+      });
+      setConfig(saved.config);
+      setMessage({
+        title: "Doctor AI assistance saved",
+        detail: saved.config.doctor_ai_enabled ? "Doctor can use AI under the selected run policy." : "Doctor AI provider calls are revoked.",
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Doctor AI settings failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setAIAuthorityBusy(null);
+    }
+  }
+
+  async function saveGrowthAIAuthority() {
+    setAIAuthorityBusy("growth");
+    setMessage(null);
+    try {
+      const saved = await api.updateConfig(projectId, {
+        growth_ai_enabled: config.growth_ai_enabled,
+        growth_ai_run_policy: config.growth_ai_run_policy,
+      });
+      setConfig(saved.config);
+      setMessage({
+        title: "Opportunities AI assistance saved",
+        detail: saved.config.growth_ai_enabled ? "Opportunities can use AI under the selected run policy." : "Opportunities AI provider calls are revoked.",
+        tone: "green",
+      });
+    } catch (e: any) {
+      setMessage({ title: "Opportunities AI settings failed", detail: friendlyError(e.message), tone: "red" });
+    } finally {
+      setAIAuthorityBusy(null);
     }
   }
 
@@ -1420,17 +1470,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const selectedAutomationCard = selectedAutomationCheck
     ? automationReadinessCards.find((card) => card.id === selectedAutomationCheck) ?? null
     : null;
-  const aiDiscoveryFindingEnabled = config.opportunity_finding_source_mix !== "signal_scan";
-  const opportunityFindingBadgeLabel = aiDiscoveryFindingEnabled
-    ? config.ai_discovery_automation === "manual"
-      ? "Manual mode"
-      : "Scheduled"
-    : "Signal Scan only";
-  const opportunityFindingBadgeTone = aiDiscoveryFindingEnabled
-    ? config.ai_discovery_automation === "manual"
-      ? "amber"
-      : "green"
-    : "neutral";
+  const doctorAIStatus = config.doctor_ai_enabled ? "on" : "off";
+  const growthAIStatus = config.growth_ai_enabled ? "on" : "off";
 
   return (
     <div className="space-y-7">
@@ -2500,80 +2541,144 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       </section>
       )}
 
-      {activeSettingsTab === "opportunity-finding" && (
-      <section id="settings-panel-opportunity-finding" role="tabpanel" aria-labelledby="settings-tab-opportunity-finding" tabIndex={0}>
-        <SectionHeader title="Opportunity Finding" eyebrow="Growth discovery" />
-        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-col gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-950">Finding pipeline</div>
-              <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-600">
-                {aiDiscoveryFindingEnabled
-                  ? "Signal Scan uses connected site evidence. AI Discovery is the AI-led public discovery stage. All keeps both enabled."
-                  : "Signal Scan uses connected site evidence only. AI Discovery stays off while this mode is selected."}
-              </p>
+      {activeSettingsTab === "ai-assistance" && (
+      <section id="settings-panel-ai-assistance" role="tabpanel" aria-labelledby="settings-tab-ai-assistance" tabIndex={0} className="space-y-4">
+        <SectionHeader title="AI assistance" eyebrow="Independent execution authority" />
+
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-bold text-slate-950">
+              AI assistance: Doctor {doctorAIStatus} · Opportunities {growthAIStatus}
             </div>
-            <Badge tone={opportunityFindingBadgeTone}>{opportunityFindingBadgeLabel}</Badge>
+            <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-600">
+              Each line has separate consent. Turning one off does not change the other line.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={config.doctor_ai_enabled ? "green" : "neutral"}>Doctor {doctorAIStatus}</Badge>
+            <Badge tone={config.growth_ai_enabled ? "green" : "neutral"}>Opportunities {growthAIStatus}</Badge>
+          </div>
+        </div>
+
+        <Notice
+          tone="amber"
+          title="Provider use and cost"
+          detail={`Doctor and Opportunities can use the same shared provider credential, but that credential is not execution authority. Enabled calls consume provider tokens and count toward your $${config.monthly_budget_usd.toFixed(2)} monthly project budget.`}
+        />
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+          <div className="grid content-start gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Doctor</div>
+                <h3 className="mt-1 text-base font-bold text-slate-950">AI-assisted diagnosis and Site Fixes</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-600">
+                  Authorizes AI calls only for Doctor diagnosis, fix preparation, and verification.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="AI assistance for Doctor"
+                aria-checked={config.doctor_ai_enabled}
+                onClick={() => update({ doctor_ai_enabled: !config.doctor_ai_enabled })}
+                className={cx(
+                  "relative h-7 w-12 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d93820] focus-visible:ring-offset-2 active:scale-[0.98]",
+                  config.doctor_ai_enabled ? "bg-[#d93820]" : "bg-slate-300",
+                )}
+              >
+                <span className={cx("absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform", config.doctor_ai_enabled ? "translate-x-6" : "translate-x-1")} />
+              </button>
+            </div>
+
+            <Field label="Doctor AI run policy" helper="Choose or confirm this policy before enabling Doctor AI.">
+              <div className="grid gap-2">
+                {doctorAIRunPolicies.map((policyOption) => {
+                  const active = config.doctor_ai_run_policy === policyOption.value;
+                  return (
+                    <button
+                      key={policyOption.value}
+                      type="button"
+                      disabled={!config.doctor_ai_enabled}
+                      onClick={() => update({ doctor_ai_run_policy: policyOption.value })}
+                      className={cx(
+                        "rounded-lg border px-3 py-3 text-left transition-colors active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50",
+                        active ? "border-[#d93820] bg-red-50" : "border-slate-200 hover:border-slate-300",
+                      )}
+                    >
+                      <span className="flex items-center justify-between gap-2 text-sm font-bold text-slate-900">
+                        {policyOption.label}
+                        {active && <CheckCircle2 size={16} className="text-[#d93820]" />}
+                      </span>
+                      <span className="mt-1 block text-sm font-semibold text-slate-700">{policyOption.summary}</span>
+                      <span className="mt-1 block text-sm leading-5 text-slate-500">{policyOption.detail}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Button variant="primary" onClick={saveDoctorAIAuthority} disabled={aiAuthorityBusy !== null}>
+              <ButtonProgress busy={aiAuthorityBusy === "doctor"} busyLabel="Saving Doctor authority" idleIcon={<Save size={16} />}>
+                Save Doctor AI settings
+              </ButtonProgress>
+            </Button>
           </div>
 
-          <Field label="Mode selection">
-            <div className="grid gap-2 md:grid-cols-3">
-              {opportunityFindingModes.map((mode) => {
-                const active = config.opportunity_finding_source_mix === mode.value;
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => update({ opportunity_finding_source_mix: mode.value })}
-                    className={cx(
-                      "min-h-28 rounded-lg border px-3 py-3 text-left transition-colors",
-                      active ? "border-sky-400 bg-sky-50 text-slate-950 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold">{mode.label}</span>
-                      {active && <CheckCircle2 size={16} className="shrink-0 text-sky-600" />}
-                    </div>
-                    <div className="mt-2 text-sm font-semibold text-slate-800">{mode.summary}</div>
-                    <p className="mt-1 text-sm leading-5 text-slate-500">{mode.detail}</p>
-                  </button>
-                );
-              })}
+          <div className="grid content-start gap-4 rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Opportunities</div>
+                <h3 className="mt-1 text-base font-bold text-slate-950">AI-assisted closed-loop growth</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-600">
+                  Authorizes AI calls only for growth discovery, content generation, measurement, and learning.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="AI assistance for Opportunities"
+                aria-checked={config.growth_ai_enabled}
+                onClick={() => update({ growth_ai_enabled: !config.growth_ai_enabled })}
+                className={cx(
+                  "relative h-7 w-12 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d93820] focus-visible:ring-offset-2 active:scale-[0.98]",
+                  config.growth_ai_enabled ? "bg-[#d93820]" : "bg-slate-300",
+                )}
+              >
+                <span className={cx("absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform", config.growth_ai_enabled ? "translate-x-6" : "translate-x-1")} />
+              </button>
             </div>
-          </Field>
 
-          {aiDiscoveryFindingEnabled && (
-          <Field label="AI Discovery Setting">
-            <div className="grid gap-2 md:grid-cols-3">
-              {aiDiscoveryAutomations.map((automation) => {
-                const active = config.ai_discovery_automation === automation.value;
-                return (
-                  <button
-                    key={automation.value}
-                    type="button"
-                    onClick={() => update({ ai_discovery_automation: automation.value })}
-                    className={cx(
-                      "min-h-28 rounded-lg border px-3 py-3 text-left transition-colors",
-                      active ? "border-emerald-400 bg-emerald-50 text-slate-950 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold">{automation.label}</span>
-                      {active && <CheckCircle2 size={16} className="shrink-0 text-emerald-600" />}
-                    </div>
-                    <div className="mt-2 text-sm font-semibold text-slate-800">{automation.summary}</div>
-                    <p className="mt-1 text-sm leading-5 text-slate-500">{automation.detail}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-          )}
+            <Field label="Opportunities AI run policy" helper="Event-triggered calls require the Automatic policy to be explicitly selected and saved.">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {growthAIRunPolicies.map((policyOption) => {
+                  const active = config.growth_ai_run_policy === policyOption.value;
+                  return (
+                    <button
+                      key={policyOption.value}
+                      type="button"
+                      disabled={!config.growth_ai_enabled}
+                      onClick={() => update({ growth_ai_run_policy: policyOption.value })}
+                      className={cx(
+                        "rounded-lg border px-3 py-3 text-left transition-colors active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50",
+                        active ? "border-[#d93820] bg-red-50" : "border-slate-200 hover:border-slate-300",
+                      )}
+                    >
+                      <span className="flex items-center justify-between gap-2 text-sm font-bold text-slate-900">
+                        {policyOption.label}
+                        {active && <CheckCircle2 size={16} className="text-[#d93820]" />}
+                      </span>
+                      <span className="mt-1 block text-sm font-semibold text-slate-700">{policyOption.summary}</span>
+                      <span className="mt-1 block text-sm leading-5 text-slate-500">{policyOption.detail}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
 
-          <div>
-            <Button disabled={busy} variant="primary" onClick={save}>
-              <ButtonProgress busy={busy} busyLabel="Saving settings" idleIcon={<Save size={16} />}>
-                Save settings
+            <Button variant="primary" onClick={saveGrowthAIAuthority} disabled={aiAuthorityBusy !== null}>
+              <ButtonProgress busy={aiAuthorityBusy === "growth"} busyLabel="Saving Opportunities authority" idleIcon={<Save size={16} />}>
+                Save Opportunities AI settings
               </ButtonProgress>
             </Button>
           </div>

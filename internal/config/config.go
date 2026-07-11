@@ -144,8 +144,15 @@ type ProjectConfig struct {
 	// keeps its own deterministic schedule so processed opportunities never
 	// depend on LLM availability.
 	AIDiscoveryAutomation string `json:"ai_discovery_automation"`
-	DoctorAIEnabled       bool   `json:"doctor_ai_enabled"`
-	DoctorAIRunPolicy     string `json:"doctor_ai_run_policy"`
+	// CapabilityPolicyVersion marks configs that have passed the legacy
+	// discovery-settings authority migration. The legacy fields above remain
+	// readable during the cutover, but no longer decide provider-call authority.
+	CapabilityPolicyVersion int    `json:"capability_policy_version"`
+	GrowthSignalEnabled     bool   `json:"growth_signal_enabled"`
+	GrowthAIEnabled         bool   `json:"growth_ai_enabled"`
+	GrowthAIRunPolicy       string `json:"growth_ai_run_policy"`
+	DoctorAIEnabled         bool   `json:"doctor_ai_enabled"`
+	DoctorAIRunPolicy       string `json:"doctor_ai_run_policy"`
 	// PublishMode controls how approved canonicals reach the live blog:
 	//   "manual" (default) — wait on the Publish page until the operator publishes/schedules;
 	//   "scheduled" — staggered one every PublishIntervalDays so a batch
@@ -164,17 +171,36 @@ const (
 )
 
 const (
+	CapabilityPolicyVersionV1 = 1
+
 	DoctorAIRunPolicyManualOnly = "manual_only"
 	DoctorAIRunPolicyOnDemand   = "on_demand"
 	DoctorAIRunPolicyAutomatic  = "automatic"
 )
 
+const (
+	GrowthAIRunPolicyScheduledOnly       = "scheduled_only"
+	GrowthAIRunPolicyScheduledAndEvent   = "scheduled_and_event"
+	GrowthAIRunPolicyOnDemandRecommended = "on_demand_recommended"
+	GrowthAIRunPolicyManualOnly          = "manual_only"
+)
+
 type DoctorAITrigger string
 
 const (
+	DoctorAITriggerDiagnosisUser         DoctorAITrigger = "diagnosis_user"
+	DoctorAITriggerDiagnosisScheduler    DoctorAITrigger = "diagnosis_scheduler"
 	DoctorAITriggerApplyUser             DoctorAITrigger = "apply_user"
 	DoctorAITriggerVerificationUser      DoctorAITrigger = "verification_user"
 	DoctorAITriggerVerificationScheduler DoctorAITrigger = "verification_scheduler"
+)
+
+type GrowthAITrigger string
+
+const (
+	GrowthAITriggerManual    GrowthAITrigger = "manual"
+	GrowthAITriggerScheduled GrowthAITrigger = "scheduled"
+	GrowthAITriggerEvent     GrowthAITrigger = "event"
 )
 
 // Opportunity finding source values.
@@ -206,6 +232,10 @@ func Default() ProjectConfig {
 		AutoAdvanceEnabled:          false,
 		OpportunityFindingSourceMix: OpportunityFindingSourceAll,
 		AIDiscoveryAutomation:       AIDiscoveryAutomationSemiAutomatic,
+		CapabilityPolicyVersion:     CapabilityPolicyVersionV1,
+		GrowthSignalEnabled:         true,
+		GrowthAIEnabled:             true,
+		GrowthAIRunPolicy:           GrowthAIRunPolicyOnDemandRecommended,
 		DoctorAIEnabled:             false,
 		DoctorAIRunPolicy:           DoctorAIRunPolicyManualOnly,
 		PublishMode:                 PublishModeManual,
@@ -222,16 +252,35 @@ func Default() ProjectConfig {
 	}
 }
 
+func (c ProjectConfig) AllowsGrowthAI(trigger GrowthAITrigger) bool {
+	if !c.GrowthAIEnabled {
+		return false
+	}
+	switch trigger {
+	case GrowthAITriggerManual:
+		return c.GrowthAIRunPolicy == GrowthAIRunPolicyManualOnly ||
+			c.GrowthAIRunPolicy == GrowthAIRunPolicyOnDemandRecommended ||
+			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly ||
+			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
+	case GrowthAITriggerScheduled:
+		return c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly || c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
+	case GrowthAITriggerEvent:
+		return c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
+	default:
+		return false
+	}
+}
+
 func (c ProjectConfig) AllowsDoctorAI(trigger DoctorAITrigger) bool {
 	if !c.DoctorAIEnabled {
 		return false
 	}
 	switch trigger {
-	case DoctorAITriggerApplyUser:
+	case DoctorAITriggerDiagnosisUser, DoctorAITriggerApplyUser:
 		return c.DoctorAIRunPolicy == DoctorAIRunPolicyManualOnly || c.DoctorAIRunPolicy == DoctorAIRunPolicyOnDemand || c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
 	case DoctorAITriggerVerificationUser:
 		return c.DoctorAIRunPolicy == DoctorAIRunPolicyManualOnly || c.DoctorAIRunPolicy == DoctorAIRunPolicyOnDemand || c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
-	case DoctorAITriggerVerificationScheduler:
+	case DoctorAITriggerDiagnosisScheduler, DoctorAITriggerVerificationScheduler:
 		return c.DoctorAIRunPolicy == DoctorAIRunPolicyAutomatic
 	default:
 		return false
@@ -239,19 +288,12 @@ func (c ProjectConfig) AllowsDoctorAI(trigger DoctorAITrigger) bool {
 }
 
 func (c ProjectConfig) OpportunityFindingStages(automatic bool) OpportunityFindingStages {
-	stages := OpportunityFindingStages{}
-	switch c.OpportunityFindingSourceMix {
-	case OpportunityFindingSourceAIDiscovery:
-		stages.SignalScan = false
-	case OpportunityFindingSourceSignalScan:
-		stages.SignalScan = true
-	default:
-		stages.SignalScan = true
+	stages := OpportunityFindingStages{SignalScan: c.GrowthSignalEnabled}
+	trigger := GrowthAITriggerManual
+	if automatic {
+		trigger = GrowthAITriggerScheduled
 	}
-	if c.OpportunityFindingSourceMix == OpportunityFindingSourceSignalScan {
-		return stages
-	}
-	stages.AIDiscovery = !automatic || c.AIDiscoveryAutomation == AIDiscoveryAutomationAutomatic
+	stages.AIDiscovery = c.AllowsGrowthAI(trigger)
 	return stages
 }
 
@@ -265,6 +307,11 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	if len(raw) == 0 || string(raw) == "{}" {
 		return c, nil
 	}
+	stored := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return c, err
+	}
+	_, hasCapabilityVersion := stored["capability_policy_version"]
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return c, err
 	}
@@ -292,6 +339,45 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	case AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual:
 	default:
 		c.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
+	}
+	if !hasCapabilityVersion || c.CapabilityPolicyVersion < CapabilityPolicyVersionV1 {
+		// Legacy source modes are mapped once into internal capabilities. Doctor
+		// AI is deliberately new authority and therefore always starts disabled.
+		c.GrowthSignalEnabled = c.OpportunityFindingSourceMix != OpportunityFindingSourceAIDiscovery
+		c.GrowthAIEnabled = c.OpportunityFindingSourceMix != OpportunityFindingSourceSignalScan
+		switch c.AIDiscoveryAutomation {
+		case AIDiscoveryAutomationAutomatic:
+			c.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
+		case AIDiscoveryAutomationManual:
+			c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+		default:
+			c.GrowthAIRunPolicy = GrowthAIRunPolicyOnDemandRecommended
+		}
+		c.DoctorAIEnabled = false
+		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
+		c.CapabilityPolicyVersion = CapabilityPolicyVersionV1
+	} else {
+		// Versioned but incomplete payloads fail closed for provider calls. The
+		// update endpoint merges patches over the stored config, so normal saves
+		// always retain these fields.
+		if _, ok := stored["growth_ai_enabled"]; !ok {
+			c.GrowthAIEnabled = false
+		}
+		if _, ok := stored["doctor_ai_enabled"]; !ok {
+			c.DoctorAIEnabled = false
+		}
+		if _, ok := stored["growth_ai_run_policy"]; !ok {
+			c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+		}
+		if _, ok := stored["doctor_ai_run_policy"]; !ok {
+			c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
+		}
+	}
+	switch c.GrowthAIRunPolicy {
+	case GrowthAIRunPolicyScheduledOnly, GrowthAIRunPolicyScheduledAndEvent, GrowthAIRunPolicyOnDemandRecommended, GrowthAIRunPolicyManualOnly:
+	default:
+		c.GrowthAIEnabled = false
+		c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
 	}
 	switch c.DoctorAIRunPolicy {
 	case DoctorAIRunPolicyManualOnly, DoctorAIRunPolicyOnDemand, DoctorAIRunPolicyAutomatic:

@@ -118,6 +118,101 @@ func TestParseKeepsExplicitOpportunityFindingSettings(t *testing.T) {
 	}
 }
 
+func TestParseMigratesLegacyDiscoveryAuthorityWithoutExpandingProviderCalls(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       string
+		signal    bool
+		growthAI  bool
+		growthRun string
+	}{
+		{name: "all automatic", raw: `{"opportunity_finding_source_mix":"all","ai_discovery_automation":"automatic"}`, signal: true, growthAI: true, growthRun: GrowthAIRunPolicyScheduledOnly},
+		{name: "signal manual", raw: `{"opportunity_finding_source_mix":"signal_scan","ai_discovery_automation":"manual"}`, signal: true, growthAI: false, growthRun: GrowthAIRunPolicyManualOnly},
+		{name: "AI only semi automatic", raw: `{"opportunity_finding_source_mix":"ai_discovery","ai_discovery_automation":"semi_automatic"}`, signal: false, growthAI: true, growthRun: GrowthAIRunPolicyOnDemandRecommended},
+		{name: "legacy defaults", raw: `{}`, signal: true, growthAI: true, growthRun: GrowthAIRunPolicyOnDemandRecommended},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse(json.RawMessage(tt.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.GrowthSignalEnabled != tt.signal || cfg.GrowthAIEnabled != tt.growthAI || cfg.GrowthAIRunPolicy != tt.growthRun {
+				t.Fatalf("migrated config=%+v", cfg)
+			}
+			if cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
+				t.Fatalf("legacy config silently gained Doctor AI authority: %+v", cfg)
+			}
+			if cfg.CapabilityPolicyVersion != CapabilityPolicyVersionV1 {
+				t.Fatalf("capability policy version=%d", cfg.CapabilityPolicyVersion)
+			}
+		})
+	}
+}
+
+func TestGrowthAIPolicySeparatesManualScheduledAndEventAuthority(t *testing.T) {
+	cfg := Default()
+	cfg.GrowthAIEnabled = true
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
+	if !cfg.AllowsGrowthAI(GrowthAITriggerManual) || !cfg.AllowsGrowthAI(GrowthAITriggerScheduled) {
+		t.Fatal("scheduled_only must retain explicit and legacy scheduled calls")
+	}
+	if cfg.AllowsGrowthAI(GrowthAITriggerEvent) {
+		t.Fatal("scheduled_only must not silently authorize event-driven provider calls")
+	}
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledAndEvent
+	if !cfg.AllowsGrowthAI(GrowthAITriggerEvent) {
+		t.Fatal("scheduled_and_event must authorize an explicitly confirmed event call")
+	}
+	cfg.GrowthAIEnabled = false
+	for _, trigger := range []GrowthAITrigger{GrowthAITriggerManual, GrowthAITriggerScheduled, GrowthAITriggerEvent} {
+		if cfg.AllowsGrowthAI(trigger) {
+			t.Fatalf("disabled Growth AI authorized %s", trigger)
+		}
+	}
+}
+
+func TestOpportunityFindingStagesUseCapabilityPolicyInsteadOfLegacyProductModes(t *testing.T) {
+	cfg := Default()
+	cfg.GrowthSignalEnabled = false
+	cfg.GrowthAIEnabled = true
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAll
+	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationAutomatic
+
+	if got := cfg.OpportunityFindingStages(true); got.SignalScan || got.AIDiscovery {
+		t.Fatalf("legacy fields expanded scheduled authority: %+v", got)
+	}
+	if got := cfg.OpportunityFindingStages(false); got.SignalScan || !got.AIDiscovery {
+		t.Fatalf("manual capability stages=%+v", got)
+	}
+}
+
+func TestExplicitCapabilityPolicyRoundTripsIndependentLineAuthority(t *testing.T) {
+	raw := json.RawMessage(`{
+		"capability_policy_version":1,
+		"growth_signal_enabled":false,
+		"growth_ai_enabled":true,
+		"growth_ai_run_policy":"scheduled_only",
+		"doctor_ai_enabled":false,
+		"doctor_ai_run_policy":"manual_only"
+	}`)
+	cfg, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GrowthSignalEnabled || !cfg.GrowthAIEnabled || cfg.DoctorAIEnabled {
+		t.Fatalf("partial authority state was not preserved: %+v", cfg)
+	}
+	roundTrip, err := Parse(cfg.JSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.GrowthSignalEnabled || !roundTrip.GrowthAIEnabled || roundTrip.DoctorAIEnabled {
+		t.Fatalf("round-trip changed independent authority: %+v", roundTrip)
+	}
+}
+
 func TestOpportunityFindingStagesRespectAutomaticEligibility(t *testing.T) {
 	cfg := Default()
 	stages := cfg.OpportunityFindingStages(true)
@@ -128,19 +223,20 @@ func TestOpportunityFindingStagesRespectAutomaticEligibility(t *testing.T) {
 		t.Fatal("default semi-automatic AI Discovery should not spend provider tokens on the daily automatic tick")
 	}
 
-	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationAutomatic
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
 	stages = cfg.OpportunityFindingStages(true)
 	if !stages.SignalScan || !stages.AIDiscovery {
 		t.Fatalf("automatic all-mode stages = %+v, want Signal Scan and AI Discovery", stages)
 	}
 
-	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAIDiscovery
+	cfg.GrowthSignalEnabled = false
 	stages = cfg.OpportunityFindingStages(true)
 	if stages.SignalScan || !stages.AIDiscovery {
 		t.Fatalf("automatic AI-only stages = %+v, want AI Discovery only", stages)
 	}
 
-	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceSignalScan
+	cfg.GrowthSignalEnabled = true
+	cfg.GrowthAIEnabled = false
 	stages = cfg.OpportunityFindingStages(true)
 	if !stages.SignalScan || stages.AIDiscovery {
 		t.Fatalf("signal-scan stages = %+v, want Signal Scan only", stages)
@@ -149,14 +245,14 @@ func TestOpportunityFindingStagesRespectAutomaticEligibility(t *testing.T) {
 
 func TestOpportunityFindingStagesManualRunTriggersEnabledAIDiscovery(t *testing.T) {
 	cfg := Default()
-	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationManual
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
 	stages := cfg.OpportunityFindingStages(false)
 	if !stages.SignalScan || !stages.AIDiscovery {
 		t.Fatalf("manual all-mode run stages = %+v, want Signal Scan and AI Discovery", stages)
 	}
 
-	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
-	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAIDiscovery
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyOnDemandRecommended
+	cfg.GrowthSignalEnabled = false
 	stages = cfg.OpportunityFindingStages(false)
 	if stages.SignalScan || !stages.AIDiscovery {
 		t.Fatalf("manual semi-automatic AI-only run stages = %+v, want AI Discovery only", stages)
@@ -200,7 +296,7 @@ func TestDoctorAIPolicyDefaultsOffAndRoutesTriggers(t *testing.T) {
 }
 
 func TestDoctorAIPolicyRoundTripsAndNormalizesInvalid(t *testing.T) {
-	cfg, err := Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"on_demand"}`))
+	cfg, err := Parse(json.RawMessage(`{"capability_policy_version":1,"doctor_ai_enabled":true,"doctor_ai_run_policy":"on_demand","growth_ai_enabled":false,"growth_ai_run_policy":"manual_only"}`))
 	if err != nil || !cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyOnDemand {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
@@ -208,7 +304,7 @@ func TestDoctorAIPolicyRoundTripsAndNormalizesInvalid(t *testing.T) {
 	if err != nil || !roundTrip.DoctorAIEnabled || roundTrip.DoctorAIRunPolicy != DoctorAIRunPolicyOnDemand {
 		t.Fatalf("roundtrip=%+v err=%v", roundTrip, err)
 	}
-	invalid, _ := Parse(json.RawMessage(`{"doctor_ai_enabled":true,"doctor_ai_run_policy":"always"}`))
+	invalid, _ := Parse(json.RawMessage(`{"capability_policy_version":1,"doctor_ai_enabled":true,"doctor_ai_run_policy":"always","growth_ai_enabled":false,"growth_ai_run_policy":"manual_only"}`))
 	if invalid.DoctorAIEnabled || invalid.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
 		t.Fatalf("invalid authority must fail closed: %+v", invalid)
 	}

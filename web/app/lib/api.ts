@@ -133,6 +133,12 @@ export type ProjectConfig = {
   auto_advance_enabled: boolean;
   opportunity_finding_source_mix: OpportunityFindingSourceMix;
   ai_discovery_automation: AIDiscoveryAutomation;
+  capability_policy_version: 1;
+  growth_signal_enabled: boolean;
+  growth_ai_enabled: boolean;
+  growth_ai_run_policy: GrowthAIRunPolicy;
+  doctor_ai_enabled: boolean;
+  doctor_ai_run_policy: DoctorAIRunPolicy;
   publish_mode?: "scheduled" | "manual";
   publish_interval_days?: number;
   crawl: {
@@ -148,6 +154,8 @@ export type ProjectConfig = {
 
 export type OpportunityFindingSourceMix = "all" | "signal_scan" | "ai_discovery";
 export type AIDiscoveryAutomation = "automatic" | "semi_automatic" | "manual";
+export type GrowthAIRunPolicy = "scheduled_only" | "scheduled_and_event" | "on_demand_recommended" | "manual_only";
+export type DoctorAIRunPolicy = "automatic" | "on_demand" | "manual_only";
 
 export type Project = {
   id: string;
@@ -483,6 +491,9 @@ export type OpportunityFindingRun = {
 export type OpportunityFindingStatus = {
   source_mix: OpportunityFindingSourceMix;
   ai_discovery_automation: AIDiscoveryAutomation;
+  growth_signal_enabled: boolean;
+  growth_ai_enabled: boolean;
+  growth_ai_run_policy: GrowthAIRunPolicy;
   manual_mode: boolean;
   last_run?: OpportunityFindingRun | null;
   next_finding_at?: any;
@@ -1182,6 +1193,12 @@ export function defaultProjectConfig(): ProjectConfig {
     auto_advance_enabled: false,
     opportunity_finding_source_mix: "all",
     ai_discovery_automation: "semi_automatic",
+    capability_policy_version: 1,
+    growth_signal_enabled: true,
+    growth_ai_enabled: true,
+    growth_ai_run_policy: "on_demand_recommended",
+    doctor_ai_enabled: false,
+    doctor_ai_run_policy: "manual_only",
     publish_mode: "manual",
     publish_interval_days: 2,
     crawl: {
@@ -1204,16 +1221,40 @@ function normalizeAIDiscoveryAutomation(value: any): AIDiscoveryAutomation {
   return value === "automatic" || value === "manual" || value === "semi_automatic" ? value : "semi_automatic";
 }
 
+function normalizeGrowthAIRunPolicy(value: any): GrowthAIRunPolicy {
+  return value === "scheduled_only" || value === "scheduled_and_event" || value === "on_demand_recommended" || value === "manual_only"
+    ? value
+    : "manual_only";
+}
+
+function normalizeDoctorAIRunPolicy(value: any): DoctorAIRunPolicy {
+  return value === "automatic" || value === "on_demand" || value === "manual_only" ? value : "manual_only";
+}
+
 function normalizeProjectConfig(raw: any): ProjectConfig {
   const defaults = defaultProjectConfig();
   const data = raw ?? {};
+  const sourceMix = normalizeOpportunityFindingSourceMix(data.opportunity_finding_source_mix);
+  const legacyAutomation = normalizeAIDiscoveryAutomation(data.ai_discovery_automation);
+  const hasCapabilityPolicy = Number(data.capability_policy_version) >= 1;
+  const migratedGrowthPolicy: GrowthAIRunPolicy = legacyAutomation === "automatic"
+    ? "scheduled_only"
+    : legacyAutomation === "manual"
+      ? "manual_only"
+      : "on_demand_recommended";
   return {
     ...defaults,
     ...data,
     channel_mix: { ...defaults.channel_mix, ...(data.channel_mix ?? {}) },
     crawl: { ...defaults.crawl, ...(data.crawl ?? {}) },
-    opportunity_finding_source_mix: normalizeOpportunityFindingSourceMix(data.opportunity_finding_source_mix),
-    ai_discovery_automation: normalizeAIDiscoveryAutomation(data.ai_discovery_automation),
+    opportunity_finding_source_mix: sourceMix,
+    ai_discovery_automation: legacyAutomation,
+    capability_policy_version: 1,
+    growth_signal_enabled: hasCapabilityPolicy ? data.growth_signal_enabled !== false : sourceMix !== "ai_discovery",
+    growth_ai_enabled: hasCapabilityPolicy ? data.growth_ai_enabled === true : sourceMix !== "signal_scan",
+    growth_ai_run_policy: hasCapabilityPolicy ? normalizeGrowthAIRunPolicy(data.growth_ai_run_policy) : migratedGrowthPolicy,
+    doctor_ai_enabled: hasCapabilityPolicy && data.doctor_ai_enabled === true,
+    doctor_ai_run_policy: hasCapabilityPolicy ? normalizeDoctorAIRunPolicy(data.doctor_ai_run_policy) : "manual_only",
   };
 }
 
@@ -1340,9 +1381,21 @@ function normalizeSEOSettings(raw: any): { property?: SEOProperty | null; integr
 function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
   const data = raw ?? {};
   const counts = data.counts ?? {};
+  const sourceMix = normalizeOpportunityFindingSourceMix(data.source_mix);
+  const legacyAutomation = normalizeAIDiscoveryAutomation(data.ai_discovery_automation);
+  const hasGrowthAuthority = typeof data.growth_ai_enabled === "boolean";
   return {
-    source_mix: normalizeOpportunityFindingSourceMix(data.source_mix),
-    ai_discovery_automation: normalizeAIDiscoveryAutomation(data.ai_discovery_automation),
+    source_mix: sourceMix,
+    ai_discovery_automation: legacyAutomation,
+    growth_signal_enabled: typeof data.growth_signal_enabled === "boolean" ? data.growth_signal_enabled : sourceMix !== "ai_discovery",
+    growth_ai_enabled: hasGrowthAuthority ? data.growth_ai_enabled : sourceMix !== "signal_scan",
+    growth_ai_run_policy: data.growth_ai_run_policy
+      ? normalizeGrowthAIRunPolicy(data.growth_ai_run_policy)
+      : legacyAutomation === "automatic"
+        ? "scheduled_only"
+        : legacyAutomation === "manual"
+          ? "manual_only"
+          : "on_demand_recommended",
     manual_mode: Boolean(data.manual_mode),
     last_run: data.last_run
       ? {
@@ -2173,7 +2226,7 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/`, undefined, auth);
     return normalizeProject(raw);
   },
-  updateConfig: async (id: string, config: ProjectConfig) => {
+  updateConfig: async (id: string, config: Partial<ProjectConfig>) => {
     const raw = await req<any>(`/projects/${id}/config`, { method: "PUT", body: JSON.stringify(config) }, auth);
     return normalizeProject(raw);
   },

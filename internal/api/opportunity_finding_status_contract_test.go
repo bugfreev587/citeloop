@@ -14,8 +14,9 @@ func TestOpportunityFindingStatusUsesRunHistoryAndProjectConfig(t *testing.T) {
 	source := string(raw)
 	for _, want := range []string{
 		"type OpportunityFindingStatus struct",
-		"SourceMix",
-		"AIDiscoveryAutomation",
+		"GrowthSignalEnabled",
+		"GrowthAIEnabled",
+		"GrowthAIRunPolicy",
 		"ManualMode",
 		"LastRun",
 		"NextFindingAt",
@@ -29,6 +30,23 @@ func TestOpportunityFindingStatusUsesRunHistoryAndProjectConfig(t *testing.T) {
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("opportunity finding status contract missing %q", want)
+		}
+	}
+}
+
+func TestOpportunityFindingStatusUsesCapabilityAuthority(t *testing.T) {
+	raw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatalf("read handlers_seo.go: %v", err)
+	}
+	source := string(raw)
+	for _, marker := range []string{"func opportunityFindingAISummary", "func opportunityFindingManualMode", "func nextOpportunityFindingAt"} {
+		body := functionBody(t, source, marker)
+		if strings.Contains(body, "OpportunityFindingSourceMix") || strings.Contains(body, "AIDiscoveryAutomation") {
+			t.Fatalf("%s still uses retired product-mode authority", marker)
+		}
+		if !strings.Contains(body, "GrowthAI") && marker != "func nextOpportunityFindingAt" {
+			t.Fatalf("%s does not consume Growth AI capability policy", marker)
 		}
 	}
 }

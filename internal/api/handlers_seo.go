@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -29,7 +30,7 @@ import (
 )
 
 func (s *Server) seoService() seopkg.Service {
-	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData}
+	return seopkg.Service{Q: s.Q, BlogBaseURL: s.Env.BlogBaseURL, GoogleData: s.SEOData, LLM: s.LLM, DoctorAIModel: s.Env.TokenGateModel}
 }
 
 func (s *Server) seoServiceForProject(ctx context.Context, projectID uuid.UUID) seopkg.Service {
@@ -157,6 +158,9 @@ type ResultsAction struct {
 type OpportunityFindingStatus struct {
 	SourceMix             string                          `json:"source_mix"`
 	AIDiscoveryAutomation string                          `json:"ai_discovery_automation"`
+	GrowthSignalEnabled   bool                            `json:"growth_signal_enabled"`
+	GrowthAIEnabled       bool                            `json:"growth_ai_enabled"`
+	GrowthAIRunPolicy     string                          `json:"growth_ai_run_policy"`
 	ManualMode            bool                            `json:"manual_mode"`
 	LastRun               *OpportunityFindingRun          `json:"last_run,omitempty"`
 	NextFindingAt         *time.Time                      `json:"next_finding_at,omitempty"`
@@ -350,6 +354,9 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 	status := OpportunityFindingStatus{
 		SourceMix:             cfg.OpportunityFindingSourceMix,
 		AIDiscoveryAutomation: cfg.AIDiscoveryAutomation,
+		GrowthSignalEnabled:   cfg.GrowthSignalEnabled,
+		GrowthAIEnabled:       cfg.GrowthAIEnabled,
+		GrowthAIRunPolicy:     cfg.GrowthAIRunPolicy,
 		ManualMode:            opportunityFindingManualMode(cfg),
 		LastRun:               opportunityFindingRunView(latestRun),
 		NextFindingAt:         nextOpportunityFindingAt(time.Now().UTC(), cfg),
@@ -477,26 +484,28 @@ func opportunityFindingSummaryFromNote(note string) (OpportunityFindingSummaryIt
 }
 
 func opportunityFindingAISummary(cfg config.ProjectConfig) OpportunityFindingSummaryItem {
-	if cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan {
-		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Off by settings", Tone: "neutral"}
+	if !cfg.GrowthAIEnabled {
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Off for Opportunities", Tone: "neutral"}
 	}
-	switch cfg.AIDiscoveryAutomation {
-	case config.AIDiscoveryAutomationAutomatic:
-		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Configured for automatic runs", Tone: "green"}
-	case config.AIDiscoveryAutomationManual:
-		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Manual mode; run when needed", Tone: "amber"}
+	switch cfg.GrowthAIRunPolicy {
+	case config.GrowthAIRunPolicyScheduledAndEvent:
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Scheduled and approved event runs", Tone: "green"}
+	case config.GrowthAIRunPolicyScheduledOnly:
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Scheduled runs only", Tone: "green"}
+	case config.GrowthAIRunPolicyManualOnly:
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "Manual only", Tone: "amber"}
 	default:
-		return OpportunityFindingSummaryItem{Label: "AI Discovery", Detail: "Semi-automatic; review before loop entry", Tone: "neutral"}
+		return OpportunityFindingSummaryItem{Label: "AI assistance", Detail: "On demand; review before provider use", Tone: "neutral"}
 	}
 }
 
 func opportunityFindingManualMode(cfg config.ProjectConfig) bool {
-	return cfg.OpportunityFindingSourceMix != config.OpportunityFindingSourceSignalScan && cfg.AIDiscoveryAutomation == config.AIDiscoveryAutomationManual
+	return cfg.AllowsGrowthAI(config.GrowthAITriggerManual) && !cfg.AllowsGrowthAI(config.GrowthAITriggerScheduled)
 }
 
 func nextOpportunityFindingAt(now time.Time, cfg config.ProjectConfig) *time.Time {
-	hasScheduledSignalScan := cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceAll || cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan
-	hasScheduledAI := cfg.OpportunityFindingSourceMix != config.OpportunityFindingSourceSignalScan && cfg.AIDiscoveryAutomation == config.AIDiscoveryAutomationAutomatic
+	hasScheduledSignalScan := cfg.GrowthSignalEnabled
+	hasScheduledAI := cfg.AllowsGrowthAI(config.GrowthAITriggerScheduled)
 	if !hasScheduledSignalScan && !hasScheduledAI {
 		return nil
 	}
@@ -715,6 +724,9 @@ type contentActionOverrides struct {
 // It is shared by the opportunity-accept endpoint and the Doctor
 // finding→Site Fix conversion, so the lifecycle stays identical for both origins.
 func (s *Server) persistContentActionFromOpportunity(ctx context.Context, projectID uuid.UUID, opp db.SeoOpportunity, workType, routingSource string, in contentActionOverrides) (db.ContentAction, error) {
+	if err := s.requireGrowthOpportunityExecutable(ctx, projectID, opp.ID); err != nil {
+		return db.ContentAction{}, err
+	}
 	actionType := strings.TrimSpace(in.ActionType)
 	if actionType == "" && opp.RecommendedAction != nil {
 		actionType = *opp.RecommendedAction
@@ -790,6 +802,21 @@ func (s *Server) persistContentActionFromOpportunity(ctx context.Context, projec
 	return action, nil
 }
 
+var errGrowthOpportunityHardBlocked = errors.New("Growth opportunity is blocked by unresolved Doctor work")
+
+func (s *Server) requireGrowthOpportunityExecutable(ctx context.Context, projectID, opportunityID uuid.UUID) error {
+	canExecute, err := s.Q.GrowthOpportunityExecutionGuard(ctx, db.GrowthOpportunityExecutionGuardParams{
+		ProjectID: projectID, OpportunityID: pgtype.UUID{Bytes: opportunityID, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("check Growth work reservation: %w", err)
+	}
+	if !canExecute {
+		return errGrowthOpportunityHardBlocked
+	}
+	return nil
+}
+
 func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r *http.Request, successStatus int) {
 	projectID, oppID, ok := s.seoIDs(w, r, "opportunityID")
 	if !ok {
@@ -815,6 +842,10 @@ func (s *Server) createSEOContentActionFromOpportunity(w http.ResponseWriter, r 
 	}
 	action, err := s.persistContentActionFromOpportunity(r.Context(), projectID, opp, workType, routingSource, in)
 	if err != nil {
+		if errors.Is(err, errGrowthOpportunityHardBlocked) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

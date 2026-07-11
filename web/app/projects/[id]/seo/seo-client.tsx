@@ -824,9 +824,10 @@ function formatOpportunityFindingDuration(ms?: number) {
 
 function opportunityFindingModeLabel(status: OpportunityFindingStatus | null) {
   if (!status) return "Loading";
-  if (status.source_mix === "signal_scan") return "Signal Scan";
-  if (status.source_mix === "ai_discovery") return "AI Discovery";
-  return "All";
+  if (status.growth_signal_enabled && status.growth_ai_enabled) return "Evidence + AI";
+  if (status.growth_signal_enabled) return "Evidence only";
+  if (status.growth_ai_enabled) return "AI only";
+  return "No automated sources";
 }
 
 function OpportunityFindingStatusPanel({
@@ -851,13 +852,15 @@ function OpportunityFindingStatusPanel({
   const durationLabel = formatOpportunityFindingDuration(status?.last_run?.duration_ms);
   const summary = status?.summary?.length
     ? status.summary
-    : [{ label: "Signal Scan", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
+    : [{ label: "Evidence review", detail: "Waiting for the first Opportunity Finding run.", tone: "neutral" }];
   const automationLabel =
-    status?.ai_discovery_automation === "automatic"
+    status?.growth_ai_run_policy === "scheduled_and_event"
       ? "Automatic"
-      : status?.ai_discovery_automation === "manual"
-        ? "Manual"
-        : "Semi-automatic";
+      : status?.growth_ai_run_policy === "scheduled_only"
+        ? "Scheduled only"
+        : status?.growth_ai_run_policy === "manual_only"
+          ? "Manual only"
+          : "On demand";
 
   return (
     <section data-analysis-opportunity-finding-status className={cx("rounded-xl border px-4 py-4 shadow-sm", panelClass)}>
