@@ -70,6 +70,14 @@ func TestMigrationRunnerSafetyContract(t *testing.T) {
 			"pgx.identifier",
 			".sanitize()",
 			"pg_get_indexdef",
+			"indisready",
+			"indisunique",
+			"indkey",
+			"indexprs",
+			"indoption",
+			"indclass",
+			"indcollation",
+			"pg_get_expr(i.indpred",
 			"index definition mismatch",
 		)
 	})
@@ -203,10 +211,10 @@ func TestParseMigrationSpecFailsClosed(t *testing.T) {
 
 func TestCanonicalIndexDefinitionMatchesPostgresDeparse(t *testing.T) {
 	migrationSQL := `create unique index concurrently if not exists idx_safe
-		on widgets (project_id, lower(email), updated_at desc)
+		on widgets (project_id, email, updated_at desc)
 		where deleted_at is not null and status in ('ready','failed');`
 	postgresDefinition := `CREATE UNIQUE INDEX idx_safe ON public.widgets USING btree
-		(project_id, lower((email)::text), updated_at DESC)
+		(project_id, email, updated_at DESC)
 		WHERE ((deleted_at IS NOT NULL) AND (status = ANY (ARRAY['ready'::text, 'failed'::text])))`
 	want, err := canonicalIndexDefinition(migrationSQL)
 	if err != nil {
@@ -221,8 +229,38 @@ func TestCanonicalIndexDefinitionMatchesPostgresDeparse(t *testing.T) {
 	}
 }
 
+func TestCanonicalIndexDefinitionPreservesSQLSemantics(t *testing.T) {
+	for name, pair := range map[string][2]string{
+		"literal case": {
+			"create index idx_safe on widgets (id) where status in ('ready');",
+			"create index idx_safe on widgets (id) where status in ('READY');",
+		},
+		"boolean grouping": {
+			"create index idx_safe on widgets (id) where (a or b) and c;",
+			"create index idx_safe on widgets (id) where a or (b and c);",
+		},
+		"expression grouping": {
+			"create index idx_safe on widgets ((a + b) * c);",
+			"create index idx_safe on widgets (a + (b * c));",
+		},
+		"identifier versus cast expression": {
+			"create index idx_safe on widgets (id);",
+			"create index idx_safe on widgets (((id)::text));",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			left, leftErr := canonicalIndexDefinition(pair[0])
+			right, rightErr := canonicalIndexDefinition(pair[1])
+			if leftErr == nil && rightErr == nil && left == right {
+				t.Fatalf("semantically distinct definitions collapsed to %q", left)
+			}
+		})
+	}
+}
+
 type migrationTestRow struct {
 	value           bool
+	ready           bool
 	relationIsIndex bool
 	definition      string
 	err             error
@@ -247,6 +285,58 @@ func (r migrationTestRow) Scan(dest ...any) error {
 			return errors.New("unexpected index scan destination types")
 		}
 		*isIndex, *valid, *definition = r.relationIsIndex, r.value, r.definition
+	case 14:
+		isIndex, okIndex := dest[0].(*bool)
+		valid, okValid := dest[1].(*bool)
+		ready, okReady := dest[2].(*bool)
+		unique, okUnique := dest[3].(*bool)
+		currentSchema, okSchema := dest[4].(*bool)
+		stringDestinations := make([]*string, 0, 9)
+		stringsOK := true
+		for _, destination := range dest[5:] {
+			value, ok := destination.(*string)
+			stringsOK = stringsOK && ok
+			stringDestinations = append(stringDestinations, value)
+		}
+		if !okIndex || !okValid || !okReady || !okUnique || !okSchema || !stringsOK {
+			return errors.New("unexpected catalog scan destination types")
+		}
+		definition, parseErr := parseSupportedIndexDefinition(r.definition)
+		keyCount := len(definition.Keys)
+		if keyCount == 0 {
+			keyCount = 1
+		}
+		indKey, indOption := make([]string, keyCount), make([]string, keyCount)
+		opclasses, collations := make([]string, keyCount), make([]string, keyCount)
+		for i := 0; i < keyCount; i++ {
+			indKey[i], indOption[i], opclasses[i], collations[i] = "1", "0", "1978", "0"
+			if parseErr == nil && definition.Keys[i].Desc {
+				indOption[i] = "3"
+			}
+		}
+		predicate := ""
+		if where := strings.Index(strings.ToLower(r.definition), " where "); where >= 0 {
+			predicate = strings.TrimSpace(r.definition[where+len(" where "):])
+		}
+		indexExpressions := ""
+		if parseErr != nil && (strings.Contains(strings.ToLower(r.definition), "lower(") || strings.Contains(strings.ToLower(r.definition), "::text")) {
+			indexExpressions = "expression"
+			indKey[0] = "0"
+		}
+		*isIndex, *valid, *ready = r.relationIsIndex, r.value, r.ready
+		*unique, *currentSchema = strings.Contains(strings.ToLower(r.definition), "create unique index"), true
+		table := definition.Table
+		if table == "" {
+			table = "widgets"
+		}
+		values := []string{
+			table, "btree", strings.Join(indKey, " "), indexExpressions,
+			strings.Join(indOption, " "), strings.Join(opclasses, " "), strings.Join(collations, " "),
+			r.definition, predicate,
+		}
+		for i, value := range values {
+			*stringDestinations[i] = value
+		}
 	default:
 		return errors.New("unexpected scan destination count")
 	}
@@ -261,6 +351,7 @@ type migrationTestConn struct {
 	indexDefinition      string
 	nonIndexCollision    bool
 	postCreateDefinition string
+	indexNotReady        bool
 	boundedNonTxn        bool
 	boundedTxn           bool
 }
@@ -310,6 +401,7 @@ func (c *migrationTestConn) QueryRow(_ context.Context, sql string, _ ...any) pg
 	}
 	return migrationTestRow{
 		value:           c.indexValid,
+		ready:           !c.indexNotReady,
 		relationIsIndex: !c.nonIndexCollision,
 		definition:      c.indexDefinition,
 	}
@@ -423,13 +515,13 @@ func TestRunMigrationPassMarksExistingValidConcurrentIndex(t *testing.T) {
 }
 
 func TestRunMigrationPassRejectsValidMismatchedIndexDefinition(t *testing.T) {
-	migrationSQL := "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id) where active;"
+	migrationSQL := "-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id) where active is not null;"
 	for name, definition := range map[string]string{
-		"wrong table":      "create index idx_safe on other_widgets using btree (id) where active",
-		"wrong uniqueness": "create unique index idx_safe on widgets using btree (id) where active",
-		"wrong columns":    "create index idx_safe on widgets using btree (other_id) where active",
-		"wrong expression": "create index idx_safe on widgets using btree (lower(id)) where active",
-		"wrong predicate":  "create index idx_safe on widgets using btree (id) where archived",
+		"wrong table":      "create index idx_safe on other_widgets using btree (id) where active is not null",
+		"wrong uniqueness": "create unique index idx_safe on widgets using btree (id) where active is not null",
+		"wrong columns":    "create index idx_safe on widgets using btree (other_id) where active is not null",
+		"wrong expression": "create index idx_safe on widgets using btree (lower(id)) where active is not null",
+		"wrong predicate":  "create index idx_safe on widgets using btree (id) where archived is not null",
 	} {
 		t.Run(name, func(t *testing.T) {
 			conn := &migrationTestConn{indexExists: true, indexValid: true, indexDefinition: definition}
@@ -453,6 +545,22 @@ func TestRunMigrationPassRejectsSameNameNonIndexCollision(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err == nil {
 		t.Fatal("expected same-name non-index collision to fail closed")
+	}
+}
+
+func TestRunMigrationPassRejectsNotReadyIndex(t *testing.T) {
+	conn := &migrationTestConn{
+		indexExists:     true,
+		indexValid:      true,
+		indexNotReady:   true,
+		indexDefinition: "create index idx_safe on public.widgets using btree (id)",
+	}
+	migrationFS := fstest.MapFS{
+		"0001_index.sql": &fstest.MapFile{Data: []byte("-- citeloop:migration-mode=nontransactional\n-- citeloop:index=idx_safe\ncreate index concurrently if not exists idx_safe on widgets (id);")},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err == nil {
+		t.Fatal("expected not-ready index to fail before marking")
 	}
 }
 
