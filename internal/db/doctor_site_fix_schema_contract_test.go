@@ -14,6 +14,21 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		t.Fatalf("read Doctor Site Fix migration: %v", err)
 	}
 	migration := strings.ToLower(string(raw))
+	var followOn []string
+	for _, pattern := range []string{"0049*.sql", "0050*.sql"} {
+		matches, globErr := filepath.Glob(filepath.Join("..", "migrations", pattern))
+		if globErr != nil {
+			t.Fatalf("glob Doctor relationship migrations: %v", globErr)
+		}
+		followOn = append(followOn, matches...)
+	}
+	for _, name := range followOn {
+		body, readErr := os.ReadFile(name)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		migration += "\n" + strings.ToLower(string(body))
+	}
 
 	requireSQL := func(scope, sql string, required ...string) {
 		t.Helper()
@@ -63,7 +78,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		"jsonb_typeof(evidence_read) = 'object'",
 		"acceptance_results jsonb not null",
 		"jsonb_typeof(acceptance_results) = 'array'",
-		"ai_call_id uuid references ai_call_records(id) on delete set null",
+		"ai_call_id uuid references ai_call_records(id) on delete cascade",
 		"result text not null check (result in ('passed','failed','inconclusive','error'))",
 		"retry_classification text not null check (retry_classification in ('not_applicable','retryable','retry_exhausted','terminal'))",
 		"unique (site_fix_id, attempt_number)",
@@ -75,7 +90,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 
 	batches := tableDefinition("migration_batches")
 	requireSQL(t.Name()+" migration_batches", batches,
-		"project_id uuid not null references projects(id) on delete restrict",
+		"project_id uuid not null references projects(id) on delete cascade",
 		"source_snapshot jsonb not null",
 		"jsonb_typeof(source_snapshot) = 'object'",
 		"result_snapshot jsonb not null",
@@ -89,7 +104,7 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 	)
 	ledger := tableDefinition("migration_ledger")
 	requireSQL(t.Name()+" migration_ledger", ledger,
-		"migration_batch_id uuid not null references migration_batches(id) on delete restrict",
+		"migration_batch_id uuid not null references migration_batches(id) on delete cascade",
 		"before_hash text not null",
 		"after_hash text not null",
 		"before_snapshot jsonb not null",
@@ -145,9 +160,10 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 		"jsonb_typeof(healthy_coverage) = 'array'",
 		"trigger in ('onboarding','manual','weekly','post_publish','migration')",
 		"mode in ('shadow','canonical','migration')",
-		"constraint discovery_candidates_shadow_run_id_fkey foreign key (shadow_run_id)",
-		"references discovery_shadow_runs(id) on delete restrict",
-		"constraint work_signature_registry_shadow_run_id_fkey foreign key (shadow_run_id)",
+		"constraint discovery_candidates_shadow_run_restrict_fk",
+		"foreign key (shadow_run_id) references discovery_shadow_runs(id)",
+		"on delete restrict not valid",
+		"constraint work_signature_registry_shadow_run_restrict_fk",
 	)
 	for _, statement := range strings.Split(migration, ";") {
 		if strings.Contains(statement, "alter table seo_doctor_findings") &&
@@ -163,6 +179,21 @@ func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 		t.Fatalf("read Doctor Site Fix migration: %v", err)
 	}
 	migration := strings.ToLower(string(raw))
+	var followOn []string
+	for _, pattern := range []string{"0049*.sql", "0050*.sql"} {
+		matches, globErr := filepath.Glob(filepath.Join("..", "migrations", pattern))
+		if globErr != nil {
+			t.Fatalf("glob Doctor relationship migrations: %v", globErr)
+		}
+		followOn = append(followOn, matches...)
+	}
+	for _, name := range followOn {
+		body, readErr := os.ReadFile(name)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		migration += "\n" + strings.ToLower(string(body))
+	}
 	tableDefinition := func(t *testing.T, name string) string {
 		t.Helper()
 		pattern := regexp.MustCompile(`(?s)create table if not exists ` + regexp.QuoteMeta(name) + `\s*\((.*?)\n\);`)
@@ -194,7 +225,7 @@ func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 		)
 		rollbackEvents := tableDefinition(t, "migration_rollback_events")
 		requireSQL(t, rollbackEvents,
-			"migration_batch_id uuid not null references migration_batches(id) on delete restrict",
+			"migration_batch_id uuid not null references migration_batches(id) on delete cascade",
 			"rollback_eligibility text not null",
 			"rollback_blocked_forward_fix_required",
 			"rollback_completed",
@@ -229,9 +260,9 @@ func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 	})
 
 	t.Run("candidate provenance cannot cascade", func(t *testing.T) {
-		candidateFK := regexp.MustCompile(`(?s)constraint work_signature_registry_candidate_id_fkey foreign key \(candidate_id\)\s+references discovery_candidates\(id\) on delete restrict`).MatchString(migration)
+		candidateFK := regexp.MustCompile(`(?s)constraint work_signature_registry_candidate_project_fk\s+foreign key \(project_id, candidate_id\)\s+references discovery_candidates\(project_id, id\)\s+on delete restrict`).MatchString(migration)
 		if !candidateFK {
-			t.Error("work_signature_registry_candidate_id_fkey must be replaced with ON DELETE RESTRICT")
+			t.Error("work signature candidate provenance must be project-consistent and ON DELETE RESTRICT")
 		}
 		requireSQL(t, migration, "drop constraint if exists work_signature_registry_candidate_id_fkey")
 	})
