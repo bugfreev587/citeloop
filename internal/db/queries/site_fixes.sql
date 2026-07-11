@@ -1192,7 +1192,7 @@ with locked_authority as materialized (
          candidate.shadow_run_id, 'enforced', sqlc.arg(registry_status), sqlc.arg(registry_active),
          sqlc.arg(exact_signature_hash), sqlc.arg(signature_payload)::jsonb,
          sqlc.arg(conflict_bucket_keys)::jsonb, 'work-signature/v1', 'doctor',
-         'site_fix', sqlc.arg(site_fix_id)::text, 'site_fix', sqlc.arg(site_fix_id),
+         'site_fix', sqlc.arg(site_fix_id)::uuid::text, 'site_fix', sqlc.arg(site_fix_id)::uuid,
          sqlc.arg(evidence_fingerprint)
   from candidate
   where (select count(*) from bumped_buckets) =
@@ -1205,7 +1205,7 @@ with locked_authority as materialized (
     verification_snapshot, retry_count, max_retries, legacy_opportunity_id,
     legacy_content_action_id, migration_batch_id, approved_at, created_at, updated_at
   )
-  select sqlc.arg(site_fix_id), sqlc.arg(project_id), chosen_finding.id,
+  select sqlc.arg(site_fix_id)::uuid, sqlc.arg(project_id), chosen_finding.id,
          signature.candidate_id, signature.id, sqlc.arg(site_fix_status),
          chosen_finding.finding_kind, sqlc.arg(target_urls)::jsonb, sqlc.arg(finding_evidence)::jsonb,
          sqlc.arg(proposed_fix)::jsonb, sqlc.arg(acceptance_tests)::jsonb,

@@ -819,7 +819,7 @@ func (s *PostgresMigrationStore) createArtifacts(ctx context.Context, q *db.Quer
 		SourceObjectType: stringPointerValue(migrationSourceObjectType(legacy)), EvidenceFingerprint: candidate.EvidenceFingerprint,
 		ExactSignatureHash: &item.IdentityHash, SignaturePayload: payload,
 		ConflictBucketKeys: buckets, WorkSignatureID: signatureID,
-		RegistryStatus: registry, RegistryActive: registryActive, SiteFixID: pgUUID(item.SiteFixID), SiteFixStatus: status,
+		RegistryStatus: registry, RegistryActive: registryActive, SiteFixID: item.SiteFixID, SiteFixStatus: status,
 		ProposedFix: mustJSON(map[string]any{"mutations": json.RawMessage(mutations), "legacy_action_type": legacy.ChangeFamily,
 			"approved_by": legacy.ApprovedBy, "approval_source": legacy.ApprovalSource,
 			"input_snapshot": json.RawMessage(legacy.InputSnapshot), "output_snapshot": json.RawMessage(legacy.OutputSnapshot), "diff_snapshot": json.RawMessage(legacy.DiffSnapshot)}), ApprovedAt: approvedAt,
