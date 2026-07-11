@@ -776,6 +776,77 @@ test("site fix GitHub PR API calls the action apply endpoint", async () => {
   }
 });
 
+test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    const fix = {
+      id: "fix-1",
+      project_id: "project-1",
+      doctor_finding_id: "finding-1",
+      status: url.endsWith("/approve") ? "approved" : "proposed",
+      finding_kind: "broken",
+      target_urls: ["https://example.test/page"],
+      evidence_snapshot: { check: "canonical" },
+      proposed_fix: { mutations: [{ field: "canonical", operation: "replace" }] },
+      acceptance_tests: [{ type: "canonical_present" }],
+    };
+    if (url.endsWith("/apply") || url.endsWith("/verify")) {
+      const verifying = url.endsWith("/verify");
+      return {
+        ok: true,
+        status: verifying ? 202 : 200,
+        json: async () => ({
+          site_fix: { ...fix, status: verifying ? "verifying" : "awaiting_deploy" },
+          application: {
+            id: "application-1",
+            site_fix_id: "fix-1",
+            status: verifying ? "verification_pending" : "manual_handoff",
+            target_url: "https://example.test/page",
+          },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: url.includes("/findings/") ? 201 : 200,
+      json: async () => (url.endsWith("/site-fixes") && !url.includes("/findings/") ? [fix] : fix),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+
+    const listed = await client.listDoctorSiteFixes("project-1");
+    const created = await client.createDoctorSiteFix("project-1", "finding-1");
+    const approved = await client.approveDoctorSiteFix("project-1", "fix-1");
+    const applied = await client.applyDoctorSiteFix("project-1", "fix-1");
+    const verification = await client.verifyDoctorSiteFix("project-1", "fix-1");
+
+    assert.equal(listed[0].finding_kind, "broken");
+    assert.deepEqual(listed[0].target_urls, ["https://example.test/page"]);
+    assert.equal(created.doctor_finding_id, "finding-1");
+    assert.equal(approved.status, "approved");
+    assert.equal(applied.site_fix.status, "awaiting_deploy");
+    assert.equal(applied.application.site_fix_id, "fix-1");
+    assert.equal(verification.site_fix.status, "verifying");
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.init.method ?? "GET"]),
+      [
+        ["https://api.example.test/api/projects/project-1/doctor/site-fixes", "GET"],
+        ["https://api.example.test/api/projects/project-1/doctor/findings/finding-1/site-fixes", "POST"],
+        ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/approve", "POST"],
+        ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/apply", "POST"],
+        ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/verify", "POST"],
+      ],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("list APIs tolerate null responses as empty arrays", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({

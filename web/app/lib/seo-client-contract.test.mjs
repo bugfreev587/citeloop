@@ -139,16 +139,18 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
 
   for (const expected of [
     "selectedID",
-    "SiteFixAction",
+    "SiteFix",
     "data-site-fix-card",
     "data-site-fix-drawer",
     "RightDrawer",
     "Review site fix details",
     "returnFocusRef",
-    "Mark applied",
-    "Dismiss",
-    "dismissSiteFix",
-    "api.dismissSEOContentAction",
+    "Approve fix",
+    "Apply fix",
+    "Verify fix",
+    "api.approveDoctorSiteFix",
+    "api.applyDoctorSiteFix",
+    "api.verifyDoctorSiteFix",
   ]) {
     assert.equal(source.includes(expected), true, `site-fixes-client.tsx missing ${expected}`);
   }
@@ -161,60 +163,29 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
   assert.match(source, /<\/div>\s*<RightDrawer/, "RightDrawer must render outside (sibling of) the surfaceRef div, not nested inside it");
 });
 
-test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
-  // The AI repair payload builders and their contract copy moved to the shared
-  // helper module; the copy affordance lives on the dedicated Site Fixes page.
+test("Canonical Site Fixes expose copyable repair JSON", async () => {
   const lib = await readFile(new URL("site-fix.ts", import.meta.url), "utf8");
   const ui = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
 
   for (const expected of [
-    "buildSiteFixAIPayload",
-    "siteFixImplementationSteps",
-    "siteFixLikelySurfaces",
-    "siteFixPatchContract",
-    "metadataRewriteObservedSnapshot",
-    "metadataRewriteOpportunityContext",
-    "metadataRewriteProposedChange",
-    "metadataRewriteAcceptanceTests",
-    "siteFixAIJSON",
-    "ai_repair",
+    "canonicalSiteFixAIJSON",
+    "canonicalSiteFixTitle",
+    "canonicalSiteFixTarget",
+    "evidence_snapshot",
+    "proposed_fix",
     "acceptance_tests",
-    "observed",
-    "opportunity",
-    "proposed_change",
-    "<title> equals",
-    "JSON.stringify(proposed.title.trim())",
-    "meta[name=\\\"description\\\"] equals",
-    "canonical URL remains",
-    "page remains indexable",
-    "OpenGraph",
-    "Twitter card",
-    "proposed_changes",
-    "observed_metadata",
-    "deduplication_rule",
-    "graph_guidance",
-    "@graph",
-    "#organization",
-    "#website",
-    "#webpage",
-    "do_not",
-    "human_review",
-    "does not require rich result eligibility",
-    "schema_patch",
-    "script[type=\\\"application/ld+json\\\"]",
+    "verification_snapshot",
   ]) {
     assert.equal(lib.includes(expected), true, `lib/site-fix.ts missing ${expected}`);
   }
 
   for (const expected of [
-    "siteFixAIJSON",
+    "canonicalSiteFixAIJSON",
     "copyFixJSON",
     "writeClipboardText",
     "data-site-fix-ai-payload",
     "AI coding fix JSON",
     "Copy fix JSON",
-    "whitespace-nowrap",
-    "min-w-[9.5rem]",
     "Copy this JSON into Codex or Claude Code",
     "Clipboard",
     "Code2",
@@ -223,28 +194,21 @@ test("Analysis Site Fixes expose copyable AI repair JSON", async () => {
   }
 });
 
-test("Analysis Site Fixes switch from JSON copy to GitHub PR when connected", async () => {
-  // Now owned by the dedicated Site Fixes page.
+test("Canonical Site Fixes load and mutate only through Doctor lifecycle APIs", async () => {
   const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
   const refreshStart = source.indexOf("const refresh = useCallback(async () => {");
   const refreshEnd = source.indexOf("useEffect(() => {", refreshStart);
   const refreshSource = source.slice(refreshStart, refreshEnd);
 
   assert.notEqual(refreshStart, -1, "site-fixes-client.tsx missing refresh callback");
-  assert.match(source, /const \[publisherConnections, setPublisherConnections\] = useState<PublisherConnection\[\]>\(\[\]\)/);
-  assert.match(refreshSource, /api\.listPublisherConnections\(projectId\)/);
-  assert.match(refreshSource, /setPublisherConnections\(connections\)/);
-  assert.match(source, /const hasConnectedGitHubPublisher = useMemo/);
-  assert.match(source, /siteFixGitHubPRURL\(/);
-  assert.match(source, /siteFixAlreadyMatchesSource\(/);
-  assert.match(source, /async function createPR\(action: SiteFixAction\)/);
-  assert.match(source, /api\.createSiteFixGitHubPR\(projectId, action\.id\)/);
-  // The drawer footer swaps the primary CTA based on publisher connectivity.
-  assert.match(source, /hasConnectedGitHubPublisher/);
-  assert.match(source, /Create GitHub PR/);
-  assert.match(source, /Open PR/);
-  assert.match(source, /Source matches/);
+  assert.match(refreshSource, /api\.listDoctorSiteFixes\(projectId\)/);
+  assert.match(source, /api\.approveDoctorSiteFix\(projectId, fix\.id\)/);
+  assert.match(source, /api\.applyDoctorSiteFix\(projectId, fix\.id\)/);
+  assert.match(source, /api\.verifyDoctorSiteFix\(projectId, fix\.id\)/);
   assert.match(source, /Copy fix JSON/);
+  for (const forbidden of ["SEOContentAction", "/seo/actions", "opportunity_status", "Growth", "measuring", "api.createSiteFixGitHubPR", "listPublisherConnections"]) {
+    assert.equal(source.includes(forbidden), false, `site-fixes-client.tsx must not use ${forbidden}`);
+  }
 });
 
 test("Analysis Site Fixes treat connected enabled GitHub App publishers as PR-capable", async () => {

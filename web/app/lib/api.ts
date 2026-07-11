@@ -11,6 +11,25 @@ import {
   normalizeRun,
   normalizeTopic,
 } from "./normalize";
+import type {
+  DoctorFindingKind,
+  DoctorHealthyCoverage,
+  SiteChangeApplication,
+  SiteFix,
+  SiteFixLifecycleResult,
+  SiteFixStatus,
+  SiteFixVerification,
+} from "./types";
+
+export type {
+  DoctorFindingKind,
+  DoctorHealthyCoverage,
+  SiteChangeApplication,
+  SiteFix,
+  SiteFixLifecycleResult,
+  SiteFixStatus,
+  SiteFixVerification,
+} from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const MISSING_PROJECT_DETAIL = "Connect your domain to create your first project.";
@@ -608,6 +627,7 @@ export type SEODoctorRun = {
   updated_at?: any;
   finished_at?: any;
   created_at?: any;
+  healthy_coverage: DoctorHealthyCoverage[];
 };
 
 export type SEODoctorFinding = {
@@ -636,6 +656,7 @@ export type SEODoctorFinding = {
   last_seen_at?: any;
   resolved_at?: any;
   updated_at?: any;
+  finding_kind: DoctorFindingKind;
 };
 
 export type SEODoctorReport = {
@@ -1396,6 +1417,16 @@ function normalizeStringArray(raw: any): string[] {
   return arrayFrom(raw).map(String).filter((item) => item.trim() !== "");
 }
 
+function normalizeDoctorHealthyCoverage(raw: any): DoctorHealthyCoverage[] {
+  return arrayFrom(raw).map((item: any) => ({
+    check: String(item?.check ?? ""),
+    checked_urls: normalizeStringArray(item?.checked_urls),
+    passed_urls: normalizeStringArray(item?.passed_urls),
+    failed_urls: normalizeStringArray(item?.failed_urls),
+    skipped_urls: normalizeStringArray(item?.skipped_urls),
+  }));
+}
+
 function normalizeSEODoctorRun(raw: any): SEODoctorRun {
   const data = raw ?? {};
   return {
@@ -1420,6 +1451,7 @@ function normalizeSEODoctorRun(raw: any): SEODoctorRun {
     updated_at: data.updated_at ?? undefined,
     finished_at: data.finished_at ?? undefined,
     created_at: data.created_at ?? undefined,
+    healthy_coverage: normalizeDoctorHealthyCoverage(data.healthy_coverage),
   };
 }
 
@@ -1451,6 +1483,7 @@ function normalizeSEODoctorFinding(raw: any): SEODoctorFinding {
     last_seen_at: data.last_seen_at ?? undefined,
     resolved_at: data.resolved_at ?? undefined,
     updated_at: data.updated_at ?? undefined,
+    finding_kind: data.finding_kind === "optimization" || data.finding_kind === "healthy" ? data.finding_kind : "broken",
   };
 }
 
@@ -1460,6 +1493,92 @@ function normalizeSEODoctorReport(raw: any): SEODoctorReport {
     run: data.run ? normalizeSEODoctorRun(data.run) : null,
     findings: arrayFrom(data.findings).map(normalizeSEODoctorFinding),
     human_report: data.human_report ?? null,
+  };
+}
+
+function normalizeSiteFixVerification(raw: any): SiteFixVerification {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    project_id: String(data.project_id ?? ""),
+    site_fix_id: String(data.site_fix_id ?? ""),
+    attempt_number: Number(data.attempt_number ?? 0),
+    evidence_read: data.evidence_read ?? {},
+    acceptance_results: data.acceptance_results ?? [],
+    result: String(data.result ?? ""),
+    retry_classification: String(data.retry_classification ?? ""),
+    failure_reason: data.failure_reason ?? null,
+    attempted_at: data.attempted_at ?? null,
+    created_at: data.created_at ?? null,
+  };
+}
+
+function normalizeSiteChangeApplication(raw: any): SiteChangeApplication {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    project_id: data.project_id == null ? undefined : String(data.project_id),
+    site_fix_id: String(data.site_fix_id ?? ""),
+    application_kind: String(data.application_kind ?? ""),
+    target_url: String(data.target_url ?? ""),
+    normalized_target_url: String(data.normalized_target_url ?? ""),
+    source_file_paths: normalizeStringArray(data.source_file_paths),
+    source_mapping_confidence: String(data.source_mapping_confidence ?? ""),
+    source_mapping_reason: String(data.source_mapping_reason ?? ""),
+    patch_snapshot: data.patch_snapshot ?? {},
+    diff_snapshot: data.diff_snapshot ?? {},
+    resolution_criteria: data.resolution_criteria ?? {},
+    github_pr_number: data.github_pr_number == null ? null : Number(data.github_pr_number),
+    github_pr_url: data.github_pr_url ?? null,
+    github_pr_state: data.github_pr_state ?? null,
+    deployment_snapshot: data.deployment_snapshot ?? {},
+    verification_snapshot: data.verification_snapshot ?? {},
+    failure_reason: data.failure_reason ?? null,
+    status: String(data.status ?? ""),
+    created_at: data.created_at ?? null,
+    updated_at: data.updated_at ?? null,
+    pr_created_at: data.pr_created_at ?? null,
+    merged_at: data.merged_at ?? null,
+    deployed_at: data.deployed_at ?? null,
+    verified_at: data.verified_at ?? null,
+  };
+}
+
+function normalizeSiteFix(raw: any): SiteFix {
+  const data = raw ?? {};
+  return {
+    id: String(data.id ?? ""),
+    project_id: String(data.project_id ?? ""),
+    doctor_finding_id: String(data.doctor_finding_id ?? ""),
+    candidate_id: String(data.candidate_id ?? ""),
+    work_signature_id: String(data.work_signature_id ?? ""),
+    supersedes_site_fix_id: data.supersedes_site_fix_id ?? null,
+    status: String(data.status ?? "proposed") as SiteFixStatus,
+    finding_kind: data.finding_kind === "optimization" ? "optimization" : "broken",
+    target_urls: normalizeStringArray(data.target_urls),
+    evidence_snapshot: data.evidence_snapshot ?? {},
+    proposed_fix: data.proposed_fix ?? {},
+    acceptance_tests: arrayFrom(data.acceptance_tests),
+    verification_snapshot: data.verification_snapshot ?? {},
+    failure_reason: data.failure_reason ?? null,
+    retry_count: Number(data.retry_count ?? 0),
+    max_retries: Number(data.max_retries ?? 0),
+    approved_at: data.approved_at ?? null,
+    applied_at: data.applied_at ?? null,
+    deployed_at: data.deployed_at ?? null,
+    verified_at: data.verified_at ?? null,
+    created_at: data.created_at ?? null,
+    updated_at: data.updated_at ?? null,
+    application: data.application ? normalizeSiteChangeApplication(data.application) : null,
+    verifications: arrayFrom(data.verifications).map(normalizeSiteFixVerification),
+  };
+}
+
+function normalizeSiteFixLifecycleResult(raw: any): SiteFixLifecycleResult {
+  const data = raw ?? {};
+  return {
+    site_fix: normalizeSiteFix(data.site_fix),
+    application: normalizeSiteChangeApplication(data.application),
   };
 }
 
@@ -2278,6 +2397,26 @@ export function createApi(auth?: AuthOptions) {
   dismissSEODoctorFinding: async (id: string, findingID: string): Promise<SEODoctorFinding> => {
     const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/dismiss`, { method: "POST" }, auth);
     return normalizeSEODoctorFinding(raw);
+  },
+  listDoctorSiteFixes: async (id: string): Promise<SiteFix[]> => {
+    const raw = await req<any[]>(`/projects/${id}/doctor/site-fixes`, undefined, auth);
+    return arrayFrom(raw).map(normalizeSiteFix);
+  },
+  createDoctorSiteFix: async (id: string, findingID: string): Promise<SiteFix> => {
+    const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/site-fixes`, { method: "POST" }, auth);
+    return normalizeSiteFix(raw);
+  },
+  approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFix> => {
+    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/approve`, { method: "POST" }, auth);
+    return normalizeSiteFix(raw);
+  },
+  applyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
+    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/apply`, { method: "POST" }, auth);
+    return normalizeSiteFixLifecycleResult(raw);
+  },
+  verifyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
+    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/verify`, { method: "POST" }, auth);
+    return normalizeSiteFixLifecycleResult(raw);
   },
   convertSEODoctorFinding: async (id: string, findingID: string): Promise<SEOContentAction> => {
     const raw = await req<any>(`/projects/${id}/doctor/findings/${findingID}/convert`, { method: "POST" }, auth);

@@ -370,8 +370,7 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
   assert.match(opportunityDrawer, /Detected/);
   assert.match(opportunityDrawer, /formatDate\(selectedOpportunity\.created_at \?\? null\)/);
 
-  // Site Fix action timestamps moved to the dedicated Site Fixes page: its grid
-  // and its RightDrawer "Action timeline" section.
+  // Canonical Site Fix timestamps live on the dedicated repair-loop surface.
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
   const siteFixesGridStart = siteFixes.indexOf("data-site-fixes-grid");
   const siteFixesGridEnd = siteFixes.indexOf("</section>", siteFixesGridStart);
@@ -380,12 +379,12 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
   const siteFixDrawer = siteFixes.slice(siteFixDrawerStart);
 
   assert.match(siteFixesBlock, /data-site-fixes-grid/);
-  assert.match(siteFixesBlock, /md:grid-cols-2 xl:grid-cols-3/);
-  assert.match(siteFixes, /min-h-\[220px\]/);
-  assert.match(siteFixDrawer, /Action timeline/);
-  assert.match(siteFixDrawer, /Approved/);
-  assert.match(siteFixDrawer, /formatDate\(drawerAction\.approved_at \?\? null\)/);
-  assert.match(siteFixDrawer, /formatDate\(drawerAction\.created_at \?\? null\)/);
+  assert.match(siteFixesBlock, /sm:grid-cols-2 xl:grid-cols-3/);
+  assert.match(siteFixes, /min-h-56/);
+  assert.match(siteFixes, /Updated \{formatDate\(fix\.updated_at \?\? fix\.created_at \?\? null\)\}/);
+  assert.match(siteFixDrawer, /<LifecycleStrip fix=\{selected\}/);
+  assert.match(siteFixes, /\["Finding", "Approved", "Applied \/ deploy", "Verified"\]/);
+  assert.match(siteFixDrawer, /formatDate\(selected\.created_at \?\? null\)/);
 });
 
 test("results surface defaults to published outcomes with card-triggered attribution details", () => {
