@@ -72,6 +72,8 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/admin/geo-credentials/{scope}", s.deleteAdminGEOCredentials)
 			r.Get("/admin/projects", s.listAdminProjects)
 			r.Delete("/admin/projects/{projectID}", s.deleteAdminProject)
+			r.Post("/admin/projects/{projectID}/discovery-shadow/run", s.runAdminDiscoveryShadow)
+			r.Get("/admin/projects/{projectID}/discovery-shadow/report", s.getAdminDiscoveryShadowReport)
 			r.Get("/admin/users", s.listAdminUsers)
 			r.Delete("/admin/users/{ownerID}", s.deleteAdminUser)
 		})
