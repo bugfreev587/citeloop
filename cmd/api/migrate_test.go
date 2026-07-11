@@ -118,6 +118,7 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0051_05_discovery_candidates_shadow_run.sql":          "idx_discovery_candidates_shadow_run_fk",
 		"0051_06_work_signature_registry_shadow_run.sql":       "idx_work_signature_registry_shadow_run_fk",
 		"0052_01_work_signature_shadow_candidate.sql":          "uniq_work_signature_registry_shadow_candidate",
+		"0054_01_discovery_arbitration_project_identity.sql":   "discovery_arbitration_decisions_project_id_id_key",
 	}
 	actualConcurrent := make(map[string]struct{})
 	entries, err := fs.ReadDir(migrations.FS, ".")

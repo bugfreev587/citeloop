@@ -21,12 +21,14 @@ type Querier interface {
 	ApproveCanonicalSiteFix(ctx context.Context, arg ApproveCanonicalSiteFixParams) (ApproveCanonicalSiteFixRow, error)
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)
 	ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCanonicalSiteFixApplyingParams) (ClaimCanonicalSiteFixApplyingRow, error)
+	ClaimDoctorSiteFixPreparationLease(ctx context.Context, arg ClaimDoctorSiteFixPreparationLeaseParams) (ClaimDoctorSiteFixPreparationLeaseRow, error)
 	ClaimPageUpdateDraftForApply(ctx context.Context, arg ClaimPageUpdateDraftForApplyParams) (PageUpdateDraft, error)
 	ClaimPendingWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ClearPublisherConnectionCredentialRef(ctx context.Context, arg ClearPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	CloseSEOWatchlistItem(ctx context.Context, arg CloseSEOWatchlistItemParams) (SeoWatchlistItem, error)
 	CompleteCanonicalDiscoveryRun(ctx context.Context, arg CompleteCanonicalDiscoveryRunParams) (DiscoveryShadowRun, error)
 	CompleteDiscoveryShadowRun(ctx context.Context, arg CompleteDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
+	CompleteDoctorSiteFixPreparationLease(ctx context.Context, arg CompleteDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error)
 	CompleteSEODoctorRun(ctx context.Context, arg CompleteSEODoctorRunParams) (SeoDoctorRun, error)
 	ContentActionCounts(ctx context.Context, projectID uuid.UUID) ([]ContentActionCountsRow, error)
 	CountManualSEODoctorRunsSince(ctx context.Context, arg CountManualSEODoctorRunsSinceParams) (int64, error)
@@ -46,6 +48,7 @@ type Querier interface {
 	// same statement as the Site Fix and enforced work-signature transition.
 	CreateCanonicalSiteFix(ctx context.Context, arg CreateCanonicalSiteFixParams) (SiteFix, error)
 	CreateCanonicalSiteFixApplication(ctx context.Context, arg CreateCanonicalSiteFixApplicationParams) (SiteChangeApplication, error)
+	CreateCanonicalSiteFixEvidenceMerge(ctx context.Context, arg CreateCanonicalSiteFixEvidenceMergeParams) (CreateCanonicalSiteFixEvidenceMergeRow, error)
 	CreateContentAction(ctx context.Context, arg CreateContentActionParams) (ContentAction, error)
 	CreateDiscoverySemanticEvaluation(ctx context.Context, arg CreateDiscoverySemanticEvaluationParams) (DiscoverySemanticEvaluation, error)
 	CreateDiscoveryShadowRun(ctx context.Context, arg CreateDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
@@ -92,6 +95,7 @@ type Querier interface {
 	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
 	FailDiscoveryShadowRun(ctx context.Context, arg FailDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
+	FailDoctorSiteFixPreparationLease(ctx context.Context, arg FailDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error)
 	FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunParams) (SeoDoctorRun, error)
 	FenceProductWriterAuthority(ctx context.Context, arg FenceProductWriterAuthorityParams) (ProductWriterAuthority, error)
 	// FindReusableGitHubInstallation returns a GitHub App installation_id already
@@ -115,6 +119,9 @@ type Querier interface {
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 	GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error)
 	GetCanonicalSiteFix(ctx context.Context, arg GetCanonicalSiteFixParams) (SiteFix, error)
+	GetCanonicalSiteFixByWorkSignature(ctx context.Context, arg GetCanonicalSiteFixByWorkSignatureParams) (SiteFix, error)
+	GetCanonicalSiteFixEvidenceMerge(ctx context.Context, arg GetCanonicalSiteFixEvidenceMergeParams) (SiteFixEvidenceMerge, error)
+	GetCompletedDoctorSiteFixPreparationDecision(ctx context.Context, arg GetCompletedDoctorSiteFixPreparationDecisionParams) (DiscoveryArbitrationDecision, error)
 	GetConflictBucketSnapshot(ctx context.Context, arg GetConflictBucketSnapshotParams) ([]WorkConflictBucket, error)
 	GetContentAction(ctx context.Context, arg GetContentActionParams) (ContentAction, error)
 	GetDefaultPublisherConnectionForProject(ctx context.Context, arg GetDefaultPublisherConnectionForProjectParams) (PublisherConnection, error)
@@ -122,6 +129,7 @@ type Querier interface {
 	GetDiscoveryCandidateForArbitration(ctx context.Context, arg GetDiscoveryCandidateForArbitrationParams) (DiscoveryCandidate, error)
 	GetDiscoveryCandidateForReview(ctx context.Context, arg GetDiscoveryCandidateForReviewParams) (DiscoveryCandidate, error)
 	GetDiscoveryReviewItem(ctx context.Context, arg GetDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
+	GetDoctorSiteFixPreparationLease(ctx context.Context, arg GetDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error)
 	GetEnabledPublisherConnectionForProject(ctx context.Context, arg GetEnabledPublisherConnectionForProjectParams) (PublisherConnection, error)
 	GetEnforcedWorkSignatureForReservedWork(ctx context.Context, arg GetEnforcedWorkSignatureForReservedWorkParams) (WorkSignatureRegistry, error)
 	GetGEOAssetBriefForProject(ctx context.Context, arg GetGEOAssetBriefForProjectParams) (GeoAssetBrief, error)
@@ -164,6 +172,7 @@ type Querier interface {
 	InsertGenerationRun(ctx context.Context, arg InsertGenerationRunParams) (GenerationRun, error)
 	InsertProfile(ctx context.Context, arg InsertProfileParams) (ProductProfile, error)
 	InsertSEORun(ctx context.Context, arg InsertSEORunParams) (SeoRun, error)
+	InvalidateDoctorSiteFixPreparationLease(ctx context.Context, arg InvalidateDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error)
 	// LatestCanonicalPublishSlotForProject returns the latest publish slot already
 	// taken by a project's canonical articles (scheduled or published), so a new
 	// approval can be staggered after it instead of publishing immediately.
@@ -250,6 +259,7 @@ type Querier interface {
 	LockConflictBucketsForReserve(ctx context.Context, arg LockConflictBucketsForReserveParams) ([]WorkConflictBucket, error)
 	LockDiscoveryCandidateForReserve(ctx context.Context, arg LockDiscoveryCandidateForReserveParams) (DiscoveryCandidate, error)
 	LockDiscoveryReviewItemForResolve(ctx context.Context, arg LockDiscoveryReviewItemForResolveParams) (DiscoveryReviewItem, error)
+	LockDoctorSiteFixPreparationLeaseForReserve(ctx context.Context, arg LockDoctorSiteFixPreparationLeaseForReserveParams) (DoctorSiteFixPreparationLease, error)
 	LockProductWriterAuthority(ctx context.Context, arg LockProductWriterAuthorityParams) (ProductWriterAuthority, error)
 	MarkArbitrationDecisionReserved(ctx context.Context, arg MarkArbitrationDecisionReservedParams) (DiscoveryArbitrationDecision, error)
 	MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanonicalSiteFixAppliedParams) (MarkCanonicalSiteFixAppliedRow, error)
@@ -404,6 +414,7 @@ type Querier interface {
 	UpsertTechnicalCheck(ctx context.Context, arg UpsertTechnicalCheckParams) (TechnicalCheck, error)
 	UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkReviewMemoryParams) (WorkReviewMemory, error)
 	UpsertWorkSignatureAlias(ctx context.Context, arg UpsertWorkSignatureAliasParams) (WorkSignatureAlias, error)
+	ValidateDoctorSiteFixPreparationLease(ctx context.Context, arg ValidateDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error)
 	WakeDueSnoozedSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 }
 

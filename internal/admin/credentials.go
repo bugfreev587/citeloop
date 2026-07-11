@@ -4,8 +4,10 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -235,6 +237,69 @@ func (p *RuntimeProvider) Complete(ctx context.Context, req llm.CompletionReq) (
 	req.Model = target.ModelAlias
 	req.DisableProviderFallback = req.DisableProviderFallback || !target.FallbackEnabled
 	return ProviderFromCredentials(*cred, p.Env).Complete(ctx, req)
+}
+
+// RuntimeAuthorityFingerprint identifies the configuration authority that will
+// route a completion, rather than an environment default or a provider's
+// response model. It intentionally excludes credential secrets.
+func (p *RuntimeProvider) RuntimeAuthorityFingerprint(ctx context.Context, purpose llm.CompletionPurpose) (string, error) {
+	if p == nil {
+		return "", errors.New("runtime provider unavailable")
+	}
+	if p.Pool == nil {
+		return p.fallbackRuntimeAuthorityFingerprint(ctx, purpose)
+	}
+	cred, err := LoadCredentials(ctx, p.Pool)
+	if err != nil {
+		return "", err
+	}
+	if cred == nil || cred.APIKey == "" {
+		return p.fallbackRuntimeAuthorityFingerprint(ctx, purpose)
+	}
+	target := runtimeRouteForRequest(*cred, p.Env, llm.CompletionReq{Purpose: purpose})
+	payload := struct {
+		Authority      string                `json:"authority"`
+		CredentialTime string                `json:"credential_updated_at"`
+		BaseURL        string                `json:"base_url"`
+		Purpose        llm.CompletionPurpose `json:"purpose"`
+		Role           ModelRole             `json:"role"`
+		Provider       ModelProvider         `json:"provider"`
+		ModelAlias     string                `json:"model_alias"`
+		Fallback       bool                  `json:"fallback_enabled"`
+	}{
+		Authority: "admin_credentials", CredentialTime: cred.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		BaseURL: resolveCredentialBaseURL(firstNonBlank(cred.BaseURL, p.Env.TokenGateBaseURL)),
+		Purpose: purpose, Role: target.Role, Provider: target.Provider,
+		ModelAlias: target.ModelAlias, Fallback: target.FallbackEnabled,
+	}
+	return hashRuntimeAuthority(payload)
+}
+
+func (p *RuntimeProvider) fallbackRuntimeAuthorityFingerprint(ctx context.Context, purpose llm.CompletionPurpose) (string, error) {
+	if provider, ok := p.Fallback.(interface {
+		RuntimeAuthorityFingerprint(context.Context, llm.CompletionPurpose) (string, error)
+	}); ok {
+		return provider.RuntimeAuthorityFingerprint(ctx, purpose)
+	}
+	payload := struct {
+		Authority    string                `json:"authority"`
+		ProviderType string                `json:"provider_type"`
+		Purpose      llm.CompletionPurpose `json:"purpose"`
+		BaseURL      string                `json:"base_url"`
+		Model        string                `json:"model"`
+	}{
+		Authority: "environment_fallback", ProviderType: fmt.Sprintf("%T", p.Fallback), Purpose: purpose,
+		BaseURL: strings.TrimSpace(p.Env.TokenGateBaseURL), Model: strings.TrimSpace(p.Env.TokenGateModel),
+	}
+	return hashRuntimeAuthority(payload)
+}
+
+func hashRuntimeAuthority(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(raw)), nil
 }
 
 func ProviderFromCredentials(c Credentials, env config.Env) llm.Provider {

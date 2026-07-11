@@ -32,6 +32,7 @@ type Server struct {
 	Env             config.Env
 	Log             *slog.Logger
 	SEOData         seo.GoogleDataProvider
+	SiteFixes       DoctorSiteFixService
 	githubAppClient githubAppAPI
 
 	OnboardingRunner         projectOnboardingRunner
@@ -203,6 +204,7 @@ func (s *Server) Router() http.Handler {
 				})
 			})
 			s.registerDoctorRoutes(r, "/doctor")
+			s.registerCanonicalDoctorSiteFixRoutes(r, "/doctor")
 			r.Route("/geo", func(r chi.Router) {
 				r.Get("/overview", s.getGEOOverview)
 				r.Post("/crawler-audit", s.runGEOCrawlerAudit)

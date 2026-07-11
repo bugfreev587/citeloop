@@ -10,12 +10,10 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
-	"github.com/citeloop/citeloop/internal/pgutil"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const seoDoctorRunTimeout = 10 * time.Minute
@@ -34,6 +32,15 @@ func (s *Server) registerDoctorRoutes(r chi.Router, prefix string) {
 	r.Get(prefix+"/latest", s.getLatestSEODoctor)
 	r.Post(prefix+"/findings/{findingID}/dismiss", s.dismissSEODoctorFinding)
 	r.Post(prefix+"/findings/{findingID}/convert", s.convertSEODoctorFinding)
+}
+
+func (s *Server) registerCanonicalDoctorSiteFixRoutes(r chi.Router, prefix string) {
+	r.Post(prefix+"/findings/{findingID}/site-fixes", s.createDoctorSiteFix)
+	r.Get(prefix+"/site-fixes", s.listDoctorSiteFixes)
+	r.Get(prefix+"/site-fixes/{fixID}", s.getDoctorSiteFix)
+	r.Post(prefix+"/site-fixes/{fixID}/approve", s.approveDoctorSiteFix)
+	r.Post(prefix+"/site-fixes/{fixID}/apply", s.applyDoctorSiteFix)
+	r.Post(prefix+"/site-fixes/{fixID}/verify", s.verifyDoctorSiteFix)
 }
 
 func (s *Server) getSEODoctor(w http.ResponseWriter, r *http.Request) {
@@ -151,94 +158,17 @@ func (s *Server) dismissSEODoctorFinding(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, finding)
 }
 
-// convertSEODoctorFinding turns a reviewed Doctor finding into a Site Fix.
-// It synthesizes a fix-site-issue opportunity from the finding and routes it
-// through the shared opportunity → content action lifecycle, then links the
-// finding to the created action. The flow is idempotent: a finding that was
-// already converted returns its existing action untouched.
+// convertSEODoctorFinding is the deprecated compatibility alias. It delegates
+// to the same canonical Site Fix service as the successor endpoint and never
+// writes an Opportunity or Content Action.
 func (s *Server) convertSEODoctorFinding(w http.ResponseWriter, r *http.Request) {
 	projectID, findingID, ok := s.seoDoctorIDs(w, r, "findingID")
 	if !ok {
 		return
 	}
-	finding, err := s.Q.GetSEODoctorFinding(r.Context(), db.GetSEODoctorFindingParams{ID: findingID, ProjectID: projectID})
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "doctor finding not found")
-		return
-	}
-	if finding.Status == "converted" && finding.LinkedContentActionID.Valid {
-		if action, err := s.Q.GetContentAction(r.Context(), db.GetContentActionParams{
-			ID:        uuid.UUID(finding.LinkedContentActionID.Bytes),
-			ProjectID: projectID,
-		}); err == nil {
-			writeJSON(w, http.StatusOK, action)
-			return
-		}
-	}
-
-	pageURL := firstDoctorFindingURL(finding.AffectedUrls)
-	normalizedURL := firstDoctorFindingURL(finding.NormalizedUrls)
-	if normalizedURL == "" {
-		normalizedURL = pageURL
-	}
-	recommended := strings.TrimSpace(finding.FixIntent)
-	if recommended == "" {
-		recommended = strings.TrimSpace(finding.IssueType)
-	}
-	if recommended == "" {
-		recommended = "technical SEO fix task"
-	}
-	impact := strings.TrimSpace(finding.WhyItMatters)
-	var pageURLPtr *string
-	if pageURL != "" {
-		pageURLPtr = &pageURL
-	}
-
-	oppRow, err := s.Q.UpsertSEOOpportunity(r.Context(), db.UpsertSEOOpportunityParams{
-		ProjectID:         projectID,
-		Type:              doctorFindingOpportunityType(finding),
-		Status:            "open",
-		PriorityScore:     pgutil.Numeric(doctorFindingPriority(finding.Severity)),
-		Confidence:        pgutil.Numeric(80),
-		PageUrl:           pageURLPtr,
-		NormalizedPageUrl: normalizedURL,
-		Evidence:          doctorFindingOpportunityEvidence(finding),
-		RecommendedAction: &recommended,
-		ExpectedImpact:    &impact,
-		Effort:            2,
-		RiskLevel:         normalizeDoctorRiskLevel(finding.RiskLevel),
-	})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	opp, err := s.Q.GetSEOOpportunity(r.Context(), db.GetSEOOpportunityParams{ID: oppRow.ID, ProjectID: projectID})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	action, err := s.persistContentActionFromOpportunity(r.Context(), projectID, opp, WorkTypeFixSiteIssue, RoutingSourceSystem, contentActionOverrides{
-		ActionType:       recommended,
-		AssetType:        doctorFindingAssetType(finding),
-		EvidenceSnapshot: finding.Evidence,
-		DiffSnapshot:     doctorFindingDiffSnapshot(finding),
-	})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if _, err := s.Q.LinkSEODoctorFindingToAction(r.Context(), db.LinkSEODoctorFindingToActionParams{
-		LinkedOpportunityID:   pgtype.UUID{Bytes: opp.ID, Valid: true},
-		LinkedContentActionID: pgtype.UUID{Bytes: action.ID, Valid: true},
-		ID:                    findingID,
-		ProjectID:             projectID,
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, action)
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", "</api/projects/"+projectID.String()+"/doctor/findings/"+findingID.String()+"/site-fixes>; rel=\"successor-version\"")
+	s.createDoctorSiteFixForIDs(w, r, projectID, findingID)
 }
 
 // firstDoctorFindingURL returns the first non-empty URL from a finding's

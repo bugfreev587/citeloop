@@ -380,6 +380,25 @@ type DiscoveryShadowRun struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DoctorSiteFixPreparationLease struct {
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	ExactSignatureHash          string             `json:"exact_signature_hash"`
+	LeaseToken                  uuid.UUID          `json:"lease_token"`
+	RuntimeAuthorityFingerprint string             `json:"runtime_authority_fingerprint"`
+	LeaderCandidateID           uuid.UUID          `json:"leader_candidate_id"`
+	ArbitrationDecisionID       pgtype.UUID        `json:"arbitration_decision_id"`
+	ResolvedProvider            *string            `json:"resolved_provider"`
+	ResolvedModel               *string            `json:"resolved_model"`
+	Status                      string             `json:"status"`
+	LeaseExpiresAt              pgtype.Timestamptz `json:"lease_expires_at"`
+	ResultExpiresAt             pgtype.Timestamptz `json:"result_expires_at"`
+	AttemptCount                int64              `json:"attempt_count"`
+	LastErrorCode               *string            `json:"last_error_code"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
+}
+
 type GenerationRun struct {
 	ID        uuid.UUID          `json:"id"`
 	ProjectID uuid.UUID          `json:"project_id"`
@@ -1209,6 +1228,19 @@ type SiteFix struct {
 	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SiteFixEvidenceMerge struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ArbitrationDecisionID uuid.UUID          `json:"arbitration_decision_id"`
+	SiteFixID             uuid.UUID          `json:"site_fix_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	FindingKind           string             `json:"finding_kind"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
 type SiteFixVerification struct {

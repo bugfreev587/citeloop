@@ -36,6 +36,309 @@ where project_id = sqlc.arg(project_id)
   and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
 order by updated_at desc, id asc;
 
+-- name: GetCanonicalSiteFixByWorkSignature :one
+select * from site_fixes
+where project_id = sqlc.arg(project_id)
+  and work_signature_id = sqlc.arg(work_signature_id);
+
+-- name: ClaimDoctorSiteFixPreparationLease :one
+with claimed as (
+  insert into doctor_site_fix_preparation_leases (
+    project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id,
+    status, lease_expires_at, attempt_count
+  ) values (
+    sqlc.arg(project_id), sqlc.arg(exact_signature_hash), sqlc.arg(lease_token), sqlc.arg(runtime_authority_fingerprint),
+    sqlc.arg(leader_candidate_id), 'preparing',
+    clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int), 1
+  )
+  on conflict (project_id, exact_signature_hash) do update set
+    lease_token = excluded.lease_token,
+    runtime_authority_fingerprint = excluded.runtime_authority_fingerprint,
+    leader_candidate_id = excluded.leader_candidate_id,
+    arbitration_decision_id = null,
+    resolved_provider = null,
+    resolved_model = null,
+    status = 'preparing',
+    lease_expires_at = excluded.lease_expires_at,
+    result_expires_at = null,
+    attempt_count = doctor_site_fix_preparation_leases.attempt_count + 1,
+    last_error_code = null,
+    updated_at = now(),
+    completed_at = null
+  where doctor_site_fix_preparation_leases.status = 'failed'
+     or doctor_site_fix_preparation_leases.runtime_authority_fingerprint <> excluded.runtime_authority_fingerprint
+     or (
+       doctor_site_fix_preparation_leases.status = 'preparing'
+       and doctor_site_fix_preparation_leases.lease_expires_at <= clock_timestamp()
+     )
+     or (
+       doctor_site_fix_preparation_leases.status = 'completed'
+       and doctor_site_fix_preparation_leases.result_expires_at <= clock_timestamp()
+     )
+  returning doctor_site_fix_preparation_leases.*
+)
+select claimed.*, true as is_leader from claimed
+union all
+select current.*, false as is_leader
+from doctor_site_fix_preparation_leases current
+where current.project_id = sqlc.arg(project_id)
+  and current.exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and not exists (select 1 from claimed)
+limit 1;
+
+-- name: GetDoctorSiteFixPreparationLease :one
+select * from doctor_site_fix_preparation_leases
+where project_id = sqlc.arg(project_id)
+  and exact_signature_hash = sqlc.arg(exact_signature_hash);
+
+-- name: ValidateDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set lease_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int),
+    updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and lease_token = sqlc.arg(lease_token)
+  and status = 'preparing'
+  and lease_expires_at > clock_timestamp()
+returning *;
+
+-- name: CompleteDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set arbitration_decision_id = sqlc.arg(arbitration_decision_id),
+    resolved_provider = sqlc.arg(resolved_provider),
+    resolved_model = sqlc.arg(resolved_model),
+    status = 'completed',
+    result_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(result_ttl_seconds)::int),
+    completed_at = clock_timestamp(),
+    updated_at = now(),
+    last_error_code = null
+where project_id = sqlc.arg(project_id)
+  and exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and lease_token = sqlc.arg(lease_token)
+  and status = 'preparing'
+  and lease_expires_at > clock_timestamp()
+returning *;
+
+-- name: FailDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set status = 'failed', result_expires_at = null, completed_at = null,
+    last_error_code = sqlc.arg(error_code), updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and lease_token = sqlc.arg(lease_token)
+  and status = 'preparing'
+returning *;
+
+-- name: InvalidateDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set status = 'failed', result_expires_at = null, completed_at = null,
+    last_error_code = 'stale_result', updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and lease_token = sqlc.arg(observed_lease_token)
+  and status = 'completed'
+returning *;
+
+-- name: LockDoctorSiteFixPreparationLeaseForReserve :one
+update doctor_site_fix_preparation_leases
+set lease_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int),
+    updated_at = now()
+from discovery_candidates candidate
+where doctor_site_fix_preparation_leases.project_id = sqlc.arg(project_id)
+  and doctor_site_fix_preparation_leases.exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and doctor_site_fix_preparation_leases.lease_token = sqlc.arg(lease_token)
+  and doctor_site_fix_preparation_leases.leader_candidate_id = sqlc.arg(leader_candidate_id)
+  and doctor_site_fix_preparation_leases.status = 'preparing'
+  and doctor_site_fix_preparation_leases.lease_expires_at > clock_timestamp()
+  and candidate.project_id = doctor_site_fix_preparation_leases.project_id
+  and candidate.id = doctor_site_fix_preparation_leases.leader_candidate_id
+  and candidate.status = 'identity_ready'
+  and candidate.exact_signature_hash = doctor_site_fix_preparation_leases.exact_signature_hash
+returning doctor_site_fix_preparation_leases.*;
+
+-- name: GetCompletedDoctorSiteFixPreparationDecision :one
+select decision.*
+from doctor_site_fix_preparation_leases preparation
+join discovery_arbitration_decisions decision
+  on decision.project_id = preparation.project_id
+ and decision.id = preparation.arbitration_decision_id
+join discovery_candidates candidate
+  on candidate.project_id = decision.project_id
+ and candidate.id = decision.candidate_id
+where preparation.project_id = sqlc.arg(project_id)
+  and preparation.exact_signature_hash = sqlc.arg(exact_signature_hash)
+  and preparation.runtime_authority_fingerprint = sqlc.arg(runtime_authority_fingerprint)
+  and preparation.status = 'completed'
+  and preparation.result_expires_at > clock_timestamp()
+  and decision.exact_signature_hash = preparation.exact_signature_hash
+  and decision.candidate_id = sqlc.arg(candidate_id)
+  and decision.evidence_fingerprint = sqlc.arg(evidence_fingerprint)
+  and decision.candidate_version = candidate.candidate_version
+  and preparation.resolved_provider = decision.provider
+  and preparation.resolved_model = decision.model
+  and decision.rules_version = sqlc.arg(rules_version)
+  and decision.prompt_version = sqlc.arg(prompt_version)
+  and not exists (
+    select 1
+    from jsonb_each_text(decision.expected_bucket_versions) expected(bucket_key, bucket_version)
+    left join work_conflict_buckets bucket
+      on bucket.project_id = decision.project_id
+     and bucket.bucket_key = expected.bucket_key
+    where bucket.id is null
+       or bucket.bucket_version <> expected.bucket_version::bigint
+  );
+
+-- name: GetCanonicalSiteFixEvidenceMerge :one
+select evidence_merge.*
+from site_fix_evidence_merges evidence_merge
+join site_fixes sf
+  on sf.project_id = evidence_merge.project_id
+ and sf.id = evidence_merge.site_fix_id
+join work_signature_registry registry
+  on registry.project_id = sf.project_id
+ and registry.id = sf.work_signature_id
+where evidence_merge.project_id = sqlc.arg(project_id)
+  and evidence_merge.candidate_id = sqlc.arg(candidate_id)
+  and evidence_merge.evidence_fingerprint = sqlc.arg(evidence_fingerprint)
+  and registry.mode = 'enforced'
+  and registry.active = true
+  and registry.owner = 'doctor'
+  and registry.reserved_work_type = 'site_fix'
+  and registry.reserved_work_id = sf.id
+  and sf.status in (
+    'proposed','approved','preparing','ready_to_apply','applying',
+    'awaiting_deploy','verifying','failed_retryable','reopened'
+  )
+order by evidence_merge.created_at desc, evidence_merge.id asc
+limit 1;
+
+-- name: CreateCanonicalSiteFixEvidenceMerge :one
+with existing_link as materialized (
+  select evidence_merge.*
+  from site_fix_evidence_merges evidence_merge
+  where evidence_merge.project_id = sqlc.arg(project_id)
+    and evidence_merge.candidate_id = sqlc.arg(candidate_id)
+    and evidence_merge.site_fix_id = sqlc.arg(site_fix_id)
+    and evidence_merge.doctor_finding_id = sqlc.arg(doctor_finding_id)
+    and evidence_merge.finding_kind = sqlc.arg(finding_kind)
+    and evidence_merge.evidence_fingerprint = sqlc.arg(evidence_fingerprint)
+), authority as materialized (
+  select product_writer_authority.project_id
+  from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id)
+    and product_writer_authority.product = 'doctor'
+    and product_writer_authority.writer_authority = 'canonical'
+    and product_writer_authority.write_fenced = false
+  for update
+), source_snapshot as materialized (
+  select decision.id, decision.expected_bucket_versions
+  from discovery_arbitration_decisions decision
+  join authority on authority.project_id = decision.project_id
+  where decision.project_id = sqlc.arg(project_id)
+    and decision.id = sqlc.arg(arbitration_decision_id)
+    and not exists (select 1 from existing_link)
+), expected_keys as materialized (
+  select expected.bucket_key, expected.bucket_version::bigint as bucket_version
+  from source_snapshot snapshot
+  cross join lateral jsonb_each_text(snapshot.expected_bucket_versions)
+    expected(bucket_key, bucket_version)
+  order by expected.bucket_key
+), locked_buckets as materialized (
+  select bucket.id, bucket.bucket_key
+  from work_conflict_buckets bucket
+  join expected_keys expected
+    on expected.bucket_key = bucket.bucket_key
+   and expected.bucket_version = bucket.bucket_version
+  where bucket.project_id = sqlc.arg(project_id)
+  order by bucket.bucket_key
+  for update of bucket
+), locked_work as materialized (
+  select decision.id as decision_id
+  from discovery_arbitration_decisions decision
+  join discovery_candidates candidate
+    on candidate.project_id = decision.project_id
+   and candidate.id = decision.candidate_id
+  join seo_doctor_findings finding
+    on finding.project_id = candidate.project_id
+   and finding.id = sqlc.arg(doctor_finding_id)
+   and finding.finding_kind = sqlc.arg(finding_kind)
+  join site_fixes sf
+    on sf.project_id = candidate.project_id
+   and sf.id = sqlc.arg(site_fix_id)
+  join work_signature_registry registry
+    on registry.project_id = sf.project_id
+   and registry.id = sf.work_signature_id
+  join doctor_site_fix_preparation_leases preparation
+    on preparation.project_id = candidate.project_id
+   and preparation.exact_signature_hash = sqlc.arg(exact_signature_hash)
+  join authority on authority.project_id = decision.project_id
+  where decision.project_id = sqlc.arg(project_id)
+    and decision.id = sqlc.arg(arbitration_decision_id)
+    and decision.candidate_id = sqlc.arg(candidate_id)
+    and decision.decision = 'merge_evidence'
+    and decision.owner = 'doctor'
+    and decision.status = 'prepared'
+    and decision.candidate_version = candidate.candidate_version
+    and decision.exact_signature_hash = sqlc.arg(exact_signature_hash)
+    and decision.exact_signature_hash = candidate.exact_signature_hash
+    and decision.evidence_fingerprint = sqlc.arg(evidence_fingerprint)
+    and candidate.status = 'identity_ready'
+    and candidate.source_kind = 'doctor'
+    and candidate.source_object_type = 'seo_doctor_finding'
+    and candidate.source_object_id = sqlc.arg(doctor_finding_id)::text
+    and candidate.evidence_fingerprint = sqlc.arg(evidence_fingerprint)
+    and finding.status = 'active'
+    and finding.updated_at = sqlc.arg(expected_finding_updated_at)
+    and registry.mode = 'enforced'
+    and registry.active = true
+    and registry.owner = 'doctor'
+    and registry.reserved_work_type = 'site_fix'
+    and registry.reserved_work_id = sf.id
+    and registry.exact_signature_hash = decision.exact_signature_hash
+    and decision.overlap_work_ids @> jsonb_build_array(registry.id::text)
+    and sf.status in (
+      'proposed','approved','preparing','ready_to_apply','applying',
+      'awaiting_deploy','verifying','failed_retryable','reopened'
+    )
+    and preparation.lease_token = sqlc.arg(lease_token)
+    and preparation.leader_candidate_id = candidate.id
+    and preparation.status = 'preparing'
+    and preparation.lease_expires_at > clock_timestamp()
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of decision, candidate, finding, sf, registry, preparation
+), bumped_buckets as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id
+    and exists (select 1 from locked_work)
+  returning bucket.id
+), resolved_decision as (
+  update discovery_arbitration_decisions decision
+  set status = 'resolved', updated_at = now()
+  from locked_work work
+  where decision.project_id = sqlc.arg(project_id)
+    and decision.id = work.decision_id
+    and decision.status = 'prepared'
+    and (select count(*) from bumped_buckets) = (select count(*) from expected_keys)
+  returning decision.id
+), inserted_link as (
+insert into site_fix_evidence_merges (
+  id, project_id, candidate_id, arbitration_decision_id, site_fix_id,
+  doctor_finding_id, finding_kind, evidence_fingerprint, evidence_snapshot
+)
+select sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(candidate_id),
+       decision.id, sqlc.arg(site_fix_id), sqlc.arg(doctor_finding_id),
+       sqlc.arg(finding_kind), sqlc.arg(evidence_fingerprint),
+       sqlc.arg(evidence_snapshot)::jsonb
+from resolved_decision decision
+returning site_fix_evidence_merges.*
+)
+select * from inserted_link
+union all
+select * from existing_link
+limit 1;
+
 -- name: LockCanonicalSiteFixForUpdate :one
 select * from site_fixes
 where id = sqlc.arg(id)
@@ -517,7 +820,15 @@ where project_id = sqlc.arg(project_id)
   and alias_state = 'active';
 
 -- name: ApproveCanonicalSiteFix :one
-with eligible as materialized (
+with authority as materialized (
+  select product_writer_authority.project_id
+  from product_writer_authority
+  where product_writer_authority.project_id = sqlc.arg(project_id)
+    and product = 'doctor'
+    and writer_authority = 'canonical'
+    and write_fenced = false
+  for update
+), eligible as materialized (
   select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
@@ -527,6 +838,7 @@ with eligible as materialized (
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join authority a on a.project_id = sf.project_id
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'proposed'

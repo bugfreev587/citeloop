@@ -241,7 +241,15 @@ func (q *Queries) AppendMigrationRollbackEvent(ctx context.Context, arg AppendMi
 }
 
 const approveCanonicalSiteFix = `-- name: ApproveCanonicalSiteFix :one
-with eligible as materialized (
+with authority as materialized (
+  select product_writer_authority.project_id
+  from product_writer_authority
+  where product_writer_authority.project_id = $1
+    and product = 'doctor'
+    and writer_authority = 'canonical'
+    and write_fenced = false
+  for update
+), eligible as materialized (
   select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
@@ -251,8 +259,9 @@ with eligible as materialized (
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
-  where sf.id = $1
-    and sf.project_id = $2
+  join authority a on a.project_id = sf.project_id
+  where sf.id = $2
+    and sf.project_id = $1
     and sf.status = 'proposed'
     and w.status in ('reserved','proposed')
     and w.mode = 'enforced' and w.active = true
@@ -265,7 +274,7 @@ with eligible as materialized (
   select b.id, b.bucket_key
   from work_conflict_buckets b
   join expected_keys keys on keys.bucket_key = b.bucket_key
-  where b.project_id = $2
+  where b.project_id = $1
   order by b.bucket_key
   for update of b
 ), locked_application as materialized (
@@ -332,8 +341,8 @@ cross join signature_transition
 `
 
 type ApproveCanonicalSiteFixParams struct {
-	SiteFixID  uuid.UUID          `json:"site_fix_id"`
 	ProjectID  uuid.UUID          `json:"project_id"`
+	SiteFixID  uuid.UUID          `json:"site_fix_id"`
 	ApprovedAt pgtype.Timestamptz `json:"approved_at"`
 }
 
@@ -366,7 +375,7 @@ type ApproveCanonicalSiteFixRow struct {
 }
 
 func (q *Queries) ApproveCanonicalSiteFix(ctx context.Context, arg ApproveCanonicalSiteFixParams) (ApproveCanonicalSiteFixRow, error) {
-	row := q.db.QueryRow(ctx, approveCanonicalSiteFix, arg.SiteFixID, arg.ProjectID, arg.ApprovedAt)
+	row := q.db.QueryRow(ctx, approveCanonicalSiteFix, arg.ProjectID, arg.SiteFixID, arg.ApprovedAt)
 	var i ApproveCanonicalSiteFixRow
 	err := row.Scan(
 		&i.ID,
@@ -551,6 +560,173 @@ func (q *Queries) ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCa
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const claimDoctorSiteFixPreparationLease = `-- name: ClaimDoctorSiteFixPreparationLease :one
+with claimed as (
+  insert into doctor_site_fix_preparation_leases (
+    project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id,
+    status, lease_expires_at, attempt_count
+  ) values (
+    $1, $2, $3, $4,
+    $5, 'preparing',
+    clock_timestamp() + make_interval(secs => $6::int), 1
+  )
+  on conflict (project_id, exact_signature_hash) do update set
+    lease_token = excluded.lease_token,
+    runtime_authority_fingerprint = excluded.runtime_authority_fingerprint,
+    leader_candidate_id = excluded.leader_candidate_id,
+    arbitration_decision_id = null,
+    resolved_provider = null,
+    resolved_model = null,
+    status = 'preparing',
+    lease_expires_at = excluded.lease_expires_at,
+    result_expires_at = null,
+    attempt_count = doctor_site_fix_preparation_leases.attempt_count + 1,
+    last_error_code = null,
+    updated_at = now(),
+    completed_at = null
+  where doctor_site_fix_preparation_leases.status = 'failed'
+     or doctor_site_fix_preparation_leases.runtime_authority_fingerprint <> excluded.runtime_authority_fingerprint
+     or (
+       doctor_site_fix_preparation_leases.status = 'preparing'
+       and doctor_site_fix_preparation_leases.lease_expires_at <= clock_timestamp()
+     )
+     or (
+       doctor_site_fix_preparation_leases.status = 'completed'
+       and doctor_site_fix_preparation_leases.result_expires_at <= clock_timestamp()
+     )
+  returning doctor_site_fix_preparation_leases.project_id, doctor_site_fix_preparation_leases.exact_signature_hash, doctor_site_fix_preparation_leases.lease_token, doctor_site_fix_preparation_leases.runtime_authority_fingerprint, doctor_site_fix_preparation_leases.leader_candidate_id, doctor_site_fix_preparation_leases.arbitration_decision_id, doctor_site_fix_preparation_leases.resolved_provider, doctor_site_fix_preparation_leases.resolved_model, doctor_site_fix_preparation_leases.status, doctor_site_fix_preparation_leases.lease_expires_at, doctor_site_fix_preparation_leases.result_expires_at, doctor_site_fix_preparation_leases.attempt_count, doctor_site_fix_preparation_leases.last_error_code, doctor_site_fix_preparation_leases.created_at, doctor_site_fix_preparation_leases.updated_at, doctor_site_fix_preparation_leases.completed_at
+)
+select claimed.project_id, claimed.exact_signature_hash, claimed.lease_token, claimed.runtime_authority_fingerprint, claimed.leader_candidate_id, claimed.arbitration_decision_id, claimed.resolved_provider, claimed.resolved_model, claimed.status, claimed.lease_expires_at, claimed.result_expires_at, claimed.attempt_count, claimed.last_error_code, claimed.created_at, claimed.updated_at, claimed.completed_at, true as is_leader from claimed
+union all
+select current.project_id, current.exact_signature_hash, current.lease_token, current.runtime_authority_fingerprint, current.leader_candidate_id, current.arbitration_decision_id, current.resolved_provider, current.resolved_model, current.status, current.lease_expires_at, current.result_expires_at, current.attempt_count, current.last_error_code, current.created_at, current.updated_at, current.completed_at, false as is_leader
+from doctor_site_fix_preparation_leases current
+where current.project_id = $1
+  and current.exact_signature_hash = $2
+  and not exists (select 1 from claimed)
+limit 1
+`
+
+type ClaimDoctorSiteFixPreparationLeaseParams struct {
+	ProjectID                   uuid.UUID `json:"project_id"`
+	ExactSignatureHash          string    `json:"exact_signature_hash"`
+	LeaseToken                  uuid.UUID `json:"lease_token"`
+	RuntimeAuthorityFingerprint string    `json:"runtime_authority_fingerprint"`
+	LeaderCandidateID           uuid.UUID `json:"leader_candidate_id"`
+	LeaseTtlSeconds             int32     `json:"lease_ttl_seconds"`
+}
+
+type ClaimDoctorSiteFixPreparationLeaseRow struct {
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	ExactSignatureHash          string             `json:"exact_signature_hash"`
+	LeaseToken                  uuid.UUID          `json:"lease_token"`
+	RuntimeAuthorityFingerprint string             `json:"runtime_authority_fingerprint"`
+	LeaderCandidateID           uuid.UUID          `json:"leader_candidate_id"`
+	ArbitrationDecisionID       pgtype.UUID        `json:"arbitration_decision_id"`
+	ResolvedProvider            *string            `json:"resolved_provider"`
+	ResolvedModel               *string            `json:"resolved_model"`
+	Status                      string             `json:"status"`
+	LeaseExpiresAt              pgtype.Timestamptz `json:"lease_expires_at"`
+	ResultExpiresAt             pgtype.Timestamptz `json:"result_expires_at"`
+	AttemptCount                int64              `json:"attempt_count"`
+	LastErrorCode               *string            `json:"last_error_code"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
+	IsLeader                    bool               `json:"is_leader"`
+}
+
+func (q *Queries) ClaimDoctorSiteFixPreparationLease(ctx context.Context, arg ClaimDoctorSiteFixPreparationLeaseParams) (ClaimDoctorSiteFixPreparationLeaseRow, error) {
+	row := q.db.QueryRow(ctx, claimDoctorSiteFixPreparationLease,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.LeaseToken,
+		arg.RuntimeAuthorityFingerprint,
+		arg.LeaderCandidateID,
+		arg.LeaseTtlSeconds,
+	)
+	var i ClaimDoctorSiteFixPreparationLeaseRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.IsLeader,
+	)
+	return i, err
+}
+
+const completeDoctorSiteFixPreparationLease = `-- name: CompleteDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set arbitration_decision_id = $1,
+    resolved_provider = $2,
+    resolved_model = $3,
+    status = 'completed',
+    result_expires_at = clock_timestamp() + make_interval(secs => $4::int),
+    completed_at = clock_timestamp(),
+    updated_at = now(),
+    last_error_code = null
+where project_id = $5
+  and exact_signature_hash = $6
+  and lease_token = $7
+  and status = 'preparing'
+  and lease_expires_at > clock_timestamp()
+returning project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at
+`
+
+type CompleteDoctorSiteFixPreparationLeaseParams struct {
+	ArbitrationDecisionID pgtype.UUID `json:"arbitration_decision_id"`
+	ResolvedProvider      *string     `json:"resolved_provider"`
+	ResolvedModel         *string     `json:"resolved_model"`
+	ResultTtlSeconds      int32       `json:"result_ttl_seconds"`
+	ProjectID             uuid.UUID   `json:"project_id"`
+	ExactSignatureHash    string      `json:"exact_signature_hash"`
+	LeaseToken            uuid.UUID   `json:"lease_token"`
+}
+
+func (q *Queries) CompleteDoctorSiteFixPreparationLease(ctx context.Context, arg CompleteDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, completeDoctorSiteFixPreparationLease,
+		arg.ArbitrationDecisionID,
+		arg.ResolvedProvider,
+		arg.ResolvedModel,
+		arg.ResultTtlSeconds,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.LeaseToken,
+	)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -828,6 +1004,193 @@ func (q *Queries) CreateCanonicalSiteFixApplication(ctx context.Context, arg Cre
 	return i, err
 }
 
+const createCanonicalSiteFixEvidenceMerge = `-- name: CreateCanonicalSiteFixEvidenceMerge :one
+with existing_link as materialized (
+  select evidence_merge.id, evidence_merge.project_id, evidence_merge.candidate_id, evidence_merge.arbitration_decision_id, evidence_merge.site_fix_id, evidence_merge.doctor_finding_id, evidence_merge.finding_kind, evidence_merge.evidence_fingerprint, evidence_merge.evidence_snapshot, evidence_merge.created_at
+  from site_fix_evidence_merges evidence_merge
+  where evidence_merge.project_id = $1
+    and evidence_merge.candidate_id = $2
+    and evidence_merge.site_fix_id = $3
+    and evidence_merge.doctor_finding_id = $4
+    and evidence_merge.finding_kind = $5
+    and evidence_merge.evidence_fingerprint = $6
+), authority as materialized (
+  select product_writer_authority.project_id
+  from product_writer_authority
+  where product_writer_authority.project_id = $1
+    and product_writer_authority.product = 'doctor'
+    and product_writer_authority.writer_authority = 'canonical'
+    and product_writer_authority.write_fenced = false
+  for update
+), source_snapshot as materialized (
+  select decision.id, decision.expected_bucket_versions
+  from discovery_arbitration_decisions decision
+  join authority on authority.project_id = decision.project_id
+  where decision.project_id = $1
+    and decision.id = $7
+    and not exists (select 1 from existing_link)
+), expected_keys as materialized (
+  select expected.bucket_key, expected.bucket_version::bigint as bucket_version
+  from source_snapshot snapshot
+  cross join lateral jsonb_each_text(snapshot.expected_bucket_versions)
+    expected(bucket_key, bucket_version)
+  order by expected.bucket_key
+), locked_buckets as materialized (
+  select bucket.id, bucket.bucket_key
+  from work_conflict_buckets bucket
+  join expected_keys expected
+    on expected.bucket_key = bucket.bucket_key
+   and expected.bucket_version = bucket.bucket_version
+  where bucket.project_id = $1
+  order by bucket.bucket_key
+  for update of bucket
+), locked_work as materialized (
+  select decision.id as decision_id
+  from discovery_arbitration_decisions decision
+  join discovery_candidates candidate
+    on candidate.project_id = decision.project_id
+   and candidate.id = decision.candidate_id
+  join seo_doctor_findings finding
+    on finding.project_id = candidate.project_id
+   and finding.id = $4
+   and finding.finding_kind = $5
+  join site_fixes sf
+    on sf.project_id = candidate.project_id
+   and sf.id = $3
+  join work_signature_registry registry
+    on registry.project_id = sf.project_id
+   and registry.id = sf.work_signature_id
+  join doctor_site_fix_preparation_leases preparation
+    on preparation.project_id = candidate.project_id
+   and preparation.exact_signature_hash = $8
+  join authority on authority.project_id = decision.project_id
+  where decision.project_id = $1
+    and decision.id = $7
+    and decision.candidate_id = $2
+    and decision.decision = 'merge_evidence'
+    and decision.owner = 'doctor'
+    and decision.status = 'prepared'
+    and decision.candidate_version = candidate.candidate_version
+    and decision.exact_signature_hash = $8
+    and decision.exact_signature_hash = candidate.exact_signature_hash
+    and decision.evidence_fingerprint = $6
+    and candidate.status = 'identity_ready'
+    and candidate.source_kind = 'doctor'
+    and candidate.source_object_type = 'seo_doctor_finding'
+    and candidate.source_object_id = $4::text
+    and candidate.evidence_fingerprint = $6
+    and finding.status = 'active'
+    and finding.updated_at = $9
+    and registry.mode = 'enforced'
+    and registry.active = true
+    and registry.owner = 'doctor'
+    and registry.reserved_work_type = 'site_fix'
+    and registry.reserved_work_id = sf.id
+    and registry.exact_signature_hash = decision.exact_signature_hash
+    and decision.overlap_work_ids @> jsonb_build_array(registry.id::text)
+    and sf.status in (
+      'proposed','approved','preparing','ready_to_apply','applying',
+      'awaiting_deploy','verifying','failed_retryable','reopened'
+    )
+    and preparation.lease_token = $10
+    and preparation.leader_candidate_id = candidate.id
+    and preparation.status = 'preparing'
+    and preparation.lease_expires_at > clock_timestamp()
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of decision, candidate, finding, sf, registry, preparation
+), bumped_buckets as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id
+    and exists (select 1 from locked_work)
+  returning bucket.id
+), resolved_decision as (
+  update discovery_arbitration_decisions decision
+  set status = 'resolved', updated_at = now()
+  from locked_work work
+  where decision.project_id = $1
+    and decision.id = work.decision_id
+    and decision.status = 'prepared'
+    and (select count(*) from bumped_buckets) = (select count(*) from expected_keys)
+  returning decision.id
+), inserted_link as (
+insert into site_fix_evidence_merges (
+  id, project_id, candidate_id, arbitration_decision_id, site_fix_id,
+  doctor_finding_id, finding_kind, evidence_fingerprint, evidence_snapshot
+)
+select $11, $1, $2,
+       decision.id, $3, $4,
+       $5, $6,
+       $12::jsonb
+from resolved_decision decision
+returning site_fix_evidence_merges.id, site_fix_evidence_merges.project_id, site_fix_evidence_merges.candidate_id, site_fix_evidence_merges.arbitration_decision_id, site_fix_evidence_merges.site_fix_id, site_fix_evidence_merges.doctor_finding_id, site_fix_evidence_merges.finding_kind, site_fix_evidence_merges.evidence_fingerprint, site_fix_evidence_merges.evidence_snapshot, site_fix_evidence_merges.created_at
+)
+select id, project_id, candidate_id, arbitration_decision_id, site_fix_id, doctor_finding_id, finding_kind, evidence_fingerprint, evidence_snapshot, created_at from inserted_link
+union all
+select id, project_id, candidate_id, arbitration_decision_id, site_fix_id, doctor_finding_id, finding_kind, evidence_fingerprint, evidence_snapshot, created_at from existing_link
+limit 1
+`
+
+type CreateCanonicalSiteFixEvidenceMergeParams struct {
+	ProjectID                uuid.UUID          `json:"project_id"`
+	CandidateID              uuid.UUID          `json:"candidate_id"`
+	SiteFixID                uuid.UUID          `json:"site_fix_id"`
+	DoctorFindingID          uuid.UUID          `json:"doctor_finding_id"`
+	FindingKind              string             `json:"finding_kind"`
+	EvidenceFingerprint      string             `json:"evidence_fingerprint"`
+	ArbitrationDecisionID    uuid.UUID          `json:"arbitration_decision_id"`
+	ExactSignatureHash       string             `json:"exact_signature_hash"`
+	ExpectedFindingUpdatedAt pgtype.Timestamptz `json:"expected_finding_updated_at"`
+	LeaseToken               uuid.UUID          `json:"lease_token"`
+	ID                       uuid.UUID          `json:"id"`
+	EvidenceSnapshot         json.RawMessage    `json:"evidence_snapshot"`
+}
+
+type CreateCanonicalSiteFixEvidenceMergeRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateID           uuid.UUID          `json:"candidate_id"`
+	ArbitrationDecisionID uuid.UUID          `json:"arbitration_decision_id"`
+	SiteFixID             uuid.UUID          `json:"site_fix_id"`
+	DoctorFindingID       uuid.UUID          `json:"doctor_finding_id"`
+	FindingKind           string             `json:"finding_kind"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
+	EvidenceSnapshot      json.RawMessage    `json:"evidence_snapshot"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateCanonicalSiteFixEvidenceMerge(ctx context.Context, arg CreateCanonicalSiteFixEvidenceMergeParams) (CreateCanonicalSiteFixEvidenceMergeRow, error) {
+	row := q.db.QueryRow(ctx, createCanonicalSiteFixEvidenceMerge,
+		arg.ProjectID,
+		arg.CandidateID,
+		arg.SiteFixID,
+		arg.DoctorFindingID,
+		arg.FindingKind,
+		arg.EvidenceFingerprint,
+		arg.ArbitrationDecisionID,
+		arg.ExactSignatureHash,
+		arg.ExpectedFindingUpdatedAt,
+		arg.LeaseToken,
+		arg.ID,
+		arg.EvidenceSnapshot,
+	)
+	var i CreateCanonicalSiteFixEvidenceMergeRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ArbitrationDecisionID,
+		&i.SiteFixID,
+		&i.DoctorFindingID,
+		&i.FindingKind,
+		&i.EvidenceFingerprint,
+		&i.EvidenceSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createLegacyObjectAlias = `-- name: CreateLegacyObjectAlias :one
 insert into legacy_object_aliases (
   id, project_id, migration_batch_id, legacy_object_type, legacy_object_id,
@@ -1023,6 +1386,53 @@ func (q *Queries) CreateMigrationReviewItem(ctx context.Context, arg CreateMigra
 	return i, err
 }
 
+const failDoctorSiteFixPreparationLease = `-- name: FailDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set status = 'failed', result_expires_at = null, completed_at = null,
+    last_error_code = $1, updated_at = now()
+where project_id = $2
+  and exact_signature_hash = $3
+  and lease_token = $4
+  and status = 'preparing'
+returning project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at
+`
+
+type FailDoctorSiteFixPreparationLeaseParams struct {
+	ErrorCode          *string   `json:"error_code"`
+	ProjectID          uuid.UUID `json:"project_id"`
+	ExactSignatureHash string    `json:"exact_signature_hash"`
+	LeaseToken         uuid.UUID `json:"lease_token"`
+}
+
+func (q *Queries) FailDoctorSiteFixPreparationLease(ctx context.Context, arg FailDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, failDoctorSiteFixPreparationLease,
+		arg.ErrorCode,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.LeaseToken,
+	)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const fenceProductWriterAuthority = `-- name: FenceProductWriterAuthority :one
 update product_writer_authority
 set write_fenced = true,
@@ -1163,6 +1573,218 @@ func (q *Queries) GetCanonicalSiteFix(ctx context.Context, arg GetCanonicalSiteF
 	return i, err
 }
 
+const getCanonicalSiteFixByWorkSignature = `-- name: GetCanonicalSiteFixByWorkSignature :one
+select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
+where project_id = $1
+  and work_signature_id = $2
+`
+
+type GetCanonicalSiteFixByWorkSignatureParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+}
+
+func (q *Queries) GetCanonicalSiteFixByWorkSignature(ctx context.Context, arg GetCanonicalSiteFixByWorkSignatureParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, getCanonicalSiteFixByWorkSignature, arg.ProjectID, arg.WorkSignatureID)
+	var i SiteFix
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCanonicalSiteFixEvidenceMerge = `-- name: GetCanonicalSiteFixEvidenceMerge :one
+select evidence_merge.id, evidence_merge.project_id, evidence_merge.candidate_id, evidence_merge.arbitration_decision_id, evidence_merge.site_fix_id, evidence_merge.doctor_finding_id, evidence_merge.finding_kind, evidence_merge.evidence_fingerprint, evidence_merge.evidence_snapshot, evidence_merge.created_at
+from site_fix_evidence_merges evidence_merge
+join site_fixes sf
+  on sf.project_id = evidence_merge.project_id
+ and sf.id = evidence_merge.site_fix_id
+join work_signature_registry registry
+  on registry.project_id = sf.project_id
+ and registry.id = sf.work_signature_id
+where evidence_merge.project_id = $1
+  and evidence_merge.candidate_id = $2
+  and evidence_merge.evidence_fingerprint = $3
+  and registry.mode = 'enforced'
+  and registry.active = true
+  and registry.owner = 'doctor'
+  and registry.reserved_work_type = 'site_fix'
+  and registry.reserved_work_id = sf.id
+  and sf.status in (
+    'proposed','approved','preparing','ready_to_apply','applying',
+    'awaiting_deploy','verifying','failed_retryable','reopened'
+  )
+order by evidence_merge.created_at desc, evidence_merge.id asc
+limit 1
+`
+
+type GetCanonicalSiteFixEvidenceMergeParams struct {
+	ProjectID           uuid.UUID `json:"project_id"`
+	CandidateID         uuid.UUID `json:"candidate_id"`
+	EvidenceFingerprint string    `json:"evidence_fingerprint"`
+}
+
+func (q *Queries) GetCanonicalSiteFixEvidenceMerge(ctx context.Context, arg GetCanonicalSiteFixEvidenceMergeParams) (SiteFixEvidenceMerge, error) {
+	row := q.db.QueryRow(ctx, getCanonicalSiteFixEvidenceMerge, arg.ProjectID, arg.CandidateID, arg.EvidenceFingerprint)
+	var i SiteFixEvidenceMerge
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.ArbitrationDecisionID,
+		&i.SiteFixID,
+		&i.DoctorFindingID,
+		&i.FindingKind,
+		&i.EvidenceFingerprint,
+		&i.EvidenceSnapshot,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCompletedDoctorSiteFixPreparationDecision = `-- name: GetCompletedDoctorSiteFixPreparationDecision :one
+select decision.id, decision.project_id, decision.candidate_id, decision.candidate_version, decision.ai_call_id, decision.disposition, decision.decision, decision.owner, decision.overlap_work_ids, decision.reason, decision.confidence, decision.semantic_fingerprint, decision.compared_work_ids, decision.expected_bucket_versions, decision.snapshot_fingerprint, decision.exact_signature_hash, decision.signature_version, decision.evidence_fingerprint, decision.rules_version, decision.prompt_version, decision.provider, decision.model, decision.status, decision.created_at, decision.updated_at
+from doctor_site_fix_preparation_leases preparation
+join discovery_arbitration_decisions decision
+  on decision.project_id = preparation.project_id
+ and decision.id = preparation.arbitration_decision_id
+join discovery_candidates candidate
+  on candidate.project_id = decision.project_id
+ and candidate.id = decision.candidate_id
+where preparation.project_id = $1
+  and preparation.exact_signature_hash = $2
+  and preparation.runtime_authority_fingerprint = $3
+  and preparation.status = 'completed'
+  and preparation.result_expires_at > clock_timestamp()
+  and decision.exact_signature_hash = preparation.exact_signature_hash
+  and decision.candidate_id = $4
+  and decision.evidence_fingerprint = $5
+  and decision.candidate_version = candidate.candidate_version
+  and preparation.resolved_provider = decision.provider
+  and preparation.resolved_model = decision.model
+  and decision.rules_version = $6
+  and decision.prompt_version = $7
+  and not exists (
+    select 1
+    from jsonb_each_text(decision.expected_bucket_versions) expected(bucket_key, bucket_version)
+    left join work_conflict_buckets bucket
+      on bucket.project_id = decision.project_id
+     and bucket.bucket_key = expected.bucket_key
+    where bucket.id is null
+       or bucket.bucket_version <> expected.bucket_version::bigint
+  )
+`
+
+type GetCompletedDoctorSiteFixPreparationDecisionParams struct {
+	ProjectID                   uuid.UUID `json:"project_id"`
+	ExactSignatureHash          string    `json:"exact_signature_hash"`
+	RuntimeAuthorityFingerprint string    `json:"runtime_authority_fingerprint"`
+	CandidateID                 uuid.UUID `json:"candidate_id"`
+	EvidenceFingerprint         string    `json:"evidence_fingerprint"`
+	RulesVersion                string    `json:"rules_version"`
+	PromptVersion               string    `json:"prompt_version"`
+}
+
+func (q *Queries) GetCompletedDoctorSiteFixPreparationDecision(ctx context.Context, arg GetCompletedDoctorSiteFixPreparationDecisionParams) (DiscoveryArbitrationDecision, error) {
+	row := q.db.QueryRow(ctx, getCompletedDoctorSiteFixPreparationDecision,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.RuntimeAuthorityFingerprint,
+		arg.CandidateID,
+		arg.EvidenceFingerprint,
+		arg.RulesVersion,
+		arg.PromptVersion,
+	)
+	var i DiscoveryArbitrationDecision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.CandidateID,
+		&i.CandidateVersion,
+		&i.AiCallID,
+		&i.Disposition,
+		&i.Decision,
+		&i.Owner,
+		&i.OverlapWorkIds,
+		&i.Reason,
+		&i.Confidence,
+		&i.SemanticFingerprint,
+		&i.ComparedWorkIds,
+		&i.ExpectedBucketVersions,
+		&i.SnapshotFingerprint,
+		&i.ExactSignatureHash,
+		&i.SignatureVersion,
+		&i.EvidenceFingerprint,
+		&i.RulesVersion,
+		&i.PromptVersion,
+		&i.Provider,
+		&i.Model,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDoctorSiteFixPreparationLease = `-- name: GetDoctorSiteFixPreparationLease :one
+select project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at from doctor_site_fix_preparation_leases
+where project_id = $1
+  and exact_signature_hash = $2
+`
+
+type GetDoctorSiteFixPreparationLeaseParams struct {
+	ProjectID          uuid.UUID `json:"project_id"`
+	ExactSignatureHash string    `json:"exact_signature_hash"`
+}
+
+func (q *Queries) GetDoctorSiteFixPreparationLease(ctx context.Context, arg GetDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, getDoctorSiteFixPreparationLease, arg.ProjectID, arg.ExactSignatureHash)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getLatestCanonicalSiteFixForFindingForUpdate = `-- name: GetLatestCanonicalSiteFixForFindingForUpdate :one
 select id, project_id, doctor_finding_id, candidate_id, work_signature_id, supersedes_site_fix_id, status, finding_kind, target_urls, evidence_snapshot, proposed_fix, acceptance_tests, verification_snapshot, failure_reason, retry_count, max_retries, legacy_opportunity_id, legacy_content_action_id, migration_batch_id, approved_at, applied_at, deployed_at, verified_at, created_at, updated_at from site_fixes
 where project_id = $1
@@ -1235,6 +1857,47 @@ func (q *Queries) GetProductWriterAuthority(ctx context.Context, arg GetProductW
 		&i.AuthorityChangedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const invalidateDoctorSiteFixPreparationLease = `-- name: InvalidateDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set status = 'failed', result_expires_at = null, completed_at = null,
+    last_error_code = 'stale_result', updated_at = now()
+where project_id = $1
+  and exact_signature_hash = $2
+  and lease_token = $3
+  and status = 'completed'
+returning project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at
+`
+
+type InvalidateDoctorSiteFixPreparationLeaseParams struct {
+	ProjectID          uuid.UUID `json:"project_id"`
+	ExactSignatureHash string    `json:"exact_signature_hash"`
+	ObservedLeaseToken uuid.UUID `json:"observed_lease_token"`
+}
+
+func (q *Queries) InvalidateDoctorSiteFixPreparationLease(ctx context.Context, arg InvalidateDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, invalidateDoctorSiteFixPreparationLease, arg.ProjectID, arg.ExactSignatureHash, arg.ObservedLeaseToken)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -1383,6 +2046,62 @@ func (q *Queries) LockCanonicalSiteFixForUpdate(ctx context.Context, arg LockCan
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockDoctorSiteFixPreparationLeaseForReserve = `-- name: LockDoctorSiteFixPreparationLeaseForReserve :one
+update doctor_site_fix_preparation_leases
+set lease_expires_at = clock_timestamp() + make_interval(secs => $1::int),
+    updated_at = now()
+from discovery_candidates candidate
+where doctor_site_fix_preparation_leases.project_id = $2
+  and doctor_site_fix_preparation_leases.exact_signature_hash = $3
+  and doctor_site_fix_preparation_leases.lease_token = $4
+  and doctor_site_fix_preparation_leases.leader_candidate_id = $5
+  and doctor_site_fix_preparation_leases.status = 'preparing'
+  and doctor_site_fix_preparation_leases.lease_expires_at > clock_timestamp()
+  and candidate.project_id = doctor_site_fix_preparation_leases.project_id
+  and candidate.id = doctor_site_fix_preparation_leases.leader_candidate_id
+  and candidate.status = 'identity_ready'
+  and candidate.exact_signature_hash = doctor_site_fix_preparation_leases.exact_signature_hash
+returning doctor_site_fix_preparation_leases.project_id, doctor_site_fix_preparation_leases.exact_signature_hash, doctor_site_fix_preparation_leases.lease_token, doctor_site_fix_preparation_leases.runtime_authority_fingerprint, doctor_site_fix_preparation_leases.leader_candidate_id, doctor_site_fix_preparation_leases.arbitration_decision_id, doctor_site_fix_preparation_leases.resolved_provider, doctor_site_fix_preparation_leases.resolved_model, doctor_site_fix_preparation_leases.status, doctor_site_fix_preparation_leases.lease_expires_at, doctor_site_fix_preparation_leases.result_expires_at, doctor_site_fix_preparation_leases.attempt_count, doctor_site_fix_preparation_leases.last_error_code, doctor_site_fix_preparation_leases.created_at, doctor_site_fix_preparation_leases.updated_at, doctor_site_fix_preparation_leases.completed_at
+`
+
+type LockDoctorSiteFixPreparationLeaseForReserveParams struct {
+	LeaseTtlSeconds    int32     `json:"lease_ttl_seconds"`
+	ProjectID          uuid.UUID `json:"project_id"`
+	ExactSignatureHash string    `json:"exact_signature_hash"`
+	LeaseToken         uuid.UUID `json:"lease_token"`
+	LeaderCandidateID  uuid.UUID `json:"leader_candidate_id"`
+}
+
+func (q *Queries) LockDoctorSiteFixPreparationLeaseForReserve(ctx context.Context, arg LockDoctorSiteFixPreparationLeaseForReserveParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, lockDoctorSiteFixPreparationLeaseForReserve,
+		arg.LeaseTtlSeconds,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.LeaseToken,
+		arg.LeaderCandidateID,
+	)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -3839,6 +4558,54 @@ func (q *Queries) TerminalizeCanonicalSiteFix(ctx context.Context, arg Terminali
 		&i.VerifiedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const validateDoctorSiteFixPreparationLease = `-- name: ValidateDoctorSiteFixPreparationLease :one
+update doctor_site_fix_preparation_leases
+set lease_expires_at = clock_timestamp() + make_interval(secs => $1::int),
+    updated_at = now()
+where project_id = $2
+  and exact_signature_hash = $3
+  and lease_token = $4
+  and status = 'preparing'
+  and lease_expires_at > clock_timestamp()
+returning project_id, exact_signature_hash, lease_token, runtime_authority_fingerprint, leader_candidate_id, arbitration_decision_id, resolved_provider, resolved_model, status, lease_expires_at, result_expires_at, attempt_count, last_error_code, created_at, updated_at, completed_at
+`
+
+type ValidateDoctorSiteFixPreparationLeaseParams struct {
+	LeaseTtlSeconds    int32     `json:"lease_ttl_seconds"`
+	ProjectID          uuid.UUID `json:"project_id"`
+	ExactSignatureHash string    `json:"exact_signature_hash"`
+	LeaseToken         uuid.UUID `json:"lease_token"`
+}
+
+func (q *Queries) ValidateDoctorSiteFixPreparationLease(ctx context.Context, arg ValidateDoctorSiteFixPreparationLeaseParams) (DoctorSiteFixPreparationLease, error) {
+	row := q.db.QueryRow(ctx, validateDoctorSiteFixPreparationLease,
+		arg.LeaseTtlSeconds,
+		arg.ProjectID,
+		arg.ExactSignatureHash,
+		arg.LeaseToken,
+	)
+	var i DoctorSiteFixPreparationLease
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ExactSignatureHash,
+		&i.LeaseToken,
+		&i.RuntimeAuthorityFingerprint,
+		&i.LeaderCandidateID,
+		&i.ArbitrationDecisionID,
+		&i.ResolvedProvider,
+		&i.ResolvedModel,
+		&i.Status,
+		&i.LeaseExpiresAt,
+		&i.ResultExpiresAt,
+		&i.AttemptCount,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
