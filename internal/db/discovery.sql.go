@@ -455,7 +455,7 @@ do update set
   signature_payload = excluded.signature_payload,
   conflict_bucket_keys = excluded.conflict_bucket_keys,
   updated_at = now()
-returning id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at
+returning id, project_id, shadow_run_id, source_kind, source_object_type, source_object_id, target_kind, normalized_target_set, issue_or_hypothesis_family, change_family, proposed_mutations, artifact_intent, intended_slug_or_canonical, topic_entity_identity, audience_identity, primary_success_metric, verification_mode, evidence_ids, evidence_fingerprint, suggested_owner, confidence, candidate_schema_version, status, hold_reason, exact_signature_hash, signature_payload, conflict_bucket_keys, created_at, updated_at, candidate_version
 `
 
 type UpsertDiscoveryCandidateParams struct {
@@ -547,6 +547,7 @@ func (q *Queries) UpsertDiscoveryCandidate(ctx context.Context, arg UpsertDiscov
 		&i.ConflictBucketKeys,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CandidateVersion,
 	)
 	return i, err
 }
@@ -573,7 +574,7 @@ on conflict (candidate_id, mode) do update set
   source_object_type = excluded.source_object_type,
   source_object_id = excluded.source_object_id,
   updated_at = now()
-returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at
+returning id, project_id, candidate_id, shadow_run_id, mode, status, active, exact_signature_hash, signature_payload, semantic_fingerprint, conflict_bucket_keys, signature_version, owner, source_object_type, source_object_id, created_at, updated_at, arbitration_decision_id, reserved_work_type, reserved_work_id, evidence_fingerprint
 `
 
 type UpsertShadowWorkSignatureParams struct {
@@ -621,6 +622,10 @@ func (q *Queries) UpsertShadowWorkSignature(ctx context.Context, arg UpsertShado
 		&i.SourceObjectID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArbitrationDecisionID,
+		&i.ReservedWorkType,
+		&i.ReservedWorkID,
+		&i.EvidenceFingerprint,
 	)
 	return i, err
 }

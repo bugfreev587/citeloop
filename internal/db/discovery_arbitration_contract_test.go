@@ -1,0 +1,50 @@
+package db
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestDiscoverySemanticArbitrationSchemaContract(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0047_discovery_semantic_arbitration.sql"))
+	if err != nil {
+		t.Fatalf("read discovery semantic arbitration migration: %v", err)
+	}
+	migration := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"add column if not exists candidate_version bigint not null default 1",
+		"create table if not exists ai_call_records",
+		"create table if not exists discovery_arbitration_decisions",
+		"create table if not exists work_review_memory",
+		"create table if not exists work_signature_aliases",
+		"create table if not exists discovery_semantic_gold_cases",
+		"create table if not exists discovery_arbitration_configs",
+		"expected_bucket_versions jsonb not null",
+		"compared_work_ids jsonb not null",
+		"automatic_suppression_enabled boolean not null default false",
+		"check (not automatic_suppression_enabled or launch_ready)",
+		"add column if not exists arbitration_decision_id uuid",
+		"add column if not exists reserved_work_type text",
+		"add column if not exists reserved_work_id uuid",
+		"add column if not exists evidence_fingerprint text not null default ''",
+		"where active = true",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("discovery semantic arbitration migration missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		"stage text not null check",
+		"status text not null check",
+		"confidence numeric(5,4) not null",
+		"jsonb_typeof(expected_bucket_versions) = 'object'",
+		"jsonb_typeof(compared_work_ids) = 'array'",
+		"unique (project_id, alias_exact_signature_hash, alias_signature_version)",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("arbitration schema invariant missing %q", want)
+		}
+	}
+}
