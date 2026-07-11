@@ -52,7 +52,7 @@ func (r *PostgresRepository) SaveCandidate(ctx context.Context, runID uuid.UUID,
 	if err != nil {
 		return uuid.Nil, err
 	}
-	mutations, err := json.Marshal(candidate.ProposedMutations)
+	mutations, err := marshalMutationsForStorage(candidate.ProposedMutations)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -204,6 +204,13 @@ func reportFromDB(run db.DiscoveryShadowRun) Report {
 		report.Error = *run.Error
 	}
 	return report
+}
+
+func marshalMutationsForStorage(mutations []Mutation) (json.RawMessage, error) {
+	if mutations == nil {
+		mutations = []Mutation{}
+	}
+	return json.Marshal(mutations)
 }
 
 func numericFromConfidence(value float64) (pgtype.Numeric, error) {
