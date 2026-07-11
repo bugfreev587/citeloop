@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -37,6 +38,13 @@ func TestSemanticEvaluationCalculatesSafetyAndCapacityMetrics(t *testing.T) {
 	}
 	if !result.LaunchReady || len(result.Blockers) != 0 {
 		t.Fatalf("expected launch ready, got %+v", result)
+	}
+	blockersJSON, err := json.Marshal(result.Blockers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(blockersJSON) != "[]" {
+		t.Fatalf("launch-ready blockers encoded as %s, want []", blockersJSON)
 	}
 }
 
