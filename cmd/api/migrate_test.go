@@ -125,6 +125,7 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0059_03_opportunity_canonical_site_fix_index.sql":     "idx_seo_opportunities_canonical_site_fix",
 		"0059_04_work_review_legacy_state_index.sql":           "idx_work_review_memory_legacy_state",
 		"0059_05_active_legacy_alias_index.sql":                "uniq_active_legacy_object_alias",
+		"0062_z_seo_opportunities_project_identity.sql":        "seo_opportunities_project_id_id_key",
 		"0064_canonical_growth_legacy_index.sql":               "idx_seo_opportunities_legacy_growth_migration",
 	}
 	actualConcurrent := make(map[string]struct{})
@@ -217,6 +218,31 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 	}
 }
 
+func TestCanonicalGrowthProjectIdentityIndexMigrationRecoversInvalidIndex(t *testing.T) {
+	raw, err := fs.ReadFile(migrations.FS, "0062_z_seo_opportunities_project_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := "create unique index seo_opportunities_project_id_id_key on seo_opportunities using btree (project_id, id)"
+	conn := &migrationTestConn{
+		indexExists:          true,
+		indexValid:           false,
+		indexDefinition:      definition,
+		postCreateDefinition: definition,
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	migrationFS := fstest.MapFS{
+		"0062_z_seo_opportunities_project_identity.sql": &fstest.MapFile{Data: raw},
+	}
+	if err := runMigrationPass(context.Background(), conn, migrationFS, log); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock", "schema", "marker-check", "index-check", "drop-invalid", "create-concurrent", "index-check", "mark-nontransactional", "unlock"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected project identity index recovery order: got %v want %v", conn.events, want)
+	}
+}
+
 func TestCanonicalGrowthLegacyIndexMigrationRecoversInvalidIndex(t *testing.T) {
 	raw, err := fs.ReadFile(migrations.FS, "0064_canonical_growth_legacy_index.sql")
 	if err != nil {
@@ -252,10 +278,13 @@ func TestPhaseTwoMigrationOrderingKeepsDDLBeforeIndexAndValidationAfterAdd(t *te
 		positions[entry.Name()] = index
 	}
 	ordered := []string{
+		"0062_z_seo_opportunities_project_identity.sql",
 		"0063_canonical_growth_writer_cutover.sql",
 		"0064_canonical_growth_legacy_index.sql",
 		"0065_fix_grounding_verification_stage.sql",
 		"0066_validate_fix_grounding_verification_stage.sql",
+		"0067_growth_cutover_status_constraints_add.sql",
+		"0068_growth_cutover_status_constraints_validate.sql",
 	}
 	for index, name := range ordered {
 		position, ok := positions[name]

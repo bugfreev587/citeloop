@@ -1,9 +1,6 @@
 alter table seo_opportunities
   add column if not exists canonical_growth boolean not null default false;
 
-create unique index if not exists seo_opportunities_project_id_id_key
-  on seo_opportunities (project_id, id);
-
 create table if not exists growth_opportunity_work_aliases (
   project_id uuid not null references projects(id) on delete cascade,
   legacy_opportunity_id uuid not null,
@@ -62,14 +59,6 @@ create table if not exists growth_cutover_session_entries (
   primary key (batch_id, sequence_number),
   unique (batch_id, opportunity_id)
 );
-
-alter table discovery_candidates drop constraint if exists discovery_candidates_status_check;
-alter table discovery_candidates add constraint discovery_candidates_status_check
-  check (status in ('identity_ready','needs_specification','needs_evidence','needs_arbitration_review','migration_rolled_back'));
-
-alter table work_signature_registry drop constraint if exists work_signature_registry_status_check;
-alter table work_signature_registry add constraint work_signature_registry_status_check
-  check (status in ('shadow_observed','reserved','proposed','approved','preparing','executing','awaiting_deploy','verifying','measuring','blocked','watching','snoozed','failed_retryable','reopened','verified','learned','dismissed','superseded','cancelled','failed_terminal','migration_rolled_back'));
 
 create or replace function enforce_legacy_growth_read_only_after_cutover()
 returns trigger language plpgsql as $$

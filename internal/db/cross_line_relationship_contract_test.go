@@ -111,3 +111,78 @@ func TestCanonicalGrowthLegacyLookupIndexUsesRecoverableConcurrentMigration(t *t
 		t.Fatalf("concurrent index migration must contain one CREATE statement, got %d", got)
 	}
 }
+
+func TestCanonicalGrowthPopulatedTableDDLIsSplitAndLockBounded(t *testing.T) {
+	baseRaw, err := os.ReadFile("../migrations/0063_canonical_growth_writer_cutover.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityRaw, err := os.ReadFile("../migrations/0062_z_seo_opportunities_project_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addRaw, err := os.ReadFile("../migrations/0067_growth_cutover_status_constraints_add.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validateRaw, err := os.ReadFile("../migrations/0068_growth_cutover_status_constraints_validate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := strings.ToLower(string(baseRaw))
+	identity := strings.ToLower(string(identityRaw))
+	add := strings.ToLower(string(addRaw))
+	validate := strings.ToLower(string(validateRaw))
+	for _, forbidden := range []string{
+		"create unique index if not exists seo_opportunities_project_id_id_key",
+		"drop constraint if exists discovery_candidates_status_check",
+		"drop constraint if exists work_signature_registry_status_check",
+	} {
+		if strings.Contains(base, forbidden) {
+			t.Errorf("transactional 0063 retains populated-table DDL %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"-- citeloop:migration-mode=nontransactional",
+		"-- citeloop:index=seo_opportunities_project_id_id_key",
+		"create unique index concurrently if not exists seo_opportunities_project_id_id_key",
+		"on seo_opportunities (project_id, id)",
+	} {
+		if !strings.Contains(identity, want) {
+			t.Errorf("project identity migration missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		"set local lock_timeout = '5s'",
+		"set local statement_timeout = '30s'",
+		"drop constraint if exists discovery_candidates_status_check",
+		"add constraint discovery_candidates_status_check",
+		"drop constraint if exists work_signature_registry_status_check",
+		"add constraint work_signature_registry_status_check",
+		"not valid",
+		"reset statement_timeout",
+		"reset lock_timeout",
+	} {
+		if !strings.Contains(add, want) {
+			t.Errorf("status constraint add migration missing %q", want)
+		}
+	}
+	if strings.Contains(add, "validate constraint") {
+		t.Fatal("status constraint add migration must not scan populated tables")
+	}
+	for _, want := range []string{
+		"set local lock_timeout = '5s'",
+		"set local statement_timeout = '30s'",
+		"validate constraint discovery_candidates_status_check",
+		"validate constraint work_signature_registry_status_check",
+		"reset statement_timeout",
+		"reset lock_timeout",
+	} {
+		if !strings.Contains(validate, want) {
+			t.Errorf("status constraint validation migration missing %q", want)
+		}
+	}
+	if strings.Contains(validate, "drop constraint") || strings.Contains(validate, "add constraint") {
+		t.Fatal("status constraint validation migration must not replace constraints")
+	}
+}
