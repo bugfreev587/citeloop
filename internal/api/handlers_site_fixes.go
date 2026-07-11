@@ -137,6 +137,7 @@ func (s *postgresDoctorSiteFixLifecycleService) Apply(ctx context.Context, proje
 	service := s.apply
 	if !projectConfig.AllowsDoctorAI(config.DoctorAITriggerApplyUser) {
 		service.Generator = sitefix.DeterministicApplicationGenerator{}
+		service.Verifier = sitefix.DeterministicPatchGroundingVerifier{}
 	}
 	return service.Apply(ctx, projectID, fixID)
 }
@@ -1038,6 +1039,7 @@ func (s *Server) doctorSiteFixLifecycleService() DoctorSiteFixLifecycleService {
 		apply: sitefix.ApplyService{
 			Store:     sitefix.PostgresApplyStore{Pool: s.Pool, Q: s.Q},
 			Generator: sitefix.LLMApplicationGenerator{Provider: s.LLM, Model: s.Env.TokenGateModel},
+			Verifier:  sitefix.LLMPatchGroundingVerifier{Provider: s.LLM, Model: s.Env.TokenGateModel},
 		},
 	}
 }

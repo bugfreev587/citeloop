@@ -18,7 +18,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrLifecycleConflict = errors.New("canonical Site Fix lifecycle conflict")
+var (
+	ErrLifecycleConflict      = errors.New("canonical Site Fix lifecycle conflict")
+	ErrPatchGroundingRejected = errors.New("independent patch grounding verification rejected the canonical Site Fix")
+)
 
 type GenerationCall struct {
 	Provider           string
@@ -71,6 +74,25 @@ type FixGenerator interface {
 	Generate(context.Context, db.SiteFix, GenerationContext) (ApplicationPlan, GenerationResult, error)
 }
 
+// PatchVerification is an independent judgment over the actual generated
+// patch/diff text. It deliberately does not reuse the generator's grounding
+// self-report.
+type PatchVerification struct {
+	Approved               bool
+	PrimaryIntentPreserved bool
+	PreservedPropositions  []string
+	AddedPropositions      []string
+	RemovedPropositions    []string
+	UnsupportedClaims      []string
+	IntentDrift            bool
+	Reason                 string
+}
+
+type PatchGroundingVerifier interface {
+	Describe(db.SiteFix, GenerationContext, ApplicationPlan) GenerationCall
+	Verify(context.Context, db.SiteFix, GenerationContext, ApplicationPlan) (PatchVerification, GenerationResult, error)
+}
+
 type ApplyStore interface {
 	Load(context.Context, uuid.UUID, uuid.UUID) (db.SiteFix, error)
 	LoadGenerationContext(context.Context, db.SiteFix) (GenerationContext, error)
@@ -78,16 +100,19 @@ type ApplyStore interface {
 	MarkPreparing(context.Context, db.SiteFix) (db.SiteFix, error)
 	StartGeneration(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, error)
 	FinishGeneration(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
+	StartGroundingVerification(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, error)
+	FinishGroundingVerification(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
 	Finalize(context.Context, db.SiteFix, ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error)
 }
 
 type ApplyService struct {
 	Store     ApplyStore
 	Generator FixGenerator
+	Verifier  PatchGroundingVerifier
 }
 
 func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (ApplyResult, error) {
-	if s.Store == nil || s.Generator == nil {
+	if s.Store == nil || s.Generator == nil || s.Verifier == nil {
 		return ApplyResult{}, errors.New("canonical Site Fix apply dependencies unavailable")
 	}
 	fix, err := s.Store.Load(ctx, projectID, fixID)
@@ -162,6 +187,40 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 	if generation.Status != "ok" && generation.Status != "partial" && generation.Status != "skipped" {
 		return ApplyResult{}, fmt.Errorf("fix generation ended in %q", generation.Status)
 	}
+	verificationDescriptor := s.Verifier.Describe(fix, generationContext, plan)
+	if strings.TrimSpace(verificationDescriptor.Provider) == "" || strings.TrimSpace(verificationDescriptor.Model) == "" ||
+		strings.TrimSpace(verificationDescriptor.PromptVersion) == "" || strings.TrimSpace(verificationDescriptor.RequestFingerprint) == "" {
+		return ApplyResult{}, errors.New("independent patch grounding verifier descriptor is incomplete")
+	}
+	verificationCallID, err := s.Store.StartGroundingVerification(ctx, fix, verificationDescriptor, callID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	verification, verificationGeneration, verificationErr := s.Verifier.Verify(ctx, fix, generationContext, plan)
+	if verificationErr != nil && verificationGeneration.Status == "" {
+		verificationGeneration.Status = "failed"
+	}
+	if verificationErr == nil {
+		verificationErr = validatePatchVerification(fix, verification)
+		if verificationErr != nil {
+			verificationGeneration.Status = "failed"
+			verificationGeneration.ErrorCode = "grounding_rejected"
+		}
+	}
+	verificationFinishCtx, cancelVerificationFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelVerificationFinish()
+	if finishErr := s.Store.FinishGroundingVerification(verificationFinishCtx, fix, verificationCallID, verificationGeneration); finishErr != nil {
+		if verificationErr != nil {
+			return ApplyResult{}, errors.Join(verificationErr, finishErr)
+		}
+		return ApplyResult{}, finishErr
+	}
+	if verificationErr != nil {
+		return ApplyResult{}, verificationErr
+	}
+	if verificationGeneration.Status != "ok" && verificationGeneration.Status != "skipped" {
+		return ApplyResult{}, fmt.Errorf("independent patch grounding verification ended in %q", verificationGeneration.Status)
+	}
 	fix, app, err := s.Store.Finalize(ctx, fix, plan)
 	if err != nil {
 		return ApplyResult{}, err
@@ -170,6 +229,19 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		return ApplyResult{}, errors.New("canonical application returned an invalid source")
 	}
 	return ApplyResult{SiteFix: fix, Application: app}, nil
+}
+
+func validatePatchVerification(fix db.SiteFix, verification PatchVerification) error {
+	_, expectedPropositions, err := approvedPropositionContract(fix.EvidenceSnapshot)
+	if err != nil {
+		return err
+	}
+	if !verification.Approved || !verification.PrimaryIntentPreserved || verification.IntentDrift ||
+		len(verification.AddedPropositions) > 0 || len(verification.RemovedPropositions) > 0 || len(verification.UnsupportedClaims) > 0 ||
+		!sameNormalizedStrings(verification.PreservedPropositions, expectedPropositions) {
+		return ErrPatchGroundingRejected
+	}
+	return nil
 }
 
 func validateApplicationPlan(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) error {
@@ -428,6 +500,26 @@ func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix,
 }
 
 func (s PostgresApplyStore) FinishGeneration(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
+	return s.finishAICall(ctx, fix, callID, result)
+}
+
+func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix db.SiteFix, call GenerationCall, parentCallID uuid.UUID) (uuid.UUID, error) {
+	row, err := s.Q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
+		ProjectID: fix.ProjectID, Stage: "fix_grounding_verification", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
+		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
+		RequestFingerprint: call.RequestFingerprint, Status: "running", ParentCallID: validPGUUID(parentCallID),
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return row.ID, nil
+}
+
+func (s PostgresApplyStore) FinishGroundingVerification(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
+	return s.finishAICall(ctx, fix, callID, result)
+}
+
+func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
 	cost := pgtype.Numeric{}
 	if err := cost.Scan(fmt.Sprintf("%.8f", max(result.CostUSD, 0))); err != nil {
 		return err

@@ -24,7 +24,10 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 		DiffSnapshot:       json.RawMessage(`{}`),
 		ResolutionCriteria: json.RawMessage(`{"asset_type":"canonical"}`),
 	}}
-	service := ApplyService{Store: store, Generator: generator}
+	verifier := &patchVerifierStub{store: store, verification: PatchVerification{
+		Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
+	}}
+	service := ApplyService{Store: store, Generator: generator, Verifier: verifier}
 
 	result, err := service.Apply(context.Background(), projectID, fixID)
 	if err != nil {
@@ -33,12 +36,12 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 	if !result.Application.SiteFixID.Valid || result.Application.ContentActionID.Valid {
 		t.Fatalf("application source = site_fix:%v content_action:%v", result.Application.SiteFixID.Valid, result.Application.ContentActionID.Valid)
 	}
-	want := []string{"load", "find_application", "preparing", "start_ai", "provider", "finish_ai:ok", "finalize"}
+	want := []string{"load", "find_application", "preparing", "start_ai", "provider", "finish_ai:ok", "start_verifier", "verifier", "finish_verifier:ok", "finalize"}
 	if !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events = %#v, want %#v", store.events, want)
 	}
-	if store.providerSawLifecycleTransaction {
-		t.Fatal("provider was called while the lifecycle transaction was open")
+	if store.providerSawLifecycleTransaction || store.verifierSawLifecycleTransaction {
+		t.Fatal("provider or independent verifier was called while the lifecycle transaction was open")
 	}
 
 	// A retry is a distinct call record; failed records are never overwritten.
@@ -62,7 +65,7 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 		existing: db.SiteChangeApplication{ID: appID, ProjectID: projectID, SiteFixID: validPGUUID(fixID), Status: "ready_for_pr"},
 	}
 	generator := &fixGeneratorStub{store: store}
-	result, err := (ApplyService{Store: store, Generator: generator}).Apply(context.Background(), projectID, fixID)
+	result, err := (ApplyService{Store: store, Generator: generator, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), projectID, fixID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +74,83 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 	}
 	if want := []string{"load", "find_application"}; !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events=%v want=%v", store.events, want)
+	}
+}
+
+func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelfReport(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	fix := groundedOptimizationFix()
+	fix.ID, fix.ProjectID, fix.Status = fixID, projectID, "approved"
+	store := &applyStoreStub{fix: fix, generationContext: GenerationContext{
+		ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`),
+		ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot,
+	}}
+	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
+		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
+		SourceFilePaths:    json.RawMessage(`["app/page.tsx"]`),
+		PatchSnapshot:      json.RawMessage(`{"replacement_text":"CiteLoop guarantees 300% revenue growth."}`),
+		DiffSnapshot:       json.RawMessage(`{"added_propositions":[]}`),
+		ResolutionCriteria: json.RawMessage(`{"acceptance":"existing page remains available"}`),
+	}}
+	provider := &groundingProviderStub{response: `{
+		"approved":false,
+		"primary_intent_preserved":false,
+		"preserved_propositions":["Existing supported fact."],
+		"added_propositions":["CiteLoop guarantees 300% revenue growth."],
+		"removed_propositions":[],
+		"unsupported_claims":["CiteLoop guarantees 300% revenue growth."],
+		"intent_drift":true,
+		"reason":"The replacement introduces an unsupported commercial guarantee."
+	}`}
+	verifier := LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}
+
+	_, err := (ApplyService{Store: store, Generator: generator, Verifier: verifier}).Apply(context.Background(), projectID, fixID)
+	if err == nil || !errors.Is(err, ErrPatchGroundingRejected) {
+		t.Fatalf("Apply error = %v, want independent grounding rejection", err)
+	}
+	if !strings.Contains(provider.request.Prompt, "CiteLoop guarantees 300% revenue growth.") {
+		t.Fatalf("independent verifier did not receive actual patch text: %s", provider.request.Prompt)
+	}
+	if strings.Contains(provider.request.Prompt, "grounding_validation") {
+		t.Fatalf("independent verifier received the generator's grounding self-report: %s", provider.request.Prompt)
+	}
+	if strings.Contains(strings.Join(store.events, ","), "finalize") {
+		t.Fatalf("rejected patch was finalized: %v", store.events)
+	}
+	wantTail := []string{"finish_ai:ok", "start_verifier", "finish_verifier:failed"}
+	joined := strings.Join(store.events, ",")
+	for _, event := range wantTail {
+		if !strings.Contains(joined, event) {
+			t.Fatalf("verifier call was not fully ledgered; missing %q in %v", event, store.events)
+		}
+	}
+}
+
+func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	fix := groundedOptimizationFix()
+	fix.ID, fix.ProjectID, fix.Status = fixID, projectID, "approved"
+	store := &applyStoreStub{fix: fix, generationContext: GenerationContext{
+		ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`),
+		ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot,
+	}}
+	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
+		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "manual_apply_required",
+		SourceFilePaths: json.RawMessage(`[]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`),
+		DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
+	}}
+
+	_, err := (ApplyService{Store: store, Generator: generator, Verifier: LLMPatchGroundingVerifier{}}).Apply(context.Background(), projectID, fixID)
+	if err == nil {
+		t.Fatal("provider-unavailable independent verifier must fail closed")
+	}
+	if strings.Contains(strings.Join(store.events, ","), "finalize") {
+		t.Fatalf("unverified patch was finalized: %v", store.events)
+	}
+	if got := store.events[len(store.events)-1]; got != "finish_verifier:failed" {
+		t.Fatalf("last event = %q, want failed verifier ledger completion; events=%v", got, store.events)
 	}
 }
 
@@ -174,7 +254,9 @@ type applyStoreStub struct {
 	finishedCalls                   int
 	lifecycleTransactionOpen        bool
 	providerSawLifecycleTransaction bool
+	verifierSawLifecycleTransaction bool
 	existing                        db.SiteChangeApplication
+	generationContext               GenerationContext
 }
 
 func (s *applyStoreStub) Load(_ context.Context, projectID, fixID uuid.UUID) (db.SiteFix, error) {
@@ -185,6 +267,9 @@ func (s *applyStoreStub) Load(_ context.Context, projectID, fixID uuid.UUID) (db
 	return s.fix, nil
 }
 func (s *applyStoreStub) LoadGenerationContext(_ context.Context, fix db.SiteFix) (GenerationContext, error) {
+	if len(s.generationContext.ObservedEvidence) > 0 {
+		return s.generationContext, nil
+	}
 	return GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"test context"}`), ProfileVersion: 1, ObservedEvidence: fix.EvidenceSnapshot}, nil
 }
 func (s *applyStoreStub) MarkPreparing(_ context.Context, fix db.SiteFix) (db.SiteFix, error) {
@@ -205,6 +290,14 @@ func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ Gene
 func (s *applyStoreStub) FinishGeneration(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
 	s.events = append(s.events, "finish_ai:"+result.Status)
 	s.finishedCalls++
+	return nil
+}
+func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.SiteFix, _ GenerationCall, _ uuid.UUID) (uuid.UUID, error) {
+	s.events = append(s.events, "start_verifier")
+	return uuid.New(), nil
+}
+func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
+	s.events = append(s.events, "finish_verifier:"+result.Status)
 	return nil
 }
 func (s *applyStoreStub) Finalize(_ context.Context, fix db.SiteFix, plan ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error) {
@@ -241,4 +334,23 @@ func (g *fixGeneratorStub) generate() (ApplicationPlan, GenerationResult, error)
 		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "provider_unavailable"}, g.err
 	}
 	return g.plan, GenerationResult{Status: "ok", TotalTokens: 42}, nil
+}
+
+type patchVerifierStub struct {
+	store        *applyStoreStub
+	verification PatchVerification
+	err          error
+}
+
+func (v *patchVerifierStub) Describe(db.SiteFix, GenerationContext, ApplicationPlan) GenerationCall {
+	return GenerationCall{Provider: "test", Model: "verifier", PromptVersion: "doctor-patch-grounding-v1", RequestFingerprint: "verifier-fingerprint"}
+}
+
+func (v *patchVerifierStub) Verify(_ context.Context, _ db.SiteFix, _ GenerationContext, _ ApplicationPlan) (PatchVerification, GenerationResult, error) {
+	v.store.events = append(v.store.events, "verifier")
+	v.store.verifierSawLifecycleTransaction = v.store.lifecycleTransactionOpen
+	if v.err != nil {
+		return PatchVerification{}, GenerationResult{Status: "failed", ErrorCode: "provider_unavailable"}, v.err
+	}
+	return v.verification, GenerationResult{Provider: "test", Model: "verifier", Status: "ok"}, nil
 }
