@@ -269,13 +269,14 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		return s.store.SavePreparedDecision(ctx, base)
 	}
 
+	deterministicSoftDependencies := []uuid.UUID(nil)
 	if decision, ok, classifyErr := deterministicCrossLineDecision(candidate, snapshot.ActiveWorks); classifyErr != nil {
 		base.Disposition = DispositionManualResolution
 		base.Decision = DecisionHold
 		base.Reason = "cross-line dependency classification failed closed: " + classifyErr.Error()
 		base.Status = ArbitrationStatusHeld
 		return s.persistHold(ctx, candidate, snapshot, base)
-	} else if ok && len(snapshot.ReviewMemory) == 0 && len(snapshot.ReviewAliases) == 0 {
+	} else if ok && decision.Decision == DecisionBlockOnOtherLine && len(snapshot.ReviewMemory) == 0 && len(snapshot.ReviewAliases) == 0 {
 		base.Disposition = DispositionDeterministicSafe
 		base.Decision = decision.Decision
 		base.Owner = ownerForCandidate(candidate.Candidate)
@@ -286,6 +287,8 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		base.Status = ArbitrationStatusPrepared
 		base.SemanticFingerprint, _ = semanticFingerprint(candidate.Identity, "deterministic")
 		return s.store.SavePreparedDecision(ctx, base)
+	} else if ok && decision.Decision == DecisionCreate {
+		deterministicSoftDependencies = append([]uuid.UUID(nil), decision.OverlapWorkIDs...)
 	}
 
 	possible, incompleteMemory := semanticOverlapSet(snapshot)
@@ -356,6 +359,9 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	base.Decision = decision.Decision
 	base.Owner = decision.Owner
 	base.OverlapWorkIDs = append([]uuid.UUID(nil), decision.Overlaps...)
+	if decision.Decision == DecisionCreate {
+		base.OverlapWorkIDs = unionUUIDs(base.OverlapWorkIDs, deterministicSoftDependencies)
+	}
 	base.ComparedWorkIDs = semanticWorkIDs(possible)
 	base.Reason = decision.Reason
 	base.Confidence = decision.Confidence
@@ -392,6 +398,21 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 	base.Status = ArbitrationStatusPrepared
 	return s.store.SavePreparedDecision(ctx, base)
+}
+
+func unionUUIDs(left, right []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(left)+len(right))
+	for _, id := range append(append([]uuid.UUID(nil), left...), right...) {
+		if id != uuid.Nil {
+			seen[id] = struct{}{}
+		}
+	}
+	out := make([]uuid.UUID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
 }
 
 type deterministicDependencyDecision struct {

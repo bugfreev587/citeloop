@@ -52,17 +52,18 @@ returns trigger language plpgsql as $$
 declare
   authority text;
   fenced boolean;
+  fence_token uuid;
   canonical_growth boolean;
   opportunity_id uuid;
   signature_id uuid;
 begin
-  select writer.writer_authority, writer.write_fenced
-    into authority, fenced
+  select writer.writer_authority, writer.write_fenced, writer.fence_token
+    into authority, fenced, fence_token
   from product_writer_authority writer
   where writer.project_id = new.project_id and writer.product = 'opportunities'
   for share;
 
-  if fenced then
+  if fenced and fence_token::text is distinct from current_setting('citeloop.growth_cutover_fence_token', true) then
     raise exception 'Growth writer authority is fenced' using errcode = '55000';
   end if;
   if authority is distinct from 'canonical' then

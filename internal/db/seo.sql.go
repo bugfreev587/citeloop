@@ -13,6 +13,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appendGrowthCutoverSessionEntry = `-- name: AppendGrowthCutoverSessionEntry :one
+insert into growth_cutover_session_entries
+  (batch_id, project_id, sequence_number, opportunity_id, candidate_id,
+   work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation)
+values
+  ($1, $2, $3,
+   $4, $5, $6,
+   $7, $8::jsonb,
+   $9::jsonb, $10::jsonb)
+returning batch_id, project_id, sequence_number, opportunity_id, candidate_id, work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation, created_at
+`
+
+type AppendGrowthCutoverSessionEntryParams struct {
+	BatchID          uuid.UUID       `json:"batch_id"`
+	ProjectID        uuid.UUID       `json:"project_id"`
+	SequenceNumber   int32           `json:"sequence_number"`
+	OpportunityID    uuid.UUID       `json:"opportunity_id"`
+	CandidateID      uuid.UUID       `json:"candidate_id"`
+	WorkSignatureID  uuid.UUID       `json:"work_signature_id"`
+	Disposition      string          `json:"disposition"`
+	BeforeSnapshot   json.RawMessage `json:"before_snapshot"`
+	AfterSnapshot    json.RawMessage `json:"after_snapshot"`
+	InverseOperation json.RawMessage `json:"inverse_operation"`
+}
+
+func (q *Queries) AppendGrowthCutoverSessionEntry(ctx context.Context, arg AppendGrowthCutoverSessionEntryParams) (GrowthCutoverSessionEntry, error) {
+	row := q.db.QueryRow(ctx, appendGrowthCutoverSessionEntry,
+		arg.BatchID,
+		arg.ProjectID,
+		arg.SequenceNumber,
+		arg.OpportunityID,
+		arg.CandidateID,
+		arg.WorkSignatureID,
+		arg.Disposition,
+		arg.BeforeSnapshot,
+		arg.AfterSnapshot,
+		arg.InverseOperation,
+	)
+	var i GrowthCutoverSessionEntry
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.SequenceNumber,
+		&i.OpportunityID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.Disposition,
+		&i.BeforeSnapshot,
+		&i.AfterSnapshot,
+		&i.InverseOperation,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const claimPageUpdateDraftForApply = `-- name: ClaimPageUpdateDraftForApply :one
 with candidate as (
   select page_update_drafts.id from page_update_drafts
@@ -274,6 +329,38 @@ where project_id = $1
 
 func (q *Queries) CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countOpenSEOOpportunities, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countUnrepresentedActiveLegacyGrowth = `-- name: CountUnrepresentedActiveLegacyGrowth :one
+select count(*)::bigint from seo_opportunities opportunity
+where opportunity.project_id = $1
+  and opportunity.canonical_read_only = false
+  and not is_legacy_doctor_technical_opportunity(opportunity.type, opportunity.evidence)
+  and opportunity.status in ('open','accepted','converted','snoozed','watching')
+  and not exists (
+    select 1 from work_signature_registry owned_signature
+    where owned_signature.project_id = opportunity.project_id
+      and owned_signature.mode = 'enforced' and owned_signature.active = true
+      and owned_signature.owner = 'opportunities'
+      and owned_signature.reserved_work_type = 'seo_opportunity'
+      and owned_signature.reserved_work_id = opportunity.id
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    join work_signature_registry alias_signature
+      on alias_signature.project_id = alias.project_id
+     and alias_signature.id = alias.work_signature_id
+     and alias_signature.mode = 'enforced' and alias_signature.active = true
+    where alias.project_id = opportunity.project_id
+      and alias.legacy_opportunity_id = opportunity.id
+  )
+`
+
+func (q *Queries) CountUnrepresentedActiveLegacyGrowth(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnrepresentedActiveLegacyGrowth, projectID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -1227,6 +1314,41 @@ func (q *Queries) FailSEODoctorRun(ctx context.Context, arg FailSEODoctorRunPara
 	return i, err
 }
 
+const finishGrowthCutoverSession = `-- name: FinishGrowthCutoverSession :one
+update growth_cutover_sessions
+set status = $1, error = $2, finished_at = now()
+where project_id = $3 and batch_id = $4
+  and status = 'applying'
+returning batch_id, project_id, fence_token, status, started_at, finished_at, error
+`
+
+type FinishGrowthCutoverSessionParams struct {
+	Status    string    `json:"status"`
+	Error     *string   `json:"error"`
+	ProjectID uuid.UUID `json:"project_id"`
+	BatchID   uuid.UUID `json:"batch_id"`
+}
+
+func (q *Queries) FinishGrowthCutoverSession(ctx context.Context, arg FinishGrowthCutoverSessionParams) (GrowthCutoverSession, error) {
+	row := q.db.QueryRow(ctx, finishGrowthCutoverSession,
+		arg.Status,
+		arg.Error,
+		arg.ProjectID,
+		arg.BatchID,
+	)
+	var i GrowthCutoverSession
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.FenceToken,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+	)
+	return i, err
+}
+
 const finishSEORun = `-- name: FinishSEORun :one
 update seo_runs set
   status = $3,
@@ -1269,6 +1391,27 @@ func (q *Queries) FinishSEORun(ctx context.Context, arg FinishSEORunParams) (Seo
 		&i.CostUsd,
 		&i.Input,
 		&i.Output,
+		&i.Error,
+	)
+	return i, err
+}
+
+const getActiveGrowthCutoverSession = `-- name: GetActiveGrowthCutoverSession :one
+select batch_id, project_id, fence_token, status, started_at, finished_at, error from growth_cutover_sessions
+where project_id = $1 and status = 'applying'
+order by started_at desc limit 1
+`
+
+func (q *Queries) GetActiveGrowthCutoverSession(ctx context.Context, projectID uuid.UUID) (GrowthCutoverSession, error) {
+	row := q.db.QueryRow(ctx, getActiveGrowthCutoverSession, projectID)
+	var i GrowthCutoverSession
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.FenceToken,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
 		&i.Error,
 	)
 	return i, err
@@ -2606,6 +2749,49 @@ func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDu
 			&i.CanonicalReadOnly,
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGrowthCutoverSessionEntries = `-- name: ListGrowthCutoverSessionEntries :many
+select batch_id, project_id, sequence_number, opportunity_id, candidate_id, work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation, created_at from growth_cutover_session_entries
+where project_id = $1 and batch_id = $2
+order by sequence_number desc
+`
+
+type ListGrowthCutoverSessionEntriesParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	BatchID   uuid.UUID `json:"batch_id"`
+}
+
+func (q *Queries) ListGrowthCutoverSessionEntries(ctx context.Context, arg ListGrowthCutoverSessionEntriesParams) ([]GrowthCutoverSessionEntry, error) {
+	rows, err := q.db.Query(ctx, listGrowthCutoverSessionEntries, arg.ProjectID, arg.BatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GrowthCutoverSessionEntry
+	for rows.Next() {
+		var i GrowthCutoverSessionEntry
+		if err := rows.Scan(
+			&i.BatchID,
+			&i.ProjectID,
+			&i.SequenceNumber,
+			&i.OpportunityID,
+			&i.CandidateID,
+			&i.WorkSignatureID,
+			&i.Disposition,
+			&i.BeforeSnapshot,
+			&i.AfterSnapshot,
+			&i.InverseOperation,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -5089,6 +5275,132 @@ func (q *Queries) RevokeSEOOAuthToken(ctx context.Context, arg RevokeSEOOAuthTok
 	return i, err
 }
 
+const rollbackGrowthCutoverCanonical = `-- name: RollbackGrowthCutoverCanonical :one
+with source_signature as materialized (
+  select signature.id, signature.candidate_id, signature.conflict_bucket_keys
+  from work_signature_registry signature
+  where signature.project_id = $1
+    and signature.id = $2
+    and signature.candidate_id = $3
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = $4
+), expected_keys as materialized (
+  select distinct key.bucket_key
+  from source_signature signature
+  cross join lateral jsonb_array_elements_text(signature.conflict_bucket_keys) key(bucket_key)
+), locked_buckets as materialized (
+  select bucket.id
+  from work_conflict_buckets bucket
+  join expected_keys expected on expected.bucket_key = bucket.bucket_key
+  where bucket.project_id = $1
+  order by bucket.bucket_key
+  for update of bucket
+), removed_relationships as (
+  delete from work_relationships relationship
+  using source_signature signature
+  where relationship.project_id = $1
+    and (relationship.dependent_work_signature_id = signature.id
+      or relationship.blocking_work_signature_id = signature.id)
+  returning relationship.id
+), removed_aliases as (
+  delete from growth_opportunity_work_aliases alias
+  using source_signature signature
+  where alias.project_id = $1
+    and alias.work_signature_id = signature.id
+  returning alias.legacy_opportunity_id
+), reverted_opportunity as (
+  update seo_opportunities opportunity
+  set canonical_growth = false, updated_at = now()
+  from source_signature signature
+  where opportunity.project_id = $1
+    and opportunity.id = $4
+    and opportunity.canonical_growth = true
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning opportunity.id
+), removed_signature as (
+  delete from work_signature_registry signature
+  using source_signature source
+  where signature.project_id = $1
+    and signature.id = source.id
+    and exists (select 1 from reverted_opportunity)
+  returning signature.candidate_id
+), removed_candidate as (
+  delete from discovery_candidates candidate
+  using removed_signature signature
+  where candidate.project_id = $1
+    and candidate.id = signature.candidate_id
+  returning candidate.id
+), bumped as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id and exists (select 1 from removed_signature)
+  returning bucket.id
+)
+select count(*)::bigint as removed_count from removed_signature
+`
+
+type RollbackGrowthCutoverCanonicalParams struct {
+	ProjectID       uuid.UUID   `json:"project_id"`
+	WorkSignatureID uuid.UUID   `json:"work_signature_id"`
+	CandidateID     uuid.UUID   `json:"candidate_id"`
+	OpportunityID   pgtype.UUID `json:"opportunity_id"`
+}
+
+func (q *Queries) RollbackGrowthCutoverCanonical(ctx context.Context, arg RollbackGrowthCutoverCanonicalParams) (int64, error) {
+	row := q.db.QueryRow(ctx, rollbackGrowthCutoverCanonical,
+		arg.ProjectID,
+		arg.WorkSignatureID,
+		arg.CandidateID,
+		arg.OpportunityID,
+	)
+	var removed_count int64
+	err := row.Scan(&removed_count)
+	return removed_count, err
+}
+
+const rollbackGrowthCutoverDuplicate = `-- name: RollbackGrowthCutoverDuplicate :one
+with removed_alias as (
+  delete from growth_opportunity_work_aliases alias
+  where alias.project_id = $1
+    and alias.legacy_opportunity_id = $2
+    and alias.work_signature_id = $3
+  returning alias.legacy_opportunity_id
+), removed_candidate as (
+  delete from discovery_candidates candidate
+  where candidate.project_id = $1
+    and candidate.id = $4
+    and exists (select 1 from removed_alias)
+    and not exists (
+      select 1 from work_signature_registry signature
+      where signature.project_id = candidate.project_id
+        and signature.candidate_id = candidate.id
+    )
+  returning candidate.id
+)
+select count(*)::bigint as removed_count from removed_alias
+`
+
+type RollbackGrowthCutoverDuplicateParams struct {
+	ProjectID       uuid.UUID `json:"project_id"`
+	OpportunityID   uuid.UUID `json:"opportunity_id"`
+	WorkSignatureID uuid.UUID `json:"work_signature_id"`
+	CandidateID     uuid.UUID `json:"candidate_id"`
+}
+
+func (q *Queries) RollbackGrowthCutoverDuplicate(ctx context.Context, arg RollbackGrowthCutoverDuplicateParams) (int64, error) {
+	row := q.db.QueryRow(ctx, rollbackGrowthCutoverDuplicate,
+		arg.ProjectID,
+		arg.OpportunityID,
+		arg.WorkSignatureID,
+		arg.CandidateID,
+	)
+	var removed_count int64
+	err := row.Scan(&removed_count)
+	return removed_count, err
+}
+
 const sEODataDayCount = `-- name: SEODataDayCount :one
 select count(distinct date)::bigint
 from page_performance_daily
@@ -5300,6 +5612,34 @@ func (q *Queries) SnoozeSEOOpportunity(ctx context.Context, arg SnoozeSEOOpportu
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+	)
+	return i, err
+}
+
+const startGrowthCutoverSession = `-- name: StartGrowthCutoverSession :one
+insert into growth_cutover_sessions
+  (batch_id, project_id, fence_token, status)
+values ($1, $2, $3, 'applying')
+returning batch_id, project_id, fence_token, status, started_at, finished_at, error
+`
+
+type StartGrowthCutoverSessionParams struct {
+	BatchID    uuid.UUID `json:"batch_id"`
+	ProjectID  uuid.UUID `json:"project_id"`
+	FenceToken uuid.UUID `json:"fence_token"`
+}
+
+func (q *Queries) StartGrowthCutoverSession(ctx context.Context, arg StartGrowthCutoverSessionParams) (GrowthCutoverSession, error) {
+	row := q.db.QueryRow(ctx, startGrowthCutoverSession, arg.BatchID, arg.ProjectID, arg.FenceToken)
+	var i GrowthCutoverSession
+	err := row.Scan(
+		&i.BatchID,
+		&i.ProjectID,
+		&i.FenceToken,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
 	)
 	return i, err
 }

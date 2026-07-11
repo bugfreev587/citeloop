@@ -570,6 +570,30 @@ type GeoVisibilityScore struct {
 	ComputedAt          pgtype.Timestamptz `json:"computed_at"`
 }
 
+type GrowthCutoverSession struct {
+	BatchID    uuid.UUID          `json:"batch_id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	FenceToken uuid.UUID          `json:"fence_token"`
+	Status     string             `json:"status"`
+	StartedAt  pgtype.Timestamptz `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	Error      *string            `json:"error"`
+}
+
+type GrowthCutoverSessionEntry struct {
+	BatchID          uuid.UUID          `json:"batch_id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	SequenceNumber   int32              `json:"sequence_number"`
+	OpportunityID    uuid.UUID          `json:"opportunity_id"`
+	CandidateID      uuid.UUID          `json:"candidate_id"`
+	WorkSignatureID  uuid.UUID          `json:"work_signature_id"`
+	Disposition      string             `json:"disposition"`
+	BeforeSnapshot   json.RawMessage    `json:"before_snapshot"`
+	AfterSnapshot    json.RawMessage    `json:"after_snapshot"`
+	InverseOperation json.RawMessage    `json:"inverse_operation"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type GrowthOpportunityWorkAlias struct {
 	ProjectID              uuid.UUID          `json:"project_id"`
 	LegacyOpportunityID    uuid.UUID          `json:"legacy_opportunity_id"`

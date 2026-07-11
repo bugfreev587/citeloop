@@ -77,7 +77,47 @@ func TestArbitrationPrepareDeterministicallyBlocksGrowthOnDoctorTitleRepair(t *t
 	}
 }
 
-func TestArbitrationPrepareDeterministicallyAllowsSoftCrossLineDependency(t *testing.T) {
+func TestArbitrationPrepareSoftCrossLineDependencyStillUsesSemanticComparator(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	candidate.Candidate.ChangeFamily = "content.evidence"
+	candidate.Candidate.ProposedMutations = []Mutation{{Operation: "update", Field: "evidence_block"}}
+	identity, err := BuildIdentity(candidate.Candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.Identity = identity
+	store.candidate = candidate
+	store.snapshot.Versions = map[string]int64{identity.ConflictBucketKeys[0]: 0}
+	doctor := dependencyCandidate(candidate.Candidate.ProjectID, OwnerDoctor, VerificationImmediate, "content.evidence", "move", "answer_block")
+	doctorIdentity, err := BuildIdentity(doctor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doctorSignatureID := uuid.New()
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: doctorSignatureID, Owner: OwnerDoctor, ExactSignatureHash: doctorIdentity.ExactSignatureHash,
+		SignaturePayload: doctorIdentity.SignaturePayload,
+	}}
+	comparator.decision = SemanticDecision{
+		Decision: DecisionMergeEvidence, Owner: OwnerDoctor,
+		WorkSignature: identity.ExactSignatureHash, Overlaps: []uuid.UUID{doctorSignatureID},
+		Reason: "answer_block and evidence_block describe the same mutation", Confidence: 0.96,
+		SemanticFingerprint: "semantic-equivalent-block",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comparator.calls != 1 || prepared.Decision != DecisionMergeEvidence || prepared.Owner != OwnerDoctor {
+		t.Fatalf("calls/prepared = %d/%+v", comparator.calls, prepared)
+	}
+	if len(prepared.OverlapWorkIDs) != 1 || prepared.OverlapWorkIDs[0] != doctorSignatureID {
+		t.Fatalf("overlaps = %v", prepared.OverlapWorkIDs)
+	}
+}
+
+func TestArbitrationPreparePersistsSoftRelationshipAfterSemanticDistinct(t *testing.T) {
 	store, comparator, candidate := arbitrationFixture(t)
 	doctor := dependencyCandidate(candidate.Candidate.ProjectID, OwnerDoctor, VerificationImmediate, "metadata.description", "add", "meta_description")
 	doctorIdentity, err := BuildIdentity(doctor)
@@ -94,11 +134,32 @@ func TestArbitrationPrepareDeterministicallyAllowsSoftCrossLineDependency(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if comparator.calls != 0 || prepared.Decision != DecisionCreate || prepared.Owner != OwnerOpportunities {
+	if comparator.calls != 1 || prepared.Decision != DecisionCreate {
 		t.Fatalf("calls/prepared = %d/%+v", comparator.calls, prepared)
 	}
 	if len(prepared.OverlapWorkIDs) != 1 || prepared.OverlapWorkIDs[0] != doctorSignatureID {
-		t.Fatalf("overlaps = %v", prepared.OverlapWorkIDs)
+		t.Fatalf("soft relationship overlap was lost after semantic distinct: %v", prepared.OverlapWorkIDs)
+	}
+}
+
+func TestArbitrationPrepareSoftCrossLineFailsClosedWithoutComparator(t *testing.T) {
+	store, _, candidate := arbitrationFixture(t)
+	doctor := dependencyCandidate(candidate.Candidate.ProjectID, OwnerDoctor, VerificationImmediate, "metadata.description", "add", "meta_description")
+	doctorIdentity, err := BuildIdentity(doctor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: uuid.New(), Owner: OwnerDoctor, ExactSignatureHash: doctorIdentity.ExactSignatureHash,
+		SignaturePayload: doctorIdentity.SignaturePayload,
+	}}
+
+	prepared, err := NewArbitrationService(store, nil).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionHold || prepared.Status != ArbitrationStatusHeld || prepared.Disposition != DispositionProviderFailure {
+		t.Fatalf("soft cross-line overlap did not fail closed: %+v", prepared)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
+	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
@@ -576,8 +577,9 @@ func (c doctorSiteFixCreationCoordinator) consumeFollowerPreparation(ctx context
 }
 
 type postgresDoctorSiteFixService struct {
-	q        *db.Queries
-	creation doctorSiteFixCreationCoordinator
+	q             *db.Queries
+	creation      doctorSiteFixCreationCoordinator
+	growthCutover *growthwork.Service
 }
 
 func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Provider, model string) DoctorSiteFixService {
@@ -587,7 +589,7 @@ func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Pro
 	}
 	backend := &postgresDoctorSiteFixBackend{pool: pool, q: q, comparator: comparator, model: strings.TrimSpace(model)}
 	return &postgresDoctorSiteFixService{
-		q: q,
+		q: q, growthCutover: growthwork.NewService(pool, q, comparator),
 		creation: doctorSiteFixCreationCoordinator{
 			preparations: &postgresDoctorSiteFixPreparationManager{
 				q: q, runtimeProvider: provider, requestedModel: strings.TrimSpace(model),
@@ -602,6 +604,12 @@ func NewDoctorSiteFixService(pool *pgxpool.Pool, q *db.Queries, provider llm.Pro
 func (s *postgresDoctorSiteFixService) CreateFromFinding(ctx context.Context, projectID, findingID uuid.UUID) (DoctorSiteFixResponse, bool, error) {
 	if s == nil || s.q == nil {
 		return DoctorSiteFixResponse{}, false, errors.New("canonical Site Fix database unavailable")
+	}
+	if s.growthCutover == nil {
+		return DoctorSiteFixResponse{}, false, errors.New("Growth visibility gate unavailable")
+	}
+	if err := s.growthCutover.EnsureProjectCutover(ctx, projectID); err != nil {
+		return DoctorSiteFixResponse{}, false, fmt.Errorf("ensure Growth reservation visibility: %w", err)
 	}
 	fix, created, err := s.creation.CreateFromFinding(ctx, projectID, findingID)
 	if err != nil {

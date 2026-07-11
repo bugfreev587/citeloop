@@ -22,7 +22,9 @@ var (
 // the opportunity lock and all cross-line relationships commit atomically with
 // the signature and bucket-version increment.
 type OpportunityCreator struct {
-	Opportunity *db.CreateCanonicalGrowthOpportunityParams
+	Opportunity     *db.CreateCanonicalGrowthOpportunityParams
+	CutoverBatchID  uuid.UUID
+	CutoverSequence int32
 }
 
 func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db.Queries, work discovery.ReservedWork) (discovery.WorkReference, error) {
@@ -49,6 +51,7 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		return discovery.WorkReference{}, ErrIncompleteGrowthWork
 	}
 	var opportunity db.SeoOpportunity
+	var beforeSnapshot json.RawMessage
 	if creator.Opportunity != nil {
 		params := *creator.Opportunity
 		if params.ID != opportunityID || params.ProjectID != work.ProjectID || params.ExactSignatureHash != *candidateRow.ExactSignatureHash || params.EvidenceFingerprint != candidateRow.EvidenceFingerprint {
@@ -64,6 +67,10 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		})
 		if err != nil {
 			return discovery.WorkReference{}, fmt.Errorf("lock Growth opportunity: %w", err)
+		}
+		beforeSnapshot, err = json.Marshal(opportunity)
+		if err != nil {
+			return discovery.WorkReference{}, err
 		}
 		opportunity, err = q.MarkLegacyGrowthOpportunityCanonical(ctx, db.MarkLegacyGrowthOpportunityCanonicalParams{
 			ProjectID: work.ProjectID, ID: opportunity.ID,
@@ -119,6 +126,25 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 	}
 	if hasHardBlocker != (work.Decision == discovery.DecisionBlockOnOtherLine) {
 		return discovery.WorkReference{}, discovery.ErrSnapshotStale
+	}
+	if creator.CutoverBatchID != uuid.Nil {
+		afterSnapshot, err := json.Marshal(opportunity)
+		if err != nil {
+			return discovery.WorkReference{}, err
+		}
+		inverse, _ := json.Marshal(map[string]any{
+			"operation": "rollback_growth_canonicalization", "opportunity_id": opportunity.ID,
+			"candidate_id": work.CandidateID, "work_signature_id": work.WorkSignatureID,
+		})
+		if _, err := q.AppendGrowthCutoverSessionEntry(ctx, db.AppendGrowthCutoverSessionEntryParams{
+			BatchID: creator.CutoverBatchID, ProjectID: work.ProjectID,
+			SequenceNumber: creator.CutoverSequence, OpportunityID: opportunity.ID,
+			CandidateID: work.CandidateID, WorkSignatureID: work.WorkSignatureID,
+			Disposition: "canonicalized", BeforeSnapshot: beforeSnapshot,
+			AfterSnapshot: afterSnapshot, InverseOperation: inverse,
+		}); err != nil {
+			return discovery.WorkReference{}, fmt.Errorf("append Growth cutover entry: %w", err)
+		}
 	}
 	return discovery.WorkReference{Type: "seo_opportunity", ID: opportunity.ID}, nil
 }

@@ -57,7 +57,6 @@ func TestCanonicalGrowthCutoverConservesLegacyAndFencesNewBypass(t *testing.T) {
 	sql := strings.ToLower(string(raw))
 	for _, want := range []string{
 		"canonical_growth boolean not null default false",
-		"writer_authority = 'canonical'",
 		"legacy growth creation is disabled",
 		"legacy growth evidence/work identity is read-only",
 		"create table if not exists growth_opportunity_work_aliases",
@@ -67,6 +66,9 @@ func TestCanonicalGrowthCutoverConservesLegacyAndFencesNewBypass(t *testing.T) {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("canonical Growth cutover missing %q", want)
 		}
+	}
+	if strings.Contains(sql, "update product_writer_authority\nset writer_authority = 'canonical'") {
+		t.Fatal("schema migration must not expose canonical authority before active legacy Growth conservation")
 	}
 	createSQL := strings.ToLower(createCanonicalGrowthOpportunity)
 	if !strings.Contains(createSQL, "canonical_growth") || !strings.Contains(createSQL, "true") {

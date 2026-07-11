@@ -24,10 +24,19 @@ import (
 // pool-level reads and writes. Phase B is the only method that opens a
 // transaction, and its API deliberately has no semantic provider dependency.
 type PostgresArbitrationStore struct {
-	pool         *pgxpool.Pool
-	q            *db.Queries
-	providerName string
-	model        string
+	pool             *pgxpool.Pool
+	q                *db.Queries
+	providerName     string
+	model            string
+	writerFenceToken uuid.UUID
+}
+
+func (s *PostgresArbitrationStore) WithWriterFenceToken(token uuid.UUID) *PostgresArbitrationStore {
+	if s == nil {
+		return s
+	}
+	s.writerFenceToken = token
+	return s
 }
 
 func NewPostgresArbitrationStore(pool *pgxpool.Pool, q *db.Queries) *PostgresArbitrationStore {
@@ -227,6 +236,11 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 			_ = tx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
+	if s.writerFenceToken != uuid.Nil {
+		if _, err := tx.Exec(ctx, `select set_config('citeloop.growth_cutover_fence_token', $1, true)`, s.writerFenceToken.String()); err != nil {
+			return ReservationResult{}, err
+		}
+	}
 	tq := db.New(tx)
 	product, err := productForOwner(prepared.Owner)
 	if err != nil {
@@ -242,7 +256,9 @@ func (s *PostgresArbitrationStore) ReserveAtomically(ctx context.Context, prepar
 	if err != nil {
 		return ReservationResult{}, staleOnNoRows(err)
 	}
-	if authority.WriterAuthority != "canonical" || authority.WriteFenced {
+	fenceAuthorized := prepared.Owner == OwnerOpportunities && s.writerFenceToken != uuid.Nil &&
+		authority.WriteFenced && authority.FenceToken.Valid && authority.FenceToken.Bytes == s.writerFenceToken
+	if authority.WriterAuthority != "canonical" || (authority.WriteFenced && !fenceAuthorized) {
 		return ReservationResult{}, ErrWriterUnavailable
 	}
 

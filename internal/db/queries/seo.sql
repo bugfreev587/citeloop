@@ -785,6 +785,150 @@ select * from growth_opportunity_work_aliases
 where project_id = sqlc.arg(project_id)
   and legacy_opportunity_id = sqlc.arg(legacy_opportunity_id);
 
+-- name: StartGrowthCutoverSession :one
+insert into growth_cutover_sessions
+  (batch_id, project_id, fence_token, status)
+values (sqlc.arg(batch_id), sqlc.arg(project_id), sqlc.arg(fence_token), 'applying')
+returning *;
+
+-- name: GetActiveGrowthCutoverSession :one
+select * from growth_cutover_sessions
+where project_id = sqlc.arg(project_id) and status = 'applying'
+order by started_at desc limit 1;
+
+-- name: AppendGrowthCutoverSessionEntry :one
+insert into growth_cutover_session_entries
+  (batch_id, project_id, sequence_number, opportunity_id, candidate_id,
+   work_signature_id, disposition, before_snapshot, after_snapshot, inverse_operation)
+values
+  (sqlc.arg(batch_id), sqlc.arg(project_id), sqlc.arg(sequence_number),
+   sqlc.arg(opportunity_id), sqlc.arg(candidate_id), sqlc.arg(work_signature_id),
+   sqlc.arg(disposition), sqlc.arg(before_snapshot)::jsonb,
+   sqlc.arg(after_snapshot)::jsonb, sqlc.arg(inverse_operation)::jsonb)
+returning *;
+
+-- name: ListGrowthCutoverSessionEntries :many
+select * from growth_cutover_session_entries
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+order by sequence_number desc;
+
+-- name: FinishGrowthCutoverSession :one
+update growth_cutover_sessions
+set status = sqlc.arg(status), error = sqlc.narg(error), finished_at = now()
+where project_id = sqlc.arg(project_id) and batch_id = sqlc.arg(batch_id)
+  and status = 'applying'
+returning *;
+
+-- name: CountUnrepresentedActiveLegacyGrowth :one
+select count(*)::bigint from seo_opportunities opportunity
+where opportunity.project_id = sqlc.arg(project_id)
+  and opportunity.canonical_read_only = false
+  and not is_legacy_doctor_technical_opportunity(opportunity.type, opportunity.evidence)
+  and opportunity.status in ('open','accepted','converted','snoozed','watching')
+  and not exists (
+    select 1 from work_signature_registry owned_signature
+    where owned_signature.project_id = opportunity.project_id
+      and owned_signature.mode = 'enforced' and owned_signature.active = true
+      and owned_signature.owner = 'opportunities'
+      and owned_signature.reserved_work_type = 'seo_opportunity'
+      and owned_signature.reserved_work_id = opportunity.id
+  )
+  and not exists (
+    select 1 from growth_opportunity_work_aliases alias
+    join work_signature_registry alias_signature
+      on alias_signature.project_id = alias.project_id
+     and alias_signature.id = alias.work_signature_id
+     and alias_signature.mode = 'enforced' and alias_signature.active = true
+    where alias.project_id = opportunity.project_id
+      and alias.legacy_opportunity_id = opportunity.id
+  );
+
+-- name: RollbackGrowthCutoverDuplicate :one
+with removed_alias as (
+  delete from growth_opportunity_work_aliases alias
+  where alias.project_id = sqlc.arg(project_id)
+    and alias.legacy_opportunity_id = sqlc.arg(opportunity_id)
+    and alias.work_signature_id = sqlc.arg(work_signature_id)
+  returning alias.legacy_opportunity_id
+), removed_candidate as (
+  delete from discovery_candidates candidate
+  where candidate.project_id = sqlc.arg(project_id)
+    and candidate.id = sqlc.arg(candidate_id)
+    and exists (select 1 from removed_alias)
+    and not exists (
+      select 1 from work_signature_registry signature
+      where signature.project_id = candidate.project_id
+        and signature.candidate_id = candidate.id
+    )
+  returning candidate.id
+)
+select count(*)::bigint as removed_count from removed_alias;
+
+-- name: RollbackGrowthCutoverCanonical :one
+with source_signature as materialized (
+  select signature.id, signature.candidate_id, signature.conflict_bucket_keys
+  from work_signature_registry signature
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = sqlc.arg(work_signature_id)
+    and signature.candidate_id = sqlc.arg(candidate_id)
+    and signature.owner = 'opportunities'
+    and signature.reserved_work_type = 'seo_opportunity'
+    and signature.reserved_work_id = sqlc.arg(opportunity_id)
+), expected_keys as materialized (
+  select distinct key.bucket_key
+  from source_signature signature
+  cross join lateral jsonb_array_elements_text(signature.conflict_bucket_keys) key(bucket_key)
+), locked_buckets as materialized (
+  select bucket.id
+  from work_conflict_buckets bucket
+  join expected_keys expected on expected.bucket_key = bucket.bucket_key
+  where bucket.project_id = sqlc.arg(project_id)
+  order by bucket.bucket_key
+  for update of bucket
+), removed_relationships as (
+  delete from work_relationships relationship
+  using source_signature signature
+  where relationship.project_id = sqlc.arg(project_id)
+    and (relationship.dependent_work_signature_id = signature.id
+      or relationship.blocking_work_signature_id = signature.id)
+  returning relationship.id
+), removed_aliases as (
+  delete from growth_opportunity_work_aliases alias
+  using source_signature signature
+  where alias.project_id = sqlc.arg(project_id)
+    and alias.work_signature_id = signature.id
+  returning alias.legacy_opportunity_id
+), reverted_opportunity as (
+  update seo_opportunities opportunity
+  set canonical_growth = false, updated_at = now()
+  from source_signature signature
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = sqlc.arg(opportunity_id)
+    and opportunity.canonical_growth = true
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning opportunity.id
+), removed_signature as (
+  delete from work_signature_registry signature
+  using source_signature source
+  where signature.project_id = sqlc.arg(project_id)
+    and signature.id = source.id
+    and exists (select 1 from reverted_opportunity)
+  returning signature.candidate_id
+), removed_candidate as (
+  delete from discovery_candidates candidate
+  using removed_signature signature
+  where candidate.project_id = sqlc.arg(project_id)
+    and candidate.id = signature.candidate_id
+  returning candidate.id
+), bumped as (
+  update work_conflict_buckets bucket
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where bucket.id = locked.id and exists (select 1 from removed_signature)
+  returning bucket.id
+)
+select count(*)::bigint as removed_count from removed_signature;
+
 -- name: UpdateSEOOpportunityStatus :one
 update seo_opportunities set
   status = $3,
