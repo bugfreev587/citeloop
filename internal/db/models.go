@@ -319,6 +319,30 @@ type DiscoveryReviewItem struct {
 	ArbitrationDecisionID    pgtype.UUID        `json:"arbitration_decision_id"`
 }
 
+type DiscoverySemanticEvaluation struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	DatasetVersion               string             `json:"dataset_version"`
+	ConfidenceThreshold          pgtype.Numeric     `json:"confidence_threshold"`
+	DuplicateSafetyRecallTarget  pgtype.Numeric     `json:"duplicate_safety_recall_target"`
+	FalseSuppressionRateTarget   pgtype.Numeric     `json:"false_suppression_rate_target"`
+	TotalCases                   int32              `json:"total_cases"`
+	DuplicateSafetyCases         int32              `json:"duplicate_safety_cases"`
+	DistinctCases                int32              `json:"distinct_cases"`
+	DuplicateSafetyRecall        pgtype.Numeric     `json:"duplicate_safety_recall"`
+	FalseSuppressionRate         pgtype.Numeric     `json:"false_suppression_rate"`
+	ComparatorCoverage           pgtype.Numeric     `json:"comparator_coverage"`
+	AutomatedDispositionCoverage pgtype.Numeric     `json:"automated_disposition_coverage"`
+	HoldRate                     pgtype.Numeric     `json:"hold_rate"`
+	ThresholdBacklog             int32              `json:"threshold_backlog"`
+	WeeklyOpsCapacity            int32              `json:"weekly_ops_capacity"`
+	LaunchReady                  bool               `json:"launch_ready"`
+	AutomaticSuppressionEnabled  bool               `json:"automatic_suppression_enabled"`
+	Blockers                     json.RawMessage    `json:"blockers"`
+	EvaluatedBy                  string             `json:"evaluated_by"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+}
+
 type DiscoverySemanticGoldCase struct {
 	ID               uuid.UUID          `json:"id"`
 	ProjectID        uuid.UUID          `json:"project_id"`

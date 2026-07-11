@@ -185,3 +185,31 @@ create table if not exists discovery_arbitration_configs (
   updated_at timestamptz not null default now(),
   check (not automatic_suppression_enabled or launch_ready)
 );
+
+create table if not exists discovery_semantic_evaluations (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  dataset_version text not null,
+  confidence_threshold numeric(5,4) not null check (confidence_threshold >= 0 and confidence_threshold <= 1),
+  duplicate_safety_recall_target numeric(5,4) not null check (duplicate_safety_recall_target >= 0 and duplicate_safety_recall_target <= 1),
+  false_suppression_rate_target numeric(5,4) not null check (false_suppression_rate_target >= 0 and false_suppression_rate_target <= 1),
+  total_cases int not null check (total_cases > 0),
+  duplicate_safety_cases int not null check (duplicate_safety_cases >= 0),
+  distinct_cases int not null check (distinct_cases >= 0),
+  duplicate_safety_recall numeric(7,6) not null check (duplicate_safety_recall >= 0 and duplicate_safety_recall <= 1),
+  false_suppression_rate numeric(7,6) not null check (false_suppression_rate >= 0 and false_suppression_rate <= 1),
+  comparator_coverage numeric(7,6) not null check (comparator_coverage >= 0 and comparator_coverage <= 1),
+  automated_disposition_coverage numeric(7,6) not null check (automated_disposition_coverage >= 0 and automated_disposition_coverage <= 1),
+  hold_rate numeric(7,6) not null check (hold_rate >= 0 and hold_rate <= 1),
+  threshold_backlog int not null check (threshold_backlog >= 0),
+  weekly_ops_capacity int not null check (weekly_ops_capacity >= 0),
+  launch_ready boolean not null,
+  automatic_suppression_enabled boolean not null default false,
+  blockers jsonb not null default '[]'::jsonb check (jsonb_typeof(blockers) = 'array'),
+  evaluated_by text not null,
+  created_at timestamptz not null default now(),
+  check (not automatic_suppression_enabled or launch_ready)
+);
+
+create index if not exists idx_discovery_semantic_evaluations_project_age
+  on discovery_semantic_evaluations (project_id, created_at desc);

@@ -242,6 +242,97 @@ func (q *Queries) CreateArbitrationDecision(ctx context.Context, arg CreateArbit
 	return i, err
 }
 
+const createDiscoverySemanticEvaluation = `-- name: CreateDiscoverySemanticEvaluation :one
+insert into discovery_semantic_evaluations
+  (project_id, dataset_version, confidence_threshold,
+   duplicate_safety_recall_target, false_suppression_rate_target,
+   total_cases, duplicate_safety_cases, distinct_cases,
+   duplicate_safety_recall, false_suppression_rate, comparator_coverage,
+   automated_disposition_coverage, hold_rate, threshold_backlog,
+   weekly_ops_capacity, launch_ready, automatic_suppression_enabled,
+   blockers, evaluated_by)
+values
+  ($1, $2, $3,
+   $4, $5,
+   $6, $7, $8,
+   $9, $10, $11,
+   $12, $13, $14,
+   $15, $16, $17,
+   $18::jsonb, $19)
+returning id, project_id, dataset_version, confidence_threshold, duplicate_safety_recall_target, false_suppression_rate_target, total_cases, duplicate_safety_cases, distinct_cases, duplicate_safety_recall, false_suppression_rate, comparator_coverage, automated_disposition_coverage, hold_rate, threshold_backlog, weekly_ops_capacity, launch_ready, automatic_suppression_enabled, blockers, evaluated_by, created_at
+`
+
+type CreateDiscoverySemanticEvaluationParams struct {
+	ProjectID                    uuid.UUID       `json:"project_id"`
+	DatasetVersion               string          `json:"dataset_version"`
+	ConfidenceThreshold          pgtype.Numeric  `json:"confidence_threshold"`
+	DuplicateSafetyRecallTarget  pgtype.Numeric  `json:"duplicate_safety_recall_target"`
+	FalseSuppressionRateTarget   pgtype.Numeric  `json:"false_suppression_rate_target"`
+	TotalCases                   int32           `json:"total_cases"`
+	DuplicateSafetyCases         int32           `json:"duplicate_safety_cases"`
+	DistinctCases                int32           `json:"distinct_cases"`
+	DuplicateSafetyRecall        pgtype.Numeric  `json:"duplicate_safety_recall"`
+	FalseSuppressionRate         pgtype.Numeric  `json:"false_suppression_rate"`
+	ComparatorCoverage           pgtype.Numeric  `json:"comparator_coverage"`
+	AutomatedDispositionCoverage pgtype.Numeric  `json:"automated_disposition_coverage"`
+	HoldRate                     pgtype.Numeric  `json:"hold_rate"`
+	ThresholdBacklog             int32           `json:"threshold_backlog"`
+	WeeklyOpsCapacity            int32           `json:"weekly_ops_capacity"`
+	LaunchReady                  bool            `json:"launch_ready"`
+	AutomaticSuppressionEnabled  bool            `json:"automatic_suppression_enabled"`
+	Blockers                     json.RawMessage `json:"blockers"`
+	EvaluatedBy                  string          `json:"evaluated_by"`
+}
+
+func (q *Queries) CreateDiscoverySemanticEvaluation(ctx context.Context, arg CreateDiscoverySemanticEvaluationParams) (DiscoverySemanticEvaluation, error) {
+	row := q.db.QueryRow(ctx, createDiscoverySemanticEvaluation,
+		arg.ProjectID,
+		arg.DatasetVersion,
+		arg.ConfidenceThreshold,
+		arg.DuplicateSafetyRecallTarget,
+		arg.FalseSuppressionRateTarget,
+		arg.TotalCases,
+		arg.DuplicateSafetyCases,
+		arg.DistinctCases,
+		arg.DuplicateSafetyRecall,
+		arg.FalseSuppressionRate,
+		arg.ComparatorCoverage,
+		arg.AutomatedDispositionCoverage,
+		arg.HoldRate,
+		arg.ThresholdBacklog,
+		arg.WeeklyOpsCapacity,
+		arg.LaunchReady,
+		arg.AutomaticSuppressionEnabled,
+		arg.Blockers,
+		arg.EvaluatedBy,
+	)
+	var i DiscoverySemanticEvaluation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DatasetVersion,
+		&i.ConfidenceThreshold,
+		&i.DuplicateSafetyRecallTarget,
+		&i.FalseSuppressionRateTarget,
+		&i.TotalCases,
+		&i.DuplicateSafetyCases,
+		&i.DistinctCases,
+		&i.DuplicateSafetyRecall,
+		&i.FalseSuppressionRate,
+		&i.ComparatorCoverage,
+		&i.AutomatedDispositionCoverage,
+		&i.HoldRate,
+		&i.ThresholdBacklog,
+		&i.WeeklyOpsCapacity,
+		&i.LaunchReady,
+		&i.AutomaticSuppressionEnabled,
+		&i.Blockers,
+		&i.EvaluatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createDiscoveryShadowRun = `-- name: CreateDiscoveryShadowRun :one
 insert into discovery_shadow_runs
   (project_id, candidate_schema_version, signature_version)
@@ -666,6 +757,42 @@ func (q *Queries) GetDiscoveryReviewItem(ctx context.Context, arg GetDiscoveryRe
 	return i, err
 }
 
+const getLatestDiscoverySemanticEvaluation = `-- name: GetLatestDiscoverySemanticEvaluation :one
+select id, project_id, dataset_version, confidence_threshold, duplicate_safety_recall_target, false_suppression_rate_target, total_cases, duplicate_safety_cases, distinct_cases, duplicate_safety_recall, false_suppression_rate, comparator_coverage, automated_disposition_coverage, hold_rate, threshold_backlog, weekly_ops_capacity, launch_ready, automatic_suppression_enabled, blockers, evaluated_by, created_at from discovery_semantic_evaluations
+where project_id = $1
+order by created_at desc
+limit 1
+`
+
+func (q *Queries) GetLatestDiscoverySemanticEvaluation(ctx context.Context, projectID uuid.UUID) (DiscoverySemanticEvaluation, error) {
+	row := q.db.QueryRow(ctx, getLatestDiscoverySemanticEvaluation, projectID)
+	var i DiscoverySemanticEvaluation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DatasetVersion,
+		&i.ConfidenceThreshold,
+		&i.DuplicateSafetyRecallTarget,
+		&i.FalseSuppressionRateTarget,
+		&i.TotalCases,
+		&i.DuplicateSafetyCases,
+		&i.DistinctCases,
+		&i.DuplicateSafetyRecall,
+		&i.FalseSuppressionRate,
+		&i.ComparatorCoverage,
+		&i.AutomatedDispositionCoverage,
+		&i.HoldRate,
+		&i.ThresholdBacklog,
+		&i.WeeklyOpsCapacity,
+		&i.LaunchReady,
+		&i.AutomaticSuppressionEnabled,
+		&i.Blockers,
+		&i.EvaluatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLatestDiscoveryShadowRun = `-- name: GetLatestDiscoveryShadowRun :one
 select id, project_id, mode, status, candidate_schema_version, signature_version, doctor_candidates, opportunity_candidates, identity_ready, needs_specification, exact_duplicate_groups, possible_conflict_groups, error, started_at, finished_at, created_at, updated_at from discovery_shadow_runs
 where project_id = $1
@@ -974,6 +1101,53 @@ func (q *Queries) ListDiscoveryReviewItems(ctx context.Context, arg ListDiscover
 			&i.InternalOwner,
 			&i.DueAt,
 			&i.ArbitrationDecisionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDiscoverySemanticGoldCases = `-- name: ListDiscoverySemanticGoldCases :many
+select id, project_id, left_candidate_id, right_candidate_id, dataset_version, label, expected_decision, actual_decision, actual_confidence, reviewed_by, reviewed_at, notes, created_at, updated_at from discovery_semantic_gold_cases
+where project_id = $1
+  and dataset_version = $2
+order by id asc
+`
+
+type ListDiscoverySemanticGoldCasesParams struct {
+	ProjectID      uuid.UUID `json:"project_id"`
+	DatasetVersion string    `json:"dataset_version"`
+}
+
+func (q *Queries) ListDiscoverySemanticGoldCases(ctx context.Context, arg ListDiscoverySemanticGoldCasesParams) ([]DiscoverySemanticGoldCase, error) {
+	rows, err := q.db.Query(ctx, listDiscoverySemanticGoldCases, arg.ProjectID, arg.DatasetVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DiscoverySemanticGoldCase
+	for rows.Next() {
+		var i DiscoverySemanticGoldCase
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.LeftCandidateID,
+			&i.RightCandidateID,
+			&i.DatasetVersion,
+			&i.Label,
+			&i.ExpectedDecision,
+			&i.ActualDecision,
+			&i.ActualConfidence,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1563,6 +1737,71 @@ func (q *Queries) UpdateArbitrationDecisionStatus(ctx context.Context, arg Updat
 		&i.Provider,
 		&i.Model,
 		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertDiscoveryArbitrationEvaluationConfig = `-- name: UpsertDiscoveryArbitrationEvaluationConfig :one
+insert into discovery_arbitration_configs
+  (project_id, confidence_threshold, duplicate_safety_recall_target,
+   false_suppression_rate_target, gold_dataset_version, weekly_ops_capacity,
+   launch_ready, automatic_suppression_enabled, evaluated_at)
+values
+  ($1, $2,
+   $3, $4,
+   $5, $6,
+   $7, $8, now())
+on conflict (project_id) do update set
+  confidence_threshold = excluded.confidence_threshold,
+  duplicate_safety_recall_target = excluded.duplicate_safety_recall_target,
+  false_suppression_rate_target = excluded.false_suppression_rate_target,
+  gold_dataset_version = excluded.gold_dataset_version,
+  weekly_ops_capacity = excluded.weekly_ops_capacity,
+  launch_ready = excluded.launch_ready,
+  automatic_suppression_enabled = excluded.automatic_suppression_enabled,
+  evaluated_at = excluded.evaluated_at,
+  updated_at = now()
+returning project_id, confidence_threshold, duplicate_safety_recall_target, false_suppression_rate_target, gold_dataset_version, weekly_ops_capacity, launch_ready, automatic_suppression_enabled, rules_version, prompt_version, semantic_fingerprint_version, evaluated_at, created_at, updated_at
+`
+
+type UpsertDiscoveryArbitrationEvaluationConfigParams struct {
+	ProjectID                   uuid.UUID      `json:"project_id"`
+	ConfidenceThreshold         pgtype.Numeric `json:"confidence_threshold"`
+	DuplicateSafetyRecallTarget pgtype.Numeric `json:"duplicate_safety_recall_target"`
+	FalseSuppressionRateTarget  pgtype.Numeric `json:"false_suppression_rate_target"`
+	GoldDatasetVersion          string         `json:"gold_dataset_version"`
+	WeeklyOpsCapacity           int32          `json:"weekly_ops_capacity"`
+	LaunchReady                 bool           `json:"launch_ready"`
+	AutomaticSuppressionEnabled bool           `json:"automatic_suppression_enabled"`
+}
+
+func (q *Queries) UpsertDiscoveryArbitrationEvaluationConfig(ctx context.Context, arg UpsertDiscoveryArbitrationEvaluationConfigParams) (DiscoveryArbitrationConfig, error) {
+	row := q.db.QueryRow(ctx, upsertDiscoveryArbitrationEvaluationConfig,
+		arg.ProjectID,
+		arg.ConfidenceThreshold,
+		arg.DuplicateSafetyRecallTarget,
+		arg.FalseSuppressionRateTarget,
+		arg.GoldDatasetVersion,
+		arg.WeeklyOpsCapacity,
+		arg.LaunchReady,
+		arg.AutomaticSuppressionEnabled,
+	)
+	var i DiscoveryArbitrationConfig
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ConfidenceThreshold,
+		&i.DuplicateSafetyRecallTarget,
+		&i.FalseSuppressionRateTarget,
+		&i.GoldDatasetVersion,
+		&i.WeeklyOpsCapacity,
+		&i.LaunchReady,
+		&i.AutomaticSuppressionEnabled,
+		&i.RulesVersion,
+		&i.PromptVersion,
+		&i.SemanticFingerprintVersion,
+		&i.EvaluatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

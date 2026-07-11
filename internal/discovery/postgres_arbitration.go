@@ -486,6 +486,119 @@ func (s *PostgresArbitrationStore) ResolveReviewAtomically(ctx context.Context, 
 	return result, nil
 }
 
+func (s *PostgresArbitrationStore) LoadGoldCases(ctx context.Context, projectID uuid.UUID, datasetVersion string) ([]SemanticGoldCase, error) {
+	if err := s.requireQueries(); err != nil {
+		return nil, err
+	}
+	rows, err := s.q.ListDiscoverySemanticGoldCases(ctx, db.ListDiscoverySemanticGoldCasesParams{
+		ProjectID: projectID, DatasetVersion: datasetVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]SemanticGoldCase, 0, len(rows))
+	for _, row := range rows {
+		actual := DecisionHold
+		compared := row.ActualDecision != nil
+		if compared {
+			actual = DecisionKind(*row.ActualDecision)
+		}
+		result = append(result, SemanticGoldCase{
+			ID: row.ID, Label: SemanticGoldLabel(row.Label), ExpectedDecision: DecisionKind(row.ExpectedDecision),
+			ActualDecision: actual, Confidence: numericFloat(row.ActualConfidence), Compared: compared,
+		})
+	}
+	return result, nil
+}
+
+func (s *PostgresArbitrationStore) SaveSemanticEvaluation(ctx context.Context, projectID uuid.UUID, result SemanticEvaluationResult, automaticSuppression bool, evaluatedBy string) (saved SemanticEvaluationResult, resultErr error) {
+	if s == nil || s.pool == nil {
+		return SemanticEvaluationResult{}, errors.New("database pool unavailable")
+	}
+	if automaticSuppression && !result.LaunchReady {
+		return SemanticEvaluationResult{}, errors.New("automatic suppression requires a launch-ready evaluation")
+	}
+	toNumeric := func(value float64) (pgtype.Numeric, error) {
+		if value > 1 {
+			return pgtype.Numeric{}, fmt.Errorf("evaluation ratio exceeds one: %v", value)
+		}
+		return numericFromNonNegative(value, 6)
+	}
+	threshold, err := toNumeric(result.ConfidenceThreshold)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	recallTarget, err := toNumeric(result.DuplicateSafetyRecallTarget)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	falseTarget, err := toNumeric(result.FalseSuppressionRateTarget)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	recall, err := toNumeric(result.DuplicateSafetyRecall)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	falseRate, err := toNumeric(result.FalseSuppressionRate)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	coverage, err := toNumeric(result.ComparatorCoverage)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	automatedCoverage, err := toNumeric(result.AutomatedDispositionCoverage)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	holdRate, err := toNumeric(result.HoldRate)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	blockers, err := json.Marshal(result.Blockers)
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	tq := db.New(tx)
+	row, err := tq.CreateDiscoverySemanticEvaluation(ctx, db.CreateDiscoverySemanticEvaluationParams{
+		ProjectID: projectID, DatasetVersion: result.DatasetVersion, ConfidenceThreshold: threshold,
+		DuplicateSafetyRecallTarget: recallTarget, FalseSuppressionRateTarget: falseTarget,
+		TotalCases: boundedInt32(result.TotalCases), DuplicateSafetyCases: boundedInt32(result.DuplicateSafetyCases),
+		DistinctCases: boundedInt32(result.DistinctCases), DuplicateSafetyRecall: recall,
+		FalseSuppressionRate: falseRate, ComparatorCoverage: coverage,
+		AutomatedDispositionCoverage: automatedCoverage, HoldRate: holdRate,
+		ThresholdBacklog: boundedInt32(result.ThresholdBacklog), WeeklyOpsCapacity: boundedInt32(result.WeeklyOpsCapacity),
+		LaunchReady: result.LaunchReady, AutomaticSuppressionEnabled: automaticSuppression,
+		Blockers: blockers, EvaluatedBy: evaluatedBy,
+	})
+	if err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	if _, err := tq.UpsertDiscoveryArbitrationEvaluationConfig(ctx, db.UpsertDiscoveryArbitrationEvaluationConfigParams{
+		ProjectID: projectID, ConfidenceThreshold: threshold,
+		DuplicateSafetyRecallTarget: recallTarget, FalseSuppressionRateTarget: falseTarget,
+		GoldDatasetVersion: result.DatasetVersion, WeeklyOpsCapacity: boundedInt32(result.WeeklyOpsCapacity),
+		LaunchReady: result.LaunchReady, AutomaticSuppressionEnabled: automaticSuppression,
+	}); err != nil {
+		return SemanticEvaluationResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SemanticEvaluationResult{}, staleOnConflict(err)
+	}
+	result.ID = row.ID
+	return result, nil
+}
+
 func (s *PostgresArbitrationStore) requireQueries() error {
 	if s == nil || s.q == nil {
 		return errors.New("database queries unavailable")

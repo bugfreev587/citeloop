@@ -423,3 +423,56 @@ where project_id = sqlc.arg(project_id)
   and id = sqlc.arg(id)
   and active = true
 returning *;
+
+-- name: ListDiscoverySemanticGoldCases :many
+select * from discovery_semantic_gold_cases
+where project_id = sqlc.arg(project_id)
+  and dataset_version = sqlc.arg(dataset_version)
+order by id asc;
+
+-- name: CreateDiscoverySemanticEvaluation :one
+insert into discovery_semantic_evaluations
+  (project_id, dataset_version, confidence_threshold,
+   duplicate_safety_recall_target, false_suppression_rate_target,
+   total_cases, duplicate_safety_cases, distinct_cases,
+   duplicate_safety_recall, false_suppression_rate, comparator_coverage,
+   automated_disposition_coverage, hold_rate, threshold_backlog,
+   weekly_ops_capacity, launch_ready, automatic_suppression_enabled,
+   blockers, evaluated_by)
+values
+  (sqlc.arg(project_id), sqlc.arg(dataset_version), sqlc.arg(confidence_threshold),
+   sqlc.arg(duplicate_safety_recall_target), sqlc.arg(false_suppression_rate_target),
+   sqlc.arg(total_cases), sqlc.arg(duplicate_safety_cases), sqlc.arg(distinct_cases),
+   sqlc.arg(duplicate_safety_recall), sqlc.arg(false_suppression_rate), sqlc.arg(comparator_coverage),
+   sqlc.arg(automated_disposition_coverage), sqlc.arg(hold_rate), sqlc.arg(threshold_backlog),
+   sqlc.arg(weekly_ops_capacity), sqlc.arg(launch_ready), sqlc.arg(automatic_suppression_enabled),
+   sqlc.arg(blockers)::jsonb, sqlc.arg(evaluated_by))
+returning *;
+
+-- name: UpsertDiscoveryArbitrationEvaluationConfig :one
+insert into discovery_arbitration_configs
+  (project_id, confidence_threshold, duplicate_safety_recall_target,
+   false_suppression_rate_target, gold_dataset_version, weekly_ops_capacity,
+   launch_ready, automatic_suppression_enabled, evaluated_at)
+values
+  (sqlc.arg(project_id), sqlc.arg(confidence_threshold),
+   sqlc.arg(duplicate_safety_recall_target), sqlc.arg(false_suppression_rate_target),
+   sqlc.arg(gold_dataset_version), sqlc.arg(weekly_ops_capacity),
+   sqlc.arg(launch_ready), sqlc.arg(automatic_suppression_enabled), now())
+on conflict (project_id) do update set
+  confidence_threshold = excluded.confidence_threshold,
+  duplicate_safety_recall_target = excluded.duplicate_safety_recall_target,
+  false_suppression_rate_target = excluded.false_suppression_rate_target,
+  gold_dataset_version = excluded.gold_dataset_version,
+  weekly_ops_capacity = excluded.weekly_ops_capacity,
+  launch_ready = excluded.launch_ready,
+  automatic_suppression_enabled = excluded.automatic_suppression_enabled,
+  evaluated_at = excluded.evaluated_at,
+  updated_at = now()
+returning *;
+
+-- name: GetLatestDiscoverySemanticEvaluation :one
+select * from discovery_semantic_evaluations
+where project_id = sqlc.arg(project_id)
+order by created_at desc
+limit 1;

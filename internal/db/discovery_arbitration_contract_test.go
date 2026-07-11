@@ -20,6 +20,7 @@ func TestDiscoverySemanticArbitrationSchemaContract(t *testing.T) {
 		"create table if not exists work_review_memory",
 		"create table if not exists work_signature_aliases",
 		"create table if not exists discovery_semantic_gold_cases",
+		"create table if not exists discovery_semantic_evaluations",
 		"create table if not exists discovery_arbitration_configs",
 		"expected_bucket_versions jsonb not null",
 		"compared_work_ids jsonb not null",
@@ -68,6 +69,14 @@ func TestDiscoveryArbitrationQueries(t *testing.T) {
 		"UpsertWorkReviewMemory":         upsertWorkReviewMemory,
 		"UpsertWorkSignatureAlias":       upsertWorkSignatureAlias,
 		"GetDiscoveryCandidateForReview": getDiscoveryCandidateForReview,
+		"ListDiscoverySemanticGoldCases": listDiscoverySemanticGoldCases,
+		"CreateDiscoverySemanticEvaluation": createDiscoverySemanticEvaluation,
+		"UpsertDiscoveryArbitrationEvaluationConfig": upsertDiscoveryArbitrationEvaluationConfig,
+		"GetLatestDiscoverySemanticEvaluation": getLatestDiscoverySemanticEvaluation,
+	}
+	config := strings.ToLower(upsertDiscoveryArbitrationEvaluationConfig)
+	if !strings.Contains(config, "automatic_suppression_enabled") || !strings.Contains(config, "launch_ready") {
+		t.Fatal("evaluation config must persist launch and automatic suppression gates")
 	}
 	for name, query := range queries {
 		if strings.TrimSpace(query) == "" {
