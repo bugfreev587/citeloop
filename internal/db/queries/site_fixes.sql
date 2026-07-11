@@ -63,45 +63,293 @@ where project_id = sqlc.arg(project_id)
 order by attempt_number asc;
 
 -- name: CreateCanonicalSiteFixApplication :one
+with source_snapshot as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id,
+         sf.status as expected_fix_status,
+         w.status as expected_signature_status,
+         w.active as expected_signature_active,
+         w.conflict_bucket_keys
+  from site_fixes sf
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  where sf.project_id = sqlc.arg(project_id)
+    and sf.id = sqlc.arg(site_fix_id)
+    and sf.status in ('ready_to_apply','applying')
+    and w.status = 'executing'
+    and w.mode = 'enforced'
+    and w.active = true
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from source_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_work as materialized (
+  select s.*
+  from source_snapshot s
+  join site_fixes sf on sf.id = s.id and sf.project_id = s.project_id
+  join work_signature_registry w
+    on w.id = s.work_signature_id and w.project_id = s.project_id
+  where sf.status = s.expected_fix_status
+    and sf.status in ('ready_to_apply','applying')
+    and w.status = s.expected_signature_status
+    and w.status = 'executing'
+    and w.active = s.expected_signature_active
+    and w.active = true
+    and w.mode = 'enforced'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
 insert into site_change_applications (
   id, project_id, source_opportunity_id, content_action_id, site_fix_id,
   page_update_draft_id, application_kind, target_url,
   normalized_target_url, opportunity_key, source_file_paths,
   source_mapping_confidence, source_mapping_reason, patch_snapshot,
   diff_snapshot, resolution_criteria, status
-) values (
+) select
   sqlc.arg(id), sqlc.arg(project_id), null, null, sqlc.arg(site_fix_id),
   null, 'site_fix', sqlc.arg(target_url), sqlc.arg(normalized_target_url),
   sqlc.arg(opportunity_key), sqlc.arg(source_file_paths)::jsonb,
   sqlc.arg(source_mapping_confidence), sqlc.arg(source_mapping_reason),
   sqlc.arg(patch_snapshot)::jsonb, sqlc.arg(diff_snapshot)::jsonb,
   sqlc.arg(resolution_criteria)::jsonb, sqlc.arg(status)
-)
+from locked_work work
+where work.id = sqlc.arg(site_fix_id)
+  and sqlc.arg(status)::text in (
+    'draft_ready','source_mapping_required','ready_for_pr','manual_apply_required'
+  )
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
 returning *;
 
 -- name: RepointApplicationToCanonicalSiteFix :one
-update site_change_applications
+with source_snapshot as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id,
+         sf.status as expected_fix_status,
+         w.status as expected_signature_status,
+         w.active as expected_signature_active,
+         w.conflict_bucket_keys
+  from site_fixes sf
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  where sf.project_id = sqlc.arg(project_id)
+    and sf.id = sqlc.arg(site_fix_id)
+    and w.mode = 'enforced'
+    and (
+      (w.active = true and (
+        (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+        or (sf.status = 'approved' and w.status = 'approved')
+        or (sf.status = 'preparing' and w.status = 'preparing')
+        or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+        or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+        or (sf.status = 'verifying' and w.status = 'verifying')
+        or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+        or (sf.status = 'reopened' and w.status = 'reopened')
+      ))
+      or (w.active = false and (
+        (sf.status = 'verified' and w.status = 'verified')
+        or (sf.status = 'failed_terminal' and w.status = 'failed_terminal')
+        or (sf.status = 'superseded' and w.status = 'superseded')
+      ))
+    )
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from source_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select a.id, a.content_action_id
+  from site_change_applications a
+  where a.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
+    and a.content_action_id = sqlc.arg(content_action_id)
+    and a.site_fix_id is null
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of a
+), locked_content_action as materialized (
+  select ca.id
+  from content_actions ca
+  join locked_application a on a.content_action_id = ca.id
+  where ca.project_id = sqlc.arg(project_id)
+    and ca.id = sqlc.arg(content_action_id)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of ca
+), locked_work as materialized (
+  select s.*
+  from source_snapshot s
+  join site_fixes sf on sf.id = s.id and sf.project_id = s.project_id
+  join work_signature_registry w
+    on w.id = s.work_signature_id and w.project_id = s.project_id
+  where sf.status = s.expected_fix_status
+    and w.status = s.expected_signature_status
+    and w.active = s.expected_signature_active
+    and w.mode = 'enforced'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application)
+    and exists (select 1 from locked_content_action)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update site_change_applications a
 set site_fix_id = sqlc.arg(site_fix_id),
     content_action_id = null,
     application_kind = 'site_fix',
     updated_at = now()
-where project_id = sqlc.arg(project_id)
-  and id = sqlc.arg(application_id)
-  and content_action_id = sqlc.arg(content_action_id)
-  and site_fix_id is null
-returning *;
+from locked_application locked
+cross join locked_work work
+where a.id = locked.id
+  and a.project_id = sqlc.arg(project_id)
+  and a.content_action_id = sqlc.arg(content_action_id)
+  and a.site_fix_id is null
+  and work.id = sqlc.arg(site_fix_id)
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning a.*;
 
 -- name: RestoreApplicationToLegacyContentAction :one
-update site_change_applications
+with source_snapshot as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id,
+         sf.status as expected_fix_status,
+         w.status as expected_signature_status,
+         w.active as expected_signature_active,
+         w.conflict_bucket_keys
+  from site_fixes sf
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  where sf.project_id = sqlc.arg(project_id)
+    and sf.id = sqlc.arg(site_fix_id)
+    and w.mode = 'enforced'
+    and (
+      (w.active = true and (
+        (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+        or (sf.status = 'approved' and w.status = 'approved')
+        or (sf.status = 'preparing' and w.status = 'preparing')
+        or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+        or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+        or (sf.status = 'verifying' and w.status = 'verifying')
+        or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+        or (sf.status = 'reopened' and w.status = 'reopened')
+      ))
+      or (w.active = false and (
+        (sf.status = 'verified' and w.status = 'verified')
+        or (sf.status = 'failed_terminal' and w.status = 'failed_terminal')
+        or (sf.status = 'superseded' and w.status = 'superseded')
+        or (sf.status = 'migration_rolled_back' and w.status = 'cancelled')
+      ))
+    )
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from source_snapshot s
+  cross join lateral jsonb_array_elements_text(s.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select a.id
+  from site_change_applications a
+  where a.project_id = sqlc.arg(project_id)
+    and a.id = sqlc.arg(application_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id)
+    and a.content_action_id is null
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of a
+), locked_content_action as materialized (
+  select ca.id
+  from content_actions ca
+  join locked_application a on true
+  where ca.project_id = sqlc.arg(project_id)
+    and ca.id = sqlc.arg(content_action_id)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of ca
+), locked_work as materialized (
+  select s.*
+  from source_snapshot s
+  join site_fixes sf on sf.id = s.id and sf.project_id = s.project_id
+  join work_signature_registry w
+    on w.id = s.work_signature_id and w.project_id = s.project_id
+  where sf.status = s.expected_fix_status
+    and w.status = s.expected_signature_status
+    and w.active = s.expected_signature_active
+    and w.mode = 'enforced'
+    and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application)
+    and exists (select 1 from locked_content_action)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) =
+        (select count(*) from expected_keys)
+  returning b.id
+)
+update site_change_applications a
 set content_action_id = sqlc.arg(content_action_id),
     site_fix_id = null,
     application_kind = 'site_fix',
     updated_at = now()
-where project_id = sqlc.arg(project_id)
-  and id = sqlc.arg(application_id)
-  and site_fix_id = sqlc.arg(site_fix_id)
-  and content_action_id is null
-returning *;
+from locked_application locked
+cross join locked_content_action action
+cross join locked_work work
+where a.id = locked.id
+  and a.project_id = sqlc.arg(project_id)
+  and a.site_fix_id = sqlc.arg(site_fix_id)
+  and a.content_action_id is null
+  and action.id = sqlc.arg(content_action_id)
+  and work.id = sqlc.arg(site_fix_id)
+  and (select count(*) from bumped) =
+      (select count(*) from expected_keys)
+returning a.*;
 
 -- name: GetProductWriterAuthority :one
 select * from product_writer_authority
@@ -262,6 +510,7 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'proposed'
+    and w.status in ('reserved','proposed')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -298,6 +547,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -353,7 +603,11 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and a.id = sqlc.arg(application_id)
-    and sf.status in ('verifying','failed_retryable','reopened')
+    and (
+      (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
     and a.status in ('verification_pending','needs_follow_up')
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
@@ -391,6 +645,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -463,7 +718,10 @@ with eligible as materialized (
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
-    and sf.status in ('verifying','reopened')
+    and (
+      (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
     and sf.retry_count < sf.max_retries
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
@@ -501,6 +759,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -559,6 +818,7 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'failed_retryable'
+    and w.status = 'failed_retryable'
     and sf.retry_count <= sf.max_retries
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
@@ -596,6 +856,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -648,7 +909,11 @@ with eligible as materialized (
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
-    and sf.status in ('verifying','failed_retryable','reopened')
+    and (
+      (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
     and (sf.retry_count >= sf.max_retries or sqlc.arg(force_terminal)::boolean)
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
@@ -686,6 +951,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -745,6 +1011,16 @@ with eligible as materialized (
       'proposed','approved','preparing','ready_to_apply','applying',
       'awaiting_deploy','verifying','failed_retryable','reopened'
     )
+    and (
+      (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+      or (sf.status = 'approved' and w.status = 'approved')
+      or (sf.status = 'preparing' and w.status = 'preparing')
+      or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+      or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+      or (sf.status = 'verifying' and w.status = 'verifying')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+      or (sf.status = 'reopened' and w.status = 'reopened')
+    )
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -781,6 +1057,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -840,6 +1117,14 @@ with eligible as materialized (
       'proposed','approved','preparing','ready_to_apply','applying',
       'awaiting_deploy','failed_retryable'
     )
+    and (
+      (sf.status = 'proposed' and w.status in ('reserved','proposed'))
+      or (sf.status = 'approved' and w.status = 'approved')
+      or (sf.status = 'preparing' and w.status = 'preparing')
+      or (sf.status in ('ready_to_apply','applying') and w.status = 'executing')
+      or (sf.status = 'awaiting_deploy' and w.status = 'awaiting_deploy')
+      or (sf.status = 'failed_retryable' and w.status = 'failed_retryable')
+    )
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -876,6 +1161,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -938,10 +1224,8 @@ with eligible as materialized (
     and sf.project_id = sqlc.arg(project_id)
     and a.id = sqlc.arg(application_id)
     and sf.status = 'applying'
-    and a.status in (
-      'ready_for_pr','creating_pr','github_pr_open','github_pr_merged',
-      'manual_apply_required'
-    )
+    and w.status = 'executing'
+    and a.status = 'github_pr_merged'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -978,6 +1262,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -1006,17 +1291,13 @@ with eligible as materialized (
     and a.project_id = sqlc.arg(project_id)
     and a.site_fix_id = sqlc.arg(site_fix_id)
     and a.content_action_id is null
-    and a.status in (
-      'ready_for_pr','creating_pr','github_pr_open','github_pr_merged',
-      'manual_apply_required'
-    )
+    and a.status = 'github_pr_merged'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
-  set status = 'awaiting_deploy',
-      applied_at = coalesce(sf.applied_at, sqlc.arg(applied_at)),
+  set applied_at = coalesce(sf.applied_at, sqlc.arg(applied_at)),
       failure_reason = null,
       updated_at = now()
   from applied_application a
@@ -1026,7 +1307,7 @@ with eligible as materialized (
   returning sf.*
 ), signature_transition as (
   update work_signature_registry w
-  set status = 'awaiting_deploy', active = true, updated_at = now()
+  set status = 'executing', active = true, updated_at = now()
   from transitioned sf
   where w.id = sf.work_signature_id and w.project_id = sf.project_id
   returning w.id
@@ -1040,14 +1321,21 @@ with eligible as materialized (
          sf.status as expected_fix_status,
          w.status as expected_signature_status,
          w.active as expected_signature_active,
-         null::uuid as application_id,
-         null::text as expected_application_status
+         a.id as application_id,
+         a.status as expected_application_status
   from site_fixes sf
   join work_signature_registry w
     on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  join site_change_applications a
+    on a.site_fix_id = sf.id and a.project_id = sf.project_id
+   and a.content_action_id is null
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
-    and sf.status in ('ready_to_apply','applying')
+    and a.id = sqlc.arg(application_id)
+    and sf.status = 'applying'
+    and sf.applied_at is not null
+    and w.status = 'executing'
+    and a.status = 'deployment_pending'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1084,6 +1372,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -1103,17 +1392,28 @@ with eligible as materialized (
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   returning b.id
+), awaiting_application as (
+  update site_change_applications a
+  set status = 'deployment_pending', updated_at = now()
+  from locked_work e
+  where a.id = e.application_id
+    and a.project_id = sqlc.arg(project_id)
+    and a.site_fix_id = sqlc.arg(site_fix_id)
+    and a.content_action_id is null
+    and a.status = 'deployment_pending'
+    and (select count(*) from bumped) =
+        (select count(*) from expected_keys)
+  returning a.site_fix_id
 ), transitioned as (
   update site_fixes sf
   set status = 'awaiting_deploy',
-      applied_at = coalesce(applied_at, sqlc.arg(applied_at)),
       failure_reason = null,
       updated_at = now()
-  from locked_work e
-  where sf.id = e.id
-    and sf.status in ('ready_to_apply','applying')
-    and (select count(*) from bumped) =
-        (select count(*) from expected_keys)
+  from awaiting_application a
+  where sf.id = a.site_fix_id
+    and sf.project_id = sqlc.arg(project_id)
+    and sf.status = 'applying'
+    and sf.applied_at is not null
   returning sf.*
 ), signature_transition as (
   update work_signature_registry w
@@ -1143,7 +1443,8 @@ with eligible as materialized (
     and sf.project_id = sqlc.arg(project_id)
     and a.id = sqlc.arg(application_id)
     and sf.status = 'awaiting_deploy'
-    and a.status in ('github_pr_merged','deployment_pending','verification_pending')
+    and w.status = 'awaiting_deploy'
+    and a.status = 'deployment_pending'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1180,6 +1481,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -1211,7 +1513,7 @@ with eligible as materialized (
     and a.project_id = sqlc.arg(project_id)
     and a.site_fix_id = sqlc.arg(site_fix_id)
     and a.content_action_id is null
-    and a.status in ('github_pr_merged','deployment_pending','verification_pending')
+    and a.status = 'deployment_pending'
     and (select count(*) from bumped) =
         (select count(*) from expected_keys)
   returning a.site_fix_id
@@ -1250,6 +1552,7 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'approved'
+    and w.status = 'approved'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1286,6 +1589,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -1338,6 +1642,7 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'preparing'
+    and w.status = 'preparing'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1374,6 +1679,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (
@@ -1426,6 +1732,7 @@ with eligible as materialized (
   where sf.id = sqlc.arg(site_fix_id)
     and sf.project_id = sqlc.arg(project_id)
     and sf.status = 'ready_to_apply'
+    and w.status = 'executing'
     and w.mode = 'enforced' and w.active = true
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -1462,6 +1769,7 @@ with eligible as materialized (
     and w.active = e.expected_signature_active
     and w.mode = 'enforced'
     and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
     and (
       e.application_id is null
       or exists (

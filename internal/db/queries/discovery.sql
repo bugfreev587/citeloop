@@ -496,6 +496,7 @@ with signature_snapshot as materialized (
     and w.mode = 'enforced'
     and w.active = true
     and w.reserved_work_type = 'site_fix'
+    and w.status in ('reserved','proposed','approved','preparing','executing','awaiting_deploy','failed_retryable')
 ), expected_keys as materialized (
   select distinct keys.bucket_key
   from signature_snapshot s
@@ -517,6 +518,7 @@ with signature_snapshot as materialized (
     and w.status = s.expected_status
     and w.reserved_work_type = 'site_fix'
     and w.conflict_bucket_keys = s.conflict_bucket_keys
+    and jsonb_array_length(s.conflict_bucket_keys) > 0
     and (select count(*) from locked_buckets) =
         (select count(*) from expected_keys)
   for update of w

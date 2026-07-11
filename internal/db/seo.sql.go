@@ -422,7 +422,7 @@ insert into site_change_applications
    source_mapping_confidence, source_mapping_reason, base_file_sha,
    base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot,
    resolution_criteria, status)
-values (
+select
   $1,
   $2,
   $3,
@@ -448,7 +448,7 @@ values (
   $23::jsonb,
   $24::jsonb,
   $25
-)
+where $3::uuid is not null
 on conflict (project_id, opportunity_key)
 where status in (
   'draft_ready',

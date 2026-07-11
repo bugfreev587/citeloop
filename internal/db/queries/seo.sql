@@ -1061,7 +1061,7 @@ insert into site_change_applications
    source_mapping_confidence, source_mapping_reason, base_file_sha,
    base_content_hash, proposed_content_hash, patch_snapshot, diff_snapshot,
    resolution_criteria, status)
-values (
+select
   sqlc.arg(project_id),
   sqlc.narg(source_opportunity_id),
   sqlc.arg(content_action_id),
@@ -1087,7 +1087,7 @@ values (
   sqlc.arg(diff_snapshot)::jsonb,
   sqlc.arg(resolution_criteria)::jsonb,
   sqlc.arg(status)
-)
+where sqlc.arg(content_action_id)::uuid is not null
 on conflict (project_id, opportunity_key)
 where status in (
   'draft_ready',

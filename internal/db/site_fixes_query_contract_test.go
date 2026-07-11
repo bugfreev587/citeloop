@@ -100,6 +100,8 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 		"bucket_version = bucket_version + 1",
 		"select count(*) from locked_buckets",
 		"select count(*) from expected_keys",
+		"jsonb_array_length(s.conflict_bucket_keys) > 0",
+		"w.status in ('reserved','proposed','approved','preparing','executing','awaiting_deploy','failed_retryable')",
 		"active = false",
 	)
 
@@ -139,6 +141,17 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 
 	createApplication := namedSQL(t, siteFixes, "CreateCanonicalSiteFixApplication")
 	requireQuerySQL(t, createApplication,
+		"expected_keys as materialized",
+		"locked_buckets as materialized",
+		"order by b.bucket_key",
+		"for update of b",
+		"locked_work as materialized",
+		"for update of sf, w",
+		"sf.status in ('ready_to_apply','applying')",
+		"w.status = 'executing'",
+		"jsonb_array_length(s.conflict_bucket_keys) > 0",
+		"update work_conflict_buckets",
+		"bucket_version = bucket_version + 1",
 		"insert into site_change_applications",
 		"site_fix_id",
 		"content_action_id",
@@ -146,20 +159,52 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 		"application_kind",
 		"'site_fix'",
 	)
+	if strings.Contains(create, "update work_conflict_buckets") {
+		t.Error("Site Fix creation gets its single bucket bump from atomic reservation, not from CreateCanonicalSiteFix")
+	}
 
 	repoint := namedSQL(t, siteFixes, "RepointApplicationToCanonicalSiteFix")
 	requireQuerySQL(t, repoint,
+		"expected_keys as materialized",
+		"locked_buckets as materialized",
+		"order by b.bucket_key",
+		"for update of b",
+		"locked_application as materialized",
+		"for update of a",
+		"locked_content_action as materialized",
+		"for update of ca",
+		"locked_work as materialized",
+		"for update of sf, w",
+		"jsonb_array_length(s.conflict_bucket_keys) > 0",
+		"update work_conflict_buckets",
+		"bucket_version = bucket_version + 1",
 		"set site_fix_id = sqlc.arg(site_fix_id)",
 		"content_action_id = null",
-		"where project_id = sqlc.arg(project_id)",
-		"and content_action_id = sqlc.arg(content_action_id)",
+		"a.project_id = sqlc.arg(project_id)",
+		"a.content_action_id = sqlc.arg(content_action_id)",
 	)
 	restore := namedSQL(t, siteFixes, "RestoreApplicationToLegacyContentAction")
 	requireQuerySQL(t, restore,
+		"expected_keys as materialized",
+		"locked_buckets as materialized",
+		"order by b.bucket_key",
+		"for update of b",
+		"locked_application as materialized",
+		"for update of a",
+		"locked_content_action as materialized",
+		"from content_actions ca",
+		"ca.project_id = sqlc.arg(project_id)",
+		"ca.id = sqlc.arg(content_action_id)",
+		"for update of ca",
+		"locked_work as materialized",
+		"for update of sf, w",
+		"jsonb_array_length(s.conflict_bucket_keys) > 0",
+		"update work_conflict_buckets",
+		"bucket_version = bucket_version + 1",
 		"set content_action_id = sqlc.arg(content_action_id)",
 		"site_fix_id = null",
-		"where project_id = sqlc.arg(project_id)",
-		"and site_fix_id = sqlc.arg(site_fix_id)",
+		"a.project_id = sqlc.arg(project_id)",
+		"a.site_fix_id = sqlc.arg(site_fix_id)",
 	)
 
 	fence := namedSQL(t, siteFixes, "FenceProductWriterAuthority")
@@ -212,6 +257,7 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 			"expected_fix_status",
 			"expected_signature_status",
 			"w.conflict_bucket_keys = e.conflict_bucket_keys",
+			"jsonb_array_length(e.conflict_bucket_keys) > 0",
 			"exists (select 1 from locked_work)",
 			"update work_conflict_buckets",
 			"bucket_version = bucket_version + 1",
@@ -232,6 +278,90 @@ func TestCanonicalSiteFixQueries(t *testing.T) {
 		}
 		if strings.Contains(query, "(select count(*) from bumped) >= 0") {
 			t.Errorf("%s must not allow partial or missing conflict-bucket bumps", name)
+		}
+		if got := strings.Count(query, "jsonb_array_length(e.conflict_bucket_keys) > 0"); got != 1 {
+			t.Errorf("%s must have exactly one non-empty conflict-bucket guard, got %d", name, got)
+		}
+	}
+}
+
+func TestCanonicalSiteFixTransitionStatePairs(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+
+	pairs := map[string][]string{
+		"ApproveCanonicalSiteFix": {
+			"sf.status = 'proposed'",
+			"w.status in ('reserved','proposed')",
+		},
+		"MarkCanonicalSiteFixPreparing": {
+			"sf.status = 'approved'",
+			"w.status = 'approved'",
+		},
+		"MarkCanonicalSiteFixReadyToApply": {
+			"sf.status = 'preparing'",
+			"w.status = 'preparing'",
+		},
+		"ClaimCanonicalSiteFixApplying": {
+			"sf.status = 'ready_to_apply'",
+			"w.status = 'executing'",
+		},
+		"MarkCanonicalSiteFixApplied": {
+			"sf.status = 'applying'",
+			"w.status = 'executing'",
+			"a.status = 'github_pr_merged'",
+		},
+		"MarkCanonicalSiteFixAwaitingDeploy": {
+			"sf.status = 'applying'",
+			"sf.applied_at is not null",
+			"w.status = 'executing'",
+			"a.id = sqlc.arg(application_id)",
+			"a.status = 'deployment_pending'",
+			"a.site_fix_id = sf.id",
+			"a.content_action_id is null",
+		},
+		"MarkCanonicalSiteFixVerifying": {
+			"sf.status = 'awaiting_deploy'",
+			"w.status = 'awaiting_deploy'",
+		},
+		"MarkCanonicalSiteFixVerified": {
+			"(sf.status = 'verifying' and w.status = 'verifying')",
+			"(sf.status = 'failed_retryable' and w.status = 'failed_retryable')",
+			"(sf.status = 'reopened' and w.status = 'reopened')",
+		},
+		"MarkCanonicalSiteFixRetryable": {
+			"(sf.status = 'verifying' and w.status = 'verifying')",
+			"(sf.status = 'reopened' and w.status = 'reopened')",
+		},
+		"ReopenCanonicalSiteFix": {
+			"sf.status = 'failed_retryable'",
+			"w.status = 'failed_retryable'",
+		},
+		"TerminalizeCanonicalSiteFix": {
+			"(sf.status = 'verifying' and w.status = 'verifying')",
+			"(sf.status = 'failed_retryable' and w.status = 'failed_retryable')",
+			"(sf.status = 'reopened' and w.status = 'reopened')",
+		},
+		"SupersedeCanonicalSiteFix": {
+			"(sf.status = 'proposed' and w.status in ('reserved','proposed'))",
+			"(sf.status = 'approved' and w.status = 'approved')",
+			"(sf.status in ('ready_to_apply','applying') and w.status = 'executing')",
+			"(sf.status = 'reopened' and w.status = 'reopened')",
+		},
+		"MarkCanonicalSiteFixMigrationRolledBack": {
+			"(sf.status = 'proposed' and w.status in ('reserved','proposed'))",
+			"(sf.status = 'approved' and w.status = 'approved')",
+			"(sf.status in ('ready_to_apply','applying') and w.status = 'executing')",
+			"(sf.status = 'failed_retryable' and w.status = 'failed_retryable')",
+		},
+	}
+	for name, required := range pairs {
+		requireQuerySQL(t, namedSQL(t, siteFixes, name), required...)
+	}
+
+	applied := namedSQL(t, siteFixes, "MarkCanonicalSiteFixApplied")
+	for _, forbidden := range []string{"'ready_for_pr'", "'creating_pr'", "'github_pr_open'", "'manual_apply_required'"} {
+		if strings.Contains(applied, forbidden) {
+			t.Errorf("MarkCanonicalSiteFixApplied must not accept unapplied application state %s", forbidden)
 		}
 	}
 }
@@ -269,4 +399,16 @@ func TestDoctorVerificationStopsAtVerified(t *testing.T) {
 	requireQuerySQL(t, supersedeSQL, "status = 'superseded'", "active = false")
 	rollbackSQL := namedSQL(t, siteFixes, "MarkCanonicalSiteFixMigrationRolledBack")
 	requireQuerySQL(t, rollbackSQL, "status = 'migration_rolled_back'", "active = false")
+}
+
+func TestLegacyApplicationWriterRejectsMissingContentAction(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("queries", "seo.sql"))
+	if err != nil {
+		t.Fatalf("read legacy SEO queries: %v", err)
+	}
+	query := namedSQL(t, strings.ToLower(string(raw)), "CreateOrReuseSiteChangeApplication")
+	requireQuerySQL(t, query,
+		"select",
+		"where sqlc.arg(content_action_id)::uuid is not null",
+	)
 }
