@@ -399,7 +399,7 @@ func (s *ArbitrationService) persistHold(ctx context.Context, candidate Arbitrat
 		ProjectID:              saved.ProjectID,
 		CandidateID:            saved.CandidateID,
 		CandidateVersion:       saved.CandidateVersion,
-		State:                  StatusNeedsArbitration,
+		State:                  reviewStateForHold(candidate.Candidate.Status, saved.Disposition),
 		Reason:                 saved.Reason,
 		ExpectedBucketVersions: cloneVersions(saved.ExpectedBucketVersions),
 		ArbitrationDecisionID:  saved.ID,
@@ -408,6 +408,16 @@ func (s *ArbitrationService) persistHold(ctx context.Context, candidate Arbitrat
 		return PreparedDecision{}, err
 	}
 	return saved, nil
+}
+
+func reviewStateForHold(candidateStatus CandidateStatus, disposition ArbitrationDisposition) CandidateStatus {
+	if disposition != DispositionIncompleteSpecification {
+		return StatusNeedsArbitration
+	}
+	if candidateStatus == StatusNeedsEvidence {
+		return StatusNeedsEvidence
+	}
+	return StatusNeedsSpecification
 }
 
 func normalizeArbitrationConfig(config ArbitrationConfig) ArbitrationConfig {
