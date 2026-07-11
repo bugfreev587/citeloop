@@ -372,6 +372,7 @@ var supportedIndexHeaderPattern = regexp.MustCompile(`(?is)^create\s+(unique\s+)
 var supportedIndexTablePattern = regexp.MustCompile(`(?is)^(?:([a-z_][a-z0-9_]*)\.)?([a-z_][a-z0-9_]*)\s+(.+)$`)
 var supportedIndexKeyPattern = regexp.MustCompile(`(?i)^([a-z_][a-z0-9_]*)(?:\s+(asc|desc))?$`)
 var notNullPredicatePattern = regexp.MustCompile(`(?i)^([a-z_][a-z0-9_]*)\s+is\s+not\s+null$`)
+var literalEqualityPredicatePattern = regexp.MustCompile(`(?is)^([a-z_][a-z0-9_]*)\s*=\s*(.+)$`)
 var inPredicatePattern = regexp.MustCompile(`(?is)^([a-z_][a-z0-9_]*)\s+in\s*\((.*)\)$`)
 var anyArrayPredicatePattern = regexp.MustCompile(`(?is)^([a-z_][a-z0-9_]*)\s*=\s*any\s*\(\s*array\s*\[(.*)\]\s*(?:::text\[\])?\s*\)$`)
 
@@ -539,6 +540,17 @@ func parseSupportedPredicate(sql string) ([]supportedIndexPredicate, error) {
 		if match := notNullPredicatePattern.FindStringSubmatch(term); len(match) == 2 {
 			predicates = append(predicates, supportedIndexPredicate{Column: strings.ToLower(match[1]), Kind: "not-null"})
 			continue
+		}
+		if match := literalEqualityPredicatePattern.FindStringSubmatch(term); len(match) == 3 {
+			values, literalErr := parseSQLStringList(match[2])
+			if literalErr == nil && len(values) == 1 {
+				// PostgreSQL deparses a one-element IN predicate as literal
+				// equality. Normalize both forms to the same strict predicate.
+				predicates = append(predicates, supportedIndexPredicate{
+					Column: strings.ToLower(match[1]), Kind: "in", Values: values,
+				})
+				continue
+			}
 		}
 		var match []string
 		if candidate := inPredicatePattern.FindStringSubmatch(term); len(candidate) == 3 {

@@ -117,6 +117,32 @@ func TestEmbeddedNontransactionalIndexMigrationContract(t *testing.T) {
 		"0051_04_rollback_records_site_fix.sql":                "idx_rollback_records_site_fix_id",
 		"0051_05_discovery_candidates_shadow_run.sql":          "idx_discovery_candidates_shadow_run_fk",
 		"0051_06_work_signature_registry_shadow_run.sql":       "idx_work_signature_registry_shadow_run_fk",
+		"0052_01_work_signature_shadow_candidate.sql":          "uniq_work_signature_registry_shadow_candidate",
+	}
+	actualConcurrent := make(map[string]struct{})
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, err := fs.ReadFile(migrations.FS, entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.ToLower(string(raw)), nonTransactionalModeDirective) {
+			actualConcurrent[entry.Name()] = struct{}{}
+		}
+	}
+	if len(actualConcurrent) != len(expectedConcurrent) {
+		t.Fatalf("embedded nontransactional migrations = %v, expected %v", actualConcurrent, expectedConcurrent)
+	}
+	for name := range actualConcurrent {
+		if _, ok := expectedConcurrent[name]; !ok {
+			t.Fatalf("unexpected nontransactional embedded migration %s", name)
+		}
 	}
 
 	for name, indexName := range expectedConcurrent {
@@ -226,6 +252,46 @@ func TestCanonicalIndexDefinitionMatchesPostgresDeparse(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("canonical definitions differ:\n migration: %s\n postgres:  %s", want, got)
+	}
+}
+
+func TestCanonicalSingleLiteralPredicateMatchesPostgresDeparse(t *testing.T) {
+	migrationSQL := `create unique index concurrently if not exists idx_safe
+		on work_signature_registry (candidate_id)
+		where mode in ('sha''dow');`
+	deparsed := []string{
+		`CREATE UNIQUE INDEX idx_safe ON public.work_signature_registry USING btree
+			(candidate_id) WHERE (mode = 'sha''dow'::text)`,
+		`CREATE UNIQUE INDEX idx_safe ON public.work_signature_registry USING btree
+			(candidate_id) WHERE (mode = ANY (ARRAY['sha''dow'::text]))`,
+	}
+	want, err := canonicalIndexDefinition(migrationSQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, postgresDefinition := range deparsed {
+		got, err := canonicalIndexDefinition(postgresDefinition)
+		if err != nil {
+			t.Fatalf("parse PostgreSQL deparse %q: %v", postgresDefinition, err)
+		}
+		if got != want {
+			t.Fatalf("canonical definitions differ:\n migration: %s\n postgres:  %s", want, got)
+		}
+	}
+}
+
+func TestCanonicalLiteralEqualityPredicateFailsClosed(t *testing.T) {
+	for name, sql := range map[string]string{
+		"identifier rhs": "create index idx_safe on widgets (id) where mode = other_mode;",
+		"numeric rhs":    "create index idx_safe on widgets (id) where mode = 1;",
+		"or predicate":   "create index idx_safe on widgets (id) where mode = 'shadow' or active is not null;",
+		"unsafe cast":    "create index idx_safe on widgets (id) where mode = 'shadow'::regclass;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := canonicalIndexDefinition(sql); err == nil {
+				t.Fatal("expected unsupported equality predicate to fail closed")
+			}
+		})
 	}
 }
 
