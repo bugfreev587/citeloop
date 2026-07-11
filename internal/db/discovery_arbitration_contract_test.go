@@ -48,3 +48,39 @@ func TestDiscoverySemanticArbitrationSchemaContract(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryArbitrationQueries(t *testing.T) {
+	queries := map[string]string{
+		"CreateAICallRecord":             createAICallRecord,
+		"FinishAICallRecord":             finishAICallRecord,
+		"CreateArbitrationDecision":      createArbitrationDecision,
+		"MaterializeConflictBuckets":     materializeConflictBuckets,
+		"GetConflictBucketSnapshot":      getConflictBucketSnapshot,
+		"ListSnapshotActiveSignatures":   listSnapshotActiveSignatures,
+		"ListSnapshotReviewMemory":       listSnapshotReviewMemory,
+		"ListDiscoveryReviewItems":       listDiscoveryReviewItems,
+		"GetDiscoveryReviewItem":         getDiscoveryReviewItem,
+		"UpsertWorkReviewMemory":         upsertWorkReviewMemory,
+		"UpsertWorkSignatureAlias":       upsertWorkSignatureAlias,
+		"GetDiscoveryCandidateForReview": getDiscoveryCandidateForReview,
+	}
+	for name, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			t.Fatalf("%s query should exist", name)
+		}
+		lower := strings.ToLower(query)
+		if strings.Contains(name, "Snapshot") && !strings.Contains(lower, "project_id") {
+			t.Fatalf("%s must be project scoped: %s", name, query)
+		}
+	}
+	active := strings.ToLower(listSnapshotActiveSignatures)
+	for _, want := range []string{"mode = 'enforced'", "active = true", "conflict_bucket_keys ?|"} {
+		if !strings.Contains(active, want) {
+			t.Fatalf("active snapshot query missing %q: %s", want, listSnapshotActiveSignatures)
+		}
+	}
+	memory := strings.ToLower(listSnapshotReviewMemory)
+	if !strings.Contains(memory, "active = true") || !strings.Contains(memory, "conflict_bucket_keys ?|") {
+		t.Fatalf("review-memory snapshot must be active and bucket scoped: %s", listSnapshotReviewMemory)
+	}
+}

@@ -32,6 +32,8 @@ type Querier interface {
 	// exists. The scheduler uses this to fill only the buffer-window deficit
 	// instead of regenerating every tick (§5.4).
 	CountStockedCanonical(ctx context.Context, projectID uuid.UUID) (int64, error)
+	CreateAICallRecord(ctx context.Context, arg CreateAICallRecordParams) (AiCallRecord, error)
+	CreateArbitrationDecision(ctx context.Context, arg CreateArbitrationDecisionParams) (DiscoveryArbitrationDecision, error)
 	CreateArticle(ctx context.Context, arg CreateArticleParams) (Article, error)
 	CreateContentAction(ctx context.Context, arg CreateContentActionParams) (ContentAction, error)
 	CreateDiscoveryShadowRun(ctx context.Context, arg CreateDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
@@ -80,6 +82,7 @@ type Querier interface {
 	// re-running the install flow (which dead-ends on GitHub's "already installed"
 	// page). Scoped to the current project's owner so it never crosses tenants.
 	FindReusableGitHubInstallation(ctx context.Context, id uuid.UUID) (string, error)
+	FinishAICallRecord(ctx context.Context, arg FinishAICallRecordParams) (AiCallRecord, error)
 	FinishArticleRepairForProject(ctx context.Context, arg FinishArticleRepairForProjectParams) (Article, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
@@ -91,8 +94,11 @@ type Querier interface {
 	GetActiveSiteChangeApplicationByOpportunityKey(ctx context.Context, arg GetActiveSiteChangeApplicationByOpportunityKeyParams) (SiteChangeApplication, error)
 	GetArticle(ctx context.Context, id uuid.UUID) (Article, error)
 	GetArticleForProject(ctx context.Context, arg GetArticleForProjectParams) (Article, error)
+	GetConflictBucketSnapshot(ctx context.Context, arg GetConflictBucketSnapshotParams) ([]WorkConflictBucket, error)
 	GetContentAction(ctx context.Context, arg GetContentActionParams) (ContentAction, error)
 	GetDefaultPublisherConnectionForProject(ctx context.Context, arg GetDefaultPublisherConnectionForProjectParams) (PublisherConnection, error)
+	GetDiscoveryCandidateForReview(ctx context.Context, arg GetDiscoveryCandidateForReviewParams) (DiscoveryCandidate, error)
+	GetDiscoveryReviewItem(ctx context.Context, arg GetDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	GetEnabledPublisherConnectionForProject(ctx context.Context, arg GetEnabledPublisherConnectionForProjectParams) (PublisherConnection, error)
 	GetGEOAssetBriefForProject(ctx context.Context, arg GetGEOAssetBriefForProjectParams) (GeoAssetBrief, error)
 	GetGEOCompetitorForProject(ctx context.Context, arg GetGEOCompetitorForProjectParams) (GeoCompetitor, error)
@@ -151,6 +157,7 @@ type Querier interface {
 	ListAutopilotRuns(ctx context.Context, arg ListAutopilotRunsParams) ([]AutopilotRun, error)
 	ListContentActions(ctx context.Context, arg ListContentActionsParams) ([]ContentAction, error)
 	ListDeadWorkflowEventsForProject(ctx context.Context, arg ListDeadWorkflowEventsForProjectParams) ([]WorkflowEvent, error)
+	ListDiscoveryReviewItems(ctx context.Context, arg ListDiscoveryReviewItemsParams) ([]DiscoveryReviewItem, error)
 	ListDiscoveryShadowSignaturesForRun(ctx context.Context, arg ListDiscoveryShadowSignaturesForRunParams) ([]ListDiscoveryShadowSignaturesForRunRow, error)
 	ListDueMeasuringContentActions(ctx context.Context, arg ListDueMeasuringContentActionsParams) ([]ContentAction, error)
 	ListEnabledNotificationSubscriptionsForEvent(ctx context.Context, arg ListEnabledNotificationSubscriptionsForEventParams) ([]NotificationSubscription, error)
@@ -198,6 +205,8 @@ type Querier interface {
 	ListSEOWatchlistItems(ctx context.Context, arg ListSEOWatchlistItemsParams) ([]ListSEOWatchlistItemsRow, error)
 	ListSafeModeEvents(ctx context.Context, arg ListSafeModeEventsParams) ([]SafeModeEvent, error)
 	ListSearchQueryOpportunityRollups(ctx context.Context, arg ListSearchQueryOpportunityRollupsParams) ([]ListSearchQueryOpportunityRollupsRow, error)
+	ListSnapshotActiveSignatures(ctx context.Context, arg ListSnapshotActiveSignaturesParams) ([]WorkSignatureRegistry, error)
+	ListSnapshotReviewMemory(ctx context.Context, arg ListSnapshotReviewMemoryParams) ([]WorkReviewMemory, error)
 	ListStalePageUpdateDrafts(ctx context.Context, arg ListStalePageUpdateDraftsParams) ([]PageUpdateDraft, error)
 	ListTopics(ctx context.Context, projectID uuid.UUID) ([]Topic, error)
 	ListUnplannedContentActions(ctx context.Context, arg ListUnplannedContentActionsParams) ([]ContentAction, error)
@@ -226,6 +235,7 @@ type Querier interface {
 	MarkSiteChangeApplicationStatus(ctx context.Context, arg MarkSiteChangeApplicationStatusParams) (SiteChangeApplication, error)
 	MarkWorkflowEventFailed(ctx context.Context, arg MarkWorkflowEventFailedParams) (WorkflowEvent, error)
 	MarkWorkflowEventSucceeded(ctx context.Context, id uuid.UUID) (WorkflowEvent, error)
+	MaterializeConflictBuckets(ctx context.Context, arg MaterializeConflictBucketsParams) ([]WorkConflictBucket, error)
 	// Cumulative cost for the current calendar month (cost breaker basis, §5.4).
 	MonthlySpend(ctx context.Context, projectID uuid.UUID) (pgtype.Numeric, error)
 	NextProfileVersion(ctx context.Context, projectID uuid.UUID) (int32, error)
@@ -278,6 +288,7 @@ type Querier interface {
 	StartTopicGenerationForProject(ctx context.Context, arg StartTopicGenerationForProjectParams) (Topic, error)
 	UnlockVariant(ctx context.Context, arg UnlockVariantParams) (Article, error)
 	UnsnoozeSEOOpportunity(ctx context.Context, arg UnsnoozeSEOOpportunityParams) (SeoOpportunity, error)
+	UpdateArbitrationDecisionStatus(ctx context.Context, arg UpdateArbitrationDecisionStatusParams) (DiscoveryArbitrationDecision, error)
 	UpdateArticleContent(ctx context.Context, arg UpdateArticleContentParams) (Article, error)
 	UpdateArticleContentForProject(ctx context.Context, arg UpdateArticleContentForProjectParams) (Article, error)
 	UpdateArticleDistributionMetadataForProject(ctx context.Context, arg UpdateArticleDistributionMetadataForProjectParams) (Article, error)
@@ -310,6 +321,7 @@ type Querier interface {
 	UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error)
 	UpsertDefaultPublisherConnection(ctx context.Context, arg UpsertDefaultPublisherConnectionParams) (PublisherConnection, error)
 	UpsertDiscoveryCandidate(ctx context.Context, arg UpsertDiscoveryCandidateParams) (DiscoveryCandidate, error)
+	UpsertDiscoveryReviewItem(ctx context.Context, arg UpsertDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	UpsertGEOCompetitor(ctx context.Context, arg UpsertGEOCompetitorParams) (GeoCompetitor, error)
 	UpsertGEOExternalSurface(ctx context.Context, arg UpsertGEOExternalSurfaceParams) (GeoExternalSurface, error)
 	UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error)
@@ -329,6 +341,8 @@ type Querier interface {
 	UpsertSearchPerformanceDaily(ctx context.Context, arg UpsertSearchPerformanceDailyParams) (SearchPerformanceDaily, error)
 	UpsertShadowWorkSignature(ctx context.Context, arg UpsertShadowWorkSignatureParams) (WorkSignatureRegistry, error)
 	UpsertTechnicalCheck(ctx context.Context, arg UpsertTechnicalCheckParams) (TechnicalCheck, error)
+	UpsertWorkReviewMemory(ctx context.Context, arg UpsertWorkReviewMemoryParams) (WorkReviewMemory, error)
+	UpsertWorkSignatureAlias(ctx context.Context, arg UpsertWorkSignatureAliasParams) (WorkSignatureAlias, error)
 	WakeDueSnoozedSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
 }
 
