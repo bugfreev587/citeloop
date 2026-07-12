@@ -221,14 +221,12 @@ test("project config exposes content plan auto advance and defaults it off", asy
   try {
     const { createApi, defaultProjectConfig } = await loadApiModule();
     assert.equal(defaultProjectConfig().auto_advance_enabled, false);
-    assert.equal(defaultProjectConfig().opportunity_finding_source_mix, "all");
-    assert.equal(defaultProjectConfig().ai_discovery_automation, "semi_automatic");
 
     const projects = await createApi({ token: "session-token" }).listProjects();
     assert.equal(projects[0].config.auto_advance_enabled, false);
     assert.equal(projects[1].config.auto_advance_enabled, true);
-    assert.equal(projects[0].config.opportunity_finding_source_mix, "all");
-    assert.equal(projects[0].config.ai_discovery_automation, "semi_automatic");
+    assert.equal(projects[0].config.growth_signal_enabled, true);
+    assert.equal(projects[0].config.growth_ai_enabled, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -243,8 +241,9 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
       ok: true,
       status: 200,
       json: async () => ({
-        source_mix: "all",
-        ai_discovery_automation: "manual",
+        growth_signal_enabled: true,
+        growth_ai_enabled: true,
+        growth_ai_run_policy: "manual_only",
         manual_mode: true,
         last_run: {
           id: "run-1",
@@ -268,7 +267,8 @@ test("Opportunity Finding status and manual run APIs call the canonical endpoint
     assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/opportunities/status");
     assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/opportunities/runs");
     assert.equal(calls[1].init.method, "POST");
-    assert.equal(status.source_mix, "all");
+    assert.equal(status.growth_signal_enabled, true);
+    assert.equal(status.growth_ai_enabled, true);
     assert.equal(status.manual_mode, true);
     assert.equal(status.summary[0].label, "Evidence matching");
     assert.equal(status.last_run.progress_percent, 33);

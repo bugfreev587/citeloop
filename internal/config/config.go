@@ -135,18 +135,8 @@ type ProjectConfig struct {
 	BrandVoice         string     `json:"brand_voice"`
 	MonthlyBudgetUSD   float64    `json:"monthly_budget_usd"`
 	AutoAdvanceEnabled bool       `json:"auto_advance_enabled"`
-	// OpportunityFindingSourceMix controls which discovery stages are eligible:
-	//   "all" (default) — deterministic Signal Scan plus AI Discovery;
-	//   "signal_scan" — only Search Console/crawl/profile signals;
-	//   "ai_discovery" — only the AI Discovery stage.
-	OpportunityFindingSourceMix string `json:"opportunity_finding_source_mix"`
-	// AIDiscoveryAutomation controls the AI Discovery stage only. Signal Scan
-	// keeps its own deterministic schedule so processed opportunities never
-	// depend on LLM availability.
-	AIDiscoveryAutomation string `json:"ai_discovery_automation"`
-	// CapabilityPolicyVersion marks configs that have passed the legacy
-	// discovery-settings authority migration. The legacy fields above remain
-	// readable during the cutover, but no longer decide provider-call authority.
+	// CapabilityPolicyVersion marks configs that use independent Doctor and
+	// Opportunities execution authority.
 	CapabilityPolicyVersion int    `json:"capability_policy_version"`
 	GrowthSignalEnabled     bool   `json:"growth_signal_enabled"`
 	GrowthAIEnabled         bool   `json:"growth_ai_enabled"`
@@ -203,20 +193,6 @@ const (
 	GrowthAITriggerEvent     GrowthAITrigger = "event"
 )
 
-// Opportunity finding source values.
-const (
-	OpportunityFindingSourceAll         = "all"
-	OpportunityFindingSourceSignalScan  = "signal_scan"
-	OpportunityFindingSourceAIDiscovery = "ai_discovery"
-)
-
-// AI Discovery automation values.
-const (
-	AIDiscoveryAutomationAutomatic     = "automatic"
-	AIDiscoveryAutomationSemiAutomatic = "semi_automatic"
-	AIDiscoveryAutomationManual        = "manual"
-)
-
 type OpportunityFindingStages struct {
 	SignalScan  bool
 	AIDiscovery bool
@@ -225,21 +201,19 @@ type OpportunityFindingStages struct {
 // Default returns the PRD §3 example config values.
 func Default() ProjectConfig {
 	return ProjectConfig{
-		CadencePerWeek:              3,
-		BufferDays:                  5,
-		ChannelMix:                  ChannelMix{Blog: 0.6, Syndication: 0.4},
-		MonthlyBudgetUSD:            50,
-		AutoAdvanceEnabled:          false,
-		OpportunityFindingSourceMix: OpportunityFindingSourceAll,
-		AIDiscoveryAutomation:       AIDiscoveryAutomationSemiAutomatic,
-		CapabilityPolicyVersion:     CapabilityPolicyVersionV1,
-		GrowthSignalEnabled:         true,
-		GrowthAIEnabled:             true,
-		GrowthAIRunPolicy:           GrowthAIRunPolicyOnDemandRecommended,
-		DoctorAIEnabled:             false,
-		DoctorAIRunPolicy:           DoctorAIRunPolicyManualOnly,
-		PublishMode:                 PublishModeManual,
-		PublishIntervalDays:         2,
+		CadencePerWeek:          3,
+		BufferDays:              5,
+		ChannelMix:              ChannelMix{Blog: 0.6, Syndication: 0.4},
+		MonthlyBudgetUSD:        50,
+		AutoAdvanceEnabled:      false,
+		CapabilityPolicyVersion: CapabilityPolicyVersionV1,
+		GrowthSignalEnabled:     true,
+		GrowthAIEnabled:         true,
+		GrowthAIRunPolicy:       GrowthAIRunPolicyOnDemandRecommended,
+		DoctorAIEnabled:         false,
+		DoctorAIRunPolicy:       DoctorAIRunPolicyManualOnly,
+		PublishMode:             PublishModeManual,
+		PublishIntervalDays:     2,
 		Crawl: CrawlConfig{
 			SameOriginOnly:   true,
 			MaxPages:         200,
@@ -315,7 +289,6 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return c, err
 	}
-	_, hasCapabilityVersion := stored["capability_policy_version"]
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return c, err
 	}
@@ -334,49 +307,21 @@ func Parse(raw json.RawMessage) (ProjectConfig, error) {
 			c.PublishIntervalDays = 2
 		}
 	}
-	switch c.OpportunityFindingSourceMix {
-	case OpportunityFindingSourceAll, OpportunityFindingSourceSignalScan, OpportunityFindingSourceAIDiscovery:
-	default:
-		c.OpportunityFindingSourceMix = OpportunityFindingSourceAll
+	c.CapabilityPolicyVersion = CapabilityPolicyVersionV1
+	// Incomplete post-migration payloads keep deterministic evidence enabled but
+	// fail closed for provider calls. Normal settings saves merge over the full
+	// stored config and therefore retain explicit authority fields.
+	if _, ok := stored["growth_ai_enabled"]; !ok {
+		c.GrowthAIEnabled = false
 	}
-	switch c.AIDiscoveryAutomation {
-	case AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual:
-	default:
-		c.AIDiscoveryAutomation = AIDiscoveryAutomationSemiAutomatic
+	if _, ok := stored["doctor_ai_enabled"]; !ok {
+		c.DoctorAIEnabled = false
 	}
-	if !hasCapabilityVersion || c.CapabilityPolicyVersion < CapabilityPolicyVersionV1 {
-		// Legacy source modes are mapped once into internal capabilities. Doctor
-		// AI is deliberately new authority and therefore always starts disabled.
-		c.GrowthSignalEnabled = c.OpportunityFindingSourceMix != OpportunityFindingSourceAIDiscovery
-		c.GrowthAIEnabled = c.OpportunityFindingSourceMix != OpportunityFindingSourceSignalScan
-		switch c.AIDiscoveryAutomation {
-		case AIDiscoveryAutomationAutomatic:
-			c.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
-		case AIDiscoveryAutomationManual:
-			c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
-		default:
-			c.GrowthAIRunPolicy = GrowthAIRunPolicyOnDemandRecommended
-		}
-		// Doctor fields predate capability_policy_version in some configs. Keep
-		// explicit consent/revocation from those payloads; Default already makes
-		// projects with no Doctor fields fail closed at off/manual_only.
-		c.CapabilityPolicyVersion = CapabilityPolicyVersionV1
-	} else {
-		// Versioned but incomplete payloads fail closed for provider calls. The
-		// update endpoint merges patches over the stored config, so normal saves
-		// always retain these fields.
-		if _, ok := stored["growth_ai_enabled"]; !ok {
-			c.GrowthAIEnabled = false
-		}
-		if _, ok := stored["doctor_ai_enabled"]; !ok {
-			c.DoctorAIEnabled = false
-		}
-		if _, ok := stored["growth_ai_run_policy"]; !ok {
-			c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
-		}
-		if _, ok := stored["doctor_ai_run_policy"]; !ok {
-			c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
-		}
+	if _, ok := stored["growth_ai_run_policy"]; !ok {
+		c.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
+	}
+	if _, ok := stored["doctor_ai_run_policy"]; !ok {
+		c.DoctorAIRunPolicy = DoctorAIRunPolicyManualOnly
 	}
 	switch c.GrowthAIRunPolicy {
 	case GrowthAIRunPolicyScheduledOnly, GrowthAIRunPolicyScheduledAndEvent, GrowthAIRunPolicyOnDemandRecommended, GrowthAIRunPolicyManualOnly:

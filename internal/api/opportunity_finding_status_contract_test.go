@@ -95,6 +95,19 @@ func TestOpportunityFindingStatusUsesCapabilityAuthority(t *testing.T) {
 	}
 }
 
+func TestOpportunityFindingStatusDoesNotExposeRetiredSourceModes(t *testing.T) {
+	raw, err := os.ReadFile("handlers_seo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.ToLower(string(raw))
+	for _, retired := range []string{"opportunityfindingsourcemix", "aidiscoveryautomation", `json:"source_mix"`, `json:"ai_discovery_automation"`} {
+		if strings.Contains(source, retired) {
+			t.Fatalf("Opportunity status still exposes retired mode %q", retired)
+		}
+	}
+}
+
 func TestOpportunityFindingRoutesAreMounted(t *testing.T) {
 	raw, err := os.ReadFile("server.go")
 	if err != nil {

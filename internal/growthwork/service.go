@@ -1003,6 +1003,15 @@ func appendGrowthCutoverAudit(ctx context.Context, q *db.Queries, session db.Gro
 			return err
 		}
 	}
+	if status == "rolled_back" {
+		resolvedBy := "growth_cutover"
+		if _, err := q.DismissPendingMigrationReviewItemsForBatch(ctx, db.DismissPendingMigrationReviewItemsForBatchParams{
+			ProjectID: session.ProjectID, MigrationBatchID: session.BatchID,
+			ResolvedBy: &resolvedBy, ResolvedAt: now,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
