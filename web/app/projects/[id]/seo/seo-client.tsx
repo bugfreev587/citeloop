@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, CheckCircle2, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, Wrench, X } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronRight, Clipboard, FileText, History, RefreshCw, Search, Settings, ShieldAlert, X } from "lucide-react";
 import {
   ActionMeasurement,
   AICrawlerAccessSnapshot,
@@ -502,6 +502,17 @@ function isVisibleLoopAction(action: LoopAction) {
   if (inactiveLoopActionStatuses.has(normalizedLifecycleStatus(action.status))) return false;
   if (hasDismissedSourceOpportunity(action) && !hasResultsExecutionEvidence(action)) return false;
   return true;
+}
+
+// Opportunities owns delayed growth work only. Historical direct actions can
+// still be resolved through their canonical Doctor Site Fix records, but must
+// never re-enter the Opportunities queue or lifecycle presentation.
+function isOpportunitiesOwnedAction(action: LoopAction) {
+  return !isDirectAction(action);
+}
+
+function isOpportunitiesOwnedOpportunity(opportunity: SEOOpportunity) {
+  return opportunityWorkType(opportunity) !== "Fix Site Issue";
 }
 
 const activeHandoffStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
@@ -1509,9 +1520,11 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     };
   }, [selectedResultAction?.id]);
 
-  const activeOpportunities = opportunities.filter((opportunity) => opportunity.status === "open");
+  const activeOpportunities = opportunities.filter(
+    (opportunity) => opportunity.status === "open" && isOpportunitiesOwnedOpportunity(opportunity),
+  );
   const summaryLifecycleCounts = visibilitySummary?.lifecycle_counts;
-  const visibleLoopActions = loopActions.filter(isVisibleLoopAction);
+  const visibleLoopActions = loopActions.filter(isVisibleLoopAction).filter(isOpportunitiesOwnedAction);
   const loopLifecycleCounts = visibilityLifecycleCounts(visibleLoopActions);
   loopLifecycleCounts.detected = activeOpportunities.length || summaryLifecycleCounts?.detected || 0;
   const loopActiveCount =
@@ -1545,8 +1558,12 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setSelectedLoopStage(null);
   }, [selectedLoopSummaryItem]);
 
-  const snoozedOpportunities = opportunities.filter((opportunity) => opportunity.status === "snoozed");
-  const watchingOpportunityLinks = opportunities.filter((opportunity) => opportunity.status === "watching");
+  const snoozedOpportunities = opportunities.filter(
+    (opportunity) => opportunity.status === "snoozed" && isOpportunitiesOwnedOpportunity(opportunity),
+  );
+  const watchingOpportunityLinks = opportunities.filter(
+    (opportunity) => opportunity.status === "watching" && isOpportunitiesOwnedOpportunity(opportunity),
+  );
   const sentOpportunityLinks = visibleLoopActions
     .filter(isRecentlySentAction)
     .slice()
@@ -1813,6 +1830,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     setOpportunityPending(opp.id, "create");
     setMessage(null);
     try {
+      if (!isOpportunitiesOwnedOpportunity(opp)) {
+        throw new Error("Technical repair work belongs to Doctor and cannot be created from Opportunities.");
+      }
       const workType = routeOverrides[opp.id] ?? opportunityWorkType(opp);
       const destination = destinationForWorkType(workType);
       const action = await api.createSEOContentAction(projectId, opp.id, {
@@ -2170,7 +2190,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
           </section>
 
 
-          <section data-analysis-loop-strip aria-label="Loop in motion for Content Plan and Site Fixes work through Published / Applied stages" className="space-y-3">
+          <section data-analysis-loop-strip aria-label="Opportunities loop in motion through content planning, publishing, measurement, and learning" className="space-y-3">
             <SectionHeader
               title="Loop in motion"
               eyebrow="Where reviewed opportunities are now"
@@ -2227,12 +2247,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                           <div className="min-w-0">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-1">
-                                <Badge tone={loopActionDestinationLabel(action) === "Site Fixes" ? "blue" : "violet"}>
-                                  {loopActionDestinationLabel(action) === "Site Fixes" ? (
-                                    <Wrench size={12} className="mr-1" />
-                                  ) : (
-                                    <FileText size={12} className="mr-1" />
-                                  )}
+                                <Badge tone="violet">
+                                  <FileText size={12} className="mr-1" />
                                   {loopActionDestinationLabel(action)}
                                 </Badge>
                                 <Badge tone={lifecycleStageTone(stage)}>{lifecycleStageLabel(stage)}</Badge>
@@ -2262,7 +2278,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </div>
               )}
               {!selectedLoopStage && (
-                <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed Content Plan and Site Fixes work will appear here after it enters the loop.</p>
+                <p className="mt-3 text-sm leading-6 text-slate-500">Reviewed growth work will appear here after it enters Content Plan.</p>
               )}
             </div>
           </section>

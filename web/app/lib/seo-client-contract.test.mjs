@@ -71,17 +71,19 @@ test("Analysis page does not render Automation readiness as a primary module", a
   );
 });
 
-test("Analysis page leads with Opportunity Queue before Site Fixes", async () => {
+test("Analysis page is owned only by the Opportunities growth loop", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
   const siteFixes = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
 
-  // Site Fixes moved to their own dedicated page. Analysis now leads with the
-  // Opportunity Queue and keeps loop diagnostics below it.
+  // Site Fixes live on Doctor's dedicated repair surface. Analysis contains
+  // only the Opportunity Queue and its delayed growth loop.
   for (const expected of ["data-analysis-opportunity-finding-status", "data-analysis-growth-findings-section", "Opportunity Queue ·", "data-analysis-loop-strip"]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
   assert.equal(source.includes("data-site-fixes-queue"), false, "Analysis should no longer render an on-page Site Fixes queue");
   assert.equal(source.includes("data-site-fix-card"), false, "Site Fix cards moved to the dedicated Site Fixes page");
+  assert.match(source, /function isOpportunitiesOwnedAction/);
+  assert.match(source, /filter\(isOpportunitiesOwnedAction\)/);
 
   const findingStatusIndex = source.indexOf("data-analysis-opportunity-finding-status");
   const opportunityQueueIndex = source.indexOf("data-analysis-growth-findings-section");
@@ -247,7 +249,7 @@ test("Analysis Site Fixes treat connected enabled GitHub App publishers as PR-ca
   assert.doesNotMatch(connectionSource, /credential_configured/);
 });
 
-test("Analysis Loop in motion makes Site Fixes visible inside the lifecycle", async () => {
+test("Analysis Loop in motion excludes Doctor Site Fix work", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
   const loopStart = source.indexOf("data-analysis-loop-strip");
@@ -257,13 +259,14 @@ test("Analysis Loop in motion makes Site Fixes visible inside the lifecycle", as
   assert.notEqual(loopStart, -1, "seo-client.tsx missing Loop in motion section");
   assert.match(source, /function loopActionDestinationLabel/);
   assert.match(source, /function loopLifecycleSummaryLabel/);
-  assert.match(loopBlock, /Published \/ Applied/);
+  assert.match(loopBlock, /publishing, measurement, and learning/);
   assert.match(loopBlock, /loopActionDestinationLabel\(action\)/);
-  assert.match(loopBlock, /Site Fixes/);
   assert.match(loopBlock, /Content Plan/);
+  assert.doesNotMatch(loopBlock, /Site Fixes/);
+  assert.doesNotMatch(loopBlock, /Applied/);
 });
 
-test("Analysis opportunity cards expose destination-specific routing and handoff links", async () => {
+test("Analysis opportunity cards expose growth-work routing and handoff links", async () => {
   const source = await readFile(new URL("../projects/[id]/seo/seo-client.tsx", import.meta.url), "utf8");
 
   for (const expected of [
@@ -275,12 +278,7 @@ test("Analysis opportunity cards expose destination-specific routing and handoff
     "data-opportunity-handoff-card",
     "Recently Decided",
     "data-opportunity-recent-drawer-trigger",
-    "Sent to Site Fixes",
-    "View in Site Fixes",
     "plan?action=${action.id}",
-    // Site Fixes handoff now navigates to the dedicated page rather than focusing
-    // an on-page card.
-    "/projects/${projectId}/site-fixes",
     "citeloop-linked-card-pulse",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
@@ -330,7 +328,6 @@ test("Opportunity review drawer explains work type destination and approval sour
     "Destination",
     "Approval source",
     "Human opportunity approval",
-    "Create Site Fix",
   ]) {
     assert.equal(source.includes(expected), true, `seo-client.tsx missing ${expected}`);
   }
