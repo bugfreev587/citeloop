@@ -851,6 +851,8 @@ type MigrationReviewItem struct {
 	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	InternalOwner      string             `json:"internal_owner"`
+	DueAt              pgtype.Timestamptz `json:"due_at"`
 }
 
 type MigrationRollbackEvent struct {

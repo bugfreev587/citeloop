@@ -87,6 +87,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/admin/projects/{projectID}/discovery-semantic-evaluation/run", s.runAdminDiscoverySemanticEvaluation)
 			r.Post("/admin/projects/{projectID}/site-fix-migration/dry-run", s.dryRunAdminSiteFixMigration)
 			r.Post("/admin/projects/{projectID}/site-fix-migration/apply", s.applyAdminSiteFixMigration)
+			r.Get("/admin/projects/{projectID}/site-fix-migration/reviews", s.listAdminMigrationReviews)
+			r.Post("/admin/projects/{projectID}/site-fix-migration/reviews/{reviewID}/resolve", s.resolveAdminMigrationReview)
 			r.Post("/admin/projects/{projectID}/site-fix-migration/{batchID}/rollback", s.rollbackAdminSiteFixMigration)
 			r.Get("/admin/projects/{projectID}/site-fix-migration/{batchID}", s.getAdminSiteFixMigrationReport)
 			r.Get("/admin/users", s.listAdminUsers)

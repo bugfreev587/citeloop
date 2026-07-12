@@ -22,6 +22,8 @@ func TestAdminSiteFixMigrationRoutesAreAdminRegistered(t *testing.T) {
 		{http.MethodPost, "/api/admin/projects/" + projectID.String() + "/site-fix-migration/apply"},
 		{http.MethodPost, "/api/admin/projects/" + projectID.String() + "/site-fix-migration/" + batchID.String() + "/rollback"},
 		{http.MethodGet, "/api/admin/projects/" + projectID.String() + "/site-fix-migration/" + batchID.String()},
+		{http.MethodGet, "/api/admin/projects/" + projectID.String() + "/site-fix-migration/reviews"},
+		{http.MethodPost, "/api/admin/projects/" + projectID.String() + "/site-fix-migration/reviews/" + batchID.String() + "/resolve"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(`{"expected_snapshot_hash":"snapshot"}`))
 		res := httptest.NewRecorder()
@@ -34,6 +36,28 @@ func TestAdminSiteFixMigrationRoutesAreAdminRegistered(t *testing.T) {
 	text := string(server)
 	if !strings.Contains(text, `r.Use(s.requireAdmin)`) || !strings.Contains(text, `/site-fix-migration/dry-run`) {
 		t.Fatal("migration routes must remain inside requireAdmin group")
+	}
+}
+
+func TestAdminMigrationReviewOperationsExposeAgeSLAAndAudit(t *testing.T) {
+	handler, err := os.ReadFile("admin_site_fix_migration.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(handler)
+	for _, required := range []string{
+		"listAdminMigrationReviews",
+		"resolveAdminMigrationReview",
+		"min_age_seconds",
+		"overdue_only",
+		"age_seconds",
+		"sla_status",
+		"internal_owner",
+		"adminAuditActor",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("migration review operations missing %q", required)
+		}
 	}
 }
 
