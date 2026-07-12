@@ -372,7 +372,7 @@ func findingValues(v db.SeoDoctorFinding) []any {
 	return []any{v.ID, v.ProjectID, v.RunID, v.FindingKey, v.Severity, v.Category, v.IssueType, v.Status, v.AffectedUrls, v.NormalizedUrls, v.Evidence, v.WhyItMatters, v.FixIntent, v.DeveloperInstructions, v.LikelyFilesOrSurfaces, v.AcceptanceTests, v.RiskLevel, v.ReviewRequired, v.AutofixEligible, v.LinkedOpportunityID, v.LinkedContentActionID, v.FirstSeenAt, v.LastSeenAt, v.ResolvedAt, v.CreatedAt, v.UpdatedAt, v.FindingKind}
 }
 func siteFixValues(v db.SiteFix) []any {
-	return []any{v.ID, v.ProjectID, v.DoctorFindingID, v.CandidateID, v.WorkSignatureID, v.SupersedesSiteFixID, v.Status, v.FindingKind, v.TargetUrls, v.EvidenceSnapshot, v.ProposedFix, v.AcceptanceTests, v.VerificationSnapshot, v.FailureReason, v.RetryCount, v.MaxRetries, v.LegacyOpportunityID, v.LegacyContentActionID, v.MigrationBatchID, v.ApprovedAt, v.AppliedAt, v.DeployedAt, v.VerifiedAt, v.CreatedAt, v.UpdatedAt}
+	return []any{v.ID, v.ProjectID, v.DoctorFindingID, v.CandidateID, v.WorkSignatureID, v.SupersedesSiteFixID, v.Status, v.FindingKind, v.TargetUrls, v.EvidenceSnapshot, v.ProposedFix, v.AcceptanceTests, v.VerificationSnapshot, v.FailureReason, v.RetryCount, v.MaxRetries, v.LegacyOpportunityID, v.LegacyContentActionID, v.MigrationBatchID, v.ApprovedAt, v.AppliedAt, v.DeployedAt, v.VerifiedAt, v.CreatedAt, v.UpdatedAt, v.DoctorLinkDismissedAt, v.DoctorLinkDismissedBy}
 }
 func siteFixFromArgs(args []interface{}) db.SiteFix {
 	return db.SiteFix{

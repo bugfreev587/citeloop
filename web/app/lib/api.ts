@@ -1699,6 +1699,8 @@ function normalizeSiteFix(raw: any): SiteFix {
     applied_at: data.applied_at ?? null,
     deployed_at: data.deployed_at ?? null,
     verified_at: data.verified_at ?? null,
+    doctor_link_dismissed_at: data.doctor_link_dismissed_at ?? null,
+    doctor_link_dismissed_by: data.doctor_link_dismissed_by ?? null,
     created_at: data.created_at ?? null,
     updated_at: data.updated_at ?? null,
     application: data.application ? normalizeSiteChangeApplication(data.application) : null,
@@ -2570,12 +2572,20 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/doctor/site-fixes`, undefined, auth);
     return arrayFrom(raw).map(normalizeSiteFix);
   },
+  listDoctorSiteFixLinks: async (id: string): Promise<SiteFix[]> => {
+    const raw = await req<any[]>(`/projects/${id}/doctor/finding-links`, undefined, auth);
+    return arrayFrom(raw).map(normalizeSiteFix);
+  },
   createDoctorSiteFix: async (id: string, findingID: string): Promise<SiteFix> => {
     const raw = await req<any>(
       `/projects/${id}/doctor/findings/${findingID}/site-fixes`,
       { method: "POST" },
       withMinimumTimeout(auth, DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS),
     );
+    return normalizeSiteFix(raw);
+  },
+  dismissDoctorSiteFixLink: async (id: string, fixID: string): Promise<SiteFix> => {
+    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/dismiss-link`, { method: "POST" }, auth);
     return normalizeSiteFix(raw);
   },
   approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFix> => {

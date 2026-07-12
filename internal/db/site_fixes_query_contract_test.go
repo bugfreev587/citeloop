@@ -330,6 +330,52 @@ func TestCanonicalSiteFixListDetailsAreBoundedAndBatchReadable(t *testing.T) {
 	requireQuerySQL(t, getAliases, "project_id", "canonical_object_id", "canonical_object_type = 'site_fix'", "alias_state = 'active'")
 }
 
+func TestCanonicalSiteFixDoctorLinkDismissalIsScopedAndPresentationOnly(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	dismiss := namedSQL(t, siteFixes, "DismissCanonicalSiteFixDoctorLink")
+	requireQuerySQL(t, dismiss,
+		"update site_fixes",
+		"doctor_link_dismissed_at = coalesce(doctor_link_dismissed_at, sqlc.arg(dismissed_at)::timestamptz)",
+		"doctor_link_dismissed_by = coalesce(doctor_link_dismissed_by, sqlc.arg(dismissed_by)::text)",
+		"id = sqlc.arg(id)",
+		"project_id = sqlc.arg(project_id)",
+		"doctor_finding_id is not null",
+		"returning *",
+	)
+	for _, forbidden := range []string{"status =", "doctor_finding_id =", "updated_at =", "delete ", "site_change_applications"} {
+		if strings.Contains(dismiss, forbidden) {
+			t.Fatalf("dismiss link query must not mutate Site Fix lifecycle or provenance; found %q", forbidden)
+		}
+	}
+}
+
+func TestCurrentDoctorFindingLinksAreCompleteWithoutExpandingTheCanonicalList(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	links := namedSQL(t, siteFixes, "ListCurrentDoctorSiteFixLinks")
+	requireQuerySQL(t, links,
+		"distinct on (fix.doctor_finding_id)",
+		"from site_fixes fix",
+		"join seo_doctor_findings finding",
+		"finding.id = fix.doctor_finding_id",
+		"finding.project_id = fix.project_id",
+		"fix.project_id = sqlc.arg(project_id)",
+		"finding.status = 'active'",
+		"finding.finding_kind in ('broken','optimization')",
+		"order by fix.doctor_finding_id, fix.created_at desc, fix.id desc",
+	)
+	if strings.Contains(links, "limit ") {
+		t.Fatal("current-finding link projection must not inherit the 250-row canonical workspace limit")
+	}
+	applications := namedSQL(t, siteFixes, "ListCurrentDoctorSiteFixLinkApplications")
+	requireQuerySQL(t, applications,
+		"distinct on (application.site_fix_id)",
+		"join current_links listed on listed.id = application.site_fix_id",
+		"application.project_id = sqlc.arg(project_id)",
+		"application.site_fix_id is not null",
+		"application.content_action_id is null",
+	)
+}
+
 func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	claim := namedSQL(t, siteFixes, "ClaimCanonicalSiteFixGitHubPR")

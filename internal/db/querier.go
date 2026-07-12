@@ -108,6 +108,7 @@ type Querier interface {
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
 	DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error
+	DismissCanonicalSiteFixDoctorLink(ctx context.Context, arg DismissCanonicalSiteFixDoctorLinkParams) (SiteFix, error)
 	DismissMigrationReviewItem(ctx context.Context, arg DismissMigrationReviewItemParams) (MigrationReviewItem, error)
 	DismissPendingMigrationReviewItemsForBatch(ctx context.Context, arg DismissPendingMigrationReviewItemsForBatchParams) (int64, error)
 	DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error)
@@ -270,6 +271,8 @@ type Querier interface {
 	ListCanonicalSiteFixes(ctx context.Context, arg ListCanonicalSiteFixesParams) ([]SiteFix, error)
 	ListCanonicalSiteFixesForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListContentActions(ctx context.Context, arg ListContentActionsParams) ([]ContentAction, error)
+	ListCurrentDoctorSiteFixLinkApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
+	ListCurrentDoctorSiteFixLinks(ctx context.Context, projectID uuid.UUID) ([]SiteFix, error)
 	ListCurrentSEODoctorFindings(ctx context.Context, arg ListCurrentSEODoctorFindingsParams) ([]SeoDoctorFinding, error)
 	ListDeadWorkflowEventsForProject(ctx context.Context, arg ListDeadWorkflowEventsForProjectParams) ([]WorkflowEvent, error)
 	ListDiscoveryReviewItems(ctx context.Context, arg ListDiscoveryReviewItemsParams) ([]DiscoveryReviewItem, error)

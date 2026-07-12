@@ -1462,6 +1462,8 @@ type SiteFix struct {
 	VerifiedAt            pgtype.Timestamptz `json:"verified_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DoctorLinkDismissedAt pgtype.Timestamptz `json:"doctor_link_dismissed_at"`
+	DoctorLinkDismissedBy *string            `json:"doctor_link_dismissed_by"`
 }
 
 type SiteFixEvidenceMerge struct {

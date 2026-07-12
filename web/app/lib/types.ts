@@ -96,6 +96,8 @@ export type SiteFix = {
   applied_at?: string | null;
   deployed_at?: string | null;
   verified_at?: string | null;
+  doctor_link_dismissed_at?: string | null;
+  doctor_link_dismissed_by?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   application?: SiteChangeApplication | null;

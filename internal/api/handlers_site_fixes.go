@@ -71,7 +71,9 @@ func (e *DoctorSiteFixArbitrationHoldError) publicReason() string {
 type DoctorSiteFixService interface {
 	CreateFromFinding(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixResponse, bool, error)
 	List(context.Context, uuid.UUID, *string) ([]DoctorSiteFixResponse, error)
+	ListDoctorLinks(context.Context, uuid.UUID) ([]DoctorSiteFixResponse, error)
 	Get(context.Context, uuid.UUID, uuid.UUID) (DoctorSiteFixResponse, error)
+	DismissDoctorLink(context.Context, uuid.UUID, uuid.UUID, string, time.Time) (db.SiteFix, error)
 	Approve(context.Context, uuid.UUID, uuid.UUID, time.Time) (DoctorSiteFixResponse, error)
 }
 
@@ -1019,6 +1021,36 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	return responses, nil
 }
 
+func (s *postgresDoctorSiteFixService) ListDoctorLinks(ctx context.Context, projectID uuid.UUID) ([]DoctorSiteFixResponse, error) {
+	if s == nil || s.q == nil {
+		return nil, errors.New("canonical Site Fix database unavailable")
+	}
+	fixes, err := s.q.ListCurrentDoctorSiteFixLinks(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	applications, err := s.q.ListCurrentDoctorSiteFixLinkApplications(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	applicationsByFix := make(map[uuid.UUID]db.SiteChangeApplication, len(applications))
+	for _, application := range applications {
+		if application.SiteFixID.Valid {
+			applicationsByFix[application.SiteFixID.Bytes] = application
+		}
+	}
+	responses := make([]DoctorSiteFixResponse, 0, len(fixes))
+	for _, fix := range fixes {
+		response := DoctorSiteFixResponse{SiteFix: fix, Verifications: []db.SiteFixVerification{}, LegacyAliases: []DoctorSiteFixLegacyAlias{}}
+		if application, ok := applicationsByFix[fix.ID]; ok {
+			applicationCopy := application
+			response.Application = &applicationCopy
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
+}
+
 func (s *postgresDoctorSiteFixService) Get(ctx context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixResponse, error) {
 	if s == nil || s.q == nil {
 		return DoctorSiteFixResponse{}, errors.New("canonical Site Fix database unavailable")
@@ -1028,6 +1060,22 @@ func (s *postgresDoctorSiteFixService) Get(ctx context.Context, projectID, fixID
 		return DoctorSiteFixResponse{}, err
 	}
 	return s.loadResponse(ctx, fix)
+}
+
+func (s *postgresDoctorSiteFixService) DismissDoctorLink(ctx context.Context, projectID, fixID uuid.UUID, dismissedBy string, dismissedAt time.Time) (db.SiteFix, error) {
+	if s == nil || s.q == nil {
+		return db.SiteFix{}, errors.New("canonical Site Fix database unavailable")
+	}
+	fix, err := s.q.DismissCanonicalSiteFixDoctorLink(ctx, db.DismissCanonicalSiteFixDoctorLinkParams{
+		DismissedAt: pgtype.Timestamptz{Time: dismissedAt.UTC(), Valid: true},
+		DismissedBy: strings.TrimSpace(dismissedBy),
+		ID:          fixID,
+		ProjectID:   projectID,
+	})
+	if err != nil {
+		return db.SiteFix{}, err
+	}
+	return fix, nil
 }
 
 func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, fixID uuid.UUID, approvedAt time.Time) (DoctorSiteFixResponse, error) {
@@ -1151,6 +1199,25 @@ func (s *Server) listDoctorSiteFixes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptySlice(fixes))
 }
 
+func (s *Server) listCurrentDoctorSiteFixLinks(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	service := s.doctorSiteFixService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix service unavailable")
+		return
+	}
+	links, err := service.ListDoctorLinks(r.Context(), projectID)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, emptySlice(links))
+}
+
 func (s *Server) getDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
 	if !ok {
@@ -1162,6 +1229,29 @@ func (s *Server) getDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fix, err := service.Get(r.Context(), projectID, fixID)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, fix)
+}
+
+func (s *Server) dismissDoctorSiteFixLink(w http.ResponseWriter, r *http.Request) {
+	projectID, fixID, ok := s.seoDoctorIDs(w, r, "fixID")
+	if !ok {
+		return
+	}
+	service := s.doctorSiteFixService()
+	if service == nil {
+		writeErr(w, http.StatusInternalServerError, "canonical Site Fix service unavailable")
+		return
+	}
+	actor := strings.TrimSpace(s.ownerID(r))
+	if actor == "" {
+		writeErr(w, http.StatusForbidden, "project owner required")
+		return
+	}
+	fix, err := service.DismissDoctorLink(r.Context(), projectID, fixID, actor, time.Now().UTC())
 	if err != nil {
 		s.writeDoctorSiteFixError(w, err)
 		return
