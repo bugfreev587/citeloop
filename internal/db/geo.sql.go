@@ -1638,18 +1638,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = ''
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, null, $8, $9, $10, $11, $12, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at from inserted
 `
 
 type UpsertCrawlerAccessOpportunityParams struct {
@@ -1698,6 +1698,12 @@ type UpsertCrawlerAccessOpportunityRow struct {
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 	CanonicalGrowth            bool               `json:"canonical_growth"`
+	GrowthSpecState            string             `json:"growth_spec_state"`
+	GrowthSpecVersion          string             `json:"growth_spec_version"`
+	GrowthSpecOrigin           string             `json:"growth_spec_origin"`
+	GrowthSpec                 json.RawMessage    `json:"growth_spec"`
+	GrowthSpecMissing          json.RawMessage    `json:"growth_spec_missing"`
+	DecisionReadyAt            pgtype.Timestamptz `json:"decision_ready_at"`
 }
 
 func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error) {
@@ -1747,6 +1753,12 @@ func (q *Queries) UpsertCrawlerAccessOpportunity(ctx context.Context, arg Upsert
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+		&i.GrowthSpecState,
+		&i.GrowthSpecVersion,
+		&i.GrowthSpecOrigin,
+		&i.GrowthSpec,
+		&i.GrowthSpecMissing,
+		&i.DecisionReadyAt,
 	)
 	return i, err
 }
@@ -1886,18 +1898,18 @@ with updated as (
     and so.status in ('open','accepted','converted')
     and so.normalized_page_url = $7
     and coalesce(so.query, '') = coalesce($8, '')
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 ), inserted as (
   insert into seo_opportunities
     (project_id, type, status, priority_score, confidence, page_url, normalized_page_url,
      query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id)
   select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null
   where not exists (select 1 from updated)
-  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+  returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 )
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from updated
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at from updated
 union all
-select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth from inserted
+select id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at from inserted
 `
 
 type UpsertGEOObservationOpportunityParams struct {
@@ -1947,6 +1959,12 @@ type UpsertGEOObservationOpportunityRow struct {
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 	CanonicalGrowth            bool               `json:"canonical_growth"`
+	GrowthSpecState            string             `json:"growth_spec_state"`
+	GrowthSpecVersion          string             `json:"growth_spec_version"`
+	GrowthSpecOrigin           string             `json:"growth_spec_origin"`
+	GrowthSpec                 json.RawMessage    `json:"growth_spec"`
+	GrowthSpecMissing          json.RawMessage    `json:"growth_spec_missing"`
+	DecisionReadyAt            pgtype.Timestamptz `json:"decision_ready_at"`
 }
 
 func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error) {
@@ -1997,6 +2015,12 @@ func (q *Queries) UpsertGEOObservationOpportunity(ctx context.Context, arg Upser
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+		&i.GrowthSpecState,
+		&i.GrowthSpecVersion,
+		&i.GrowthSpecOrigin,
+		&i.GrowthSpec,
+		&i.GrowthSpecMissing,
+		&i.DecisionReadyAt,
 	)
 	return i, err
 }

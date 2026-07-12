@@ -507,6 +507,39 @@ export type OpportunityFindingStatus = {
   };
 };
 
+export type GrowthOpportunitySpec = {
+  schema_version: "growth-opportunity-v1" | string;
+  hypothesis: string;
+  audience: string[];
+  baseline: {
+    source: string;
+    metric: string;
+    value: number;
+    window_start: string;
+    window_end: string;
+    sample_size?: number;
+    evidence_ids?: string[];
+  };
+  primary_metric: string;
+  expected_change: {
+    direction: "increase" | "decrease" | "maintain" | string;
+    decision_threshold: { kind: string; value: number };
+    range_confidence: string;
+  };
+  measurement_policy: {
+    policy_version: string;
+    early_signal_offset_days: number;
+    primary_checkpoint_offset_days: number;
+    follow_up_offsets_days: number[];
+    max_follow_up_attempts: number;
+    max_measuring_duration_days: number;
+    terminalization_grace_period_days: number;
+  };
+  attribution_model: string;
+  stop_conditions: string[];
+  reconsider_conditions: string[];
+};
+
 export type SEOOpportunity = {
   id: string;
   type: string;
@@ -521,6 +554,13 @@ export type SEOOpportunity = {
   expected_impact?: string | null;
   effort?: number;
   risk_level?: string;
+  canonical_growth?: boolean;
+  growth_spec_state?: "legacy" | "needs_specification" | "needs_evidence" | "decision_ready" | string;
+  growth_spec_version?: string;
+  growth_spec_origin?: "legacy_migration" | "forward" | string;
+  growth_spec?: GrowthOpportunitySpec | Record<string, never>;
+  growth_spec_missing?: string[];
+  decision_ready_at?: any;
   snoozed_until?: any;
   snooze_reason?: string | null;
   unsnoozed_at?: any;

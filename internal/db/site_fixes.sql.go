@@ -4310,7 +4310,7 @@ func (q *Queries) ListLegacyTechnicalActionsForMigration(ctx context.Context, pr
 }
 
 const listLegacyTechnicalOpportunitiesWithoutActions = `-- name: ListLegacyTechnicalOpportunitiesWithoutActions :many
-select o.id, o.project_id, o.type, o.status, o.priority_score, o.confidence, o.page_url, o.normalized_page_url, o.article_id, o.topic_id, o.query, o.evidence, o.recommended_action, o.expected_impact, o.effort, o.risk_level, o.created_by_run_id, o.created_at, o.updated_at, o.opportunity_key, o.snoozed_until, o.snooze_reason, o.unsnoozed_at, o.opportunity_identity_key, o.evidence_fingerprint, o.canonical_site_fix_id, o.canonical_read_only, o.legacy_migration_batch_id, o.legacy_migration_disposition, o.canonical_growth, coalesce(review.review_status, '')::text as review_decision,
+select o.id, o.project_id, o.type, o.status, o.priority_score, o.confidence, o.page_url, o.normalized_page_url, o.article_id, o.topic_id, o.query, o.evidence, o.recommended_action, o.expected_impact, o.effort, o.risk_level, o.created_by_run_id, o.created_at, o.updated_at, o.opportunity_key, o.snoozed_until, o.snooze_reason, o.unsnoozed_at, o.opportunity_identity_key, o.evidence_fingerprint, o.canonical_site_fix_id, o.canonical_read_only, o.legacy_migration_batch_id, o.legacy_migration_disposition, o.canonical_growth, o.growth_spec_state, o.growth_spec_version, o.growth_spec_origin, o.growth_spec, o.growth_spec_missing, o.decision_ready_at, coalesce(review.review_status, '')::text as review_decision,
        coalesce(review.id::text, '')::text as review_state_id,
        review.snoozed_until as review_snoozed_until,
        coalesce(review.reviewed_by, '')::text as review_decided_by,
@@ -4371,6 +4371,12 @@ type ListLegacyTechnicalOpportunitiesWithoutActionsRow struct {
 	LegacyMigrationBatchID       pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition   string             `json:"legacy_migration_disposition"`
 	CanonicalGrowth              bool               `json:"canonical_growth"`
+	GrowthSpecState              string             `json:"growth_spec_state"`
+	GrowthSpecVersion            string             `json:"growth_spec_version"`
+	GrowthSpecOrigin             string             `json:"growth_spec_origin"`
+	GrowthSpec                   json.RawMessage    `json:"growth_spec"`
+	GrowthSpecMissing            json.RawMessage    `json:"growth_spec_missing"`
+	DecisionReadyAt              pgtype.Timestamptz `json:"decision_ready_at"`
 	ReviewDecision               string             `json:"review_decision"`
 	ReviewStateID                string             `json:"review_state_id"`
 	ReviewSnoozedUntil           pgtype.Timestamptz `json:"review_snoozed_until"`
@@ -4422,6 +4428,12 @@ func (q *Queries) ListLegacyTechnicalOpportunitiesWithoutActions(ctx context.Con
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
 			&i.CanonicalGrowth,
+			&i.GrowthSpecState,
+			&i.GrowthSpecVersion,
+			&i.GrowthSpecOrigin,
+			&i.GrowthSpec,
+			&i.GrowthSpecMissing,
+			&i.DecisionReadyAt,
 			&i.ReviewDecision,
 			&i.ReviewStateID,
 			&i.ReviewSnoozedUntil,
@@ -7297,7 +7309,7 @@ set canonical_site_fix_id = $1, canonical_read_only = true,
 where opportunity.project_id = $3
   and opportunity.id = $4
   and opportunity.canonical_read_only = false
-returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 `
 
 type MarkLegacyOpportunityDuplicateReadOnlyParams struct {
@@ -7346,6 +7358,12 @@ func (q *Queries) MarkLegacyOpportunityDuplicateReadOnly(ctx context.Context, ar
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+		&i.GrowthSpecState,
+		&i.GrowthSpecVersion,
+		&i.GrowthSpecOrigin,
+		&i.GrowthSpec,
+		&i.GrowthSpecMissing,
+		&i.DecisionReadyAt,
 	)
 	return i, err
 }
@@ -7357,7 +7375,7 @@ set canonical_read_only = true, legacy_migration_batch_id = $1,
 where opportunity.project_id = $2
   and opportunity.id = $3
   and opportunity.canonical_read_only = false
-returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 `
 
 type MarkLegacyOpportunityMigrationReviewReadOnlyParams struct {
@@ -7400,6 +7418,12 @@ func (q *Queries) MarkLegacyOpportunityMigrationReviewReadOnly(ctx context.Conte
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+		&i.GrowthSpecState,
+		&i.GrowthSpecVersion,
+		&i.GrowthSpecOrigin,
+		&i.GrowthSpec,
+		&i.GrowthSpecMissing,
+		&i.DecisionReadyAt,
 	)
 	return i, err
 }
@@ -8803,7 +8827,7 @@ set canonical_site_fix_id = null, canonical_read_only = false,
     updated_at = now()
 where project_id = $2 and id = $3
   and legacy_migration_batch_id = $4
-returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth
+returning id, project_id, type, status, priority_score, confidence, page_url, normalized_page_url, article_id, topic_id, query, evidence, recommended_action, expected_impact, effort, risk_level, created_by_run_id, created_at, updated_at, opportunity_key, snoozed_until, snooze_reason, unsnoozed_at, opportunity_identity_key, evidence_fingerprint, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, canonical_growth, growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec, growth_spec_missing, decision_ready_at
 `
 
 type RestoreLegacyOpportunityFromLedgerParams struct {
@@ -8852,6 +8876,12 @@ func (q *Queries) RestoreLegacyOpportunityFromLedger(ctx context.Context, arg Re
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
 		&i.CanonicalGrowth,
+		&i.GrowthSpecState,
+		&i.GrowthSpecVersion,
+		&i.GrowthSpecOrigin,
+		&i.GrowthSpec,
+		&i.GrowthSpecMissing,
+		&i.DecisionReadyAt,
 	)
 	return i, err
 }

@@ -22,9 +22,11 @@ var (
 // the opportunity lock and all cross-line relationships commit atomically with
 // the signature and bucket-version increment.
 type OpportunityCreator struct {
-	Opportunity     *db.CreateCanonicalGrowthOpportunityParams
-	CutoverBatchID  uuid.UUID
-	CutoverSequence int32
+	Opportunity          *db.CreateCanonicalGrowthOpportunityParams
+	LegacyEvidence       json.RawMessage
+	LegacyTargetSnapshot string
+	CutoverBatchID       uuid.UUID
+	CutoverSequence      int32
 }
 
 func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db.Queries, work discovery.ReservedWork) (discovery.WorkReference, error) {
@@ -67,8 +69,18 @@ func (creator OpportunityCreator) CreateInTransaction(ctx context.Context, q *db
 		if err != nil {
 			return discovery.WorkReference{}, fmt.Errorf("lock Growth opportunity: %w", err)
 		}
+		lockedTarget, err := q.LockLegacyGrowthIntendedTarget(ctx, db.LockLegacyGrowthIntendedTargetParams{
+			ProjectID: work.ProjectID, OpportunityID: opportunity.ID,
+		})
+		if err != nil {
+			return discovery.WorkReference{}, fmt.Errorf("lock legacy Growth execution target: %w", err)
+		}
+		if creator.LegacyTargetSnapshot == "" || creator.LegacyTargetSnapshot != lockedLegacyGrowthTargetSnapshot(lockedTarget) {
+			return discovery.WorkReference{}, discovery.ErrSnapshotStale
+		}
 		opportunity, err = q.MarkLegacyGrowthOpportunityCanonical(ctx, db.MarkLegacyGrowthOpportunityCanonicalParams{
 			ProjectID: work.ProjectID, ID: opportunity.ID,
+			Evidence: creator.LegacyEvidence, EvidenceFingerprint: candidateRow.EvidenceFingerprint,
 		})
 		if err != nil {
 			return discovery.WorkReference{}, fmt.Errorf("mark legacy Growth opportunity canonical: %w", err)

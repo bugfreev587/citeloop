@@ -1138,6 +1138,12 @@ type SeoOpportunity struct {
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
 	CanonicalGrowth            bool               `json:"canonical_growth"`
+	GrowthSpecState            string             `json:"growth_spec_state"`
+	GrowthSpecVersion          string             `json:"growth_spec_version"`
+	GrowthSpecOrigin           string             `json:"growth_spec_origin"`
+	GrowthSpec                 json.RawMessage    `json:"growth_spec"`
+	GrowthSpecMissing          json.RawMessage    `json:"growth_spec_missing"`
+	DecisionReadyAt            pgtype.Timestamptz `json:"decision_ready_at"`
 }
 
 type SeoOpportunityReviewState struct {

@@ -1451,7 +1451,7 @@ func (q *Queries) ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context
 }
 
 const listActiveSEOOpportunitiesForDiscoveryShadow = `-- name: ListActiveSEOOpportunitiesForDiscoveryShadow :many
-select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth from seo_opportunities
+select seo_opportunities.id, seo_opportunities.project_id, seo_opportunities.type, seo_opportunities.status, seo_opportunities.priority_score, seo_opportunities.confidence, seo_opportunities.page_url, seo_opportunities.normalized_page_url, seo_opportunities.article_id, seo_opportunities.topic_id, seo_opportunities.query, seo_opportunities.evidence, seo_opportunities.recommended_action, seo_opportunities.expected_impact, seo_opportunities.effort, seo_opportunities.risk_level, seo_opportunities.created_by_run_id, seo_opportunities.created_at, seo_opportunities.updated_at, seo_opportunities.opportunity_key, seo_opportunities.snoozed_until, seo_opportunities.snooze_reason, seo_opportunities.unsnoozed_at, seo_opportunities.opportunity_identity_key, seo_opportunities.evidence_fingerprint, seo_opportunities.canonical_site_fix_id, seo_opportunities.canonical_read_only, seo_opportunities.legacy_migration_batch_id, seo_opportunities.legacy_migration_disposition, seo_opportunities.canonical_growth, seo_opportunities.growth_spec_state, seo_opportunities.growth_spec_version, seo_opportunities.growth_spec_origin, seo_opportunities.growth_spec, seo_opportunities.growth_spec_missing, seo_opportunities.decision_ready_at from seo_opportunities
 where seo_opportunities.project_id = $1
   and seo_opportunities.status in ('open','accepted','converted','dismissed','snoozed','watching')
   and not exists (
@@ -1503,6 +1503,12 @@ func (q *Queries) ListActiveSEOOpportunitiesForDiscoveryShadow(ctx context.Conte
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
 			&i.CanonicalGrowth,
+			&i.GrowthSpecState,
+			&i.GrowthSpecVersion,
+			&i.GrowthSpecOrigin,
+			&i.GrowthSpec,
+			&i.GrowthSpecMissing,
+			&i.DecisionReadyAt,
 		); err != nil {
 			return nil, err
 		}

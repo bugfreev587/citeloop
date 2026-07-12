@@ -677,7 +677,9 @@ insert into seo_opportunities
   (id, project_id, type, status, priority_score, confidence, page_url,
    normalized_page_url, article_id, topic_id, query, evidence,
    recommended_action, expected_impact, effort, risk_level, created_by_run_id,
-   opportunity_key, opportunity_identity_key, evidence_fingerprint, canonical_growth)
+   opportunity_key, opportunity_identity_key, evidence_fingerprint, canonical_growth,
+   growth_spec_state, growth_spec_version, growth_spec_origin, growth_spec,
+   growth_spec_missing, decision_ready_at)
 values
   (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(type), 'open',
    sqlc.arg(priority_score), sqlc.arg(confidence), sqlc.narg(page_url),
@@ -685,7 +687,10 @@ values
    sqlc.narg(query), sqlc.arg(evidence)::jsonb, sqlc.narg(recommended_action),
    sqlc.narg(expected_impact), sqlc.arg(effort), sqlc.arg(risk_level),
    sqlc.narg(created_by_run_id), sqlc.arg(exact_signature_hash),
-   sqlc.arg(exact_signature_hash), sqlc.arg(evidence_fingerprint), true)
+   sqlc.arg(exact_signature_hash), sqlc.arg(evidence_fingerprint), true,
+   sqlc.arg(growth_spec_state), sqlc.arg(growth_spec_version), 'forward',
+   sqlc.arg(growth_spec)::jsonb, sqlc.arg(growth_spec_missing)::jsonb,
+   sqlc.arg(decision_ready_at))
 returning *;
 
 -- name: MergeCanonicalGrowthOpportunityEvidence :one
@@ -708,6 +713,14 @@ with locked_signature as (
     priority_score = greatest(opportunity.priority_score, sqlc.arg(incoming_priority_score)::numeric),
     confidence = greatest(opportunity.confidence, sqlc.arg(incoming_confidence)::numeric),
     evidence_fingerprint = sqlc.arg(evidence_fingerprint),
+    growth_spec_state = case when sqlc.arg(growth_spec_state)::text = 'decision_ready' then sqlc.arg(growth_spec_state)::text else opportunity.growth_spec_state end,
+    growth_spec_version = case when sqlc.arg(growth_spec_state)::text = 'decision_ready' then sqlc.arg(growth_spec_version)::text else opportunity.growth_spec_version end,
+    growth_spec_origin = case when sqlc.arg(growth_spec_state)::text = 'decision_ready' then 'forward' else opportunity.growth_spec_origin end,
+    growth_spec = case when sqlc.arg(growth_spec_state)::text = 'decision_ready' then sqlc.arg(growth_spec)::jsonb else opportunity.growth_spec end,
+    growth_spec_missing = case when sqlc.arg(growth_spec_state)::text = 'decision_ready' then sqlc.arg(growth_spec_missing)::jsonb else opportunity.growth_spec_missing end,
+    decision_ready_at = case when sqlc.arg(growth_spec_state)::text = 'decision_ready'
+      then coalesce(opportunity.decision_ready_at, sqlc.arg(decision_ready_at)::timestamptz)
+      else opportunity.decision_ready_at end,
     updated_at = now()
   from locked_signature signature
   where opportunity.project_id = sqlc.arg(project_id)
@@ -787,10 +800,94 @@ order by opportunity.created_at, opportunity.id
 limit sqlc.arg(limit_rows);
 
 -- name: MarkLegacyGrowthOpportunityCanonical :one
-update seo_opportunities set canonical_growth = true, updated_at = now()
+update seo_opportunities set
+  canonical_growth = true,
+  evidence = sqlc.arg(evidence)::jsonb,
+  evidence_fingerprint = sqlc.arg(evidence_fingerprint),
+  updated_at = now()
 where project_id = sqlc.arg(project_id) and id = sqlc.arg(id)
   and canonical_growth = false and canonical_read_only = false
 returning *;
+
+-- name: GetLegacyGrowthIntendedTarget :one
+select
+  (opportunity.evidence->>'intended_slug_or_canonical')::text as evidence_intended,
+  opportunity.page_url as opportunity_page_url,
+  coalesce(action.id, '00000000-0000-0000-0000-000000000000'::uuid) as action_id,
+  action.updated_at as action_updated_at,
+  action.target_url as action_target_url,
+  action.normalized_target_url as action_normalized_target_url,
+  coalesce(article.id, '00000000-0000-0000-0000-000000000000'::uuid) as article_id,
+  article.content_hash as article_content_hash,
+  article.published_at as article_published_at,
+  article.canonical_url as article_canonical_url,
+  article.external_url as article_external_url,
+  (article.seo_meta->>'canonical_url')::text as seo_canonical_url,
+  (article.seo_meta->>'slug')::text as seo_slug
+from seo_opportunities opportunity
+left join content_actions action
+  on action.project_id = opportunity.project_id and action.opportunity_id = opportunity.id
+left join articles article
+  on article.project_id = opportunity.project_id and article.id = action.draft_article_id
+where opportunity.project_id = sqlc.arg(project_id)
+  and opportunity.id = sqlc.arg(opportunity_id)
+order by
+  (article.canonical_url is not null or article.external_url is not null) desc,
+  article.published_at desc nulls last,
+  action.updated_at desc nulls last,
+  action.id
+limit 1;
+
+-- name: LockLegacyGrowthIntendedTarget :one
+with locked_opportunity as materialized (
+  select opportunity.*
+  from seo_opportunities opportunity
+  where opportunity.project_id = sqlc.arg(project_id)
+    and opportunity.id = sqlc.arg(opportunity_id)
+  for update
+), locked_actions as materialized (
+  select selected.*
+  from content_actions selected
+  join locked_opportunity opportunity on opportunity.project_id = selected.project_id
+    and opportunity.id = selected.opportunity_id
+  order by selected.id
+  for update of selected
+), locked_articles as materialized (
+  select selected_article.*
+  from articles selected_article
+  join locked_actions action on action.project_id = selected_article.project_id
+    and action.draft_article_id = selected_article.id
+  order by selected_article.id
+  for update of selected_article
+), selected_target as (
+  select action.*, article.id as selected_article_id
+  from locked_actions action
+  left join locked_articles article on article.project_id = action.project_id and article.id = action.draft_article_id
+  order by
+    (article.canonical_url is not null or article.external_url is not null) desc,
+    article.published_at desc nulls last,
+    action.updated_at desc nulls last,
+    action.id
+  limit 1
+)
+select
+  (opportunity.evidence->>'intended_slug_or_canonical')::text as evidence_intended,
+  opportunity.page_url as opportunity_page_url,
+  coalesce(action.id, '00000000-0000-0000-0000-000000000000'::uuid) as action_id,
+  action.updated_at as action_updated_at,
+  action.target_url as action_target_url,
+  action.normalized_target_url as action_normalized_target_url,
+  coalesce(article.id, '00000000-0000-0000-0000-000000000000'::uuid) as article_id,
+  article.content_hash as article_content_hash,
+  article.published_at as article_published_at,
+  article.canonical_url as article_canonical_url,
+  article.external_url as article_external_url,
+  (article.seo_meta->>'canonical_url')::text as seo_canonical_url,
+  (article.seo_meta->>'slug')::text as seo_slug
+from locked_opportunity opportunity
+left join selected_target action on true
+left join locked_articles article
+  on article.project_id = action.project_id and article.id = action.selected_article_id;
 
 -- name: CreateDuplicateGrowthOpportunityAlias :one
 insert into growth_opportunity_work_aliases
@@ -1148,7 +1245,10 @@ with source_signature as materialized (
   returning alias.legacy_opportunity_id
 ), reverted_opportunity as (
   update seo_opportunities opportunity
-  set canonical_growth = false, updated_at = now()
+  set canonical_growth = false,
+      evidence = sqlc.arg(original_evidence)::jsonb,
+      evidence_fingerprint = sqlc.arg(original_evidence_fingerprint),
+      updated_at = now()
   from source_signature signature
   where opportunity.project_id = sqlc.arg(project_id)
     and opportunity.id = sqlc.arg(opportunity_id)
