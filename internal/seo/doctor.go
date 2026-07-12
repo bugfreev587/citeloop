@@ -277,11 +277,15 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	if authorityDegraded {
 		aiState = doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}
 	} else {
-		candidates, aiState = runDoctorDiagnosisAI(ctx, doctorDiagnosisAIRequest{
+		var aiLedgerErr error
+		candidates, aiState, aiLedgerErr = runDoctorDiagnosisAI(ctx, doctorDiagnosisAIRequest{
 			ProjectID: run.ProjectID, RunID: run.ID, Authorized: authorized, Candidates: candidates,
 			Context: mustJSON(intelligence.ProductContext), Provider: s.LLM, Model: s.DoctorAIModel,
 			Ledger: doctorPostgresAILedger{q: s.Q},
 		})
+		if aiLedgerErr != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageClassifying, "Could not persist Doctor AI accounting.", aiLedgerErr)
+		}
 	}
 	intelligence.Coverage = append(intelligence.Coverage, doctorAIReviewCoverage(aiState))
 	for _, candidate := range growthCandidates {

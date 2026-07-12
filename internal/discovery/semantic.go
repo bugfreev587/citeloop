@@ -42,6 +42,7 @@ type SemanticRequest struct {
 	Candidate        Candidate
 	Identity         Identity
 	PossibleOverlaps []SemanticWork
+	AttemptObserver  llm.AttemptObserver
 }
 
 type SemanticDecision struct {
@@ -59,9 +60,13 @@ type CallUsage struct {
 	Model              string
 	PromptVersion      string
 	RequestFingerprint string
+	PromptTokens       int
+	CompletionTokens   int
 	TotalTokens        int
 	CostUSD            float64
 }
+
+var ErrInvalidSemanticResponse = errors.New("invalid semantic comparison response")
 
 type SemanticComparator interface {
 	Compare(context.Context, SemanticRequest) (SemanticDecision, CallUsage, error)
@@ -101,7 +106,7 @@ func (c *LLMSemanticComparator) Compare(ctx context.Context, request SemanticReq
 	if err != nil {
 		return SemanticDecision{}, CallUsage{}, err
 	}
-	resp, err := c.provider.Complete(ctx, llm.CompletionReq{
+	resp, err := llm.CompleteObserved(ctx, c.provider, llm.CompletionReq{
 		Purpose:                 c.purpose,
 		System:                  "You are CiteLoop's work arbitration comparator. Compare only the structured work specifications supplied. Return the required JSON decision without markdown.",
 		Prompt:                  prompt,
@@ -110,26 +115,30 @@ func (c *LLMSemanticComparator) Compare(ctx context.Context, request SemanticReq
 		Temperature:             0,
 		JSON:                    true,
 		DisableProviderFallback: true,
+		AttemptObserver:         request.AttemptObserver,
 	})
-	if err != nil {
-		return SemanticDecision{}, CallUsage{}, err
-	}
-	decision, err := parseSemanticDecision(resp.Text, request)
-	if err != nil {
-		return SemanticDecision{}, CallUsage{}, err
-	}
-	decision.SemanticFingerprint, err = semanticFingerprint(request.Identity, firstNonEmpty(resp.Model, c.model))
-	if err != nil {
-		return SemanticDecision{}, CallUsage{}, err
-	}
-	return decision, CallUsage{
-		Provider:           c.providerName,
+	usage := CallUsage{
+		Provider:           firstNonEmpty(resp.Provider, c.providerName),
 		Model:              firstNonEmpty(resp.Model, c.model),
 		PromptVersion:      SemanticPromptVersionV1,
 		RequestFingerprint: requestFingerprint,
+		PromptTokens:       resp.PromptTokens,
+		CompletionTokens:   resp.CompletionTokens,
 		TotalTokens:        resp.Tokens,
 		CostUSD:            resp.CostUSD,
-	}, nil
+	}
+	if err != nil {
+		return SemanticDecision{}, usage, err
+	}
+	decision, err := parseSemanticDecision(resp.Text, request)
+	if err != nil {
+		return SemanticDecision{}, usage, fmt.Errorf("%w: %v", ErrInvalidSemanticResponse, err)
+	}
+	decision.SemanticFingerprint, err = semanticFingerprint(request.Identity, firstNonEmpty(resp.Model, c.model))
+	if err != nil {
+		return SemanticDecision{}, usage, fmt.Errorf("%w: %v", ErrInvalidSemanticResponse, err)
+	}
+	return decision, usage, nil
 }
 
 type semanticPromptWork struct {

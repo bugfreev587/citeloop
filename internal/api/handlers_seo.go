@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/discovery"
@@ -1695,29 +1696,51 @@ type siteFixAIProposal struct {
 }
 
 func (s *Server) generateSiteFixAIProposal(ctx context.Context, projectID uuid.UUID, action db.ContentAction) (db.ContentAction, error) {
-	if s.LLM == nil {
-		return db.ContentAction{}, fmt.Errorf("site fix AI model is not configured")
-	}
 	contract := buildSiteFixAIContract(action)
 	promptRaw, err := json.MarshalIndent(contract, "", "  ")
 	if err != nil {
 		return db.ContentAction{}, err
 	}
-	resp, err := s.LLM.Complete(ctx, llm.CompletionReq{
+	req := llm.CompletionReq{
 		System:    "You are CiteLoop Site Fix. Generate narrow crawler-facing metadata changes for an existing production page. Return only reviewed JSON.",
 		Prompt:    siteFixAIProposalPrompt(string(promptRaw)),
 		Purpose:   llm.PurposeSiteFix,
 		JSON:      true,
 		MaxTokens: 900,
-	})
+	}
+	var resp llm.CompletionResp
+	callID := uuid.Nil
+	if s.AICalls == nil {
+		if s.LLM == nil {
+			return db.ContentAction{}, fmt.Errorf("site fix AI model is not configured")
+		}
+		resp, err = s.LLM.Complete(ctx, req)
+	} else {
+		completion, completionErr := aicalls.New(s.AICalls).Complete(ctx, aicalls.Spec{
+			ProjectID: projectID, Stage: "fix_generation", LinkedObjectType: "content_action", LinkedObjectID: action.ID,
+			Provider: "runtime_route", Model: "runtime_route", PromptVersion: "legacy-site-fix-proposal-v2",
+			RequestFingerprint: aicalls.Fingerprint(req),
+		}, s.LLM, req)
+		resp, callID, err = completion.Response, completion.Call.ID, completionErr
+	}
 	if err != nil {
 		return db.ContentAction{}, fmt.Errorf("site fix AI proposal failed: %w", err)
 	}
 	proposal, err := parseSiteFixAIProposal(resp.Text)
 	if err != nil {
+		if callID != uuid.Nil {
+			if _, ledgerErr := aicalls.New(s.AICalls).FailOutput(context.WithoutCancel(ctx), callID, projectID, "invalid_response"); ledgerErr != nil {
+				return db.ContentAction{}, errors.Join(err, ledgerErr)
+			}
+		}
 		return db.ContentAction{}, fmt.Errorf("site fix AI proposal invalid: %w", err)
 	}
 	if err := validateSiteFixAIProposal(action, proposal); err != nil {
+		if callID != uuid.Nil {
+			if _, ledgerErr := aicalls.New(s.AICalls).FailOutput(context.WithoutCancel(ctx), callID, projectID, "invalid_output"); ledgerErr != nil {
+				return db.ContentAction{}, errors.Join(err, ledgerErr)
+			}
+		}
 		return db.ContentAction{}, err
 	}
 	output, diff := siteFixAIProposalSnapshots(action, contract, proposal, resp)

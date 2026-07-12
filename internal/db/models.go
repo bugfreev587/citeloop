@@ -81,6 +81,10 @@ type AiCallRecord struct {
 	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	AttemptNumber      int32              `json:"attempt_number"`
+	ProviderCalled     bool               `json:"provider_called"`
+	ProviderStartedAt  pgtype.Timestamptz `json:"provider_started_at"`
+	CausedByCallID     pgtype.UUID        `json:"caused_by_call_id"`
 }
 
 type AiCrawlerAccessSnapshot struct {

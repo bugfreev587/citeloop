@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
@@ -39,6 +40,11 @@ type GenerationResult struct {
 	CompletionTokens int32
 	TotalTokens      int32
 	CostUSD          float64
+}
+
+type siteFixAICallAttempt interface {
+	llm.AttemptObserver
+	Started() bool
 }
 
 // GenerationContext is the bounded, persisted product Context plus the exact
@@ -71,7 +77,7 @@ type ApplyResult struct {
 
 type FixGenerator interface {
 	Describe(db.SiteFix, GenerationContext) GenerationCall
-	Generate(context.Context, db.SiteFix, GenerationContext) (ApplicationPlan, GenerationResult, error)
+	Generate(context.Context, db.SiteFix, GenerationContext, siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error)
 }
 
 // PatchVerification is an independent judgment over the actual generated
@@ -90,7 +96,7 @@ type PatchVerification struct {
 
 type PatchGroundingVerifier interface {
 	Describe(db.SiteFix, GenerationContext, ApplicationPlan) GenerationCall
-	Verify(context.Context, db.SiteFix, GenerationContext, ApplicationPlan) (PatchVerification, GenerationResult, error)
+	Verify(context.Context, db.SiteFix, GenerationContext, ApplicationPlan, siteFixAICallAttempt) (PatchVerification, GenerationResult, error)
 }
 
 type ApplyStore interface {
@@ -98,9 +104,9 @@ type ApplyStore interface {
 	LoadGenerationContext(context.Context, db.SiteFix) (GenerationContext, error)
 	FindApplication(context.Context, db.SiteFix) (db.SiteChangeApplication, bool, error)
 	MarkPreparing(context.Context, db.SiteFix) (db.SiteFix, error)
-	StartGeneration(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, error)
+	StartGeneration(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, siteFixAICallAttempt, error)
 	FinishGeneration(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
-	StartGroundingVerification(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, error)
+	StartGroundingVerification(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error)
 	FinishGroundingVerification(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
 	Finalize(context.Context, db.SiteFix, ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error)
 }
@@ -152,11 +158,15 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		strings.TrimSpace(descriptor.PromptVersion) == "" || strings.TrimSpace(descriptor.RequestFingerprint) == "" {
 		return ApplyResult{}, errors.New("fix generation descriptor is incomplete")
 	}
-	callID, err := s.Store.StartGeneration(ctx, fix, descriptor)
+	callID, generationAttempt, err := s.Store.StartGeneration(ctx, fix, descriptor)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext)
+	plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext, generationAttempt)
+	if !generationAttempt.Started() && generation.Status != "skipped" {
+		generation.Status, generation.ErrorCode = "skipped", "provider_not_called"
+		generateErr = errors.Join(generateErr, errors.New("Site Fix generation provider returned without reporting a physical attempt"))
+	}
 	if generateErr != nil && generation.Status == "" {
 		generation.Status = "failed"
 	}
@@ -192,11 +202,15 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		strings.TrimSpace(verificationDescriptor.PromptVersion) == "" || strings.TrimSpace(verificationDescriptor.RequestFingerprint) == "" {
 		return ApplyResult{}, errors.New("independent patch grounding verifier descriptor is incomplete")
 	}
-	verificationCallID, err := s.Store.StartGroundingVerification(ctx, fix, verificationDescriptor, callID)
+	verificationCallID, verificationAttempt, err := s.Store.StartGroundingVerification(ctx, fix, verificationDescriptor, callID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	verification, verificationGeneration, verificationErr := s.Verifier.Verify(ctx, fix, generationContext, plan)
+	verification, verificationGeneration, verificationErr := s.Verifier.Verify(ctx, fix, generationContext, plan, verificationAttempt)
+	if !verificationAttempt.Started() && verificationGeneration.Status != "skipped" {
+		verificationGeneration.Status, verificationGeneration.ErrorCode = "skipped", "provider_not_called"
+		verificationErr = errors.Join(verificationErr, errors.New("Site Fix grounding provider returned without reporting a physical attempt"))
+	}
 	if verificationErr != nil && verificationGeneration.Status == "" {
 		verificationGeneration.Status = "failed"
 	}
@@ -487,32 +501,42 @@ func (s PostgresApplyStore) FindApplication(ctx context.Context, fix db.SiteFix)
 	return app, err == nil, err
 }
 
-func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix, call GenerationCall) (uuid.UUID, error) {
+func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix, call GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
+	parentCallID := pgtype.UUID{}
+	latest, latestErr := s.Q.GetLatestAICallForRequest(ctx, db.GetLatestAICallForRequestParams{
+		ProjectID: fix.ProjectID, Stage: "fix_generation", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
+		RequestFingerprint: call.RequestFingerprint,
+	})
+	if latestErr == nil {
+		parentCallID = validPGUUID(latest.ID)
+	} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+		return uuid.Nil, nil, latestErr
+	}
 	row, err := s.Q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
 		ProjectID: fix.ProjectID, Stage: "fix_generation", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
 		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
-		RequestFingerprint: call.RequestFingerprint, Status: "running",
+		RequestFingerprint: call.RequestFingerprint, Status: "queued", ParentCallID: parentCallID,
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
-	return row.ID, nil
+	return row.ID, aicalls.NewExistingAttemptObserver(s.Q, fix.ProjectID, row.ID), nil
 }
 
 func (s PostgresApplyStore) FinishGeneration(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
 	return s.finishAICall(ctx, fix, callID, result)
 }
 
-func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix db.SiteFix, call GenerationCall, parentCallID uuid.UUID) (uuid.UUID, error) {
+func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix db.SiteFix, call GenerationCall, parentCallID uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
 	row, err := s.Q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
 		ProjectID: fix.ProjectID, Stage: "fix_grounding_verification", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
 		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
-		RequestFingerprint: call.RequestFingerprint, Status: "running", ParentCallID: validPGUUID(parentCallID),
+		RequestFingerprint: call.RequestFingerprint, Status: "queued", CausedByCallID: validPGUUID(parentCallID),
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
-	return row.ID, nil
+	return row.ID, aicalls.NewExistingAttemptObserver(s.Q, fix.ProjectID, row.ID), nil
 }
 
 func (s PostgresApplyStore) FinishGroundingVerification(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
@@ -528,7 +552,7 @@ func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, ca
 	if strings.TrimSpace(result.ErrorCode) != "" {
 		errorCode = &result.ErrorCode
 	}
-	_, err := s.Q.FinishAICallRecord(ctx, db.FinishAICallRecordParams{
+	_, err := s.Q.FinishCanonicalAICallFenced(ctx, db.FinishCanonicalAICallFencedParams{
 		Status: result.Status, ErrorCode: errorCode, ResolvedProvider: emptyStringPtr(result.Provider), ResolvedModel: emptyStringPtr(result.Model), PromptTokens: max(result.PromptTokens, 0),
 		CompletionTokens: max(result.CompletionTokens, 0), TotalTokens: max(result.TotalTokens, 0),
 		CostUsd: cost, ID: callID, ProjectID: fix.ProjectID,
@@ -609,7 +633,7 @@ func (DeterministicApplicationGenerator) Describe(fix db.SiteFix, generationCont
 	return GenerationCall{Provider: "none", Model: "none", PromptVersion: "doctor-fix-deterministic-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
 }
 
-func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext) (ApplicationPlan, GenerationResult, error) {
+func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext, _ siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	target, err := firstTargetURL(fix.TargetUrls)
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_target"}, err
@@ -664,34 +688,37 @@ func approvedGroundingSnapshot(fix db.SiteFix, generationContext GenerationConte
 }
 
 func (g LLMApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext) GenerationCall {
-	payload := append(append(append(append([]byte{}, fix.ProposedFix...), fix.EvidenceSnapshot...), fix.AcceptanceTests...), generationContext.ProductProfile...)
-	sum := sha256.Sum256(payload)
-	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-fix-generation-v2", RequestFingerprint: hex.EncodeToString(sum[:])}
+	req := g.completionRequest(fix, generationContext)
+	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-fix-generation-v2", RequestFingerprint: aicalls.Fingerprint(req)}
 }
 
-func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext) (ApplicationPlan, GenerationResult, error) {
+func (g LLMApplicationGenerator) completionRequest(fix db.SiteFix, generationContext GenerationContext) llm.CompletionReq {
+	target, _ := firstTargetURL(fix.TargetUrls)
+	prompt, _ := json.Marshal(map[string]any{
+		"target_url": target, "context": generationContext, "evidence": fix.EvidenceSnapshot,
+		"proposed_fix": fix.ProposedFix, "acceptance_tests": fix.AcceptanceTests,
+	})
+	return llm.CompletionReq{
+		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Use only the supplied Product Context and observed page evidence. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
+		Prompt:  "Return a JSON object with patch_snapshot, diff_snapshot, resolution_criteria, source_file_paths, source_mapping_confidence, source_mapping_reason, and grounding. grounding must include context_profile_version, primary_intent_before, primary_intent_after, preserved_propositions, added_propositions, removed_propositions, unsupported_claims, and source_association_changes. added_propositions, removed_propositions, and unsupported_claims must be empty. Preserve the target URL and proposition set.\n" + string(prompt),
+		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 1400, DisableProviderFallback: true,
+	}
+}
+
+func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if g.Provider == nil {
-		return ApplicationPlan{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "provider_unavailable"}, errors.New("Doctor fix generation provider is unavailable")
+		return ApplicationPlan{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "provider_unavailable"}, errors.New("Doctor fix generation provider is unavailable")
 	}
 	target, err := firstTargetURL(fix.TargetUrls)
 	if err != nil {
-		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "invalid_target"}, err
+		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_target"}, err
 	}
 	if !meaningfulJSON(generationContext.ProductProfile) || !meaningfulJSON(generationContext.ObservedEvidence) {
-		return ApplicationPlan{}, GenerationResult{Status: "failed", ErrorCode: "missing_grounding_context"}, errors.New("Doctor fix generation requires Product Context and observed page evidence")
+		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "missing_grounding_context"}, errors.New("Doctor fix generation requires Product Context and observed page evidence")
 	}
-	prompt, _ := json.Marshal(map[string]any{
-		"target_url":       target,
-		"context":          generationContext,
-		"evidence":         fix.EvidenceSnapshot,
-		"proposed_fix":     fix.ProposedFix,
-		"acceptance_tests": fix.AcceptanceTests,
-	})
-	resp, err := g.Provider.Complete(ctx, llm.CompletionReq{
-		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Use only the supplied Product Context and observed page evidence. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
-		Prompt:  "Return a JSON object with patch_snapshot, diff_snapshot, resolution_criteria, source_file_paths, source_mapping_confidence, source_mapping_reason, and grounding. grounding must include context_profile_version, primary_intent_before, primary_intent_after, preserved_propositions, added_propositions, removed_propositions, unsupported_claims, and source_association_changes. added_propositions, removed_propositions, and unsupported_claims must be empty. Preserve the target URL and proposition set.\n" + string(prompt),
-		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 1400,
-	})
+	req := g.completionRequest(fix, generationContext)
+	req.AttemptObserver = attempt
+	resp, err := llm.CompleteObserved(ctx, g.Provider, req)
 	result := GenerationResult{Provider: firstNonEmpty(resp.Provider, "tokengate"), Model: firstNonEmpty(resp.Model, g.Model), Status: "ok", PromptTokens: int32(max(resp.PromptTokens, 0)), CompletionTokens: int32(max(resp.CompletionTokens, 0)), TotalTokens: int32(max(resp.Tokens, 0)), CostUSD: resp.CostUSD}
 	if err != nil {
 		result.Status, result.ErrorCode = "failed", "provider_error"

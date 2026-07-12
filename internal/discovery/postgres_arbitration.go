@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -138,20 +139,47 @@ func (s *PostgresArbitrationStore) LoadReservationConfig(ctx context.Context, pr
 	return s.LoadConfig(ctx, projectID)
 }
 
-func (s *PostgresArbitrationStore) StartAICall(ctx context.Context, call AICallStart) (uuid.UUID, error) {
+func (s *PostgresArbitrationStore) StartAICall(ctx context.Context, call AICallStart) (uuid.UUID, discoveryAICallAttempt, error) {
 	if err := s.requireQueries(); err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
-	row, err := s.q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
-		ProjectID: call.ProjectID, RunID: nullableUUID(call.RunID), Stage: "arbitration",
-		LinkedObjectType: "discovery_candidate", LinkedObjectID: call.CandidateID,
-		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
-		RequestFingerprint: call.RequestFingerprint, Status: call.Status,
+	parentCallID := pgtype.UUID{}
+	latest, latestErr := s.q.GetLatestAICallForRequest(ctx, db.GetLatestAICallForRequestParams{
+		ProjectID: call.ProjectID, Stage: "arbitration", LinkedObjectType: "discovery_candidate", LinkedObjectID: call.CandidateID,
+		RequestFingerprint: call.RequestFingerprint,
 	})
-	if err != nil {
-		return uuid.Nil, err
+	if latestErr == nil {
+		parentCallID = nullableUUID(latest.ID)
+	} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+		return uuid.Nil, nil, latestErr
 	}
-	return row.ID, nil
+	var (
+		row db.AiCallRecord
+		err error
+	)
+	if call.Status == "skipped" {
+		reason := firstNonEmpty(call.ErrorCode, "provider_not_called")
+		row, err = s.q.CreateSkippedAICallRecord(ctx, db.CreateSkippedAICallRecordParams{
+			ProjectID: call.ProjectID, RunID: nullableUUID(call.RunID), Stage: "arbitration",
+			LinkedObjectType: "discovery_candidate", LinkedObjectID: call.CandidateID,
+			Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
+			RequestFingerprint: call.RequestFingerprint, ErrorCode: &reason, ParentCallID: parentCallID,
+		})
+	} else {
+		row, err = s.q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
+			ProjectID: call.ProjectID, RunID: nullableUUID(call.RunID), Stage: "arbitration",
+			LinkedObjectType: "discovery_candidate", LinkedObjectID: call.CandidateID,
+			Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
+			RequestFingerprint: call.RequestFingerprint, Status: "queued", ParentCallID: parentCallID,
+		})
+	}
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if call.Status == "skipped" {
+		return row.ID, nil, nil
+	}
+	return row.ID, aicalls.NewExistingAttemptObserver(s.q, call.ProjectID, row.ID), nil
 }
 
 func (s *PostgresArbitrationStore) FinishAICall(ctx context.Context, call AICallFinish) error {
@@ -162,8 +190,8 @@ func (s *PostgresArbitrationStore) FinishAICall(ctx context.Context, call AICall
 	if err != nil {
 		return err
 	}
-	_, err = s.q.FinishAICallRecord(ctx, db.FinishAICallRecordParams{
-		Status: call.Status, ErrorCode: optionalString(call.ErrorCode),
+	_, err = s.q.FinishCanonicalAICallFenced(ctx, db.FinishCanonicalAICallFencedParams{
+		Status: call.Status, ErrorCode: optionalString(call.ErrorCode), ResolvedProvider: optionalString(call.Provider), ResolvedModel: optionalString(call.Model),
 		PromptTokens: boundedInt32(call.PromptTokens), CompletionTokens: boundedInt32(call.CompletionTokens),
 		TotalTokens: boundedInt32(call.TotalTokens), CostUsd: cost,
 		ID: call.ID, ProjectID: call.ProjectID,

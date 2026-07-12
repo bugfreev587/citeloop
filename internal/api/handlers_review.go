@@ -139,7 +139,7 @@ func (s *Server) editArticleScoped(w http.ResponseWriter, r *http.Request, proje
 	// Re-qualify on content change so the gate reflects the edited text. Without
 	// a content change QA cannot have changed, so we skip the LLM call.
 	if contentChanged {
-		qaAgent := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+		qaAgent := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 		requalified, qerr := qaAgent.Requalify(r.Context(), cur.ProjectID, aid)
 		if qerr != nil {
 			writeErr(w, 500, "re-qa failed: "+qerr.Error())
@@ -161,7 +161,7 @@ func (s *Server) fixProjectArticle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad article id")
 		return
 	}
-	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 	updated, err := writer.RepairArticle(r.Context(), projectID, aid)
 	if err != nil {
 		writeErr(w, 500, "ai fix failed: "+err.Error())
@@ -184,7 +184,7 @@ func (s *Server) recheckProjectArticle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad article id")
 		return
 	}
-	qa := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	qa := agents.NewQA(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 	updated, err := qa.Requalify(r.Context(), projectID, aid)
 	if err != nil {
 		writeErr(w, 500, "qa re-check failed: "+err.Error())
@@ -215,7 +215,7 @@ func (s *Server) applyFixProjectArticle(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, "instruction required")
 		return
 	}
-	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 	updated, err := writer.RepairArticleWithInstruction(r.Context(), projectID, aid, in.Instruction)
 	if err != nil {
 		writeErr(w, 500, "apply fix failed: "+err.Error())

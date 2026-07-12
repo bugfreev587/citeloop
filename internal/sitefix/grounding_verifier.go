@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 )
@@ -22,27 +23,28 @@ type LLMPatchGroundingVerifier struct {
 }
 
 func (v LLMPatchGroundingVerifier) Describe(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) GenerationCall {
-	payload, _ := json.Marshal(patchVerificationInput(fix, generationContext, plan))
-	sum := sha256.Sum256(payload)
 	return GenerationCall{
 		Provider: "tokengate", Model: firstNonEmpty(v.Model, llm.DefaultTokenGateModel),
-		PromptVersion: "doctor-patch-grounding-verification-v1", RequestFingerprint: hex.EncodeToString(sum[:]),
+		PromptVersion: "doctor-patch-grounding-verification-v1", RequestFingerprint: aicalls.Fingerprint(v.completionRequest(fix, generationContext, plan)),
 	}
 }
 
-func (v LLMPatchGroundingVerifier) Verify(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) (PatchVerification, GenerationResult, error) {
-	if v.Provider == nil {
-		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "provider_unavailable"}, errors.New("independent patch grounding verification provider is unavailable")
-	}
-	prompt, err := json.Marshal(patchVerificationInput(fix, generationContext, plan))
-	if err != nil {
-		return PatchVerification{}, GenerationResult{Status: "failed", ErrorCode: "invalid_input"}, err
-	}
-	resp, err := v.Provider.Complete(ctx, llm.CompletionReq{
+func (v LLMPatchGroundingVerifier) completionRequest(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) llm.CompletionReq {
+	prompt, _ := json.Marshal(patchVerificationInput(fix, generationContext, plan))
+	return llm.CompletionReq{
 		System:  "You are CiteLoop's independent final patch grounding verifier. Inspect the actual patch_snapshot, diff_snapshot, replacement text, and resolution criteria. Compare them only with the approved Product Context, observed evidence, approved primary intent, and preserved propositions. Do not trust or infer safety from any prior generator self-report. Reject every added, removed, or unsupported proposition, commercial promise, offer, capability, or intent change. Return strict JSON only.",
 		Prompt:  "Return exactly: {approved:boolean, primary_intent_preserved:boolean, preserved_propositions:string[], added_propositions:string[], removed_propositions:string[], unsupported_claims:string[], intent_drift:boolean, reason:string}. Fail closed: approved may be true only when the actual generated artifacts preserve the full approved proposition set and intent with no unsupported claim.\n" + string(prompt),
-		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(v.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 900,
-	})
+		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(v.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 900, DisableProviderFallback: true,
+	}
+}
+
+func (v LLMPatchGroundingVerifier) Verify(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan, attempt siteFixAICallAttempt) (PatchVerification, GenerationResult, error) {
+	if v.Provider == nil {
+		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "provider_unavailable"}, errors.New("independent patch grounding verification provider is unavailable")
+	}
+	req := v.completionRequest(fix, generationContext, plan)
+	req.AttemptObserver = attempt
+	resp, err := llm.CompleteObserved(ctx, v.Provider, req)
 	result := GenerationResult{
 		Provider: firstNonEmpty(resp.Provider, "tokengate"), Model: firstNonEmpty(resp.Model, v.Model), Status: "ok",
 		PromptTokens: int32(max(resp.PromptTokens, 0)), CompletionTokens: int32(max(resp.CompletionTokens, 0)),
@@ -117,16 +119,16 @@ func (DeterministicPatchGroundingVerifier) Describe(fix db.SiteFix, generationCo
 	return GenerationCall{Provider: "none", Model: "none", PromptVersion: "doctor-patch-grounding-deterministic-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
 }
 
-func (DeterministicPatchGroundingVerifier) Verify(_ context.Context, fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) (PatchVerification, GenerationResult, error) {
+func (DeterministicPatchGroundingVerifier) Verify(_ context.Context, fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan, _ siteFixAICallAttempt) (PatchVerification, GenerationResult, error) {
 	if plan.Status != "manual_apply_required" || !sameJSON(plan.PatchSnapshot, fix.ProposedFix) || !sameJSON(plan.DiffSnapshot, fix.ProposedFix) {
-		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "deterministic_snapshot_mismatch"}, ErrPatchGroundingRejected
+		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "deterministic_snapshot_mismatch"}, ErrPatchGroundingRejected
 	}
 	if err := validateApplicationPlan(fix, generationContext, plan); err != nil {
-		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "invalid_output"}, err
+		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "invalid_output"}, err
 	}
 	_, propositions, err := approvedPropositionContract(fix.EvidenceSnapshot)
 	if err != nil {
-		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "failed", ErrorCode: "invalid_evidence"}, err
+		return PatchVerification{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "invalid_evidence"}, err
 	}
 	verification := PatchVerification{Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: propositions, Reason: "Approved canonical snapshots are unchanged."}
 	return verification, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "deterministic_verification"}, nil

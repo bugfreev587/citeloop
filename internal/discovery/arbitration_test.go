@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -198,6 +199,9 @@ func TestArbitrationPrepareSoftCrossLineFailsClosedWithoutComparator(t *testing.
 	if prepared.Decision != DecisionHold || prepared.Status != ArbitrationStatusHeld || prepared.Disposition != DispositionProviderFailure {
 		t.Fatalf("soft cross-line overlap did not fail closed: %+v", prepared)
 	}
+	if prepared.AICallID == uuid.Nil || len(store.aiStarts) != 1 || store.aiStarts[0].Status != "skipped" || store.aiStarts[0].ErrorCode != "provider_unavailable" {
+		t.Fatalf("unavailable comparator must produce one skipped ledger record: prepared=%+v starts=%+v", prepared, store.aiStarts)
+	}
 }
 
 func TestArbitrationPrepareCallsProviderOutsideTransactionBoundary(t *testing.T) {
@@ -333,6 +337,26 @@ func TestArbitrationPrepareFailsClosedForProviderFailure(t *testing.T) {
 	if len(store.aiFinishes) != 1 || store.aiFinishes[0].Status != "failed" {
 		t.Fatalf("AI finish = %+v", store.aiFinishes)
 	}
+}
+
+func TestArbitrationPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
+	store, _, candidate := arbitrationFixture(t)
+	store.snapshot.ActiveWorks = []SnapshotWork{{ID: uuid.New(), ExactSignatureHash: "different", SignaturePayload: candidate.Identity.SignaturePayload}}
+	comparator := NewLLMSemanticComparator(discoveryPreflightFailureProvider{}, "runtime_route", "test-model")
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionHold || len(store.aiFinishes) != 1 || store.aiFinishes[0].Status != "skipped" || store.aiFinishes[0].ErrorCode != "provider_not_called" {
+		t.Fatalf("prepared=%+v finishes=%+v", prepared, store.aiFinishes)
+	}
+}
+
+type discoveryPreflightFailureProvider struct{}
+
+func (discoveryPreflightFailureProvider) ObservesProviderAttempts() {}
+func (discoveryPreflightFailureProvider) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
+	return llm.CompletionResp{}, errors.New("credential lookup failed")
 }
 
 func TestArbitrationPrepareGatesSemanticSuppressionUntilLaunchReady(t *testing.T) {
@@ -604,6 +628,7 @@ type arbitrationStoreStub struct {
 	saved      []PreparedDecision
 	holds      []ReviewHold
 	aiFinishes []AICallFinish
+	aiStarts   []AICallStart
 }
 
 func (s *arbitrationStoreStub) LoadCandidate(_ context.Context, _ uuid.UUID, _ uuid.UUID) (ArbitrationCandidate, error) {
@@ -622,10 +647,25 @@ func (s *arbitrationStoreStub) LoadConfig(_ context.Context, _ uuid.UUID) (Arbit
 	s.events = append(s.events, "config")
 	return s.config, nil
 }
-func (s *arbitrationStoreStub) StartAICall(_ context.Context, start AICallStart) (uuid.UUID, error) {
+func (s *arbitrationStoreStub) StartAICall(_ context.Context, start AICallStart) (uuid.UUID, discoveryAICallAttempt, error) {
 	s.events = append(s.events, "ai_start")
-	return uuid.New(), nil
+	s.aiStarts = append(s.aiStarts, start)
+	if start.Status == "skipped" {
+		return uuid.New(), nil, nil
+	}
+	return uuid.New(), &discoveryAttemptSpy{}, nil
 }
+
+type discoveryAttemptSpy struct{ started bool }
+
+func (s *discoveryAttemptSpy) StartAttempt(context.Context, string) (string, error) {
+	s.started = true
+	return "discovery-attempt", nil
+}
+func (*discoveryAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
+	return nil
+}
+func (s *discoveryAttemptSpy) Started() bool { return s.started }
 func (s *arbitrationStoreStub) FinishAICall(_ context.Context, finish AICallFinish) error {
 	s.events = append(s.events, "ai_finish")
 	s.aiFinishes = append(s.aiFinishes, finish)
@@ -651,8 +691,15 @@ type semanticComparatorStub struct {
 	events   *[]string
 }
 
-func (s *semanticComparatorStub) Compare(_ context.Context, _ SemanticRequest) (SemanticDecision, CallUsage, error) {
+func (s *semanticComparatorStub) Compare(ctx context.Context, request SemanticRequest) (SemanticDecision, CallUsage, error) {
 	s.calls++
+	if request.AttemptObserver != nil {
+		attemptID, err := request.AttemptObserver.StartAttempt(ctx, "semantic-test")
+		if err != nil {
+			return SemanticDecision{}, CallUsage{}, err
+		}
+		_ = request.AttemptObserver.FinishAttempt(ctx, attemptID, llm.CompletionResp{}, s.err)
+	}
 	if s.events != nil {
 		*s.events = append(*s.events, "compare")
 	}

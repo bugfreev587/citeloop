@@ -12,7 +12,17 @@ type Mock struct{}
 
 func NewMock() *Mock { return &Mock{} }
 
-func (m *Mock) Complete(_ context.Context, req CompletionReq) (CompletionResp, error) {
+func (*Mock) ObservesProviderAttempts() {}
+
+func (m *Mock) Complete(ctx context.Context, req CompletionReq) (CompletionResp, error) {
+	attemptID := ""
+	if req.AttemptObserver != nil {
+		var err error
+		attemptID, err = req.AttemptObserver.StartAttempt(ctx, "mock")
+		if err != nil {
+			return CompletionResp{}, err
+		}
+	}
 	var text string
 	switch {
 	case strings.Contains(req.Prompt, "[[INSIGHT_PROFILE]]"):
@@ -28,7 +38,13 @@ func (m *Mock) Complete(_ context.Context, req CompletionReq) (CompletionResp, e
 	default:
 		text = `{"ok":true}`
 	}
-	return CompletionResp{Text: text, Provider: "mock", Model: "mock", PromptTokens: 60, CompletionTokens: 40, Tokens: 100, CostUSD: 0.001}, nil
+	resp := CompletionResp{Text: text, Provider: "mock", Model: "mock", PromptTokens: 60, CompletionTokens: 40, Tokens: 100, CostUSD: 0.001}
+	if req.AttemptObserver != nil {
+		if err := req.AttemptObserver.FinishAttempt(context.WithoutCancel(ctx), attemptID, resp, nil); err != nil {
+			return resp, err
+		}
+	}
+	return resp, nil
 }
 
 const mockProfile = `{

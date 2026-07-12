@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -75,7 +76,7 @@ func (w *Writer) Generate(ctx context.Context, projectID uuid.UUID, topic db.Top
 }
 
 func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*db.Article, error) {
-	out, resp, err := w.draft(ctx, topic, profileJSON, plat, canonical)
+	out, resp, _, err := w.draftTracked(ctx, projectID, topic, profileJSON, plat, canonical)
 	recordRun(ctx, w.Q, projectID, agentWriter,
 		map[string]any{"topic": topic.ID, "platform": plat, "canonical": canonical}, out, resp, err)
 	if err != nil {
@@ -85,12 +86,12 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 
 	// QA: evidence mapping gate + scoring (§5.3)
 	qaAgent := NewQA(w.Deps, w.Log)
-	qa, qaResp, qaErr := qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
+	qa, qaResp, qaErr := qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
 	recordRun(ctx, w.Q, projectID, agentQA, map[string]any{"topic": topic.ID, "platform": plat}, qa, qaResp, qaErr)
 	repairAttemptsUsed := 0
 	for attempt := 1; attempt <= maxDraftRepairAttempts && draftNeedsRepair(out, qa, qaErr); attempt++ {
 		repairAttemptsUsed++
-		repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profileJSON, plat, canonical, *out, qa, qaErr)
+		repaired, repairResp, repairErr := w.repairDraft(ctx, projectID, topic, profileJSON, plat, canonical, *out, qa, qaErr)
 		recordRun(ctx, w.Q, projectID, agentWriter,
 			map[string]any{"topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": attempt, "feedback": repairFeedback(qa, qaErr)},
 			repaired, repairResp, repairErr)
@@ -101,7 +102,7 @@ func (w *Writer) writeArticle(ctx context.Context, projectID uuid.UUID, topic db
 		}
 		out = repaired
 		out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-		qa, qaResp, qaErr = qaAgent.Check(ctx, projectID, out.ContentMD, profileJSON)
+		qa, qaResp, qaErr = qaAgent.CheckForObject(ctx, projectID, "topic", topic.ID, out.ContentMD, profileJSON)
 		recordRun(ctx, w.Q, projectID, agentQA,
 			map[string]any{"topic": topic.ID, "platform": plat, "repair_attempt": attempt}, qa, qaResp, qaErr)
 	}
@@ -188,7 +189,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	if len(qa.Issues) == 0 && art.QaBlocking {
 		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
 	}
-	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, nil)
+	repaired, repairResp, repairErr := w.repairDraft(ctx, projectID, topic, profile.Profile, plat, canonical, *out, qa, nil)
 	recordRun(ctx, w.Q, projectID, agentWriter,
 		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "canonical": canonical, "repair_attempt": art.RepairAttempts, "feedback": repairFeedback(qa, nil)},
 		repaired, repairResp, repairErr)
@@ -257,7 +258,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 		qa.BlockingReason = instruction
 	}
 
-	repaired, repairResp, repairErr := w.repairDraft(ctx, topic, profile.Profile, plat, canonical, *out, qa, nil)
+	repaired, repairResp, repairErr := w.repairDraft(ctx, projectID, topic, profile.Profile, plat, canonical, *out, qa, nil)
 	recordRun(ctx, w.Q, projectID, agentWriter,
 		map[string]any{"article": articleID, "topic": topic.ID, "platform": plat, "apply_fix": instruction}, repaired, repairResp, repairErr)
 	if repairErr != nil {
@@ -311,6 +312,11 @@ func approvedQAAfterAppliedFix(previous *QAOutput, instruction string) *QAOutput
 }
 
 func (w *Writer) draft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, error) {
+	out, resp, _, err := w.draftTracked(ctx, uuid.Nil, topic, profileJSON, plat, canonical)
+	return out, resp, err
+}
+
+func (w *Writer) draftTracked(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool) (*WriterOutput, llm.CompletionResp, uuid.UUID, error) {
 	canonicalInstr := writerCanonicalInstruction(plat, canonical)
 	assetContract := writerAssetContract(topic)
 
@@ -330,26 +336,30 @@ PRODUCT PROFILE:
 %s`, canonicalInstr, profileGuardrailInstruction, assetContract, topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
-	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
+	req := llm.CompletionReq{
 		System: "You are an expert SEO+GEO content writer.",
 		Prompt: prompt, Purpose: llm.PurposeWriter, JSON: true, MaxTokens: 4096,
-	})
+	}
+	resp, callID, err := completeTracked(ctx, w.AICalls, w.LLM, projectID, "content_generation", "topic", topic.ID, "content-writer-v2", uuid.Nil, uuid.Nil, req)
 	if err != nil {
-		return nil, resp, err
+		return nil, resp, callID, err
 	}
 	out, err := extractWriterOutput(resp.Text)
 	if err != nil {
-		fallback, fallbackResp, fallbackErr := w.draftMarkdownFallback(ctx, topic, profileJSON, plat, canonical, canonicalInstr)
-		if fallbackErr != nil {
-			return nil, fallbackResp, fmt.Errorf("parse writer output: %w; markdown fallback failed: %w", err, fallbackErr)
+		if ledgerErr := failTrackedOutput(ctx, w.AICalls, projectID, callID, "invalid_response"); ledgerErr != nil {
+			return nil, resp, callID, errors.Join(err, ledgerErr)
 		}
-		return fallback, fallbackResp, nil
+		fallback, fallbackResp, fallbackCallID, fallbackErr := w.draftMarkdownFallbackTracked(ctx, projectID, topic, profileJSON, plat, canonical, canonicalInstr, callID)
+		if fallbackErr != nil {
+			return nil, fallbackResp, fallbackCallID, fmt.Errorf("parse writer output: %w; markdown fallback failed: %w", err, fallbackErr)
+		}
+		return fallback, fallbackResp, fallbackCallID, nil
 	}
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
-	return &out, resp, nil
+	return &out, resp, callID, nil
 }
 
-func (w *Writer) repairDraft(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, current WriterOutput, qa *QAOutput, qaErr error) (*WriterOutput, llm.CompletionResp, error) {
+func (w *Writer) repairDraft(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, current WriterOutput, qa *QAOutput, qaErr error) (*WriterOutput, llm.CompletionResp, error) {
 	current.SEOMeta = completeSEOMeta(topic, current.SEOMeta, plat, canonical)
 	metaJSON, _ := json.MarshalIndent(current.SEOMeta, "", "  ")
 	feedbackJSON, _ := json.MarshalIndent(map[string]any{
@@ -389,7 +399,7 @@ CURRENT ARTICLE:
 %s`, profileGuardrailInstruction, writerCanonicalInstruction(plat, canonical), writerAssetContract(topic), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000), string(metaJSON), string(feedbackJSON), clip(current.ContentMD, 7000))
 
-	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
+	resp, callID, err := completeTracked(ctx, w.AICalls, w.LLM, projectID, "content_generation", "topic", topic.ID, "content-repair-v2", uuid.Nil, uuid.Nil, llm.CompletionReq{
 		System: "You are an expert SEO+GEO editor. Fix drafts using only supported facts and return valid JSON.",
 		Prompt: prompt, Purpose: llm.PurposeWriter, JSON: true, MaxTokens: 4096,
 	})
@@ -398,6 +408,9 @@ CURRENT ARTICLE:
 	}
 	out, err := extractWriterOutput(resp.Text)
 	if err != nil {
+		if ledgerErr := failTrackedOutput(ctx, w.AICalls, projectID, callID, "invalid_response"); ledgerErr != nil {
+			return nil, resp, errors.Join(err, ledgerErr)
+		}
 		return nil, resp, err
 	}
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
@@ -405,6 +418,11 @@ CURRENT ARTICLE:
 }
 
 func (w *Writer) draftMarkdownFallback(ctx context.Context, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, canonicalInstr string) (*WriterOutput, llm.CompletionResp, error) {
+	out, resp, _, err := w.draftMarkdownFallbackTracked(ctx, uuid.Nil, topic, profileJSON, plat, canonical, canonicalInstr, uuid.Nil)
+	return out, resp, err
+}
+
+func (w *Writer) draftMarkdownFallbackTracked(ctx context.Context, projectID uuid.UUID, topic db.Topic, profileJSON json.RawMessage, plat string, canonical bool, canonicalInstr string, parentCallID uuid.UUID) (*WriterOutput, llm.CompletionResp, uuid.UUID, error) {
 	prompt := fmt.Sprintf(`[[WRITER_MARKDOWN]] Write a content article for this topic.
 %s
 Only state product facts supported by the profile. Return only Markdown/MDX body text. Do not wrap the answer in a code fence. Do not return JSON or front matter.
@@ -421,14 +439,14 @@ PRODUCT PROFILE:
 %s`, canonicalInstr, profileGuardrailInstruction, writerAssetContract(topic), topic.Title, strDeref(topic.TargetKeyword), strDeref(topic.TargetPrompt),
 		strDeref(topic.Angle), strDeref(topic.Format), clip(string(profileJSON), 3000))
 
-	resp, err := w.LLM.Complete(ctx, llm.CompletionReq{
+	resp, callID, err := completeTracked(ctx, w.AICalls, w.LLM, projectID, "content_generation", "topic", topic.ID, "content-writer-markdown-v1", uuid.Nil, parentCallID, llm.CompletionReq{
 		System:    "You are an expert SEO+GEO content writer. Return only Markdown/MDX body text.",
 		Prompt:    prompt,
 		Purpose:   llm.PurposeWriter,
 		MaxTokens: 8192,
 	})
 	if err != nil {
-		return nil, resp, err
+		return nil, resp, callID, err
 	}
 	content := cleanMarkdownResponse(resp.Text)
 	if content != "" && !strings.HasPrefix(strings.TrimSpace(content), "#") {
@@ -442,9 +460,12 @@ PRODUCT PROFILE:
 		SEOMeta:   seoMetaFromTopic(topic, plat, canonical),
 	}
 	if err := validateWriterOutput(out); err != nil {
-		return nil, resp, err
+		if ledgerErr := failTrackedOutput(ctx, w.AICalls, projectID, callID, "invalid_response"); ledgerErr != nil {
+			return nil, resp, callID, errors.Join(err, ledgerErr)
+		}
+		return nil, resp, callID, err
 	}
-	return &out, resp, nil
+	return &out, resp, callID, nil
 }
 
 func writerCanonicalInstruction(plat string, canonical bool) string {

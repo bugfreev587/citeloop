@@ -1934,10 +1934,11 @@ with eligible as materialized (
   returning marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_rejected') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from rejected_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), signature_transition as (
   update work_signature_registry w
@@ -2097,10 +2098,11 @@ with eligible as materialized (
   returning marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_rejected') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from rejected_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), signature_transition as (
   update work_signature_registry w
@@ -2338,10 +2340,11 @@ with eligible as materialized (
   returning marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_rejected') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from rejected_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), signature_transition as (
   update work_signature_registry w
@@ -2426,10 +2429,11 @@ with authority as materialized (
   returning marker.request_id, marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_rejected') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from rejected_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), transitioned as (
   update site_fixes sf set status = 'failed_terminal', failure_reason = sqlc.arg(failure_reason),
@@ -2552,10 +2556,11 @@ with eligible as materialized (
   returning marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_superseded') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from superseded_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), signature_transition as (
   update work_signature_registry w
@@ -2676,10 +2681,11 @@ with eligible as materialized (
   returning marker.ai_call_id, marker.project_id
 ), finished_ai_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_superseded') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from superseded_markers marker
-  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status = 'running'
+  where call.project_id = marker.project_id and call.id = marker.ai_call_id and call.status in ('queued','running')
   returning call.id
 ), signature_transition as (
   update work_signature_registry w
@@ -3406,7 +3412,7 @@ with eligible as materialized (
 ), started as (
   insert into ai_call_records(project_id,stage,linked_object_type,linked_object_id,provider,model,prompt_version,request_fingerprint,status)
   select sqlc.arg(project_id),'verification','site_fix',sqlc.arg(site_fix_id),
-         sqlc.arg(provider),sqlc.arg(model),sqlc.arg(prompt_version),sqlc.arg(request_fingerprint),'running'
+         sqlc.arg(provider),sqlc.arg(model),sqlc.arg(prompt_version),sqlc.arg(request_fingerprint),'queued'
   from eligible
   returning id
 )
@@ -3477,11 +3483,12 @@ with locked_markers as materialized (
   for update of marker
 ), finished_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_rejected'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_rejected') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from locked_markers marker
   where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
-    and call.status = 'running'
+    and call.status in ('queued','running')
   returning call.id
 )
 update doctor_ai_on_demand_triggers marker
@@ -3504,11 +3511,12 @@ with locked_markers as materialized (
   for update of marker
 ), finished_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_marker_superseded'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_marker_superseded') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from locked_markers marker
   where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
-    and call.status = 'running'
+    and call.status in ('queued','running')
   returning call.id
 )
 update doctor_ai_on_demand_triggers marker
@@ -3537,11 +3545,12 @@ with locked_markers as materialized (
   for update of marker
 ), finished_calls as (
   update ai_call_records call
-  set status = 'failed', error_code = coalesce(call.error_code, 'doctor_ai_authority_revoked'),
+  set status = case when call.status = 'queued' then 'skipped' else 'failed' end,
+      error_code = case when call.status = 'queued' then 'provider_not_called' else coalesce(call.error_code, 'doctor_ai_authority_revoked') end,
       finished_at = coalesce(call.finished_at, now()), updated_at = now()
   from locked_markers marker
   where call.project_id = sqlc.arg(project_id) and call.id = marker.ai_call_id
-    and call.status = 'running'
+    and call.status in ('queued','running')
   returning call.id
 )
 update doctor_ai_on_demand_triggers marker
@@ -3589,7 +3598,7 @@ select marker.ai_call_id
 from doctor_ai_on_demand_triggers marker
 join ai_call_records call on call.project_id = marker.project_id and call.id = marker.ai_call_id
 where marker.project_id = sqlc.arg(project_id)
-  and marker.status in ('rejected','superseded') and call.status = 'running'
+  and marker.status in ('rejected','superseded') and call.status in ('queued','running')
 order by marker.request_id;
 
 -- name: ListCanonicalSiteFixPRsForReconciliation :many

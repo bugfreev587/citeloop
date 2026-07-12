@@ -55,7 +55,7 @@ func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "landing_url must match configured domain")
 		return
 	}
-	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 	profile, summary, err := ag.RunQuickProfile(r.Context(), id, landingURL, cfg.Crawl)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -82,7 +82,7 @@ func (s *Server) runStrategist(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "project not found")
 		return
 	}
-	ag := agents.NewStrategist(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, s.Log)
+	ag := agents.NewStrategist(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
 	topics, err := ag.Run(r.Context(), id, cfg)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -519,8 +519,8 @@ func (s *Server) generateTopicInBackground(projectID, topicID uuid.UUID) {
 		return
 	}
 
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-	articles, err := writer.Generate(ctx, projectID, topic)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
+	articles, err := writer.Generate(agents.WithAICallRetry(ctx), projectID, topic)
 	if err != nil {
 		s.Log.Error("manual generation failed", "project", projectID, "topic", topicID, "err", err)
 		if n, countErr := q.CountNonRejectedArticlesForTopic(ctx, topicID); countErr == nil {

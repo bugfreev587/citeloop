@@ -21,6 +21,16 @@ func TestCrawlerEvidenceQualityDoesNotTreatUncheckedAsHealthy(t *testing.T) {
 	}
 }
 
+func TestAnswerUsageFallsBackPerRowWhenProviderOmitsTotal(t *testing.T) {
+	usage := answerUsageFromRows([]ProviderObservation{
+		{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5},
+		{PromptTokens: 7, CompletionTokens: 4},
+	}, 0.03)
+	if usage.PromptTokens != 10 || usage.CompletionTokens != 6 || usage.TotalTokens != 16 || usage.CostUSD != 0.03 {
+		t.Fatalf("usage=%+v", usage)
+	}
+}
+
 func TestAnswerEvidenceUsesWeeklyFreshnessBucket(t *testing.T) {
 	got := startOfEvidenceWeek(time.Date(2026, 7, 12, 14, 30, 0, 0, time.UTC))
 	want := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)

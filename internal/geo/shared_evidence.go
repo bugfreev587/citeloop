@@ -3,13 +3,17 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/evidence"
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func (s Service) collectCrawlerAuditEvidence(ctx context.Context, projectID, geoRunID uuid.UUID, siteURL string, urls, omittedURLs, userAgents []string, now time.Time) ([]AuditResult, error) {
@@ -107,8 +111,38 @@ func crawlerEvidenceQuality(rows []AuditResult, omittedCount int) (string, float
 func stringPointer(value string) *string { return &value }
 
 type answerEvidenceSnapshot struct {
-	Rows    []ProviderObservation `json:"rows"`
-	CostUSD float64               `json:"cost_usd"`
+	Rows               []ProviderObservation `json:"rows"`
+	CostUSD            float64               `json:"cost_usd"`
+	IncrementalCostUSD float64               `json:"incremental_cost_usd"`
+	PromptTokens       int                   `json:"prompt_tokens"`
+	CompletionTokens   int                   `json:"completion_tokens"`
+	TotalTokens        int                   `json:"total_tokens"`
+}
+
+type answerCallUsage struct {
+	PromptTokens, CompletionTokens, TotalTokens int
+	CostUSD                                     float64
+}
+
+func (u answerCallUsage) add(other answerCallUsage) answerCallUsage {
+	return answerCallUsage{
+		PromptTokens: u.PromptTokens + other.PromptTokens, CompletionTokens: u.CompletionTokens + other.CompletionTokens,
+		TotalTokens: u.TotalTokens + other.TotalTokens, CostUSD: u.CostUSD + other.CostUSD,
+	}
+}
+
+func answerUsageFromRows(rows []ProviderObservation, costUSD float64) answerCallUsage {
+	usage := answerCallUsage{CostUSD: costUSD}
+	for _, row := range rows {
+		usage.PromptTokens += row.PromptTokens
+		usage.CompletionTokens += row.CompletionTokens
+		total := row.TotalTokens
+		if total == 0 {
+			total = row.PromptTokens + row.CompletionTokens
+		}
+		usage.TotalTokens += total
+	}
+	return usage
 }
 
 func (s Service) collectAnswerProviderEvidence(ctx context.Context, projectID, geoRunID uuid.UUID, prompts []db.GeoPrompt, req ObserveAnswerProviderRequest, providerName string, now time.Time) ([]ProviderObservation, float64, time.Time, error) {
@@ -137,7 +171,20 @@ func (s Service) collectAnswerProviderEvidence(ctx context.Context, projectID, g
 			"sampling_policy": "priority_order_v1", "normalization_version": "geo-answer-observation/v1",
 		},
 	}, func(ctx context.Context) ([]evidence.Observation, error) {
-		rows, costUSD, providerErr := s.AnswerProvider.Observe(ctx, prompts)
+		rows, previousUsage := previousAnswerEvidence(ctx)
+		completed := make(map[uuid.UUID]struct{}, len(rows))
+		for _, row := range rows {
+			completed[row.PromptID] = struct{}{}
+		}
+		pending := make([]db.GeoPrompt, 0, len(prompts))
+		for _, prompt := range prompts {
+			if _, ok := completed[prompt.ID]; !ok {
+				pending = append(pending, prompt)
+			}
+		}
+		newRows, incrementalUsage, providerErr := s.observeAnswerPrompts(ctx, projectID, geoRunID, pending, req, providerName, identity)
+		rows = append(rows, newRows...)
+		usage := previousUsage.add(incrementalUsage)
 		if len(rows) == 0 && providerErr != nil {
 			return nil, providerErr
 		}
@@ -150,9 +197,10 @@ func (s Service) collectAnswerProviderEvidence(ctx context.Context, projectID, g
 		return []evidence.Observation{{
 			Key: "aggregate", State: evidence.StateObserved,
 			Facts:       map[string]any{"prompt_count": len(prompts), "observation_count": len(rows)},
-			RawSnapshot: answerEvidenceSnapshot{Rows: rows, CostUSD: costUSD},
+			RawSnapshot: answerEvidenceSnapshot{Rows: rows, CostUSD: usage.CostUSD, IncrementalCostUSD: incrementalUsage.CostUSD, PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens, TotalTokens: usage.TotalTokens},
 			Confidence:  1, Completeness: completeness, Provider: stringPointer(providerName),
-			Model: stringPointer(identity.Model), ProviderVersion: stringPointer(identity.ProviderVersion), CallStatus: stringPointer(status), CostUSD: costUSD,
+			Model: stringPointer(identity.Model), ProviderVersion: stringPointer(identity.ProviderVersion), CallStatus: stringPointer(status), CostUSD: usage.CostUSD,
+			PromptTokens: int64(usage.PromptTokens), CompletionTokens: int64(usage.CompletionTokens), TotalTokens: int64(usage.TotalTokens),
 		}}, providerErr
 	})
 	if len(result.Observations) == 0 {
@@ -166,11 +214,90 @@ func (s Service) collectAnswerProviderEvidence(ctx context.Context, projectID, g
 		collectErr = fmt.Errorf("reused partial answer evidence: %s", *result.Run.ErrorSummary)
 	}
 	observedAt := result.Observations[0].ObservedAt.Time
-	incrementalCost := snapshot.CostUSD
+	incrementalCost := snapshot.IncrementalCostUSD
+	if result.Run.AttemptNumber == 1 && incrementalCost == 0 {
+		incrementalCost = snapshot.CostUSD
+	}
 	if result.Reused {
 		incrementalCost = 0
 	}
 	return snapshot.Rows, incrementalCost, observedAt, collectErr
+}
+
+func previousAnswerEvidence(ctx context.Context) ([]ProviderObservation, answerCallUsage) {
+	for _, observation := range evidence.PreviousObservations(ctx) {
+		if observation.Source != "ai_answer" || observation.SourceObservationKey != "aggregate" {
+			continue
+		}
+		var snapshot answerEvidenceSnapshot
+		if json.Unmarshal(observation.RawSnapshot, &snapshot) == nil {
+			usage := answerCallUsage{PromptTokens: snapshot.PromptTokens, CompletionTokens: snapshot.CompletionTokens, TotalTokens: snapshot.TotalTokens, CostUSD: snapshot.CostUSD}
+			if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+				usage = answerUsageFromRows(snapshot.Rows, snapshot.CostUSD)
+			}
+			return append([]ProviderObservation(nil), snapshot.Rows...), usage
+		}
+	}
+	return nil, answerCallUsage{}
+}
+
+func (s Service) observeAnswerPrompts(ctx context.Context, projectID, geoRunID uuid.UUID, prompts []db.GeoPrompt, req ObserveAnswerProviderRequest, providerName string, identity AnswerProviderEvidenceIdentity) ([]ProviderObservation, answerCallUsage, error) {
+	promptProvider, supportsPromptCalls := s.AnswerProvider.(PromptAnswerProvider)
+	if s.AICallStore == nil || !supportsPromptCalls {
+		rows, costUSD, err := s.AnswerProvider.Observe(ctx, prompts)
+		return rows, answerUsageFromRows(rows, costUSD), err
+	}
+	recorder := aicalls.New(s.AICallStore)
+	rows := make([]ProviderObservation, 0, len(prompts))
+	usage := answerCallUsage{}
+	for _, prompt := range prompts {
+		fingerprint := aicalls.Fingerprint(llm.CompletionReq{
+			Prompt: prompt.PromptText, Model: identity.Model, MaxTokens: 1024, Temperature: 0.2,
+		})
+		spec := aicalls.Spec{
+			ProjectID: projectID, RunID: geoRunID, Stage: "evidence", LinkedObjectType: "geo_prompt", LinkedObjectID: prompt.ID,
+			Provider: providerName, Model: identity.Model, PromptVersion: "geo-answer-observation-v2", RequestFingerprint: fingerprint,
+		}
+		if evidence.IsRetry(ctx) {
+			latest, latestErr := recorder.Latest(ctx, spec)
+			if latestErr == nil {
+				spec.ParentCallID = latest.ID
+			} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+				return rows, usage, latestErr
+			}
+		}
+		call, err := recorder.Start(ctx, spec)
+		if err != nil {
+			return rows, usage, err
+		}
+		row, costUSD, providerErr := promptProvider.ObservePrompt(ctx, prompt)
+		tokens := row.TotalTokens
+		if tokens == 0 {
+			tokens = row.PromptTokens + row.CompletionTokens
+		}
+		usage = usage.add(answerCallUsage{PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD})
+		status, errorCode := "ok", ""
+		if providerErr != nil {
+			status, errorCode = "failed", "provider_failure"
+			if errors.Is(providerErr, ErrInvalidAnswerProviderResponse) {
+				errorCode = "invalid_response"
+			}
+		}
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_, finishErr := recorder.Finish(finishCtx, call.ID, projectID, aicalls.Finish{
+			Status: status, ErrorCode: errorCode, ResolvedProvider: providerName, ResolvedModel: identity.Model,
+			PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens, TotalTokens: tokens, CostUSD: costUSD,
+		})
+		cancel()
+		if finishErr != nil {
+			return rows, usage, errors.Join(providerErr, finishErr)
+		}
+		if providerErr != nil {
+			return rows, usage, providerErr
+		}
+		rows = append(rows, row)
+	}
+	return rows, usage, nil
 }
 
 func (s Service) recordAnswerProviderUnavailableEvidence(ctx context.Context, projectID, geoRunID uuid.UUID, prompts []db.GeoPrompt, req ObserveAnswerProviderRequest, now time.Time) (time.Time, error) {
@@ -188,7 +315,29 @@ func (s Service) recordAnswerProviderUnavailableEvidence(ctx context.Context, pr
 		WindowStart: &weekStart, WindowEnd: &weekEnd, RequestedBy: "opportunities", Now: now,
 		ConsumerType: "geo_run", ConsumerID: geoRunID,
 		CollectionSpec: map[string]any{"provider": "provider_unavailable", "engine": req.Engine, "locale": req.Locale, "prompt_ids": promptIDs, "normalization_version": "geo-answer-observation/v1"},
-	}, func(context.Context) ([]evidence.Observation, error) {
+	}, func(collectorCtx context.Context) ([]evidence.Observation, error) {
+		if s.AICallStore != nil {
+			recorder := aicalls.New(s.AICallStore)
+			for _, prompt := range prompts {
+				spec := aicalls.Spec{
+					ProjectID: projectID, RunID: geoRunID, Stage: "evidence", LinkedObjectType: "geo_prompt", LinkedObjectID: prompt.ID,
+					Provider: "provider_unavailable", Model: "none", PromptVersion: "geo-answer-observation-v2",
+					RequestFingerprint: aicalls.Fingerprint(llm.CompletionReq{Prompt: prompt.PromptText, Model: "none"}),
+				}
+				if evidence.IsRetry(collectorCtx) {
+					latest, latestErr := recorder.Latest(collectorCtx, spec)
+					if latestErr == nil {
+						spec.ParentCallID = latest.ID
+					} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+						return nil, latestErr
+					}
+				}
+				_, skipErr := recorder.Skip(collectorCtx, spec, "provider_unavailable")
+				if skipErr != nil {
+					return nil, skipErr
+				}
+			}
+		}
 		return []evidence.Observation{{
 			Key: "aggregate", State: evidence.StateProviderUnavailable,
 			Facts:       map[string]any{"prompt_count": len(prompts), "coverage_gap": true},

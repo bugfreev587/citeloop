@@ -7,7 +7,7 @@ import (
 )
 
 func TestAICallReclaimOnlyFinishesRunningAndPreservesUsage(t *testing.T) {
-	raw, err := os.ReadFile("queries/discovery.sql")
+	raw, err := os.ReadFile("queries/ai_calls.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,20 +21,20 @@ func TestAICallReclaimOnlyFinishesRunningAndPreservesUsage(t *testing.T) {
 }
 
 func TestFinishCanonicalAICallFencedPreservesCleanupTerminalStateAndLateUsage(t *testing.T) {
-	raw, err := os.ReadFile("queries/discovery.sql")
+	raw, err := os.ReadFile("queries/ai_calls.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	query := namedSQL(t, strings.ToLower(string(raw)), "FinishCanonicalAICallFenced")
 	for _, required := range []string{
-		"case when status = 'running' then sqlc.arg(status)",
-		"case when status = 'running' then sqlc.narg(error_code)",
+		"status = case when status = 'running' or (status = 'queued'",
+		"error_code = case when status = 'running' or (status = 'queued'",
 		"provider = coalesce(sqlc.narg(resolved_provider), provider)",
 		"model = coalesce(sqlc.narg(resolved_model), model)",
-		"prompt_tokens = sqlc.arg(prompt_tokens)",
-		"completion_tokens = sqlc.arg(completion_tokens)",
-		"total_tokens = sqlc.arg(total_tokens)",
-		"cost_usd = sqlc.arg(cost_usd)",
+		"else sqlc.arg(prompt_tokens) end",
+		"else sqlc.arg(completion_tokens) end",
+		"else sqlc.arg(total_tokens) end",
+		"else sqlc.arg(cost_usd)::numeric end",
 	} {
 		if !strings.Contains(query, required) {
 			t.Errorf("fenced canonical finish missing %q", required)

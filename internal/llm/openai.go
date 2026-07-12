@@ -79,9 +79,13 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 		model = c.Model
 	}
 
-	resp, err := c.completeWithModel(ctx, req, model)
+	resp, err := c.completeAttempt(ctx, req, model)
 	if err == nil {
 		return resp, nil
+	}
+	var accountingErr *providerAttemptAccountingError
+	if errors.As(err, &accountingErr) {
+		return resp, err
 	}
 	var httpErr *openAIChatHTTPError
 	if errors.As(err, &httpErr) && shouldRetryUnsupportedClaudeModel(httpErr.status, model, httpErr.raw) {
@@ -90,10 +94,41 @@ func (c *OpenAIChat) Complete(ctx context.Context, req CompletionReq) (Completio
 		}
 		fallback := fallbackOpenAIModel(req.Purpose)
 		if fallback != "" && fallback != model {
-			return c.completeWithModel(ctx, req, fallback)
+			return c.completeAttempt(ctx, req, fallback)
 		}
 	}
 	return resp, err
+}
+
+func (*OpenAIChat) ObservesProviderAttempts() {}
+
+func (c *OpenAIChat) completeAttempt(ctx context.Context, req CompletionReq, model string) (CompletionResp, error) {
+	if req.AttemptObserver == nil {
+		return c.completeWithModel(ctx, req, model)
+	}
+	attemptID, err := req.AttemptObserver.StartAttempt(ctx, model)
+	if err != nil {
+		return CompletionResp{}, err
+	}
+	resp, providerErr := c.completeWithModel(ctx, req, model)
+	finishErr := req.AttemptObserver.FinishAttempt(context.WithoutCancel(ctx), attemptID, resp, providerErr)
+	if finishErr != nil {
+		return resp, &providerAttemptAccountingError{providerErr: providerErr, ledgerErr: finishErr}
+	}
+	return resp, errors.Join(providerErr, finishErr)
+}
+
+type providerAttemptAccountingError struct {
+	providerErr error
+	ledgerErr   error
+}
+
+func (e *providerAttemptAccountingError) Error() string {
+	return errors.Join(e.providerErr, e.ledgerErr).Error()
+}
+
+func (e *providerAttemptAccountingError) Unwrap() []error {
+	return []error{e.providerErr, e.ledgerErr}
 }
 
 func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, model string) (CompletionResp, error) {
@@ -144,7 +179,7 @@ func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, m
 		return ledger, fmt.Errorf("tokengate chat completions: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return CompletionResp{}, fmt.Errorf("tokengate chat completions returned no choices")
+		return ledger, fmt.Errorf("tokengate chat completions returned no choices")
 	}
 	ledger.Text = cr.Choices[0].Message.Content
 	return ledger, nil

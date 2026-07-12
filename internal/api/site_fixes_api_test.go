@@ -353,7 +353,7 @@ func TestDoctorSiteFixGrowthCutoverUsesGrowthPlanningPurposeAndReportsCost(t *te
 				if err != nil {
 					t.Fatalf("Growth Compare: %v", err)
 				}
-				if usage.TotalTokens != 42 || usage.CostUSD != 0.0123 || usage.Provider != "tokengate" || usage.Model != "growth-planning-model" {
+				if usage.TotalTokens != 42 || usage.CostUSD != 0.0123 || usage.Provider != "growth-provider" || usage.Model != "growth-planning-model" {
 					t.Fatalf("Growth usage attribution = %+v", usage)
 				}
 				return sentinel

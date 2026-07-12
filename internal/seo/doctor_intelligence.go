@@ -12,6 +12,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -88,23 +89,28 @@ type doctorAICallFinish struct {
 }
 
 type doctorAICallLedger interface {
-	StartDoctorAICall(context.Context, doctorAICallStart) (uuid.UUID, error)
+	StartDoctorAICall(context.Context, doctorAICallStart) (uuid.UUID, doctorAICallAttempt, error)
 	FinishDoctorAICall(context.Context, doctorAICallFinish) error
+}
+
+type doctorAICallAttempt interface {
+	llm.AttemptObserver
+	Started() bool
 }
 
 type doctorPostgresAILedger struct{ q *db.Queries }
 
-func (l doctorPostgresAILedger) StartDoctorAICall(ctx context.Context, call doctorAICallStart) (uuid.UUID, error) {
+func (l doctorPostgresAILedger) StartDoctorAICall(ctx context.Context, call doctorAICallStart) (uuid.UUID, doctorAICallAttempt, error) {
 	row, err := l.q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
 		ProjectID: call.ProjectID, RunID: uuidToPG(call.RunID), Stage: doctorDiagnosisAICallStage,
 		LinkedObjectType: "seo_doctor_run", LinkedObjectID: call.RunID,
 		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
-		RequestFingerprint: call.RequestFingerprint, Status: "running",
+		RequestFingerprint: call.RequestFingerprint, Status: "queued",
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
-	return row.ID, nil
+	return row.ID, aicalls.NewExistingAttemptObserver(l.q, call.ProjectID, row.ID), nil
 }
 
 func (l doctorPostgresAILedger) FinishDoctorAICall(ctx context.Context, call doctorAICallFinish) error {
@@ -112,7 +118,7 @@ func (l doctorPostgresAILedger) FinishDoctorAICall(ctx context.Context, call doc
 	if strings.TrimSpace(call.ErrorCode) != "" {
 		errorCode = &call.ErrorCode
 	}
-	_, err := l.q.FinishAICallRecord(ctx, db.FinishAICallRecordParams{
+	_, err := l.q.FinishCanonicalAICallFenced(ctx, db.FinishCanonicalAICallFencedParams{
 		Status: call.Status, ErrorCode: errorCode,
 		ResolvedProvider: optionalDoctorString(call.Provider), ResolvedModel: optionalDoctorString(call.Model),
 		PromptTokens: doctorBoundedInt32(call.PromptTokens), CompletionTokens: doctorBoundedInt32(call.CompletionTokens), TotalTokens: doctorBoundedInt32(call.TotalTokens),
@@ -279,45 +285,70 @@ func attachDoctorContextSnapshot(candidates []doctorFindingCandidate, contextSna
 	return out
 }
 
-func runDoctorDiagnosisAI(ctx context.Context, req doctorDiagnosisAIRequest) ([]doctorFindingCandidate, doctorDiagnosisAIState) {
+func runDoctorDiagnosisAI(ctx context.Context, req doctorDiagnosisAIRequest) ([]doctorFindingCandidate, doctorDiagnosisAIState, error) {
 	unchanged := append([]doctorFindingCandidate(nil), req.Candidates...)
 	if !req.Authorized {
-		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusDisabled}
+		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusDisabled}, nil
 	}
 	if len(req.Candidates) == 0 {
-		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusNoCandidates}
+		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusNoCandidates}, nil
 	}
-	if req.Provider == nil || req.Ledger == nil {
-		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}
+	if req.Ledger == nil {
+		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}, errors.New("Doctor AI call ledger is unavailable")
 	}
 	prompt := doctorDiagnosisPrompt(req.Context, req.Candidates)
 	fingerprint := sha256.Sum256([]byte(prompt))
 	model := strings.TrimSpace(req.Model)
-	callID, err := req.Ledger.StartDoctorAICall(ctx, doctorAICallStart{
+	callID, attempt, err := req.Ledger.StartDoctorAICall(ctx, doctorAICallStart{
 		ProjectID: req.ProjectID, RunID: req.RunID, Provider: doctorDiagnosisPlannedProviderName, Model: model,
 		PromptVersion: doctorDiagnosisPromptVersion, RequestFingerprint: hex.EncodeToString(fingerprint[:]),
 	})
 	if err != nil {
-		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}
+		return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}, err
 	}
 	state := doctorDiagnosisAIState{AICallID: callID.String()}
-	response, providerErr := req.Provider.Complete(ctx, llm.CompletionReq{
+	if req.Provider == nil {
+		if finishErr := req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
+			ID: callID, ProjectID: req.ProjectID, Status: "skipped", ErrorCode: "provider_unavailable", Provider: "none", Model: "none",
+		}); finishErr != nil {
+			return unchanged, doctorDiagnosisAIState{Status: doctorAIStatusUnavailable, Degraded: true}, finishErr
+		}
+		state.Status, state.Degraded = doctorAIStatusUnavailable, true
+		return unchanged, state, nil
+	}
+	response, providerErr := llm.CompleteObserved(ctx, req.Provider, llm.CompletionReq{
 		System: "You are CiteLoop Doctor's evidence-grounded diagnosis reviewer. You may only prioritize supplied findings; never create findings, facts, patches, content, or success claims.",
-		Prompt: prompt, Model: model, MaxTokens: 1600, Temperature: 0, JSON: true, DisableProviderFallback: true,
+		Prompt: prompt, Model: model, MaxTokens: 1600, Temperature: 0, JSON: true, DisableProviderFallback: true, AttemptObserver: attempt,
 	})
-	if providerErr != nil {
-		_ = req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{ID: callID, ProjectID: req.ProjectID, Status: "failed", ErrorCode: "provider_failure"})
+	if !attempt.Started() {
+		if finishErr := req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
+			ID: callID, ProjectID: req.ProjectID, Status: "skipped", ErrorCode: "provider_not_called", Provider: doctorDiagnosisPlannedProviderName, Model: model,
+		}); finishErr != nil {
+			return unchanged, state, errors.Join(providerErr, finishErr)
+		}
 		state.Status, state.Degraded = doctorAIStatusFailed, true
-		return unchanged, state
+		return unchanged, state, nil
+	}
+	if providerErr != nil {
+		if finishErr := req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
+			ID: callID, ProjectID: req.ProjectID, Status: "failed", ErrorCode: "provider_failure", Provider: response.Provider, Model: response.Model,
+			PromptTokens: response.PromptTokens, CompletionTokens: response.CompletionTokens, TotalTokens: response.Tokens, CostUSD: response.CostUSD,
+		}); finishErr != nil {
+			return unchanged, state, errors.Join(providerErr, finishErr)
+		}
+		state.Status, state.Degraded = doctorAIStatusFailed, true
+		return unchanged, state, nil
 	}
 	output, parseErr := parseDoctorDiagnosisOutput(response.Text)
 	if parseErr != nil {
-		_ = req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
+		if finishErr := req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
 			ID: callID, ProjectID: req.ProjectID, Status: "failed", ErrorCode: "invalid_response", Provider: response.Provider, Model: response.Model,
 			PromptTokens: response.PromptTokens, CompletionTokens: response.CompletionTokens, TotalTokens: response.Tokens, CostUSD: response.CostUSD,
-		})
+		}); finishErr != nil {
+			return unchanged, state, errors.Join(parseErr, finishErr)
+		}
 		state.Status, state.Degraded = doctorAIStatusInvalid, true
-		return unchanged, state
+		return unchanged, state, nil
 	}
 	out, applied := applyDoctorDiagnosisPriorities(req.Candidates, output.Priorities)
 	if err := req.Ledger.FinishDoctorAICall(context.WithoutCancel(ctx), doctorAICallFinish{
@@ -325,10 +356,10 @@ func runDoctorDiagnosisAI(ctx context.Context, req doctorDiagnosisAIRequest) ([]
 		PromptTokens: response.PromptTokens, CompletionTokens: response.CompletionTokens, TotalTokens: response.Tokens, CostUSD: response.CostUSD,
 	}); err != nil {
 		state.Status, state.Degraded = doctorAIStatusFailed, true
-		return unchanged, state
+		return unchanged, state, err
 	}
 	state.Status, state.AppliedPriorities = doctorAIStatusApplied, applied
-	return out, state
+	return out, state, nil
 }
 
 func doctorDiagnosisPrompt(contextSnapshot json.RawMessage, candidates []doctorFindingCandidate) string {

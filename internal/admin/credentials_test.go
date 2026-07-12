@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,58 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/llm"
 )
+
+func TestCompleteRuntimeDelegateObservesNonObservableProviderAttempt(t *testing.T) {
+	observer := &attemptObserverStub{}
+	want := llm.CompletionResp{Text: "ok", Model: "resolved", Tokens: 9, CostUSD: 0.01}
+	got, err := completeRuntimeDelegate(context.Background(), staticProviderStub{resp: want}, llm.CompletionReq{
+		Model: "planned", AttemptObserver: observer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observer.starts != 1 || observer.finishes != 1 || observer.model != "planned" || got != want || observer.resp != want || observer.providerErr != nil {
+		t.Fatalf("observer=%+v got=%+v", observer, got)
+	}
+}
+
+func TestCompleteRuntimeDelegatePropagatesAttemptAccountingFailure(t *testing.T) {
+	observer := &attemptObserverStub{finishErr: errors.New("ledger unavailable")}
+	_, err := completeRuntimeDelegate(context.Background(), staticProviderStub{}, llm.CompletionReq{AttemptObserver: observer})
+	if err == nil || observer.starts != 1 || observer.finishes != 1 {
+		t.Fatalf("err=%v observer=%+v", err, observer)
+	}
+}
+
+type staticProviderStub struct {
+	resp llm.CompletionResp
+	err  error
+}
+
+func (p staticProviderStub) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
+	return p.resp, p.err
+}
+
+type attemptObserverStub struct {
+	starts, finishes int
+	model            string
+	resp             llm.CompletionResp
+	providerErr      error
+	finishErr        error
+}
+
+func (o *attemptObserverStub) StartAttempt(_ context.Context, model string) (string, error) {
+	o.starts++
+	o.model = model
+	return "attempt-1", nil
+}
+
+func (o *attemptObserverStub) FinishAttempt(_ context.Context, _ string, resp llm.CompletionResp, providerErr error) error {
+	o.finishes++
+	o.resp = resp
+	o.providerErr = providerErr
+	return o.finishErr
+}
 
 func TestStatusFromCredentialsMasksAPIKey(t *testing.T) {
 	updatedAt := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)

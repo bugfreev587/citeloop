@@ -20,10 +20,22 @@ limit sqlc.arg(limit_rows);
 
 -- name: MonthlySpend :one
 -- Cumulative cost for the current calendar month (cost breaker basis, §5.4).
-select coalesce(sum(cost_usd), 0)::numeric from generation_runs
-where project_id = $1
-  and status = 'ok'
-  and created_at >= date_trunc('month', now());
+-- ai_call_records is authoritative for new binaries. generation_runs remains
+-- in the sum so rolling old binaries and pre-ledger history are not lost; new
+-- binaries intentionally write zero cost to generation_runs.
+select (
+  coalesce((
+    select sum(call.cost_usd) from ai_call_records call
+    where call.project_id = sqlc.arg(project_id)
+      and call.status not in ('queued', 'skipped')
+      and call.started_at >= date_trunc('month', now())
+  ), 0)
+  + coalesce((
+    select sum(run.cost_usd) from generation_runs run
+    where run.project_id = sqlc.arg(project_id)
+      and run.created_at >= date_trunc('month', now())
+  ), 0)
+)::numeric;
 
 -- name: RecentRunFailures :one
 -- Consecutive failures heuristic for alerting (§5.2/§5.4).

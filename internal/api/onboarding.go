@@ -126,7 +126,7 @@ func (s *Server) runProjectOnboarding(ctx context.Context, in projectOnboardingI
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
+		ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, log)
 		if _, summary, err := ag.RunQuickProfile(ctx, in.ProjectID, in.SiteURL, cfg.Crawl); err != nil {
 			log.Warn("project onboarding quick profile failed", "project_id", in.ProjectID, "err", err)
 		} else {
@@ -248,7 +248,7 @@ func (s *Server) runInsightInventoryCrawl(ctx context.Context, in insightInvento
 		log.Warn("insight inventory crawl skipped: database unavailable", "project_id", in.ProjectID)
 		return
 	}
-	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search}, log)
+	ag := agents.NewInsight(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, log)
 	count, summary, err := ag.RunInventoryFromCrawl(ctx, in.ProjectID, in.LandingURL, in.Crawl)
 	if err != nil {
 		s.clearContextCrawlStarted(ctx, in.ProjectID)

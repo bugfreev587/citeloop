@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/markdownutil"
@@ -284,9 +285,10 @@ type QAOutput struct {
 
 // Deps bundles the collaborators every agent needs.
 type Deps struct {
-	Q      *db.Queries
-	LLM    llm.Provider
-	Search search.Provider
+	Q       *db.Queries
+	LLM     llm.Provider
+	Search  search.Provider
+	AICalls aicalls.Store
 }
 
 // agentName is the generation_runs.agent enum.
@@ -644,8 +646,11 @@ func ptr(s string) *string {
 	return &s
 }
 
-// recordRun persists a generation_runs row for observability and the cost
-// breaker (§5.4). It never fails the caller's flow.
+// recordRun persists a generation_runs row for legacy operational history. AI
+// spend lives only in ai_call_records for new binaries, preventing the monthly
+// cost breaker from counting the same provider attempt twice while old rolling
+// binaries continue to contribute their generation_runs cost. Model and token
+// metadata remain for API compatibility, but are not the accounting authority.
 func recordRun(ctx context.Context, q *db.Queries, projectID uuid.UUID, agent agentName,
 	in, out any, resp llm.CompletionResp, runErr error) {
 	status := "ok"
@@ -663,7 +668,7 @@ func recordRun(ctx context.Context, q *db.Queries, projectID uuid.UUID, agent ag
 		Output:    toJSON(out),
 		Model:     ptr(resp.Model),
 		Tokens:    &tok,
-		CostUsd:   pgutil.Numeric(resp.CostUSD),
+		CostUsd:   pgutil.Numeric(0),
 		Status:    status,
 		Error:     errStr,
 	})

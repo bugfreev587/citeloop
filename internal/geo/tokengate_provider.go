@@ -74,7 +74,7 @@ func (p TokenGateAnswerProvider) Observe(ctx context.Context, prompts []db.GeoPr
 	rows := make([]ProviderObservation, 0, len(prompts))
 	totalCost := 0.0
 	for _, prompt := range prompts {
-		row, cost, err := p.observePrompt(ctx, prompt)
+		row, cost, err := p.ObservePrompt(ctx, prompt)
 		if err != nil {
 			return rows, totalCost, err
 		}
@@ -84,7 +84,7 @@ func (p TokenGateAnswerProvider) Observe(ctx context.Context, prompts []db.GeoPr
 	return rows, totalCost, nil
 }
 
-func (p TokenGateAnswerProvider) observePrompt(ctx context.Context, prompt db.GeoPrompt) (ProviderObservation, float64, error) {
+func (p TokenGateAnswerProvider) ObservePrompt(ctx context.Context, prompt db.GeoPrompt) (ProviderObservation, float64, error) {
 	body := map[string]any{
 		"model":       p.model,
 		"messages":    []map[string]string{{"role": "user", "content": prompt.PromptText}},
@@ -104,14 +104,26 @@ func (p TokenGateAnswerProvider) observePrompt(ctx context.Context, prompt db.Ge
 		return ProviderObservation{}, 0, err
 	}
 	defer res.Body.Close()
-	raw, _ := io.ReadAll(res.Body)
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return ProviderObservation{}, 0, fmt.Errorf("tokengate GEO chat completions %d: %s", res.StatusCode, string(raw))
+	raw, readErr := io.ReadAll(res.Body)
+	if readErr != nil {
+		return ProviderObservation{}, 0, readErr
 	}
 	var out tokenGateGEOResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return ProviderObservation{}, 0, err
+	decodeErr := json.Unmarshal(raw, &out)
+	row, cost := tokenGateObservation(p, prompt, out)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return row, cost, fmt.Errorf("tokengate GEO chat completions %d: %s", res.StatusCode, string(raw))
 	}
+	if decodeErr != nil {
+		return row, cost, fmt.Errorf("%w: decode TokenGate GEO response: %v", ErrInvalidAnswerProviderResponse, decodeErr)
+	}
+	if strings.TrimSpace(row.AnswerSummary) == "" {
+		return row, cost, fmt.Errorf("%w: TokenGate GEO response has no answer content", ErrInvalidAnswerProviderResponse)
+	}
+	return row, cost, nil
+}
+
+func tokenGateObservation(p TokenGateAnswerProvider, prompt db.GeoPrompt, out tokenGateGEOResponse) (ProviderObservation, float64) {
 	content := ""
 	if len(out.Choices) > 0 {
 		content = out.Choices[0].Message.Content
@@ -121,14 +133,17 @@ func (p TokenGateAnswerProvider) observePrompt(ctx context.Context, prompt db.Ge
 		cost = out.Usage.TotalCost
 	}
 	return ProviderObservation{
-		PromptID:      prompt.ID,
-		Engine:        p.Engine(),
-		Locale:        providerLocale(prompt.Locale),
-		AnswerSummary: strings.TrimSpace(content),
-		CitedURLs:     uniqueStrings(out.Citations),
-		Confidence:    ConfidenceMedium,
-		CostUSD:       cost,
-	}, cost, nil
+		PromptID:         prompt.ID,
+		Engine:           p.Engine(),
+		Locale:           providerLocale(prompt.Locale),
+		AnswerSummary:    strings.TrimSpace(content),
+		CitedURLs:        uniqueStrings(out.Citations),
+		Confidence:       ConfidenceMedium,
+		PromptTokens:     out.Usage.PromptTokens,
+		CompletionTokens: out.Usage.CompletionTokens,
+		TotalTokens:      out.Usage.TotalTokens,
+		CostUSD:          cost,
+	}, cost
 }
 
 type tokenGateGEOResponse struct {
@@ -159,3 +174,4 @@ func firstNonBlank(values ...string) string {
 }
 
 var _ AnswerProvider = TokenGateAnswerProvider{}
+var _ PromptAnswerProvider = TokenGateAnswerProvider{}

@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Server) geoService(ctx context.Context) geopkg.Service {
-	service := geopkg.Service{Q: s.Q, EvidenceStore: s.Q, GrowthWriter: growthwork.NewService(s.Pool, s.Q, nil)}
+	service := geopkg.Service{Q: s.Q, EvidenceStore: s.Q, AICallStore: s.AICalls, GrowthWriter: growthwork.NewService(s.Pool, s.Q, nil)}
 	if provider := s.geoAnswerProvider(ctx); provider != nil {
 		service.AnswerProvider = provider
 	}

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -69,7 +70,7 @@ func (a *Strategist) Run(ctx context.Context, projectID uuid.UUID, cfg config.Pr
 		}
 		existing = append(existing, title+" — "+it.Url)
 	}
-	specs, resp, gerr := a.generate(ctx, profile.Profile, existing, snapshots, cfg)
+	specs, resp, gerr := a.generateTracked(ctx, projectID, profile.Profile, existing, snapshots, cfg)
 	specs = normalizeTopicSpecs(specs)
 
 	out := map[string]any{"degraded": degraded, "search": snapshots, "topics": specs}
@@ -121,6 +122,10 @@ func (a *Strategist) seedQueries(profileJSON json.RawMessage) []string {
 }
 
 func (a *Strategist) generate(ctx context.Context, profileJSON json.RawMessage, existing []string, snaps []search.Result, cfg config.ProjectConfig) ([]TopicSpec, llm.CompletionResp, error) {
+	return a.generateTracked(ctx, uuid.Nil, profileJSON, existing, snaps, cfg)
+}
+
+func (a *Strategist) generateTracked(ctx context.Context, projectID uuid.UUID, profileJSON json.RawMessage, existing []string, snaps []search.Result, cfg config.ProjectConfig) ([]TopicSpec, llm.CompletionResp, error) {
 	searchCtx := ""
 	for i, s := range snaps {
 		if i >= 20 {
@@ -143,7 +148,7 @@ SEARCH SIGNALS:
 %s`, cfg.ChannelMix.Blog*100, cfg.ChannelMix.Syndication*100,
 		clip(string(profileJSON), 3000), strings.Join(existing, "\n"), searchCtx)
 
-	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
+	resp, callID, err := completeTracked(ctx, a.AICalls, a.LLM, projectID, "growth_hypothesis", "project", projectID, "growth-strategist-v2", uuid.Nil, uuid.Nil, llm.CompletionReq{
 		System: "You are an SEO+GEO content strategist.",
 		Prompt: prompt, JSON: true, MaxTokens: 3000,
 	})
@@ -154,7 +159,8 @@ SEARCH SIGNALS:
 		Topics []TopicSpec `json:"topics"`
 	}
 	if err := extractJSON(resp.Text, &wrap); err != nil {
-		return nil, resp, fmt.Errorf("parse topics: %w", err)
+		ledgerErr := failTrackedOutput(ctx, a.AICalls, projectID, callID, "invalid_response")
+		return nil, resp, fmt.Errorf("parse topics: %w", errors.Join(err, ledgerErr))
 	}
 	return wrap.Topics, resp, nil
 }

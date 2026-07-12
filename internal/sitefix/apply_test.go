@@ -77,6 +77,66 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 	}
 }
 
+func TestCanonicalApplyPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: groundedOptimizationFix()}
+	store.fix.ID, store.fix.ProjectID, store.fix.Status = fixID, projectID, "approved"
+	generator := &fixGeneratorStub{store: store, err: errors.New("credential lookup failed"), skipAttempt: true}
+	_, err := (ApplyService{Store: store, Generator: generator, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), projectID, fixID)
+	if err == nil {
+		t.Fatal("expected preflight error")
+	}
+	if got := store.events[len(store.events)-1]; got != "finish_ai:skipped" {
+		t.Fatalf("events=%v", store.events)
+	}
+}
+
+func TestCanonicalApplyRejectsSilentObservableGeneration(t *testing.T) {
+	fix := groundedOptimizationFix()
+	fix.Status = "approved"
+	store := &applyStoreStub{fix: fix}
+	provider := silentSuccessSiteFixProvider{response: `{
+		"patch_snapshot":{"change":"make supported fact extractable"},"diff_snapshot":{"added_propositions":[]},
+		"resolution_criteria":{"acceptance":"supported fact remains sourced"},"source_file_paths":[],
+		"source_mapping_confidence":"low","source_mapping_reason":"manual mapping",
+		"grounding":{"context_profile_version":1,"primary_intent_before":"describe product","primary_intent_after":"describe product","preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"source_association_changes":[]}}`}
+	_, err := (ApplyService{Store: store, Generator: LLMApplicationGenerator{Provider: provider, Model: "test"}, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), fix.ProjectID, fix.ID)
+	if err == nil || store.events[len(store.events)-1] != "finish_ai:skipped" || slicesContain(store.events, "finalize") {
+		t.Fatalf("err=%v events=%v", err, store.events)
+	}
+}
+
+func TestCanonicalApplyRejectsSilentObservableGrounding(t *testing.T) {
+	fix := groundedOptimizationFix()
+	fix.Status = "approved"
+	store := &applyStoreStub{fix: fix}
+	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
+		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product", OpportunityKey: "doctor:" + fix.ID.String(), Status: "manual_apply_required",
+		SourceFilePaths: json.RawMessage(`[]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`), DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
+	}}
+	provider := silentSuccessSiteFixProvider{response: `{"approved":true,"primary_intent_preserved":true,"preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"intent_drift":false,"reason":"grounded"}`}
+	_, err := (ApplyService{Store: store, Generator: generator, Verifier: LLMPatchGroundingVerifier{Provider: provider, Model: "test"}}).Apply(context.Background(), fix.ProjectID, fix.ID)
+	if err == nil || store.events[len(store.events)-1] != "finish_verifier:skipped" || slicesContain(store.events, "finalize") {
+		t.Fatalf("err=%v events=%v", err, store.events)
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+type silentSuccessSiteFixProvider struct{ response string }
+
+func (silentSuccessSiteFixProvider) ObservesProviderAttempts() {}
+func (p silentSuccessSiteFixProvider) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
+	return llm.CompletionResp{Text: p.response, Provider: "silent", Model: "silent"}, nil
+}
+
 func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelfReport(t *testing.T) {
 	projectID, fixID := uuid.New(), uuid.New()
 	fix := groundedOptimizationFix()
@@ -149,15 +209,15 @@ func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *te
 	if strings.Contains(strings.Join(store.events, ","), "finalize") {
 		t.Fatalf("unverified patch was finalized: %v", store.events)
 	}
-	if got := store.events[len(store.events)-1]; got != "finish_verifier:failed" {
-		t.Fatalf("last event = %q, want failed verifier ledger completion; events=%v", got, store.events)
+	if got := store.events[len(store.events)-1]; got != "finish_verifier:skipped" {
+		t.Fatalf("last event = %q, want skipped verifier ledger completion because no provider call occurred; events=%v", got, store.events)
 	}
 }
 
 func TestDeterministicApplyDoesNotCallProviderWithoutAuthority(t *testing.T) {
 	fix := db.SiteFix{ID: uuid.New(), ProjectID: uuid.New(), TargetUrls: json.RawMessage(`["https://example.com/"]`), EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`), ProposedFix: json.RawMessage(`{"mutations":[{"field":"canonical","operation":"replace"}]}`), AcceptanceTests: json.RawMessage(`[{"type":"canonical_present"}]`)}
 	generationContext := GenerationContext{ProductProfile: json.RawMessage(`{}`), ObservedEvidence: fix.EvidenceSnapshot}
-	plan, result, err := (DeterministicApplicationGenerator{}).Generate(context.Background(), fix, generationContext)
+	plan, result, err := (DeterministicApplicationGenerator{}).Generate(context.Background(), fix, generationContext, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +238,7 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 	}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,19 +342,19 @@ func (s *applyStoreStub) FindApplication(_ context.Context, _ db.SiteFix) (db.Si
 	s.events = append(s.events, "find_application")
 	return s.existing, s.existing.ID != uuid.Nil, nil
 }
-func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ GenerationCall) (uuid.UUID, error) {
+func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
 	s.events = append(s.events, "start_ai")
 	s.startedCalls++
-	return uuid.New(), nil
+	return uuid.New(), &siteFixAttemptSpy{}, nil
 }
 func (s *applyStoreStub) FinishGeneration(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
 	s.events = append(s.events, "finish_ai:"+result.Status)
 	s.finishedCalls++
 	return nil
 }
-func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.SiteFix, _ GenerationCall, _ uuid.UUID) (uuid.UUID, error) {
+func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.SiteFix, _ GenerationCall, _ uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
 	s.events = append(s.events, "start_verifier")
-	return uuid.New(), nil
+	return uuid.New(), &siteFixAttemptSpy{}, nil
 }
 func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
 	s.events = append(s.events, "finish_verifier:"+result.Status)
@@ -310,15 +370,19 @@ func (s *applyStoreStub) Finalize(_ context.Context, fix db.SiteFix, plan Applic
 }
 
 type fixGeneratorStub struct {
-	store *applyStoreStub
-	plan  ApplicationPlan
-	err   error
+	store       *applyStoreStub
+	plan        ApplicationPlan
+	err         error
+	skipAttempt bool
 }
 
 func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "model", PromptVersion: "doctor-fix-v1", RequestFingerprint: "fingerprint"}
 }
-func (g *fixGeneratorStub) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext) (ApplicationPlan, GenerationResult, error) {
+func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+	if !g.skipAttempt {
+		_, _ = attempt.StartAttempt(ctx, "generator-test")
+	}
 	g.store.events = append(g.store.events, "provider")
 	g.store.providerSawLifecycleTransaction = g.store.lifecycleTransactionOpen
 	plan, result, err := g.generate()
@@ -346,7 +410,8 @@ func (v *patchVerifierStub) Describe(db.SiteFix, GenerationContext, ApplicationP
 	return GenerationCall{Provider: "test", Model: "verifier", PromptVersion: "doctor-patch-grounding-v1", RequestFingerprint: "verifier-fingerprint"}
 }
 
-func (v *patchVerifierStub) Verify(_ context.Context, _ db.SiteFix, _ GenerationContext, _ ApplicationPlan) (PatchVerification, GenerationResult, error) {
+func (v *patchVerifierStub) Verify(ctx context.Context, _ db.SiteFix, _ GenerationContext, _ ApplicationPlan, attempt siteFixAICallAttempt) (PatchVerification, GenerationResult, error) {
+	_, _ = attempt.StartAttempt(ctx, "verifier-test")
 	v.store.events = append(v.store.events, "verifier")
 	v.store.verifierSawLifecycleTransaction = v.store.lifecycleTransactionOpen
 	if v.err != nil {
@@ -354,3 +419,14 @@ func (v *patchVerifierStub) Verify(_ context.Context, _ db.SiteFix, _ Generation
 	}
 	return v.verification, GenerationResult{Provider: "test", Model: "verifier", Status: "ok"}, nil
 }
+
+type siteFixAttemptSpy struct{ started bool }
+
+func (s *siteFixAttemptSpy) StartAttempt(context.Context, string) (string, error) {
+	s.started = true
+	return "site-fix-attempt", nil
+}
+func (*siteFixAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
+	return nil
+}
+func (s *siteFixAttemptSpy) Started() bool { return s.started }

@@ -250,6 +250,18 @@ func TestOpenAIChatCompletePreservesResolvedUsageOnProviderError(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatCompletePreservesUsageWhenChoicesAreMissing(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"model":"gpt-5.1","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":1,"total_tokens":8}}`))}, nil
+	})
+	p := NewOpenAIChat("key", "https://tokengate.example/v1", "gpt-5.1")
+	p.client = &http.Client{Transport: transport}
+	resp, err := p.Complete(context.Background(), CompletionReq{Prompt: "write", Model: "gpt-5.1", DisableProviderFallback: true})
+	if err == nil || resp.Provider != "tokengate" || resp.Model != "gpt-5.1" || resp.Tokens != 8 || resp.CostUSD <= 0 {
+		t.Fatalf("resp=%+v err=%v", resp, err)
+	}
+}
+
 func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	p := NewOpenAIChat("", "https://example.test/v1", "claude-haiku-4-5-20251001")
 	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "hi"}); err == nil {
