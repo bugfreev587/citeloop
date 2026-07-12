@@ -51,6 +51,7 @@ type AuditResult struct {
 	SitemapState      string
 	BodyExtractable   bool
 	RawDetails        map[string]any
+	ObservedAt        time.Time
 }
 
 type Auditor struct {
@@ -134,6 +135,8 @@ func (a Auditor) client() *http.Client {
 }
 
 func (a Auditor) fetchRobots(ctx context.Context, siteURL string) RobotsRules {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	base, err := url.Parse(strings.TrimSpace(siteURL))
 	if err != nil {
 		return RobotsRules{byAgent: map[string][]robotsRule{}}

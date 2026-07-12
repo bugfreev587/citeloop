@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/evidence"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,6 +62,7 @@ type Store interface {
 
 type Service struct {
 	Q              Store
+	EvidenceStore  evidence.Store
 	GrowthWriter   GrowthOpportunityWriter
 	HTTPClient     *http.Client
 	AnswerProvider AnswerProvider
@@ -83,6 +86,7 @@ type CrawlerAuditResult struct {
 	Snapshots       []db.AiCrawlerAccessSnapshot `json:"snapshots"`
 	CheckedURLs     int                          `json:"checked_urls"`
 	CreatedBlockers int                          `json:"created_blockers"`
+	SkippedURLs     []string                     `json:"skipped_urls"`
 	DataSourceNotes []string                     `json:"data_source_notes"`
 }
 
@@ -148,17 +152,20 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 	if err != nil {
 		return finish("error", result, err)
 	}
-	urls := sampleCrawlerAuditURLs(siteURL, req.URLs, articles)
+	urls, omittedURLs := sampleCrawlerAuditURLs(siteURL, req.URLs, articles)
 	if len(urls) == 0 {
 		return finish("error", result, errors.New("geo crawler audit requires at least one URL"))
 	}
 	result.CheckedURLs = len(urls)
+	result.SkippedURLs = omittedURLs
+	if len(omittedURLs) > 0 {
+		result.DataSourceNotes = append(result.DataSourceNotes, "crawler_audit_url_cap_coverage_gap")
+	}
 
-	auditResults := Auditor{HTTPClient: s.HTTPClient, Now: s.Now}.Audit(ctx, AuditRequest{
-		SiteURL:          siteURL,
-		URLs:             urls,
-		TargetUserAgents: req.TargetUserAgents,
-	})
+	auditResults, err := s.collectCrawlerAuditEvidence(ctx, projectID, run.ID, siteURL, urls, omittedURLs, req.TargetUserAgents, now)
+	if err != nil {
+		return finish("error", result, err)
+	}
 
 	for _, audited := range auditResults {
 		snapshot, err := s.Q.UpsertAICrawlerAccessSnapshot(ctx, db.UpsertAICrawlerAccessSnapshotParams{
@@ -178,7 +185,7 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 			SitemapState:      stringPtr(audited.SitemapState),
 			BodyExtractable:   audited.BodyExtractable,
 			RawDetails:        jsonBytes(auditDetails(audited)),
-			CheckedAt:         pgutil.TS(now),
+			CheckedAt:         pgutil.TS(firstNonZeroTime(audited.ObservedAt, now)),
 		})
 		if err != nil {
 			return finish("error", result, err)
@@ -187,7 +194,13 @@ func (s Service) RunCrawlerAudit(ctx context.Context, projectID uuid.UUID, req C
 
 	}
 
-	return finish("ok", result, nil)
+	status := "ok"
+	_, auditCompleteness, _, _, failedAuditURLs := crawlerEvidenceQuality(auditResults, len(omittedURLs))
+	if auditCompleteness < 1 {
+		status = "degraded"
+		result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("crawler_audit_coverage_gap:%d", len(failedAuditURLs)+len(omittedURLs)))
+	}
+	return finish(status, result, nil)
 }
 
 func effectiveTargetUserAgents(requested []string) []string {
@@ -222,7 +235,7 @@ func (s Service) now() time.Time {
 	return time.Now().UTC()
 }
 
-func sampleCrawlerAuditURLs(siteURL string, requested []string, articles []db.Article) []string {
+func sampleCrawlerAuditURLs(siteURL string, requested []string, articles []db.Article) ([]string, []string) {
 	values := []string{siteURL}
 	values = append(values, requested...)
 	for _, article := range articles {
@@ -239,7 +252,20 @@ func sampleCrawlerAuditURLs(siteURL string, requested []string, articles []db.Ar
 		}
 		out = append(out, resolved)
 	}
-	return uniqueStrings(out)
+	out = uniqueStrings(out)
+	if len(out) > 50 {
+		return out[:50], out[50:]
+	}
+	return out, []string{}
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Now().UTC()
 }
 
 func absoluteURL(rawURL, siteURL string) (string, bool) {

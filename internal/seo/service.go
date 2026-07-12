@@ -264,14 +264,28 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	}
 	if !isProviderAttemptable(integrations, ProviderGSC) {
 		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_missing")
+		if err := s.recordGoogleCoverageGap(ctx, projectID, run.ID, "gsc", stringPtrValue(prop.GscSiteUrl), "missing", "integration_not_connected", "not_authorized"); err != nil {
+			return finish("error", result, err)
+		}
 	} else if s.GoogleData == nil {
 		result.DataSourceNotes = append(result.DataSourceNotes, "google_service_account_env_missing")
 		result.ConnectedGSC = false
+		if err := s.recordGoogleCoverageGap(ctx, projectID, run.ID, "gsc", stringPtrValue(prop.GscSiteUrl), "provider_unavailable", "provider_not_configured", "unknown"); err != nil {
+			return finish("error", result, err)
+		}
+		if prop.Ga4PropertyID != nil && strings.TrimSpace(*prop.Ga4PropertyID) != "" {
+			if err := s.recordGoogleCoverageGap(ctx, projectID, run.ID, "ga4", strings.TrimSpace(*prop.Ga4PropertyID), "provider_unavailable", "provider_not_configured", "unknown"); err != nil {
+				return finish("error", result, err)
+			}
+		}
 	} else if prop.GscSiteUrl == nil || strings.TrimSpace(*prop.GscSiteUrl) == "" {
 		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_site_url_missing")
 		result.ConnectedGSC = false
+		if err := s.recordGoogleCoverageGap(ctx, projectID, run.ID, "gsc", "", "missing", "site_url_missing", "authorized"); err != nil {
+			return finish("error", result, err)
+		}
 	} else {
-		if err := s.syncGoogleMetrics(ctx, projectID, prop, integrations, now, &result); err != nil {
+		if err := s.syncGoogleMetrics(ctx, projectID, run.ID, prop, integrations, now, &result); err != nil {
 			result.DataSourceNotes = append(result.DataSourceNotes, "google_metrics_error")
 			result.ConnectedGSC = false
 			errText := err.Error()
@@ -347,7 +361,7 @@ func (s Service) Sync(ctx context.Context, projectID uuid.UUID, siteURL string) 
 	return finish(status, result, nil)
 }
 
-func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, prop db.SeoProperty, integrations []db.SeoIntegration, now time.Time, result *SyncResult) error {
+func (s Service) syncGoogleMetrics(ctx context.Context, projectID, seoRunID uuid.UUID, prop db.SeoProperty, integrations []db.SeoIntegration, now time.Time, result *SyncResult) error {
 	if s.GoogleData == nil {
 		return nil
 	}
@@ -367,14 +381,13 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 	}
 	start := end.AddDate(0, 0, -window+1)
 	cfg := decodeNormalizationConfig(prop.UrlNormalizationConfig)
-	gsc, err := s.GoogleData.FetchSearchConsole(ctx, googledata.SearchConsoleRequest{
-		SiteURL:   *prop.GscSiteUrl,
-		StartDate: start,
-		EndDate:   end,
-		RowLimit:  25000,
-	})
-	if err != nil {
-		return err
+	gsc, gscReused, err := s.fetchSearchConsoleEvidence(ctx, projectID, seoRunID, *prop.GscSiteUrl, start, end)
+	gscFetchErr := err
+	if gscReused {
+		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_shared_evidence_reused")
+	}
+	if gscFetchErr != nil {
+		result.DataSourceNotes = append(result.DataSourceNotes, "gsc_shared_evidence_partial_or_failed")
 	}
 	for _, row := range gsc.PageRows {
 		normalized, err := NormalizeURL(row.PageURL, prop.SiteUrl, cfg)
@@ -439,25 +452,32 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 		}
 	}
 	result.DataSourceNotes = append(result.DataSourceNotes, fmt.Sprintf("gsc_rows:%d/%d/%d", len(gsc.PageRows), len(gsc.QueryRows), len(gsc.AppearanceRows)))
-	_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
-		ProjectID:      projectID,
-		Provider:       ProviderGSC,
-		Status:         "connected",
-		CredentialRef:  integrationCredentialRef(integrations, ProviderGSC),
-		LastVerifiedAt: pgutil.TS(s.now()),
-	})
+	if gscFetchErr == nil {
+		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+			ProjectID: projectID, Provider: ProviderGSC, Status: "connected",
+			CredentialRef: integrationCredentialRef(integrations, ProviderGSC), LastVerifiedAt: pgutil.TS(s.now()),
+		})
+	} else {
+		message := gscFetchErr.Error()
+		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
+			ProjectID: projectID, Provider: ProviderGSC, Status: "error",
+			CredentialRef: integrationCredentialRef(integrations, ProviderGSC), LastError: &message,
+		})
+	}
 	if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" || !isProviderAttemptable(integrations, ProviderGA4) {
 		if prop.Ga4PropertyID == nil || strings.TrimSpace(*prop.Ga4PropertyID) == "" {
 			result.DataSourceNotes = append(result.DataSourceNotes, "ga4_property_missing")
+			if err := s.recordGoogleCoverageGap(ctx, projectID, seoRunID, "ga4", "", "missing", "property_id_missing", "unknown"); err != nil {
+				return err
+			}
+		} else if !isProviderAttemptable(integrations, ProviderGA4) {
+			if err := s.recordGoogleCoverageGap(ctx, projectID, seoRunID, "ga4", strings.TrimSpace(*prop.Ga4PropertyID), "missing", "integration_not_connected", "not_authorized"); err != nil {
+				return err
+			}
 		}
-		return nil
+		return gscFetchErr
 	}
-	ga4Rows, err := s.GoogleData.FetchAnalytics(ctx, googledata.AnalyticsRequest{
-		PropertyID: *prop.Ga4PropertyID,
-		StartDate:  start,
-		EndDate:    end,
-		RowLimit:   25000,
-	})
+	ga4Rows, ga4Reused, err := s.fetchAnalyticsEvidence(ctx, projectID, seoRunID, *prop.Ga4PropertyID, start, end)
 	if err != nil {
 		status, errText, note := ga4IntegrationFailureForError(err)
 		_, _ = s.Q.UpsertSEOIntegration(ctx, db.UpsertSEOIntegrationParams{
@@ -469,7 +489,10 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 			LastError:      &errText,
 		})
 		result.DataSourceNotes = append(result.DataSourceNotes, note)
-		return nil
+		return gscFetchErr
+	}
+	if ga4Reused {
+		result.DataSourceNotes = append(result.DataSourceNotes, "ga4_shared_evidence_reused")
 	}
 	for _, row := range ga4Rows {
 		rawURL := absolutePageURL(prop.SiteUrl, row.PagePath)
@@ -500,7 +523,7 @@ func (s Service) syncGoogleMetrics(ctx context.Context, projectID uuid.UUID, pro
 		CredentialRef:  integrationCredentialRef(integrations, ProviderGA4),
 		LastVerifiedAt: pgutil.TS(s.now()),
 	})
-	return nil
+	return gscFetchErr
 }
 
 func ga4IntegrationFailureForError(err error) (status string, message string, note string) {

@@ -350,6 +350,21 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 	if human.Status == "healthy" && !doctorCoverageComplete(coverage) {
 		human.Status = "needs_attention"
 	}
+	consumerIDs := []uuid.UUID{}
+	for _, check := range checks {
+		consumerIDs = append(consumerIDs, check.RunID)
+	}
+	sharedEvidence, err := s.doctorConsumedEvidence(ctx, run.ProjectID, "seo_run", consumerIDs)
+	if err != nil {
+		return s.failDoctorRun(ctx, run, DoctorStageWritingReport, "Could not link consumed SEO evidence provenance.", err)
+	}
+	if geoRun.ID != uuid.Nil {
+		geoEvidence, err := s.doctorConsumedEvidence(ctx, run.ProjectID, "geo_run", []uuid.UUID{geoRun.ID})
+		if err != nil {
+			return s.failDoctorRun(ctx, run, DoctorStageWritingReport, "Could not link consumed GEO evidence provenance.", err)
+		}
+		sharedEvidence = append(sharedEvidence, geoEvidence...)
+	}
 	run, err = s.Q.CompleteSEODoctorRun(ctx, db.CompleteSEODoctorRunParams{
 		ID:              run.ID,
 		ProjectID:       run.ProjectID,
@@ -365,6 +380,7 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 			"healthy_coverage": coverage,
 			"growth_rerouted":  len(growthCandidates),
 			"doctor_ai_review": aiState,
+			"shared_evidence":  sharedEvidence,
 		}),
 		HealthyCoverage: mustJSON(coverage),
 		FinishedAt:      pgtype.Timestamptz{Time: s.now(), Valid: true},
@@ -373,6 +389,42 @@ func (s Service) RunDoctor(ctx context.Context, projectID, runID uuid.UUID) (Doc
 		return DoctorReport{}, err
 	}
 	return s.currentDoctorReport(ctx, run)
+}
+
+func (s Service) doctorConsumedEvidence(ctx context.Context, projectID uuid.UUID, consumerType string, consumerIDs []uuid.UUID) ([]map[string]any, error) {
+	consumerIDs = uniqueUUIDs(consumerIDs)
+	if len(consumerIDs) == 0 {
+		return []map[string]any{}, nil
+	}
+	runs, err := s.Q.ListEvidenceRunsForConsumers(ctx, db.ListEvidenceRunsForConsumersParams{ProjectID: projectID, ConsumerType: consumerType, ConsumerIds: consumerIDs})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, map[string]any{
+			"run_id": run.ID, "attempt_number": run.ConsumedAttemptNumber, "source": run.Source,
+			"status": run.ConsumedStatus, "started_at": run.ConsumedStartedAt, "finished_at": run.ConsumedFinishedAt,
+			"collection_spec_fingerprint": run.CollectionSpecFingerprint,
+		})
+	}
+	return out, nil
+}
+
+func uniqueUUIDs(values []uuid.UUID) []uuid.UUID {
+	seen := map[uuid.UUID]struct{}{}
+	out := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		if value == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func doctorAssessedResolutionScopes(checks []db.TechnicalCheck, snapshots []db.AiCrawlerAccessSnapshot, geoRunComplete bool) ([]string, []string) {
