@@ -59,7 +59,7 @@ func (a *Insight) Run(ctx context.Context, projectID uuid.UUID, landingURL strin
 
 	// 1) Product Profile from landing + article corpus.
 	profileStarted := time.Now()
-	profile, resp, err := a.extractProfile(ctx, res)
+	profile, resp, err := a.extractProfileTracked(ctx, projectID, res)
 	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL}, map[string]any{
 		"profile":       profile,
@@ -106,7 +106,7 @@ func (a *Insight) RunQuickProfile(ctx context.Context, projectID uuid.UUID, land
 	summary := summarizeCrawl(landingURL, res)
 
 	profileStarted := time.Now()
-	profile, resp, err := a.extractProfile(ctx, res)
+	profile, resp, err := a.extractProfileTracked(ctx, projectID, res)
 	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "landing"}, map[string]any{
 		"profile":        profile,
@@ -156,7 +156,7 @@ func (a *Insight) RunInventoryFromCrawl(ctx context.Context, projectID uuid.UUID
 	}, llm.CompletionResp{}, nil)
 
 	profileStarted := time.Now()
-	profile, resp, err := a.extractProfile(ctx, res)
+	profile, resp, err := a.extractProfileTracked(ctx, projectID, res)
 	profileDurationMS := elapsedMS(profileStarted)
 	recordRun(ctx, a.Q, projectID, agentInsight, map[string]any{"step": "profile", "landing": landingURL, "scope": "full_crawl"}, map[string]any{
 		"profile":        profile,
@@ -300,7 +300,7 @@ func (a *Insight) persistInventory(ctx context.Context, projectID uuid.UUID, res
 			for page := range jobs {
 				started := time.Now()
 				pageCtx, cancel := a.inventoryExtractionContext(ctx)
-				item, resp, ierr := a.extractInventory(pageCtx, page)
+				item, resp, ierr := a.extractInventoryTracked(pageCtx, projectID, page)
 				cancel()
 				results <- inventoryExtractionResult{
 					page:       page,
@@ -379,6 +379,10 @@ func elapsedMS(started time.Time) int64 {
 }
 
 func (a *Insight) extractProfile(ctx context.Context, res *crawl.Result) (*Profile, llm.CompletionResp, error) {
+	return a.extractProfileTracked(ctx, uuid.Nil, res)
+}
+
+func (a *Insight) extractProfileTracked(ctx context.Context, projectID uuid.UUID, res *crawl.Result) (*Profile, llm.CompletionResp, error) {
 	corpus := ""
 	if res.Landing != nil {
 		corpus = clip(res.Landing.Title+"\n"+res.Landing.Text, 6000)
@@ -395,7 +399,7 @@ Only use facts present in the content.
 
 CONTENT:
 %s`, corpus)
-	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
+	resp, callID, err := completeTracked(ctx, a.AICalls, a.LLM, projectID, "evidence", "project", projectID, "profile-extraction-v2", uuid.Nil, uuid.Nil, llm.CompletionReq{
 		System: "You are a product analyst extracting verifiable product facts.",
 		Prompt: prompt, JSON: true, MaxTokens: 2000,
 	})
@@ -404,19 +408,24 @@ CONTENT:
 	}
 	var p Profile
 	if err := extractJSON(resp.Text, &p); err != nil {
-		return nil, resp, fmt.Errorf("parse profile: %w", err)
+		ledgerErr := failTrackedOutput(ctx, a.AICalls, projectID, callID, "invalid_response")
+		return nil, resp, fmt.Errorf("parse profile: %w", errors.Join(err, ledgerErr))
 	}
 	return &p, resp, nil
 }
 
 func (a *Insight) extractInventory(ctx context.Context, page *crawl.Page) (*InventoryItem, llm.CompletionResp, error) {
+	return a.extractInventoryTracked(ctx, uuid.Nil, page)
+}
+
+func (a *Insight) extractInventoryTracked(ctx context.Context, projectID uuid.UUID, page *crawl.Page) (*InventoryItem, llm.CompletionResp, error) {
 	prompt := fmt.Sprintf(`[[INSIGHT_INVENTORY]] Summarize this article for a content inventory.
 Return JSON: {title, target_keyword, topics[], summary, evidence_snippets[]}.
 evidence_snippets must be verbatim factual sentences about the product, usable as QA evidence.
 
 ARTICLE (%s):
 %s`, page.URL, clip(page.Title+"\n"+page.Text, 6000))
-	resp, err := a.LLM.Complete(ctx, llm.CompletionReq{
+	resp, callID, err := completeTracked(ctx, a.AICalls, a.LLM, projectID, "evidence", "project", projectID, "inventory-extraction-v2", uuid.Nil, uuid.Nil, llm.CompletionReq{
 		System: "You extract structured content inventory with verbatim evidence.",
 		Prompt: prompt, JSON: true, MaxTokens: 1500,
 	})
@@ -425,7 +434,8 @@ ARTICLE (%s):
 	}
 	var item InventoryItem
 	if err := extractJSON(resp.Text, &item); err != nil {
-		return nil, resp, fmt.Errorf("parse inventory: %w", err)
+		ledgerErr := failTrackedOutput(ctx, a.AICalls, projectID, callID, "invalid_response")
+		return nil, resp, fmt.Errorf("parse inventory: %w", errors.Join(err, ledgerErr))
 	}
 	return &item, resp, nil
 }

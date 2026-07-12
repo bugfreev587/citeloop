@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -103,6 +104,7 @@ type AICallStart struct {
 	PromptVersion      string
 	RequestFingerprint string
 	Status             string
+	ErrorCode          string
 }
 
 type AICallFinish struct {
@@ -114,6 +116,8 @@ type AICallFinish struct {
 	CompletionTokens int
 	TotalTokens      int
 	CostUSD          float64
+	Provider         string
+	Model            string
 }
 
 type ReviewHold struct {
@@ -158,10 +162,15 @@ type ArbitrationStore interface {
 	MaterializeBuckets(context.Context, uuid.UUID, []string) error
 	ReadSnapshot(context.Context, uuid.UUID, []string) (BucketSnapshot, error)
 	LoadConfig(context.Context, uuid.UUID) (ArbitrationConfig, error)
-	StartAICall(context.Context, AICallStart) (uuid.UUID, error)
+	StartAICall(context.Context, AICallStart) (uuid.UUID, discoveryAICallAttempt, error)
 	FinishAICall(context.Context, AICallFinish) error
 	SavePreparedDecision(context.Context, PreparedDecision) (PreparedDecision, error)
 	SaveReviewHold(context.Context, ReviewHold) error
+}
+
+type discoveryAICallAttempt interface {
+	llm.AttemptObserver
+	Started() bool
 }
 
 type ArbitrationService struct {
@@ -301,21 +310,34 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 		base.Status = ArbitrationStatusHeld
 		return s.persistHold(ctx, candidate, snapshot, base)
 	}
-	if s.comparator == nil {
-		base.Disposition = DispositionProviderFailure
-		base.Decision = DecisionHold
-		base.Reason = "semantic comparison provider is unavailable"
-		base.Status = ArbitrationStatusHeld
-		return s.persistHold(ctx, candidate, snapshot, base)
-	}
 	semanticRequest := SemanticRequest{
 		CandidateID:      candidate.ID,
 		Candidate:        candidate.Candidate,
 		Identity:         candidate.Identity,
 		PossibleOverlaps: possible,
 	}
-	requestFingerprint := arbitrationRequestFingerprint(candidate, snapshotFingerprint)
-	callID, err := s.store.StartAICall(ctx, AICallStart{
+	_, requestFingerprint, err := buildSemanticPrompt(semanticRequest, config.Model)
+	if err != nil {
+		return PreparedDecision{}, fmt.Errorf("build arbitration AI request: %w", err)
+	}
+	if s.comparator == nil {
+		callID, _, startErr := s.store.StartAICall(ctx, AICallStart{
+			ProjectID: projectID, RunID: candidate.CandidateRunID(), CandidateID: candidate.ID,
+			Provider: firstNonEmpty(config.Provider, "tokengate"), Model: config.Model,
+			PromptVersion: SemanticPromptVersionV1, RequestFingerprint: requestFingerprint,
+			Status: "skipped", ErrorCode: "provider_unavailable",
+		})
+		if startErr != nil {
+			return PreparedDecision{}, fmt.Errorf("record skipped arbitration AI call: %w", startErr)
+		}
+		base.AICallID = callID
+		base.Disposition = DispositionProviderFailure
+		base.Decision = DecisionHold
+		base.Reason = "semantic comparison provider is unavailable"
+		base.Status = ArbitrationStatusHeld
+		return s.persistHold(ctx, candidate, snapshot, base)
+	}
+	callID, attempt, err := s.store.StartAICall(ctx, AICallStart{
 		ProjectID:          projectID,
 		RunID:              candidate.CandidateRunID(),
 		CandidateID:        candidate.ID,
@@ -328,11 +350,26 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	if err != nil {
 		return PreparedDecision{}, fmt.Errorf("start arbitration AI call: %w", err)
 	}
+	semanticRequest.AttemptObserver = attempt
 	decision, usage, compareErr := s.comparator.Compare(ctx, semanticRequest)
+	if !attempt.Started() {
+		compareErr = errors.Join(compareErr, errors.New("semantic comparison provider was not called"))
+	}
 	if compareErr != nil {
-		_ = s.store.FinishAICall(context.WithoutCancel(ctx), AICallFinish{
-			ID: callID, ProjectID: projectID, Status: "failed", ErrorCode: "provider_failure",
-		})
+		errorCode := "provider_failure"
+		status := "failed"
+		if !attempt.Started() {
+			status, errorCode = "skipped", "provider_not_called"
+		} else if errors.Is(compareErr, ErrInvalidSemanticResponse) {
+			errorCode = "invalid_response"
+		}
+		if finishErr := s.store.FinishAICall(context.WithoutCancel(ctx), AICallFinish{
+			ID: callID, ProjectID: projectID, Status: status, ErrorCode: errorCode,
+			PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+			TotalTokens: usage.TotalTokens, CostUSD: usage.CostUSD, Provider: usage.Provider, Model: usage.Model,
+		}); finishErr != nil {
+			return PreparedDecision{}, errors.Join(compareErr, fmt.Errorf("finish arbitration AI call: %w", finishErr))
+		}
 		base.AICallID = callID
 		base.Disposition = DispositionProviderFailure
 		base.Decision = DecisionHold
@@ -342,7 +379,8 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 	if err := s.store.FinishAICall(ctx, AICallFinish{
 		ID: callID, ProjectID: projectID, Status: "ok",
-		TotalTokens: usage.TotalTokens, CostUSD: usage.CostUSD,
+		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
+		TotalTokens: usage.TotalTokens, CostUSD: usage.CostUSD, Provider: usage.Provider, Model: usage.Model,
 	}); err != nil {
 		return PreparedDecision{}, fmt.Errorf("finish arbitration AI call: %w", err)
 	}

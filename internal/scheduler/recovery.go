@@ -116,7 +116,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	switch {
 	case articleCanAutoFix(claimed) && (claimed.RepairAttempts < draftRepairBudget || articleShouldBypassRecoveryBudget(claimed)):
 		// QA evaluated the draft and flagged a safe, editor-fixable issue.
-		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+		writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 		updated, err := writer.RepairArticle(ctx, projectID, claimed.ID)
 		if err != nil {
 			return err
@@ -125,7 +125,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	case !articleHasClaimMap(claimed) && claimed.RecoveryAttempts <= maxRequalifyBeforeRegen:
 		// QA never returned a claim map (infrastructure/parse failure, not a
 		// content problem) — re-run QA; transient failures clear here.
-		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 		updated, err := qa.Requalify(ctx, projectID, claimed.ID)
 		if err != nil {
 			return err
@@ -134,7 +134,7 @@ func (s *Scheduler) recoverArticle(ctx context.Context, q *db.Queries, projectID
 	case articleHasClaimMap(claimed):
 		// QA evaluated but the draft is still blocking and not auto-fixable; one
 		// more QA pass before we give the topic a fresh draft.
-		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+		qa := agents.NewQA(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 		updated, err := qa.Requalify(ctx, projectID, claimed.ID)
 		if err != nil {
 			return err
@@ -188,8 +188,8 @@ func (s *Scheduler) regenerateOrEscalate(ctx context.Context, q *db.Queries, pro
 	if err != nil {
 		return err
 	}
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
-	created, err := writer.Generate(ctx, projectID, genTopic)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
+	created, err := writer.Generate(agents.WithAICallRetry(ctx), projectID, genTopic)
 	if err != nil {
 		return err
 	}

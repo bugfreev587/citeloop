@@ -1211,7 +1211,7 @@ func (s *Scheduler) refreshContextForProject(ctx context.Context, q *db.Queries,
 	if _, err := q.UpdateProfile(ctx, db.UpdateProfileParams{ID: active.ID, Profile: startedProfile, SourceUrls: active.SourceUrls}); err != nil {
 		return err
 	}
-	ag := agents.NewInsight(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	ag := agents.NewInsight(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 	count, summary, err := ag.RunInventoryFromCrawl(ctx, p.ID, cfg.SiteURL, lightweightContextCrawlConfig(cfg.Crawl))
 	if err != nil {
 		_, _ = q.UpdateProfile(ctx, db.UpdateProfileParams{
@@ -1288,7 +1288,7 @@ func (s *Scheduler) generateForProject(ctx context.Context, p db.Project) error 
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 	for _, t := range candidates {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -1506,7 +1506,7 @@ func (s *Scheduler) generateDueScheduledForProject(ctx context.Context, p db.Pro
 		return err
 	}
 	q := db.New(s.Pool)
-	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search}, s.Log)
+	writer := agents.NewWriter(agents.Deps{Q: q, LLM: s.LLM, Search: s.Search, AICalls: q}, s.Log)
 	for _, t := range due {
 		s.generateReservedCandidate(ctx, q, p, writer, t)
 	}
@@ -1579,6 +1579,7 @@ func (s *Scheduler) geoService(ctx context.Context, q *db.Queries, comparator di
 	return geo.Service{
 		Q:              q,
 		EvidenceStore:  q,
+		AICallStore:    q,
 		GrowthWriter:   growthwork.NewService(s.Pool, q, comparator),
 		HTTPClient:     s.httpClient,
 		AnswerProvider: s.geoAnswerProvider(ctx),

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -32,6 +33,13 @@ func NewQA(d Deps, log *slog.Logger) *QA {
 
 // Check audits content against the project's profile + inventory evidence.
 func (qa *QA) Check(ctx context.Context, projectID uuid.UUID, contentMD string, profileJSON json.RawMessage) (*QAOutput, llm.CompletionResp, error) {
+	return qa.CheckForObject(ctx, projectID, "project", projectID, contentMD, profileJSON)
+}
+
+// CheckForObject preserves the exact content object linkage in the canonical
+// AI call ledger. Pre-persistence draft QA links to its topic; persisted review
+// QA links directly to the article.
+func (qa *QA) CheckForObject(ctx context.Context, projectID uuid.UUID, objectType string, objectID uuid.UUID, contentMD string, profileJSON json.RawMessage) (*QAOutput, llm.CompletionResp, error) {
 	inv, _ := qa.Q.ListInventory(ctx, projectID)
 	var evidence string
 	for _, it := range inv {
@@ -65,7 +73,7 @@ EVIDENCE SNIPPETS:
 ARTICLE:
 %s`, clip(string(profileJSON), 2000), clip(evidence, 3000), clip(contentMD, 6000))
 
-	out, resp, err := qa.completeQAWithRetry(ctx, llm.CompletionReq{
+	out, resp, lastCallID, err := qa.completeQAWithRetryForObject(ctx, projectID, objectType, objectID, uuid.Nil, uuid.Nil, llm.CompletionReq{
 		System: "You are an evidence-aware QA auditor. Unsupported material product claims block publication, but the editor should fix the draft whenever possible.",
 		// Roomy budget: a long article's claims array must fit in one response, or
 		// the JSON truncates and parses as "unexpected EOF" (§5.3 reliability).
@@ -75,7 +83,7 @@ ARTICLE:
 		// Every attempt failed to call or parse the model — a transient infra
 		// failure, not a content verdict. Try the smaller, stricter compact prompt
 		// before giving up so "Re-run QA" doesn't dead-end on a passing draft.
-		fallback, fallbackResp, fallbackErr := qa.compactCheck(ctx, profileJSON, evidence, contentMD)
+		fallback, fallbackResp, fallbackErr := qa.compactCheckForObject(ctx, projectID, objectType, objectID, lastCallID, profileJSON, evidence, contentMD)
 		if fallbackErr != nil {
 			return nil, fallbackResp, fmt.Errorf("parse qa: %w; compact fallback failed: %w", err, fallbackErr)
 		}
@@ -105,21 +113,37 @@ const qaParseRetries = 2
 // no attempt produced a valid QA object, so the caller can fall back or surface
 // it as a genuine infrastructure failure.
 func (qa *QA) completeQAWithRetry(ctx context.Context, req llm.CompletionReq) (QAOutput, llm.CompletionResp, error) {
+	out, resp, _, err := qa.completeQAWithRetryForObject(ctx, uuid.Nil, "", uuid.Nil, uuid.Nil, uuid.Nil, req)
+	return out, resp, err
+}
+
+func (qa *QA) completeQAWithRetryForObject(ctx context.Context, projectID uuid.UUID, objectType string, objectID, parentCallID, causedByCallID uuid.UUID, req llm.CompletionReq) (QAOutput, llm.CompletionResp, uuid.UUID, error) {
 	var lastResp llm.CompletionResp
 	var lastErr error
+	lastCallID := parentCallID
 	for attempt := 0; attempt <= qaParseRetries; attempt++ {
-		resp, err := qa.LLM.Complete(ctx, req)
+		attemptCause := uuid.Nil
+		if attempt == 0 {
+			attemptCause = causedByCallID
+		}
+		resp, callID, err := completeTracked(ctx, qa.AICalls, qa.LLM, projectID, "qa", objectType, objectID, "editorial-qa-v2", lastCallID, attemptCause, req)
+		if callID != uuid.Nil {
+			lastCallID = callID
+		}
 		if err != nil {
 			lastResp, lastErr = resp, err
 			continue
 		}
 		out, perr := extractQAOutput(resp.Text)
 		if perr == nil {
-			return out, resp, nil
+			return out, resp, lastCallID, nil
+		}
+		if ledgerErr := failTrackedOutput(ctx, qa.AICalls, projectID, callID, "invalid_response"); ledgerErr != nil {
+			return QAOutput{}, resp, lastCallID, errors.Join(perr, ledgerErr)
 		}
 		lastResp, lastErr = resp, perr
 	}
-	return QAOutput{}, lastResp, lastErr
+	return QAOutput{}, lastResp, lastCallID, lastErr
 }
 
 const qaScoreAdvisoryThreshold = 0.75
@@ -172,6 +196,10 @@ func enforceBannedClaims(out *QAOutput, profileJSON json.RawMessage, contentMD s
 }
 
 func (qa *QA) compactCheck(ctx context.Context, profileJSON json.RawMessage, evidence, contentMD string) (*QAOutput, llm.CompletionResp, error) {
+	return qa.compactCheckForObject(ctx, uuid.Nil, "", uuid.Nil, uuid.Nil, profileJSON, evidence, contentMD)
+}
+
+func (qa *QA) compactCheckForObject(ctx context.Context, projectID uuid.UUID, objectType string, objectID, parentCallID uuid.UUID, profileJSON json.RawMessage, evidence, contentMD string) (*QAOutput, llm.CompletionResp, error) {
 	prompt := fmt.Sprintf(`[[QA_COMPACT]] Audit this article. Return only this compact JSON object shape:
 {"claims":[{"claim":"short product claim","mapped":true,"evidence":"profile or evidence snippet"}],"qa_blocking":false,"geo_score":0.5,"seo_score":0.5,"issues":[],"blocking_issues":[],"fix_instructions":[],"human_decision_options":[],"blocking_reason":"","can_auto_fix":false}
 
@@ -195,7 +223,7 @@ EVIDENCE SNIPPETS:
 ARTICLE EXCERPT:
 %s`, clip(string(profileJSON), 1200), clip(evidence, 1200), clip(contentMD, 2500))
 
-	out, resp, err := qa.completeQAWithRetry(ctx, llm.CompletionReq{
+	out, resp, _, err := qa.completeQAWithRetryForObject(ctx, projectID, objectType, objectID, uuid.Nil, parentCallID, llm.CompletionReq{
 		System: "You are an evidence-aware QA auditor. Return only compact JSON.",
 		Prompt: prompt, Purpose: llm.PurposeQA, JSON: true, MaxTokens: 4096,
 	})
@@ -218,7 +246,7 @@ func (qa *QA) Requalify(ctx context.Context, projectID, articleID uuid.UUID) (db
 	if err != nil {
 		return db.Article{}, fmt.Errorf("no active profile: %w", err)
 	}
-	out, resp, qerr := qa.Check(ctx, projectID, art.ContentMd, profile.Profile)
+	out, resp, qerr := qa.CheckForObject(WithAICallRetry(ctx), projectID, "article", articleID, art.ContentMd, profile.Profile)
 	recordRun(ctx, qa.Q, projectID, agentQA, map[string]any{"requalify": articleID}, out, resp, qerr)
 	if qerr != nil {
 		// On QA failure, keep it blocking — never silently clear (§5.5).

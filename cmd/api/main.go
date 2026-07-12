@@ -99,7 +99,7 @@ func main() {
 	defer cron.Stop()
 
 	srv := &api.Server{
-		Pool: pool, Q: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log, SEOData: seoData,
+		Pool: pool, Q: q, AICalls: q, LLM: llmP, Search: searchP, Blog: blog, Sched: sched, Env: env, Log: log, SEOData: seoData,
 		SiteFixes: api.NewDoctorSiteFixService(pool, q, llmP, env.TokenGateModel),
 	}
 	httpServer := &http.Server{

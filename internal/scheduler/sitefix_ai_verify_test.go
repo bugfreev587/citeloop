@@ -47,6 +47,25 @@ func TestAuthorizedAIVerificationProviderFailureIsAuditedAndCannotPass(t *testin
 	}
 }
 
+func TestAuthorizedAIVerificationPreflightFailureIsSkipped(t *testing.T) {
+	store := &aiVerificationStoreStub{}
+	fix := db.SiteFix{ID: uuid.New(), AcceptanceTests: json.RawMessage(`[{"type":"rendered_text_contains"}]`)}
+	_, err := (canonicalAIVerificationReviewer{store: store, provider: verificationPreflightFailureProvider{}}).Review(context.Background(), uuid.New(), fix, completeAIPageEvidence(`<html></html>`))
+	if err == nil {
+		t.Fatal("expected preflight error")
+	}
+	if want := []string{"start", "finish:skipped"}; !reflect.DeepEqual(store.events, want) {
+		t.Fatalf("events=%v want=%v", store.events, want)
+	}
+}
+
+type verificationPreflightFailureProvider struct{}
+
+func (verificationPreflightFailureProvider) ObservesProviderAttempts() {}
+func (verificationPreflightFailureProvider) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
+	return llm.CompletionResp{}, errors.New("credential lookup failed")
+}
+
 func TestDoctorAIVerificationAuthorityDefaultsOff(t *testing.T) {
 	defaultCfg, _ := config.Parse(json.RawMessage(`{}`))
 	disabledCfg, _ := config.Parse(json.RawMessage(`{"doctor_ai_enabled":false,"doctor_ai_run_policy":"automatic"}`))
@@ -84,10 +103,21 @@ type aiVerificationStoreStub struct {
 	cost             float64
 }
 
-func (s *aiVerificationStoreStub) Start(context.Context, uuid.UUID, uuid.UUID, string) (uuid.UUID, error) {
+func (s *aiVerificationStoreStub) Start(context.Context, uuid.UUID, uuid.UUID, string) (uuid.UUID, canonicalAICallAttempt, error) {
 	s.events = append(s.events, "start")
-	return uuid.New(), nil
+	return uuid.New(), &canonicalAICallAttemptSpy{}, nil
 }
+
+type canonicalAICallAttemptSpy struct{ started bool }
+
+func (s *canonicalAICallAttemptSpy) StartAttempt(context.Context, string) (string, error) {
+	s.started = true
+	return "verification-attempt", nil
+}
+func (*canonicalAICallAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
+	return nil
+}
+func (s *canonicalAICallAttemptSpy) Started() bool { return s.started }
 func (s *aiVerificationStoreStub) Finish(_ context.Context, _, _ uuid.UUID, status, _, provider, model string, promptTokens, completionTokens, tokens int, cost float64) error {
 	s.events = append(s.events, "finish:"+status)
 	s.provider, s.model, s.promptTokens, s.completionTokens, s.tokens, s.cost = provider, model, promptTokens, completionTokens, tokens, cost

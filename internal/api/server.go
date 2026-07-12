@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -25,6 +26,7 @@ import (
 type Server struct {
 	Pool             *pgxpool.Pool
 	Q                *db.Queries
+	AICalls          aicalls.Store
 	LLM              llm.Provider
 	Search           search.Provider
 	Blog             *publisher.BlogPublisher

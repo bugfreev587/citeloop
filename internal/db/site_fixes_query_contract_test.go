@@ -510,7 +510,7 @@ func TestDoctorAIOnDemandTriggerIsPersistentAndExactlyOnce(t *testing.T) {
 		"('manual_only','on_demand','automatic')",
 	)
 	start := namedSQL(t, siteFixes, "StartDoctorAIOnDemandCall")
-	requireQuerySQL(t, start, "insert into ai_call_records", "ai_call_id", "processing_token", "processing_expires_at > clock_timestamp()", "for update of marker")
+	requireQuerySQL(t, start, "insert into ai_call_records", "'queued'", "ai_call_id", "processing_token", "processing_expires_at > clock_timestamp()", "for update of marker")
 	consume := namedSQL(t, siteFixes, "ConsumeDoctorAIOnDemandProcessing")
 	requireQuerySQL(t, consume,
 		"status = 'consumed'", "result_snapshot", "processing_token = sqlc.arg(processing_token)", "ai_call_id = sqlc.arg(ai_call_id)",
@@ -521,17 +521,17 @@ func TestDoctorAIOnDemandTriggerIsPersistentAndExactlyOnce(t *testing.T) {
 	reject := namedSQL(t, siteFixes, "RejectDoctorAIOnDemandTriggersForSiteFix")
 	requireQuerySQL(t, reject,
 		"status = 'rejected'", "marker.status in ('pending','processing')", "marker.status = 'consumed' and marker.lifecycle_applied_at is null", "lifecycle_applied_at = now()",
-		"processing_token = null", "processing_expires_at = null", "call.status = 'running'", "status = 'failed'",
+		"processing_token = null", "processing_expires_at = null", "call.status in ('queued','running')", "case when call.status = 'queued' then 'skipped' else 'failed' end", "provider_not_called",
 		"when marker.status = 'consumed' then marker.result_snapshot",
 	)
 	supersede := namedSQL(t, siteFixes, "SupersedeDoctorAIOnDemandSiblingTriggers")
 	requireQuerySQL(t, supersede,
 		"status = 'superseded'", "marker.status in ('pending','processing')", "marker.status = 'consumed' and marker.lifecycle_applied_at is null", "marker.request_id <> sqlc.arg(applied_request_id)",
-		"call.status = 'running'", "status = 'failed'",
+		"call.status in ('queued','running')", "case when call.status = 'queued' then 'skipped' else 'failed' end", "provider_not_called",
 		"when marker.status = 'consumed' then marker.result_snapshot",
 	)
 	unauthorized := namedSQL(t, siteFixes, "RejectUnauthorizedDoctorAIOnDemandTriggers")
-	requireQuerySQL(t, unauthorized, "marker.status = 'consumed' and marker.lifecycle_applied_at is null")
+	requireQuerySQL(t, unauthorized, "marker.status = 'consumed' and marker.lifecycle_applied_at is null", "call.status in ('queued','running')", "provider_not_called")
 	consumed := namedSQL(t, siteFixes, "ListDoctorAIOnDemandConsumedUnapplied")
 	requireQuerySQL(t, consumed,
 		"site_fix_verifications", "verification.ai_call_id = marker.ai_call_id", "has_lifecycle_reference",

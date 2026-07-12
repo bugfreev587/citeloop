@@ -79,10 +79,13 @@ func TestDoctorDiagnosisDisabledDoesNotCallProviderOrLedger(t *testing.T) {
 	ledger := &doctorAILedgerSpy{}
 	candidates := []doctorFindingCandidate{{FindingKey: "finding-1", Evidence: map[string]any{"status": "missing"}}}
 
-	got, state := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
+	got, state, err := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
 		ProjectID: uuid.New(), RunID: uuid.New(), Authorized: false,
 		Candidates: candidates, Provider: provider, Ledger: ledger,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if provider.calls != 0 || ledger.starts != 0 || ledger.finishes != 0 {
 		t.Fatalf("disabled authority made external work: provider=%d ledger=%d/%d", provider.calls, ledger.starts, ledger.finishes)
@@ -96,16 +99,33 @@ func TestDoctorDiagnosisProviderUnavailablePreservesDeterministicFindings(t *tes
 	ledger := &doctorAILedgerSpy{}
 	candidates := []doctorFindingCandidate{{FindingKey: "finding-1", Evidence: map[string]any{"status": "missing"}}}
 
-	got, state := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
+	got, state, err := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
 		ProjectID: uuid.New(), RunID: uuid.New(), Authorized: true,
 		Candidates: candidates, Ledger: ledger,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(got) != 1 || got[0].FindingKey != "finding-1" {
 		t.Fatalf("provider unavailable fabricated or removed findings: %#v", got)
 	}
-	if ledger.starts != 0 || state.Status != doctorAIStatusUnavailable || !state.Degraded {
-		t.Fatalf("provider unavailable state = %#v, ledger starts = %d", state, ledger.starts)
+	if ledger.starts != 1 || ledger.finishes != 1 || ledger.finished.Status != "skipped" || ledger.finished.ErrorCode != "provider_unavailable" || state.Status != doctorAIStatusUnavailable || !state.Degraded {
+		t.Fatalf("provider unavailable state = %#v, ledger = %d/%d %+v", state, ledger.starts, ledger.finishes, ledger.finished)
+	}
+}
+
+func TestDoctorDiagnosisPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
+	ledger := &doctorAILedgerSpy{}
+	_, state, err := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
+		ProjectID: uuid.New(), RunID: uuid.New(), Authorized: true,
+		Candidates: []doctorFindingCandidate{{FindingKey: "finding-1"}}, Provider: doctorPreflightFailureProvider{}, Ledger: ledger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ledger.finished.Status != "skipped" || ledger.finished.ErrorCode != "provider_not_called" || state.Status != doctorAIStatusFailed {
+		t.Fatalf("state=%+v finish=%+v", state, ledger.finished)
 	}
 }
 
@@ -120,10 +140,13 @@ func TestDoctorDiagnosisAILedgersCallAndOnlyEnrichesKnownFinding(t *testing.T) {
 		Evidence: map[string]any{"impact_context": map[string]any{"gsc_impressions_28d": float64(1200)}},
 	}}
 
-	got, state := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
+	got, state, err := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
 		ProjectID: uuid.New(), RunID: uuid.New(), Authorized: true,
 		Candidates: candidates, Context: []byte(`{"positioning":"fixture"}`), Provider: provider, Ledger: ledger,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if provider.calls != 1 || ledger.starts != 1 || ledger.finishes != 1 {
 		t.Fatalf("AI call accounting provider=%d ledger=%d/%d", provider.calls, ledger.starts, ledger.finishes)
@@ -147,10 +170,13 @@ func TestDoctorDiagnosisInvalidResponseFailsDegradedWithoutFalseFinding(t *testi
 	ledger := &doctorAILedgerSpy{}
 	candidates := []doctorFindingCandidate{{FindingKey: "finding-1", Evidence: map[string]any{"status": "missing"}}}
 
-	got, state := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
+	got, state, err := runDoctorDiagnosisAI(context.Background(), doctorDiagnosisAIRequest{
 		ProjectID: uuid.New(), RunID: uuid.New(), Authorized: true,
 		Candidates: candidates, Provider: provider, Ledger: ledger,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(got) != 1 || got[0].FindingKey != "finding-1" {
 		t.Fatalf("invalid response changed deterministic findings: %#v", got)
@@ -194,6 +220,13 @@ type doctorLLMStub struct {
 	calls    int
 }
 
+type doctorPreflightFailureProvider struct{}
+
+func (doctorPreflightFailureProvider) ObservesProviderAttempts() {}
+func (doctorPreflightFailureProvider) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
+	return llm.CompletionResp{}, errors.New("credential lookup failed")
+}
+
 func (s *doctorLLMStub) Complete(context.Context, llm.CompletionReq) (llm.CompletionResp, error) {
 	s.calls++
 	return s.response, s.err
@@ -206,10 +239,10 @@ type doctorAILedgerSpy struct {
 	finished doctorAICallFinish
 }
 
-func (s *doctorAILedgerSpy) StartDoctorAICall(_ context.Context, call doctorAICallStart) (uuid.UUID, error) {
+func (s *doctorAILedgerSpy) StartDoctorAICall(_ context.Context, call doctorAICallStart) (uuid.UUID, doctorAICallAttempt, error) {
 	s.starts++
 	s.started = call
-	return uuid.New(), nil
+	return uuid.New(), &doctorAttemptSpy{}, nil
 }
 
 func (s *doctorAILedgerSpy) FinishDoctorAICall(_ context.Context, call doctorAICallFinish) error {
@@ -217,3 +250,14 @@ func (s *doctorAILedgerSpy) FinishDoctorAICall(_ context.Context, call doctorAIC
 	s.finished = call
 	return nil
 }
+
+type doctorAttemptSpy struct{ started bool }
+
+func (s *doctorAttemptSpy) StartAttempt(context.Context, string) (string, error) {
+	s.started = true
+	return "doctor-attempt", nil
+}
+func (*doctorAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionResp, error) error {
+	return nil
+}
+func (s *doctorAttemptSpy) Started() bool { return s.started }

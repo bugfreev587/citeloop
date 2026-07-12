@@ -16,6 +16,7 @@ type Querier interface {
 	AcknowledgeSEOPolicyRecoveryPlan(ctx context.Context, arg AcknowledgeSEOPolicyRecoveryPlanParams) (SeoPolicy, error)
 	AcquireEvidenceRun(ctx context.Context, arg AcquireEvidenceRunParams) (AcquireEvidenceRunRow, error)
 	ActiveOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error)
+	AggregateAICallsForObject(ctx context.Context, arg AggregateAICallsForObjectParams) (AggregateAICallsForObjectRow, error)
 	AppendCanonicalSiteFixVerification(ctx context.Context, arg AppendCanonicalSiteFixVerificationParams) (SiteFixVerification, error)
 	AppendGrowthCutoverSessionEntry(ctx context.Context, arg AppendGrowthCutoverSessionEntryParams) (GrowthCutoverSessionEntry, error)
 	AppendMigrationLedger(ctx context.Context, arg AppendMigrationLedgerParams) (MigrationLedger, error)
@@ -89,6 +90,7 @@ type Querier interface {
 	CreateSEODoctorRun(ctx context.Context, arg CreateSEODoctorRunParams) (SeoDoctorRun, error)
 	CreateSEOObjective(ctx context.Context, arg CreateSEOObjectiveParams) (SeoObjective, error)
 	CreateSEOWatchlistItem(ctx context.Context, arg CreateSEOWatchlistItemParams) (SeoWatchlistItem, error)
+	CreateSkippedAICallRecord(ctx context.Context, arg CreateSkippedAICallRecordParams) (AiCallRecord, error)
 	CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error)
 	DeactivateMigrationReviewMemory(ctx context.Context, arg DeactivateMigrationReviewMemoryParams) (WorkReviewMemory, error)
 	DeactivateMigrationSignature(ctx context.Context, arg DeactivateMigrationSignatureParams) (WorkSignatureRegistry, error)
@@ -135,6 +137,7 @@ type Querier interface {
 	FinishEvidenceRun(ctx context.Context, arg FinishEvidenceRunParams) (FinishEvidenceRunRow, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
 	FinishGrowthCutoverSession(ctx context.Context, arg FinishGrowthCutoverSessionParams) (GrowthCutoverSession, error)
+	FinishQueuedAICallSkipped(ctx context.Context, arg FinishQueuedAICallSkippedParams) (AiCallRecord, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
 	GetAICallRecord(ctx context.Context, arg GetAICallRecordParams) (AiCallRecord, error)
 	GetActiveCanonicalSiteFixForFindingForUpdate(ctx context.Context, arg GetActiveCanonicalSiteFixForFindingForUpdateParams) (SiteFix, error)
@@ -180,6 +183,7 @@ type Querier interface {
 	GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
 	GetInventoryItem(ctx context.Context, id uuid.UUID) (ContentInventory, error)
+	GetLatestAICallForRequest(ctx context.Context, arg GetLatestAICallForRequestParams) (AiCallRecord, error)
 	GetLatestCanonicalSiteFixApplication(ctx context.Context, arg GetLatestCanonicalSiteFixApplicationParams) (SiteChangeApplication, error)
 	GetLatestCanonicalSiteFixForFindingForUpdate(ctx context.Context, arg GetLatestCanonicalSiteFixForFindingForUpdateParams) (SiteFix, error)
 	GetLatestDiscoverySemanticEvaluation(ctx context.Context, projectID uuid.UUID) (DiscoverySemanticEvaluation, error)
@@ -234,6 +238,7 @@ type Querier interface {
 	LatestSEODoctorRun(ctx context.Context, projectID uuid.UUID) (SeoDoctorRun, error)
 	LinkEvidenceConsumption(ctx context.Context, arg LinkEvidenceConsumptionParams) (EvidenceConsumption, error)
 	LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEODoctorFindingToActionParams) (SeoDoctorFinding, error)
+	ListAICallsForObject(ctx context.Context, arg ListAICallsForObjectParams) ([]AiCallRecord, error)
 	ListAICrawlerAccessSnapshotsForRun(ctx context.Context, arg ListAICrawlerAccessSnapshotsForRunParams) ([]AiCrawlerAccessSnapshot, error)
 	ListActionMeasurementsForAction(ctx context.Context, arg ListActionMeasurementsForActionParams) ([]ActionMeasurement, error)
 	ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error)
@@ -350,6 +355,7 @@ type Querier interface {
 	LockMigrationBucketsForBatch(ctx context.Context, arg LockMigrationBucketsForBatchParams) ([]WorkConflictBucket, error)
 	LockProductWriterAuthority(ctx context.Context, arg LockProductWriterAuthorityParams) (ProductWriterAuthority, error)
 	LockSEOOpportunityForGrowthReserve(ctx context.Context, arg LockSEOOpportunityForGrowthReserveParams) (SeoOpportunity, error)
+	MarkAICallProviderStarted(ctx context.Context, arg MarkAICallProviderStartedParams) (AiCallRecord, error)
 	MarkArbitrationDecisionReserved(ctx context.Context, arg MarkArbitrationDecisionReservedParams) (DiscoveryArbitrationDecision, error)
 	MarkArbitrationDecisionResolved(ctx context.Context, arg MarkArbitrationDecisionResolvedParams) (DiscoveryArbitrationDecision, error)
 	MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanonicalSiteFixAppliedParams) (MarkCanonicalSiteFixAppliedRow, error)
@@ -402,6 +408,9 @@ type Querier interface {
 	MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg MergeCanonicalDoctorSiteFixEvidenceParams) (MergeCanonicalDoctorSiteFixEvidenceRow, error)
 	MergeCanonicalGrowthOpportunityEvidence(ctx context.Context, arg MergeCanonicalGrowthOpportunityEvidenceParams) (MergeCanonicalGrowthOpportunityEvidenceRow, error)
 	// Cumulative cost for the current calendar month (cost breaker basis, §5.4).
+	// ai_call_records is authoritative for new binaries. generation_runs remains
+	// in the sum so rolling old binaries and pre-ledger history are not lost; new
+	// binaries intentionally write zero cost to generation_runs.
 	MonthlySpend(ctx context.Context, projectID uuid.UUID) (pgtype.Numeric, error)
 	NextProfileVersion(ctx context.Context, projectID uuid.UUID) (int32, error)
 	PreparePublishAttempt(ctx context.Context, arg PreparePublishAttemptParams) (Article, error)
@@ -412,6 +421,7 @@ type Querier interface {
 	// Consecutive failures heuristic for alerting (§5.2/§5.4).
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
+	ReclassifyAICallRecordOutputFailure(ctx context.Context, arg ReclassifyAICallRecordOutputFailureParams) (AiCallRecord, error)
 	RecordGrowthTerminalOutcome(ctx context.Context, arg RecordGrowthTerminalOutcomeParams) error
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)

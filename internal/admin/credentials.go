@@ -218,6 +218,8 @@ type RuntimeProvider struct {
 	Fallback llm.Provider
 }
 
+func (*RuntimeProvider) ObservesProviderAttempts() {}
+
 func NewRuntimeProvider(pool *pgxpool.Pool, env config.Env, fallback llm.Provider) *RuntimeProvider {
 	if fallback == nil {
 		fallback = llm.NewMock()
@@ -231,12 +233,29 @@ func (p *RuntimeProvider) Complete(ctx context.Context, req llm.CompletionReq) (
 		return llm.CompletionResp{}, err
 	}
 	if cred == nil || cred.APIKey == "" {
-		return p.Fallback.Complete(ctx, req)
+		return completeRuntimeDelegate(ctx, p.Fallback, req)
 	}
 	target := runtimeRouteForRequest(*cred, p.Env, req)
 	req.Model = target.ModelAlias
 	req.DisableProviderFallback = req.DisableProviderFallback || !target.FallbackEnabled
-	return ProviderFromCredentials(*cred, p.Env).Complete(ctx, req)
+	return completeRuntimeDelegate(ctx, ProviderFromCredentials(*cred, p.Env), req)
+}
+
+func completeRuntimeDelegate(ctx context.Context, provider llm.Provider, req llm.CompletionReq) (llm.CompletionResp, error) {
+	if req.AttemptObserver == nil {
+		return provider.Complete(ctx, req)
+	}
+	if _, observable := provider.(llm.AttemptObservable); observable {
+		return provider.Complete(ctx, req)
+	}
+	model := firstNonBlank(req.Model, "runtime-route")
+	attemptID, err := req.AttemptObserver.StartAttempt(ctx, model)
+	if err != nil {
+		return llm.CompletionResp{}, err
+	}
+	resp, providerErr := provider.Complete(ctx, req)
+	finishErr := req.AttemptObserver.FinishAttempt(context.WithoutCancel(ctx), attemptID, resp, providerErr)
+	return resp, errors.Join(providerErr, finishErr)
 }
 
 // RuntimeAuthorityFingerprint identifies the configuration authority that will

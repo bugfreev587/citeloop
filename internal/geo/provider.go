@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var ErrInvalidAnswerProviderResponse = errors.New("answer provider returned an invalid response")
 
 const (
 	ProviderPerplexitySonar             = "perplexity_sonar"
@@ -31,6 +34,10 @@ type AnswerProvider interface {
 	EvidenceIdentity() AnswerProviderEvidenceIdentity
 	Available() bool
 	Observe(ctx context.Context, prompts []db.GeoPrompt) ([]ProviderObservation, float64, error)
+}
+
+type PromptAnswerProvider interface {
+	ObservePrompt(context.Context, db.GeoPrompt) (ProviderObservation, float64, error)
 }
 
 type AnswerProviderEvidenceIdentity struct {
@@ -50,6 +57,9 @@ type ProviderObservation struct {
 	CompetitorCitations []string
 	EvidenceSnippets    []string
 	Confidence          string
+	PromptTokens        int
+	CompletionTokens    int
+	TotalTokens         int
 	CostUSD             float64
 }
 
@@ -351,7 +361,7 @@ func (p PerplexityProvider) Observe(ctx context.Context, prompts []db.GeoPrompt)
 	rows := make([]ProviderObservation, 0, len(prompts))
 	totalCost := 0.0
 	for _, prompt := range prompts {
-		row, cost, err := p.observePrompt(ctx, prompt)
+		row, cost, err := p.ObservePrompt(ctx, prompt)
 		if err != nil {
 			return rows, totalCost, err
 		}
@@ -361,7 +371,7 @@ func (p PerplexityProvider) Observe(ctx context.Context, prompts []db.GeoPrompt)
 	return rows, totalCost, nil
 }
 
-func (p PerplexityProvider) observePrompt(ctx context.Context, prompt db.GeoPrompt) (ProviderObservation, float64, error) {
+func (p PerplexityProvider) ObservePrompt(ctx context.Context, prompt db.GeoPrompt) (ProviderObservation, float64, error) {
 	body := map[string]any{
 		"model":       p.Model,
 		"messages":    []map[string]string{{"role": "user", "content": prompt.PromptText}},
@@ -380,27 +390,46 @@ func (p PerplexityProvider) observePrompt(ctx context.Context, prompt db.GeoProm
 		return ProviderObservation{}, 0, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return ProviderObservation{}, 0, fmt.Errorf("perplexity sonar returned HTTP %d", res.StatusCode)
+	raw, readErr := io.ReadAll(res.Body)
+	if readErr != nil {
+		return ProviderObservation{}, 0, readErr
 	}
 	var out perplexityResponse
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return ProviderObservation{}, 0, err
+	decodeErr := json.Unmarshal(raw, &out)
+	row, cost := perplexityObservation(prompt, out)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return row, cost, fmt.Errorf("perplexity sonar returned HTTP %d: %s", res.StatusCode, string(raw))
 	}
+	if decodeErr != nil {
+		return row, cost, fmt.Errorf("%w: decode Perplexity response: %v", ErrInvalidAnswerProviderResponse, decodeErr)
+	}
+	if strings.TrimSpace(row.AnswerSummary) == "" {
+		return row, cost, fmt.Errorf("%w: Perplexity response has no answer content", ErrInvalidAnswerProviderResponse)
+	}
+	return row, cost, nil
+}
+
+func perplexityObservation(prompt db.GeoPrompt, out perplexityResponse) (ProviderObservation, float64) {
 	content := ""
 	if len(out.Choices) > 0 {
 		content = out.Choices[0].Message.Content
 	}
 	cost := out.Usage.Cost.TotalCost
+	if cost == 0 {
+		cost = out.Usage.TotalCost
+	}
 	return ProviderObservation{
-		PromptID:      prompt.ID,
-		Engine:        "Perplexity",
-		Locale:        providerLocale(prompt.Locale),
-		AnswerSummary: strings.TrimSpace(content),
-		CitedURLs:     uniqueStrings(out.Citations),
-		Confidence:    ConfidenceMedium,
-		CostUSD:       cost,
-	}, cost, nil
+		PromptID:         prompt.ID,
+		Engine:           "Perplexity",
+		Locale:           providerLocale(prompt.Locale),
+		AnswerSummary:    strings.TrimSpace(content),
+		CitedURLs:        uniqueStrings(out.Citations),
+		Confidence:       ConfidenceMedium,
+		PromptTokens:     out.Usage.PromptTokens,
+		CompletionTokens: out.Usage.CompletionTokens,
+		TotalTokens:      out.Usage.TotalTokens,
+		CostUSD:          cost,
+	}, cost
 }
 
 type perplexityResponse struct {
@@ -411,13 +440,18 @@ type perplexityResponse struct {
 	} `json:"choices"`
 	Citations []string `json:"citations"`
 	Usage     struct {
-		Cost struct {
+		PromptTokens     int     `json:"prompt_tokens"`
+		CompletionTokens int     `json:"completion_tokens"`
+		TotalTokens      int     `json:"total_tokens"`
+		TotalCost        float64 `json:"total_cost"`
+		Cost             struct {
 			TotalCost float64 `json:"total_cost"`
 		} `json:"cost"`
 	} `json:"usage"`
 }
 
 var _ AnswerProvider = PerplexityProvider{}
+var _ PromptAnswerProvider = PerplexityProvider{}
 
 func numericFromCost(costUSD float64) pgtype.Numeric {
 	if costUSD <= 0 {

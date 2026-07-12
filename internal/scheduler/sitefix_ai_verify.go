@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -24,8 +26,13 @@ type canonicalAIVerificationResult struct {
 }
 
 type canonicalAIVerificationStore interface {
-	Start(context.Context, uuid.UUID, uuid.UUID, string) (uuid.UUID, error)
+	Start(context.Context, uuid.UUID, uuid.UUID, string) (uuid.UUID, canonicalAICallAttempt, error)
 	Finish(context.Context, uuid.UUID, uuid.UUID, string, string, string, string, int, int, int, float64) error
+}
+
+type canonicalAICallAttempt interface {
+	llm.AttemptObserver
+	Started() bool
 }
 
 type canonicalAIVerificationReviewer struct {
@@ -44,14 +51,14 @@ func (r canonicalAIVerificationReviewer) Review(ctx context.Context, projectID u
 	fingerprintEvidence, _ := json.Marshal(canonicalPageEvidenceMap("", page, nil))
 	fingerprintInput := append(append([]byte{}, fix.AcceptanceTests...), fingerprintEvidence...)
 	sum := sha256.Sum256(fingerprintInput)
-	callID, err := r.store.Start(ctx, projectID, fix.ID, hex.EncodeToString(sum[:]))
+	callID, attempt, err := r.store.Start(ctx, projectID, fix.ID, hex.EncodeToString(sum[:]))
 	if err != nil {
 		return canonicalAIVerificationResult{}, err
 	}
-	return r.reviewWithCallID(ctx, projectID, fix, page, callID)
+	return r.reviewWithCallID(ctx, projectID, fix, page, callID, attempt)
 }
 
-func (r canonicalAIVerificationReviewer) reviewWithCallID(ctx context.Context, projectID uuid.UUID, fix db.SiteFix, page canonicalPageEvidence, callID uuid.UUID) (canonicalAIVerificationResult, error) {
+func (r canonicalAIVerificationReviewer) reviewWithCallID(ctx context.Context, projectID uuid.UUID, fix db.SiteFix, page canonicalPageEvidence, callID uuid.UUID, attempt canonicalAICallAttempt) (canonicalAIVerificationResult, error) {
 	model := strings.TrimSpace(r.model)
 	if model == "" {
 		model = llm.DefaultTokenGateModel
@@ -69,11 +76,19 @@ func (r canonicalAIVerificationReviewer) reviewWithCallID(ctx context.Context, p
 		"redirect_chain":   page.RedirectChain,
 		"rendered_html":    evidenceHTML,
 	})
-	resp, providerErr := r.provider.Complete(ctx, llm.CompletionReq{
+	resp, providerErr := llm.CompleteObserved(ctx, r.provider, llm.CompletionReq{
 		System:  "You verify an already-applied Doctor Site Fix. Evaluate only the stored acceptance tests against the supplied production evidence. Do not generate content or infer missing evidence. Return strict JSON.",
 		Prompt:  "Return {\"decision\":\"passed|failed|inconclusive\",\"confidence\":0..1,\"acceptance_results\":[{\"index\":0,\"status\":\"passed|failed|inconclusive\",\"evidence\":{...}}]}. Every stored test must appear exactly once.\n" + string(prompt),
-		Purpose: llm.PurposeQA, Model: model, JSON: true, MaxTokens: 1200, DisableProviderFallback: true,
+		Purpose: llm.PurposeQA, Model: model, JSON: true, MaxTokens: 1200, DisableProviderFallback: true, AttemptObserver: attempt,
 	})
+	if !attempt.Started() {
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if finishErr := r.store.Finish(finishCtx, projectID, callID, "skipped", "provider_not_called", "", model, 0, 0, 0, 0); finishErr != nil {
+			return canonicalAIVerificationResult{CallID: callID}, errors.Join(providerErr, finishErr)
+		}
+		return canonicalAIVerificationResult{CallID: callID}, errors.Join(providerErr, errors.New("AI verification provider was not called"))
+	}
 	if providerErr != nil {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -169,16 +184,25 @@ func parseCanonicalAIVerificationResponse(text string, storedTests json.RawMessa
 
 type postgresCanonicalAIVerificationStore struct{ q *db.Queries }
 
-func (s postgresCanonicalAIVerificationStore) Start(ctx context.Context, projectID, fixID uuid.UUID, fingerprint string) (uuid.UUID, error) {
+func (s postgresCanonicalAIVerificationStore) Start(ctx context.Context, projectID, fixID uuid.UUID, fingerprint string) (uuid.UUID, canonicalAICallAttempt, error) {
+	parentCallID := pgtype.UUID{}
+	latest, latestErr := s.q.GetLatestAICallForRequest(ctx, db.GetLatestAICallForRequestParams{
+		ProjectID: projectID, Stage: "verification", LinkedObjectType: "site_fix", LinkedObjectID: fixID, RequestFingerprint: fingerprint,
+	})
+	if latestErr == nil {
+		parentCallID = pgtype.UUID{Bytes: latest.ID, Valid: true}
+	} else if !errors.Is(latestErr, pgx.ErrNoRows) {
+		return uuid.Nil, nil, latestErr
+	}
 	row, err := s.q.CreateAICallRecord(ctx, db.CreateAICallRecordParams{
 		ProjectID: projectID, Stage: "verification", LinkedObjectType: "site_fix", LinkedObjectID: fixID,
 		Provider: "tokengate", Model: llm.DefaultTokenGateModel, PromptVersion: "doctor-verification-v1",
-		RequestFingerprint: fingerprint, Status: "running",
+		RequestFingerprint: fingerprint, Status: "queued", ParentCallID: parentCallID,
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
-	return row.ID, nil
+	return row.ID, aicalls.NewExistingAttemptObserver(s.q, projectID, row.ID), nil
 }
 
 func (s postgresCanonicalAIVerificationStore) Finish(ctx context.Context, projectID, callID uuid.UUID, status, errorCode, provider, model string, promptTokens, completionTokens, tokens int, costUSD float64) error {

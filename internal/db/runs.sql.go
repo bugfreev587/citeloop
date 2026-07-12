@@ -147,13 +147,25 @@ func (q *Queries) ListGenerationRuns(ctx context.Context, arg ListGenerationRuns
 }
 
 const monthlySpend = `-- name: MonthlySpend :one
-select coalesce(sum(cost_usd), 0)::numeric from generation_runs
-where project_id = $1
-  and status = 'ok'
-  and created_at >= date_trunc('month', now())
+select (
+  coalesce((
+    select sum(call.cost_usd) from ai_call_records call
+    where call.project_id = $1
+      and call.status not in ('queued', 'skipped')
+      and call.started_at >= date_trunc('month', now())
+  ), 0)
+  + coalesce((
+    select sum(run.cost_usd) from generation_runs run
+    where run.project_id = $1
+      and run.created_at >= date_trunc('month', now())
+  ), 0)
+)::numeric
 `
 
 // Cumulative cost for the current calendar month (cost breaker basis, §5.4).
+// ai_call_records is authoritative for new binaries. generation_runs remains
+// in the sum so rolling old binaries and pre-ledger history are not lost; new
+// binaries intentionally write zero cost to generation_runs.
 func (q *Queries) MonthlySpend(ctx context.Context, projectID uuid.UUID) (pgtype.Numeric, error) {
 	row := q.db.QueryRow(ctx, monthlySpend, projectID)
 	var column_1 pgtype.Numeric

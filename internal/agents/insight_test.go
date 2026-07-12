@@ -332,6 +332,9 @@ type capturedRun struct {
 	output []byte
 	status string
 	err    *string
+	model  *string
+	tokens *int32
+	cost   pgtype.Numeric
 }
 
 type capturedProfileInsert struct {
@@ -441,7 +444,10 @@ func (s *insightDBSpy) QueryRow(_ context.Context, query string, args ...interfa
 		errValue, _ := args[8].(*string)
 		input, _ := args[2].([]byte)
 		output, _ := args[3].([]byte)
-		s.runs = append(s.runs, capturedRun{input: input, output: output, status: status, err: errValue})
+		model, _ := args[4].(*string)
+		tokens, _ := args[5].(*int32)
+		cost, _ := args[6].(pgtype.Numeric)
+		s.runs = append(s.runs, capturedRun{input: input, output: output, status: status, err: errValue, model: model, tokens: tokens, cost: cost})
 		return scanRow{values: []any{
 			uuid.New(), args[0].(uuid.UUID), args[1].(string), args[2].([]byte), args[3].([]byte),
 			args[4].(*string), args[5].(*int32), args[6].(pgtype.Numeric), status, errValue, pgtype.Timestamptz{},

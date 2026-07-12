@@ -128,8 +128,15 @@ func (s *Scheduler) reconcileCanonicalSiteFixVerificationForProject(ctx context.
 			continue
 		}
 		errorCode := "doctor_ai_marker_rejected"
-		if _, err := q.FinishAICallRecordIfRunning(ctx, db.FinishAICallRecordIfRunningParams{ErrorCode: &errorCode, ID: uuid.UUID(callID.Bytes), ProjectID: p.ID}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
+		id := uuid.UUID(callID.Bytes)
+		if _, err := q.FinishAICallRecordIfRunning(ctx, db.FinishAICallRecordIfRunningParams{ErrorCode: &errorCode, ID: id, ProjectID: p.ID}); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			skippedCode := "provider_not_called"
+			if _, skipErr := q.FinishQueuedAICallSkipped(ctx, db.FinishQueuedAICallSkippedParams{ErrorCode: &skippedCode, ID: id, ProjectID: p.ID}); skipErr != nil && !errors.Is(skipErr, pgx.ErrNoRows) {
+				return skipErr
+			}
 		}
 	}
 	legacyMarkers, err := q.ListDoctorAIOnDemandConsumedUnapplied(ctx, p.ID)

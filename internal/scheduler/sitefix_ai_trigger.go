@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/llm"
@@ -88,6 +89,11 @@ func (s *Scheduler) acquireCanonicalAIReview(ctx context.Context, q *db.Queries,
 					if _, finishErr := q.FinishAICallRecordIfRunning(ctx, db.FinishAICallRecordIfRunningParams{ErrorCode: &errorCode, ID: callID, ProjectID: projectID}); finishErr != nil && !errors.Is(finishErr, pgx.ErrNoRows) {
 						return canonicalAIAcquisition{}, finishErr
 					}
+				} else if ledger.Status == "queued" {
+					errorCode := "provider_not_called"
+					if _, finishErr := q.FinishQueuedAICallSkipped(ctx, db.FinishQueuedAICallSkippedParams{ErrorCode: &errorCode, ID: callID, ProjectID: projectID}); finishErr != nil && !errors.Is(finishErr, pgx.ErrNoRows) {
+						return canonicalAIAcquisition{}, finishErr
+					}
 				}
 			} else {
 				fingerprint, _ := json.Marshal(canonicalPageEvidenceMap("", page, nil))
@@ -111,7 +117,7 @@ func (s *Scheduler) acquireCanonicalAIReview(ctx context.Context, q *db.Queries,
 			review := canonicalAIVerificationResult{CallID: callID, Decision: "inconclusive"}
 			var reviewErr error
 			if !reclaimedExistingCall {
-				review, reviewErr = reviewer.reviewWithCallID(ctx, projectID, fix, page, callID)
+				review, reviewErr = reviewer.reviewWithCallID(ctx, projectID, fix, page, callID, aicalls.NewExistingAttemptObserver(q, projectID, callID))
 			} else {
 				reviewErr = errors.New("expired Doctor AI processing was reclaimed without repeating the provider call")
 			}

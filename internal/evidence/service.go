@@ -86,6 +86,22 @@ type Result struct {
 	Reused       bool
 }
 
+type previousObservationsKey struct{}
+type retryAttemptKey struct{}
+
+// PreviousObservations returns the immediately preceding attempt's immutable
+// observations while a retry collector is running. Collectors can resume
+// successful sub-calls instead of spending again.
+func PreviousObservations(ctx context.Context) []db.EvidenceObservation {
+	rows, _ := ctx.Value(previousObservationsKey{}).([]db.EvidenceObservation)
+	return append([]db.EvidenceObservation(nil), rows...)
+}
+
+func IsRetry(ctx context.Context) bool {
+	retry, _ := ctx.Value(retryAttemptKey{}).(bool)
+	return retry
+}
+
 func Fingerprint(spec any) (string, json.RawMessage, error) {
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -154,7 +170,23 @@ func (s Service) Collect(ctx context.Context, req Request, collector Collector) 
 		return result, nil
 	}
 
-	collected, collectErr := collector(ctx)
+	collectorCtx := ctx
+	var collected []Observation
+	var collectErr error
+	if run.AttemptNumber > 1 {
+		previous, previousErr := s.store.ListEvidenceObservations(ctx, db.ListEvidenceObservationsParams{
+			ProjectID: req.ProjectID, RunID: run.ID, AttemptNumber: run.AttemptNumber - 1,
+		})
+		if previousErr != nil {
+			collectErr = fmt.Errorf("load previous evidence attempt: %w", previousErr)
+		} else {
+			collectorCtx = context.WithValue(ctx, previousObservationsKey{}, previous)
+			collectorCtx = context.WithValue(collectorCtx, retryAttemptKey{}, true)
+		}
+	}
+	if collectErr == nil {
+		collected, collectErr = collector(collectorCtx)
+	}
 	persisted := make([]db.EvidenceObservation, 0, len(collected))
 	for _, observation := range collected {
 		row, persistErr := s.persistObservation(ctx, req, run, now, observation)

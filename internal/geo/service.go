@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/evidence"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -63,6 +64,7 @@ type Store interface {
 type Service struct {
 	Q              Store
 	EvidenceStore  evidence.Store
+	AICallStore    aicalls.Store
 	GrowthWriter   GrowthOpportunityWriter
 	HTTPClient     *http.Client
 	AnswerProvider AnswerProvider
