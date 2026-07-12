@@ -66,3 +66,26 @@ func TestSharedEvidenceQueriesAcquireBeforeCollectionAndPersistPartialStates(t *
 		}
 	}
 }
+
+func TestFinishEvidenceRunReturnsOnlyTheAttemptRow(t *testing.T) {
+	raw, err := os.ReadFile("queries/evidence.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	start := strings.Index(sql, "-- name: finishevidencerun :one")
+	if start < 0 {
+		t.Fatal("finish evidence query start is missing")
+	}
+	end := strings.Index(sql[start:], "-- name: getevidencerun :one")
+	if end < 0 {
+		t.Fatal("finish evidence query end is missing")
+	}
+	finish := sql[start : start+end]
+	if !strings.Contains(finish, "returning attempt.*") {
+		t.Fatal("finish evidence must expose only the updated attempt row to avoid ambiguous sqlc columns")
+	}
+	if strings.Contains(finish, "returning *") {
+		t.Fatal("finish evidence must not return the joined run and attempt rows together")
+	}
+}

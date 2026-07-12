@@ -119,7 +119,7 @@ with locked_run as (
     and attempt.attempt_number = sqlc.arg(attempt_number)
     and attempt.collection_owner_token = sqlc.arg(collection_owner_token)
     and attempt.status = 'running'
-  returning *
+  returning attempt.*
 ), finished_run as (
   update evidence_runs run set
     status = finished_attempt.status, error_summary = finished_attempt.error_summary,
