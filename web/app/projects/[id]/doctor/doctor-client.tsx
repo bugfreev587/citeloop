@@ -387,6 +387,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const initialSelectionHandled = useRef(false);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
   const [siteFixes, setSiteFixes] = useState<SiteFix[]>([]);
+  const [siteFixLinks, setSiteFixLinks] = useState<SiteFix[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -401,6 +402,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const findingReturnFocusRef = useRef<HTMLElement | null>(null);
   const recentReturnFocusRef = useRef<HTMLElement | null>(null);
+  const recentFallbackFocusRef = useRef<HTMLElement | null>(null);
   const dismissReturnFocusRef = useRef<HTMLElement | null>(null);
   const dismissDialogRef = useRef<HTMLDivElement | null>(null);
   const dismissingRecentLinkRef = useRef(false);
@@ -408,12 +410,14 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [next, fixes] = await Promise.all([
+      const [next, fixes, links] = await Promise.all([
         api.getSEODoctor(projectId),
         api.listDoctorSiteFixes(projectId),
+        api.listDoctorSiteFixLinks(projectId),
       ]);
       setReport(next);
       setSiteFixes(fixes);
+      setSiteFixLinks(links);
       const pendingRunID = pendingRunNoticeID.current;
       if (pendingRunID && next.run?.id === pendingRunID && !isActiveRun(next.run)) {
         pendingRunNoticeID.current = null;
@@ -446,8 +450,8 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
 
   const run = report?.run ?? null;
   const actionableFindings = useMemo(() => sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding)), [report?.findings]);
-  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
-  const recentFindingLinks = useMemo(() => recentDoctorFindingLinks(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
+  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
+  const recentFindingLinks = useMemo(() => recentDoctorFindingLinks(actionableFindings, siteFixLinks), [actionableFindings, siteFixLinks]);
   const counts = useMemo(
     () =>
       activeFindings.reduce(
@@ -610,7 +614,16 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     setDismissRecentError(null);
     try {
       const updated = await api.dismissDoctorSiteFixLink(projectId, fixID);
-      setSiteFixes((current) => current.map((siteFix) => (siteFix.id === updated.id ? updated : siteFix)));
+      const applyDismissal = (siteFix: SiteFix) =>
+        siteFix.id === updated.id
+          ? {
+              ...siteFix,
+              doctor_link_dismissed_at: updated.doctor_link_dismissed_at,
+              doctor_link_dismissed_by: updated.doctor_link_dismissed_by,
+            }
+          : siteFix;
+      setSiteFixLinks((current) => current.map(applyDismissal));
+      setSiteFixes((current) => current.map(applyDismissal));
       setPendingRecentDismiss(null);
       notify({
         tone: "green",
@@ -753,7 +766,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         ))}
       </section>
 
-      <section>
+      <section ref={recentFallbackFocusRef} tabIndex={-1}>
         <SectionHeader
           title="Findings"
           eyebrow="Grouped diagnostics"
@@ -990,6 +1003,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         maxWidthClassName="max-w-xl"
         surfaceRef={surfaceRef}
         returnFocusRef={recentReturnFocusRef}
+        fallbackFocusRef={recentFallbackFocusRef}
         interactionSuspended={Boolean(pendingRecentDismiss)}
       >
         {recentFindingLinks.length === 0 ? (

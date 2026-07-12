@@ -4026,6 +4026,152 @@ func (q *Queries) ListCanonicalSiteFixesForVerification(ctx context.Context, pro
 	return items, nil
 }
 
+const listCurrentDoctorSiteFixLinkApplications = `-- name: ListCurrentDoctorSiteFixLinkApplications :many
+with current_links as (
+  select distinct on (fix.doctor_finding_id) fix.id
+  from site_fixes fix
+  join seo_doctor_findings finding
+    on finding.id = fix.doctor_finding_id
+   and finding.project_id = fix.project_id
+  where fix.project_id = $1
+    and finding.status = 'active'
+    and finding.finding_kind in ('broken','optimization')
+  order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+)
+select distinct on (application.site_fix_id) application.id, application.project_id, application.source_opportunity_id, application.content_action_id, application.page_update_draft_id, application.application_kind, application.target_url, application.normalized_target_url, application.opportunity_key, application.publisher_connection_id, application.repo_full_name, application.base_branch, application.working_branch, application.base_commit_sha, application.head_commit_sha, application.source_file_path, application.source_file_paths, application.source_mapping_confidence, application.source_mapping_reason, application.base_file_sha, application.base_content_hash, application.proposed_content_hash, application.patch_snapshot, application.diff_snapshot, application.resolution_criteria, application.github_pr_number, application.github_pr_url, application.github_pr_state, application.deployment_snapshot, application.verification_snapshot, application.failure_reason, application.status, application.created_at, application.updated_at, application.pr_created_at, application.merged_at, application.deployed_at, application.verified_at, application.next_poll_at, application.next_notify_at, application.site_fix_id, application.pr_claim_token, application.pr_claim_expires_at, application.pr_claim_authority_fingerprint
+from site_change_applications application
+join current_links listed on listed.id = application.site_fix_id
+where application.project_id = $1
+  and application.site_fix_id is not null
+  and application.content_action_id is null
+order by application.site_fix_id, application.updated_at desc, application.id asc
+`
+
+func (q *Queries) ListCurrentDoctorSiteFixLinkApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error) {
+	rows, err := q.db.Query(ctx, listCurrentDoctorSiteFixLinkApplications, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteChangeApplication
+	for rows.Next() {
+		var i SiteChangeApplication
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SourceOpportunityID,
+			&i.ContentActionID,
+			&i.PageUpdateDraftID,
+			&i.ApplicationKind,
+			&i.TargetUrl,
+			&i.NormalizedTargetUrl,
+			&i.OpportunityKey,
+			&i.PublisherConnectionID,
+			&i.RepoFullName,
+			&i.BaseBranch,
+			&i.WorkingBranch,
+			&i.BaseCommitSha,
+			&i.HeadCommitSha,
+			&i.SourceFilePath,
+			&i.SourceFilePaths,
+			&i.SourceMappingConfidence,
+			&i.SourceMappingReason,
+			&i.BaseFileSha,
+			&i.BaseContentHash,
+			&i.ProposedContentHash,
+			&i.PatchSnapshot,
+			&i.DiffSnapshot,
+			&i.ResolutionCriteria,
+			&i.GithubPrNumber,
+			&i.GithubPrUrl,
+			&i.GithubPrState,
+			&i.DeploymentSnapshot,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrCreatedAt,
+			&i.MergedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.NextPollAt,
+			&i.NextNotifyAt,
+			&i.SiteFixID,
+			&i.PrClaimToken,
+			&i.PrClaimExpiresAt,
+			&i.PrClaimAuthorityFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCurrentDoctorSiteFixLinks = `-- name: ListCurrentDoctorSiteFixLinks :many
+select distinct on (fix.doctor_finding_id) fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by
+from site_fixes fix
+join seo_doctor_findings finding
+  on finding.id = fix.doctor_finding_id
+ and finding.project_id = fix.project_id
+where fix.project_id = $1
+  and finding.status = 'active'
+  and finding.finding_kind in ('broken','optimization')
+order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+`
+
+func (q *Queries) ListCurrentDoctorSiteFixLinks(ctx context.Context, projectID uuid.UUID) ([]SiteFix, error) {
+	rows, err := q.db.Query(ctx, listCurrentDoctorSiteFixLinks, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFix
+	for rows.Next() {
+		var i SiteFix
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.DoctorFindingID,
+			&i.CandidateID,
+			&i.WorkSignatureID,
+			&i.SupersedesSiteFixID,
+			&i.Status,
+			&i.FindingKind,
+			&i.TargetUrls,
+			&i.EvidenceSnapshot,
+			&i.ProposedFix,
+			&i.AcceptanceTests,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.RetryCount,
+			&i.MaxRetries,
+			&i.LegacyOpportunityID,
+			&i.LegacyContentActionID,
+			&i.MigrationBatchID,
+			&i.ApprovedAt,
+			&i.AppliedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DoctorLinkDismissedAt,
+			&i.DoctorLinkDismissedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDoctorAIOnDemandActiveSiteFixes = `-- name: ListDoctorAIOnDemandActiveSiteFixes :many
 select distinct marker.site_fix_id
 from doctor_ai_on_demand_triggers marker

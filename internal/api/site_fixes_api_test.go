@@ -1035,10 +1035,26 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("current Doctor finding links use a complete dedicated projection", func(t *testing.T) {
+		applicationID := uuid.New()
+		links := []DoctorSiteFixResponse{{
+			SiteFix:     fix,
+			Application: &db.SiteChangeApplication{ID: applicationID, ProjectID: projectID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}},
+		}}
+		service := &doctorSiteFixServiceStub{linkFixes: links}
+		response := serveSiteFixRequest(t, service, http.MethodGet, "/api/projects/"+projectID.String()+"/doctor/finding-links")
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if service.linkProject != projectID || !strings.Contains(response.Body.String(), applicationID.String()) {
+			t.Fatalf("link projection scope/response = %s / %s", service.linkProject, response.Body.String())
+		}
+	})
+
 	t.Run("dismiss Doctor link is project scoped and presentation only", func(t *testing.T) {
 		dismissedAt := time.Date(2026, time.July, 12, 18, 30, 0, 0, time.UTC)
 		dismissedBy := "default"
-		dismissed := DoctorSiteFixResponse{SiteFix: fix}
+		dismissed := fix
 		dismissed.DoctorLinkDismissedAt = pgtype.Timestamptz{Time: dismissedAt, Valid: true}
 		dismissed.DoctorLinkDismissedBy = &dismissedBy
 		service := &doctorSiteFixServiceStub{dismissFix: dismissed}
@@ -1056,14 +1072,18 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		if lifecycle.applyFix != uuid.Nil || lifecycle.verifyFix != uuid.Nil || lifecycle.terminateFix != uuid.Nil {
 			t.Fatalf("dismiss invoked lifecycle mutation: %+v", lifecycle)
 		}
+		repeated := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/dismiss-link")
+		if repeated.Code != http.StatusOK || service.dismissCalls != 2 || repeated.Body.String() != response.Body.String() {
+			t.Fatalf("repeated dismissal status=%d calls=%d first=%s repeated=%s", repeated.Code, service.dismissCalls, response.Body.String(), repeated.Body.String())
+		}
 
 		bad := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/not-a-uuid/dismiss-link")
-		if bad.Code != http.StatusBadRequest || service.dismissCalls != 1 {
+		if bad.Code != http.StatusBadRequest || service.dismissCalls != 2 {
 			t.Fatalf("invalid fix id status=%d calls=%d", bad.Code, service.dismissCalls)
 		}
 	})
 
-	t.Run("dismiss Doctor link is idempotent and preserves not found", func(t *testing.T) {
+	t.Run("dismiss Doctor link preserves not found", func(t *testing.T) {
 		service := &doctorSiteFixServiceStub{dismissErr: pgx.ErrNoRows}
 		path := "/api/projects/" + projectID.String() + "/doctor/site-fixes/" + fixID.String() + "/dismiss-link"
 		response := serveSiteFixRequest(t, service, http.MethodPost, path)
@@ -1221,6 +1241,9 @@ type doctorSiteFixServiceStub struct {
 	listErr        error
 	listProject    uuid.UUID
 	listStatus     *string
+	linkFixes      []DoctorSiteFixResponse
+	linkErr        error
+	linkProject    uuid.UUID
 	getFix         DoctorSiteFixResponse
 	getErr         error
 	getProject     uuid.UUID
@@ -1229,7 +1252,7 @@ type doctorSiteFixServiceStub struct {
 	approveErr     error
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
-	dismissFix     DoctorSiteFixResponse
+	dismissFix     db.SiteFix
 	dismissErr     error
 	dismissCalls   int
 	dismissProject uuid.UUID
@@ -1536,6 +1559,11 @@ func (s *doctorSiteFixServiceStub) List(_ context.Context, projectID uuid.UUID, 
 	return s.listFixes, s.listErr
 }
 
+func (s *doctorSiteFixServiceStub) ListDoctorLinks(_ context.Context, projectID uuid.UUID) ([]DoctorSiteFixResponse, error) {
+	s.linkProject = projectID
+	return s.linkFixes, s.linkErr
+}
+
 func (s *doctorSiteFixServiceStub) Get(_ context.Context, projectID, fixID uuid.UUID) (DoctorSiteFixResponse, error) {
 	s.getProject, s.getFixID = projectID, fixID
 	return s.getFix, s.getErr
@@ -1546,7 +1574,7 @@ func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID u
 	return s.approveFix, s.approveErr
 }
 
-func (s *doctorSiteFixServiceStub) DismissDoctorLink(_ context.Context, projectID, fixID uuid.UUID, dismissedBy string, dismissedAt time.Time) (DoctorSiteFixResponse, error) {
+func (s *doctorSiteFixServiceStub) DismissDoctorLink(_ context.Context, projectID, fixID uuid.UUID, dismissedBy string, dismissedAt time.Time) (db.SiteFix, error) {
 	s.dismissCalls++
 	s.dismissProject, s.dismissFixID, s.dismissBy, s.dismissAt = projectID, fixID, dismissedBy, dismissedAt
 	return s.dismissFix, s.dismissErr
@@ -1563,4 +1591,15 @@ func functionSource(t *testing.T, source, start, end string) string {
 		t.Fatalf("missing end marker %q", end)
 	}
 	return source[startIndex : startIndex+endIndex]
+}
+
+func TestDoctorLinkDismissalReturnsTheCommittedRowWithoutFallibleDetailReloads(t *testing.T) {
+	raw, err := os.ReadFile("handlers_site_fixes.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := functionSource(t, string(raw), "func (s *postgresDoctorSiteFixService) DismissDoctorLink", "func (s *postgresDoctorSiteFixService) Approve")
+	if strings.Contains(block, "loadResponse") || strings.Contains(block, "s.Get(") {
+		t.Fatal("dismissal must not report failure after persistence because an unrelated detail reload failed")
+	}
 }

@@ -37,6 +37,7 @@ func (s *Server) registerDoctorRoutes(r chi.Router, prefix string) {
 func (s *Server) registerCanonicalDoctorSiteFixRoutes(r chi.Router, prefix string) {
 	r.Post(prefix+"/findings/{findingID}/site-fixes", s.createDoctorSiteFix)
 	r.Get(prefix+"/site-fixes", s.listDoctorSiteFixes)
+	r.Get(prefix+"/finding-links", s.listCurrentDoctorSiteFixLinks)
 	r.Get(prefix+"/site-fixes/{fixID}", s.getDoctorSiteFix)
 	r.Post(prefix+"/site-fixes/{fixID}/dismiss-link", s.dismissDoctorSiteFixLink)
 	r.Post(prefix+"/site-fixes/{fixID}/approve", s.approveDoctorSiteFix)

@@ -44,9 +44,11 @@ The operation verifies that the Site Fix belongs to the project and is linked to
 
 The existing Site Fix list response includes the two dismissal fields. The web client uses the latest Site Change application already included with each Site Fix to determine whether a pull request exists.
 
+Doctor also exposes `GET /projects/{projectID}/doctor/finding-links`, a complete current-finding projection that returns the latest Site Fix and latest application for every active broken/optimization finding. This projection is intentionally separate from the 250-row Site Fixes workspace list: historical workspace pagination must never make a handed-off finding reappear as active work.
+
 ## Frontend Derivation
 
-The Doctor client creates one latest Site Fix per finding, ordered by creation time with a stable ID tiebreaker.
+The Doctor client consumes the complete current-finding projection and creates one latest Site Fix per finding, ordered by creation time with a stable ID tiebreaker.
 
 Primary findings are actionable report findings whose IDs have no linked Site Fix at all. This rule uses every loaded Site Fix, including dismissed links and fixes with pull requests, so presentation changes cannot recreate duplicate work.
 

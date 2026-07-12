@@ -22,6 +22,7 @@ export function RightDrawer({
   maxWidthClassName = "max-w-2xl",
   surfaceRef,
   returnFocusRef,
+  fallbackFocusRef,
   interactionSuspended = false,
   onClose,
 }: {
@@ -38,6 +39,7 @@ export function RightDrawer({
   maxWidthClassName?: string;
   surfaceRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
   interactionSuspended?: boolean;
   onClose: () => void;
 }) {
@@ -112,12 +114,14 @@ export function RightDrawer({
         surfaceRef.current.removeAttribute("aria-hidden");
         surfaceRef.current.inert = false;
       }
-      const focusTarget = returnFocusRef?.current ?? previousFocusRef.current;
-      if (focusTarget?.isConnected) {
+      const focusTarget = [returnFocusRef?.current, fallbackFocusRef?.current, previousFocusRef.current].find(
+        (element) => element?.isConnected && !element.matches(":disabled") && !element.closest("[inert]"),
+      );
+      if (focusTarget) {
         focusTarget.focus();
       }
     };
-  }, [open, returnFocusRef, surfaceRef]);
+  }, [fallbackFocusRef, open, returnFocusRef, surfaceRef]);
 
   if (!open) return null;
 

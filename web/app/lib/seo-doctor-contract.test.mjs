@@ -138,10 +138,18 @@ test("Doctor separates active findings from recent Site Fix handoffs", () => {
     assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.match(client, /disabled=\{recentFindingLinks\.length === 0\}/);
+  assert.match(client, /api\.listDoctorSiteFixLinks\(projectId\)/);
+  assert.match(client, /activeDoctorFindings\(actionableFindings, siteFixLinks\)/);
+  assert.match(client, /recentDoctorFindingLinks\(actionableFindings, siteFixLinks\)/);
   assert.match(client, /setSelectedFindingID\(null\)[\s\S]*setRecentDrawerOpen\(true\)/);
   assert.match(client, /setRecentDrawerOpen\(false\)[\s\S]*setSelectedFindingID\(finding\.id\)/);
   assert.doesNotMatch(client, /listDoctorSiteFixes\(projectId\)\.catch/, "Site Fix load failures must not recreate handed-off findings");
   assert.match(client, /interactionSuspended=\{Boolean\(pendingRecentDismiss\)\}/);
+  assert.match(client, /recentFallbackFocusRef/);
+  assert.match(client, /fallbackFocusRef=\{recentFallbackFocusRef\}/);
+  const drawer = read("components/right-drawer.tsx");
+  assert.match(drawer, /!element\.matches\(":disabled"\)/);
+  assert.match(drawer, /fallbackFocusRef\?\.current/);
 });
 
 test("Doctor treats the historical no-blockers sentinel as non-actionable healthy coverage", () => {

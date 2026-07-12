@@ -2572,6 +2572,10 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any[]>(`/projects/${id}/doctor/site-fixes`, undefined, auth);
     return arrayFrom(raw).map(normalizeSiteFix);
   },
+  listDoctorSiteFixLinks: async (id: string): Promise<SiteFix[]> => {
+    const raw = await req<any[]>(`/projects/${id}/doctor/finding-links`, undefined, auth);
+    return arrayFrom(raw).map(normalizeSiteFix);
+  },
   createDoctorSiteFix: async (id: string, findingID: string): Promise<SiteFix> => {
     const raw = await req<any>(
       `/projects/${id}/doctor/findings/${findingID}/site-fixes`,

@@ -46,6 +46,37 @@ where project_id = sqlc.arg(project_id)
 order by updated_at desc, id asc
 limit 250;
 
+-- name: ListCurrentDoctorSiteFixLinks :many
+select distinct on (fix.doctor_finding_id) fix.*
+from site_fixes fix
+join seo_doctor_findings finding
+  on finding.id = fix.doctor_finding_id
+ and finding.project_id = fix.project_id
+where fix.project_id = sqlc.arg(project_id)
+  and finding.status = 'active'
+  and finding.finding_kind in ('broken','optimization')
+order by fix.doctor_finding_id, fix.created_at desc, fix.id desc;
+
+-- name: ListCurrentDoctorSiteFixLinkApplications :many
+with current_links as (
+  select distinct on (fix.doctor_finding_id) fix.id
+  from site_fixes fix
+  join seo_doctor_findings finding
+    on finding.id = fix.doctor_finding_id
+   and finding.project_id = fix.project_id
+  where fix.project_id = sqlc.arg(project_id)
+    and finding.status = 'active'
+    and finding.finding_kind in ('broken','optimization')
+  order by fix.doctor_finding_id, fix.created_at desc, fix.id desc
+)
+select distinct on (application.site_fix_id) application.*
+from site_change_applications application
+join current_links listed on listed.id = application.site_fix_id
+where application.project_id = sqlc.arg(project_id)
+  and application.site_fix_id is not null
+  and application.content_action_id is null
+order by application.site_fix_id, application.updated_at desc, application.id asc;
+
 -- name: ListLatestCanonicalSiteFixApplications :many
 with listed_site_fixes as (
   select id

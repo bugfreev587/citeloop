@@ -57,8 +57,9 @@
 4. Add small pure helpers in the Doctor client for stable latest-per-finding selection and pull-request existence. Derive:
    - active findings from the absence of any linked Site Fix;
    - recent findings from the latest non-dismissed, no-PR Site Fix per current report finding.
-5. Run the focused Node contracts and TypeScript checks until green.
-6. Commit the data-contract slice.
+5. Feed those helpers from a dedicated complete current-finding link projection rather than the 250-row canonical Site Fixes workspace list.
+6. Run the focused Node contracts and TypeScript checks until green.
+7. Commit the data-contract slice.
 
 ## Task 4: Build the Recent Findings drawer and safe dismissal flow
 
