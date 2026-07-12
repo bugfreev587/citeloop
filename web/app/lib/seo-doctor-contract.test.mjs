@@ -111,6 +111,39 @@ test("Doctor route renders read-only diagnosis with self-serve AI repair JSON", 
   }
 });
 
+test("Doctor separates active findings from recent Site Fix handoffs", () => {
+  const client = read("projects/[id]/doctor/doctor-client.tsx");
+  const logic = read("lib/doctor-recent-findings.ts");
+
+  for (const contract of [
+    "activeDoctorFindings",
+    "recentDoctorFindingLinks",
+    "siteFixHasCreatedPR",
+    "doctor_link_dismissed_at",
+    "github_pr_number",
+    "github_pr_url",
+    "pr_created_at",
+  ]) {
+    assert.match(logic, new RegExp(contract));
+  }
+  for (const contract of [
+    "Recent Findings",
+    "data-doctor-recent-findings-drawer",
+    "dismissDoctorSiteFixLink",
+    "Remove this link from Doctor?",
+    "This only removes the link from Recent Findings. The Site Fix and any pull request are unchanged.",
+    "Dismiss link",
+    "site-fixes?fix=",
+  ]) {
+    assert.match(client, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(client, /disabled=\{recentFindingLinks\.length === 0\}/);
+  assert.match(client, /setSelectedFindingID\(null\)[\s\S]*setRecentDrawerOpen\(true\)/);
+  assert.match(client, /setRecentDrawerOpen\(false\)[\s\S]*setSelectedFindingID\(finding\.id\)/);
+  assert.doesNotMatch(client, /listDoctorSiteFixes\(projectId\)\.catch/, "Site Fix load failures must not recreate handed-off findings");
+  assert.match(client, /interactionSuspended=\{Boolean\(pendingRecentDismiss\)\}/);
+});
+
 test("Doctor treats the historical no-blockers sentinel as non-actionable healthy coverage", () => {
   const client = read("projects/[id]/doctor/doctor-client.tsx");
 
@@ -118,7 +151,7 @@ test("Doctor treats the historical no-blockers sentinel as non-actionable health
   assert.match(client, /finding\.issue_type === "no_active_technical_blockers"/);
   assert.match(client, /function isActionableDoctorFinding/);
   assert.match(client, /filter\(isActionableDoctorFinding\)/);
-  assert.match(client, /initialFindingId[\s\S]*isActionableDoctorFinding\(finding\)/);
+  assert.match(client, /initialFindingId[\s\S]*activeFindings\.some/);
   assert.match(client, /disabled=\{[\s\S]*!isActionableDoctorFinding\(selectedFinding\)/);
 });
 

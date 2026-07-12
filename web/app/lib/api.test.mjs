@@ -804,6 +804,8 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       legacy_opportunity_id: "opportunity-legacy",
       legacy_content_action_id: "action-legacy",
       migration_batch_id: "batch-legacy",
+      doctor_link_dismissed_at: null,
+      doctor_link_dismissed_by: null,
       application: { id: "latest-application", site_fix_id: "fix-1", status: "manual_apply_required" },
       verifications: [{ id: "verification-1", site_fix_id: "fix-1", ai_call_id: "ai-call-1", result: "failed" }],
       legacy_aliases: [
@@ -827,10 +829,13 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
         }),
       };
     }
+    const responseFix = url.endsWith("/dismiss-link")
+      ? { ...fix, doctor_link_dismissed_at: "2026-07-12T18:30:00.000Z", doctor_link_dismissed_by: "user-1" }
+      : fix;
     return {
       ok: true,
       status: url.includes("/findings/") ? 201 : 200,
-      json: async () => (url.endsWith("/site-fixes") && !url.includes("/findings/") ? [fix] : fix),
+      json: async () => (url.endsWith("/site-fixes") && !url.includes("/findings/") ? [fix] : responseFix),
     };
   };
 
@@ -839,6 +844,7 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
     const client = createApi();
 
     const listed = await client.listDoctorSiteFixes("project-1");
+    const dismissed = await client.dismissDoctorSiteFixLink("project-1", "fix-1");
     const created = await client.createDoctorSiteFix("project-1", "finding-1");
     const approved = await client.approveDoctorSiteFix("project-1", "fix-1");
     const applied = await client.applyDoctorSiteFix("project-1", "fix-1");
@@ -849,6 +855,9 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
     assert.equal(listed[0].legacy_opportunity_id, "opportunity-legacy");
     assert.equal(listed[0].legacy_content_action_id, "action-legacy");
     assert.equal(listed[0].migration_batch_id, "batch-legacy");
+    assert.equal(listed[0].doctor_link_dismissed_at, null);
+    assert.equal(dismissed.doctor_link_dismissed_at, "2026-07-12T18:30:00.000Z");
+    assert.equal(dismissed.doctor_link_dismissed_by, "user-1");
     assert.equal(listed[0].application.status, "manual_apply_required");
     assert.equal(listed[0].verifications[0].ai_call_id, "ai-call-1");
     assert.deepEqual(listed[0].legacy_aliases, [
@@ -864,6 +873,7 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       calls.map((call) => [call.url, call.init.method ?? "GET"]),
       [
         ["https://api.example.test/api/projects/project-1/doctor/site-fixes", "GET"],
+        ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/dismiss-link", "POST"],
         ["https://api.example.test/api/projects/project-1/doctor/findings/finding-1/site-fixes", "POST"],
         ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/approve", "POST"],
         ["https://api.example.test/api/projects/project-1/doctor/site-fixes/fix-1/apply", "POST"],

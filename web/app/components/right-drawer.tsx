@@ -22,6 +22,7 @@ export function RightDrawer({
   maxWidthClassName = "max-w-2xl",
   surfaceRef,
   returnFocusRef,
+  interactionSuspended = false,
   onClose,
 }: {
   open: boolean;
@@ -37,6 +38,7 @@ export function RightDrawer({
   maxWidthClassName?: string;
   surfaceRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
+  interactionSuspended?: boolean;
   onClose: () => void;
 }) {
   const titleId = useId();
@@ -44,7 +46,7 @@ export function RightDrawer({
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || interactionSuspended) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -75,7 +77,19 @@ export function RightDrawer({
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, open]);
+  }, [interactionSuspended, onClose, open]);
+
+  useEffect(() => {
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    drawer.inert = interactionSuspended;
+    if (interactionSuspended) drawer.setAttribute("aria-hidden", "true");
+    else drawer.removeAttribute("aria-hidden");
+    return () => {
+      drawer.inert = false;
+      drawer.removeAttribute("aria-hidden");
+    };
+  }, [interactionSuspended, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,13 +129,14 @@ export function RightDrawer({
         type="button"
         aria-label={closeLabel}
         onClick={onClose}
+        disabled={interactionSuspended}
         className="absolute inset-0 motion-safe:animate-[citeloop-drawer-scrim-in_180ms_ease-out] bg-slate-950/25"
       />
       <aside
         ref={drawerRef}
         {...dataProps}
         role="dialog"
-        aria-modal="true"
+        aria-modal={interactionSuspended ? undefined : "true"}
         aria-labelledby={titleId}
         className={cx(
           "absolute right-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full motion-safe:animate-[citeloop-drawer-panel-in_220ms_cubic-bezier(0.16,1,0.3,1)] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl",

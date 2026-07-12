@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
 import { SEODoctorFinding, SEODoctorReport, SEODoctorRun, SiteFix } from "../../../lib/api";
+import { activeDoctorFindings, DoctorRecentFindingLink, recentDoctorFindingLinks } from "../../../lib/doctor-recent-findings";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -72,16 +74,6 @@ function doctorRunStageLabel(run?: SEODoctorRun | null) {
   return run.stage || run.status || "Ready";
 }
 
-function issueCounts(report: SEODoctorReport | null) {
-  const counts = report?.human_report?.issue_counts ?? {};
-  return {
-    P0: Number(counts.P0 ?? 0),
-    P1: Number(counts.P1 ?? 0),
-    P2: Number(counts.P2 ?? 0),
-    Info: Number(counts.Info ?? 0),
-  };
-}
-
 function sortedFindings(findings: SEODoctorFinding[]) {
   return [...findings].sort((a, b) => {
     return (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4) || a.issue_type.localeCompare(b.issue_type);
@@ -90,6 +82,10 @@ function sortedFindings(findings: SEODoctorFinding[]) {
 
 function firstURL(finding: SEODoctorFinding) {
   return finding.affected_urls[0] || finding.normalized_urls[0] || "Project surface";
+}
+
+function siteFixStatusLabel(status: string) {
+  return status.replaceAll("_", " ");
 }
 
 function uniqueStrings(values: string[]) {
@@ -398,15 +394,23 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const [busyFindingID, setBusyFindingID] = useState<string | null>(null);
   const [busyKind, setBusyKind] = useState<"dismiss" | "add" | null>(null);
   const [selectedFindingID, setSelectedFindingID] = useState<string | null>(null);
+  const [recentDrawerOpen, setRecentDrawerOpen] = useState(false);
+  const [pendingRecentDismiss, setPendingRecentDismiss] = useState<DoctorRecentFindingLink<SEODoctorFinding> | null>(null);
+  const [dismissingRecentLinkID, setDismissingRecentLinkID] = useState<string | null>(null);
+  const [dismissRecentError, setDismissRecentError] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const findingReturnFocusRef = useRef<HTMLElement | null>(null);
+  const recentReturnFocusRef = useRef<HTMLElement | null>(null);
+  const dismissReturnFocusRef = useRef<HTMLElement | null>(null);
+  const dismissDialogRef = useRef<HTMLDivElement | null>(null);
+  const dismissingRecentLinkRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
       const [next, fixes] = await Promise.all([
         api.getSEODoctor(projectId),
-        api.listDoctorSiteFixes(projectId).catch(() => []),
+        api.listDoctorSiteFixes(projectId),
       ]);
       setReport(next);
       setSiteFixes(fixes);
@@ -441,11 +445,25 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   }, [refresh, report?.run?.id, report?.run?.status]);
 
   const run = report?.run ?? null;
-  const counts = issueCounts(report);
-  const visibleFindings = useMemo(() => {
-    const findings = sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding));
-    return filter === "all" ? findings : findings.filter((finding) => finding.severity === filter);
-  }, [filter, report?.findings]);
+  const actionableFindings = useMemo(() => sortedFindings((report?.findings ?? []).filter(isActionableDoctorFinding)), [report?.findings]);
+  const activeFindings = useMemo(() => activeDoctorFindings(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
+  const recentFindingLinks = useMemo(() => recentDoctorFindingLinks(actionableFindings, siteFixes), [actionableFindings, siteFixes]);
+  const counts = useMemo(
+    () =>
+      activeFindings.reduce(
+        (current, finding) => {
+          const severity = finding.severity as Exclude<SeverityFilter, "all">;
+          if (severity in current) current[severity] += 1;
+          return current;
+        },
+        { P0: 0, P1: 0, P2: 0, Info: 0 },
+      ),
+    [activeFindings],
+  );
+  const visibleFindings = useMemo(
+    () => filter === "all" ? activeFindings : activeFindings.filter((finding) => finding.severity === filter),
+    [activeFindings, filter],
+  );
   const healthyCoverage = run?.healthy_coverage ?? [];
   const progress = Math.max(0, Math.min(100, run?.progress_percent ?? 0));
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
@@ -473,15 +491,55 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   useEffect(() => {
     if (loading || initialSelectionHandled.current) return;
     initialSelectionHandled.current = true;
-    if (initialFindingId && (report?.findings ?? []).some((finding) => finding.id === initialFindingId && isActionableDoctorFinding(finding))) {
+    if (initialFindingId && activeFindings.some((finding) => finding.id === initialFindingId)) {
       setFilter("all");
       setSelectedFindingID(initialFindingId);
+    } else if (initialFindingId && recentFindingLinks.some(({ finding }) => finding.id === initialFindingId)) {
+      setRecentDrawerOpen(true);
     }
-  }, [initialFindingId, loading, report?.findings]);
+  }, [activeFindings, initialFindingId, loading, recentFindingLinks]);
 
   useEffect(() => {
     if (selectedFindingID && !selectedFinding) setSelectedFindingID(null);
   }, [selectedFindingID, selectedFinding]);
+
+  useEffect(() => {
+    if (!pendingRecentDismiss) return;
+    const dialog = dismissDialogRef.current;
+    dialog?.querySelector<HTMLElement>("[data-dismiss-cancel]")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !dismissingRecentLinkRef.current) {
+        event.preventDefault();
+        setPendingRecentDismiss(null);
+        setDismissRecentError(null);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      window.requestAnimationFrame(() => {
+        const preferred = dismissReturnFocusRef.current;
+        const fallback = document.querySelector<HTMLElement>("[data-doctor-recent-findings-drawer] [data-drawer-close]");
+        if (preferred?.isConnected) preferred.focus();
+        else fallback?.focus();
+      });
+    };
+  }, [pendingRecentDismiss?.siteFix.id]);
 
   async function runDoctor() {
     setRunning(true);
@@ -541,6 +599,31 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
     } finally {
       setBusyFindingID(null);
       setBusyKind(null);
+    }
+  }
+
+  async function dismissRecentFindingLink() {
+    if (!pendingRecentDismiss) return;
+    const fixID = pendingRecentDismiss.siteFix.id;
+    dismissingRecentLinkRef.current = true;
+    setDismissingRecentLinkID(fixID);
+    setDismissRecentError(null);
+    try {
+      const updated = await api.dismissDoctorSiteFixLink(projectId, fixID);
+      setSiteFixes((current) => current.map((siteFix) => (siteFix.id === updated.id ? updated : siteFix)));
+      setPendingRecentDismiss(null);
+      notify({
+        tone: "green",
+        title: "Link removed from Doctor",
+        detail: "The Site Fix and any pull request are unchanged.",
+      });
+    } catch (err: any) {
+      const detail = err?.apiMessage || err?.message || "Could not remove this link.";
+      setDismissRecentError(detail);
+      notify({ tone: "red", title: "Could not dismiss link", detail });
+    } finally {
+      dismissingRecentLinkRef.current = false;
+      setDismissingRecentLinkID(null);
     }
   }
 
@@ -675,9 +758,26 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
           title="Findings"
           eyebrow="Grouped diagnostics"
           action={
-            <Button size="sm" variant={filter === "all" ? "primary" : "outline"} onClick={() => setFilter("all")}>
-              All findings
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button size="sm" variant={filter === "all" ? "primary" : "outline"} onClick={() => setFilter("all")}>
+                All findings
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={recentFindingLinks.length === 0}
+                onClick={(event) => {
+                  recentReturnFocusRef.current = event.currentTarget;
+                  setSelectedFindingID(null);
+                  setRecentDrawerOpen(true);
+                }}
+              >
+                <span>Recent Findings</span>
+                <span className="inline-flex min-w-5 items-center justify-center rounded-md bg-slate-100 px-1.5 text-[11px] font-bold text-slate-600">
+                  {recentFindingLinks.length}
+                </span>
+              </Button>
+            </div>
           }
         />
         {loading ? (
@@ -701,7 +801,8 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
                 data-doctor-finding-card
                 aria-label={`Open finding details: ${finding.fix_intent || finding.issue_type}`}
                 onClick={(event) => {
-                  returnFocusRef.current = event.currentTarget;
+                  findingReturnFocusRef.current = event.currentTarget;
+                  setRecentDrawerOpen(false);
                   setSelectedFindingID(finding.id);
                 }}
                 className={cx(
@@ -779,7 +880,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         subtitle={selectedFinding ? firstURL(selectedFinding) : undefined}
         maxWidthClassName="max-w-3xl"
         surfaceRef={surfaceRef}
-        returnFocusRef={returnFocusRef}
+        returnFocusRef={findingReturnFocusRef}
         badges={
           selectedFinding ? (
             <>
@@ -878,6 +979,135 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
           </div>
         )}
       </RightDrawer>
+
+      <RightDrawer
+        open={recentDrawerOpen}
+        onClose={() => setRecentDrawerOpen(false)}
+        dataAttribute="doctor-recent-findings-drawer"
+        eyebrow="Site Fix handoffs"
+        title="Recent Findings"
+        subtitle="Open the canonical Site Fix for each handed-off finding. Links clear automatically after a pull request is created."
+        maxWidthClassName="max-w-xl"
+        surfaceRef={surfaceRef}
+        returnFocusRef={recentReturnFocusRef}
+        interactionSuspended={Boolean(pendingRecentDismiss)}
+      >
+        {recentFindingLinks.length === 0 ? (
+          <EmptyState
+            title="No recent links"
+            detail="New Site Fix handoffs will appear here until a pull request is created or you dismiss the link."
+          />
+        ) : (
+          <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            {recentFindingLinks.map(({ finding, siteFix }) => (
+              <article key={siteFix.id} className="grid gap-3 p-4 transition-colors hover:bg-slate-50/70">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={findingKindTone(finding)}>{findingKindLabel(finding)}</Badge>
+                  <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+                  <Badge tone="neutral">{siteFixStatusLabel(siteFix.status)}</Badge>
+                </div>
+                <Link
+                  href={`/projects/${projectId}/site-fixes?fix=${siteFix.id}`}
+                  onClick={() => setRecentDrawerOpen(false)}
+                  className="group min-w-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold leading-6 text-slate-950 group-hover:text-[#b72d1a]">
+                        {finding.fix_intent || finding.issue_type}
+                      </h4>
+                      <p className="mt-1 truncate text-xs font-semibold text-slate-500">{firstURL(finding)}</p>
+                    </div>
+                    <ChevronRight size={17} className="mt-0.5 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-slate-400">Added {formatDate(siteFix.created_at ?? null)}</p>
+                </Link>
+                <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                  <span className="text-xs font-semibold text-slate-500">Site Fix remains the source of truth</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={(event) => {
+                      dismissReturnFocusRef.current = event.currentTarget;
+                      setDismissRecentError(null);
+                      setPendingRecentDismiss({ finding, siteFix });
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </RightDrawer>
+
+      {pendingRecentDismiss && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/35 px-4 py-6">
+          <button
+            type="button"
+            aria-label="Cancel link dismissal"
+            className="absolute inset-0"
+            disabled={Boolean(dismissingRecentLinkID)}
+            onClick={() => {
+              setPendingRecentDismiss(null);
+              setDismissRecentError(null);
+            }}
+          />
+          <div
+            ref={dismissDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="doctor-recent-dismiss-title"
+            aria-describedby="doctor-recent-dismiss-description"
+            className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+          >
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Confirm link removal</div>
+            <h3 id="doctor-recent-dismiss-title" className="mt-2 text-lg font-bold leading-7 text-slate-950">
+              Remove this link from Doctor?
+            </h3>
+            <p id="doctor-recent-dismiss-description" className="mt-3 text-sm leading-6 text-slate-600">
+              This only removes the link from Recent Findings. The Site Fix and any pull request are unchanged.
+            </p>
+            <div className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold leading-5 text-slate-700">
+              {pendingRecentDismiss.finding.fix_intent || pendingRecentDismiss.finding.issue_type}
+            </div>
+            {dismissRecentError && (
+              <div className="mt-4">
+                <Notice title="Link was not removed" detail={dismissRecentError} tone="amber" />
+              </div>
+            )}
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-dismiss-cancel
+                disabled={Boolean(dismissingRecentLinkID)}
+                onClick={() => {
+                  setPendingRecentDismiss(null);
+                  setDismissRecentError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                aria-busy={Boolean(dismissingRecentLinkID)}
+                disabled={Boolean(dismissingRecentLinkID)}
+                onClick={() => void dismissRecentFindingLink()}
+              >
+                <ButtonProgress busy={Boolean(dismissingRecentLinkID)} busyLabel="Dismissing" idleIcon={<X size={14} />}>
+                  Dismiss link
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
