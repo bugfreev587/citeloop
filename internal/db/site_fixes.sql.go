@@ -7079,7 +7079,7 @@ with marked_action as (
       legacy_migration_disposition = 'duplicate', updated_at = now()
   where a.project_id = $3 and a.id = $4
     and a.canonical_read_only = false and a.canonical_site_fix_id is null
-  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition
+  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition, a.measurement_policy_version, a.measurement_policy, a.measuring_started_at, a.absolute_terminal_at, a.measurement_terminal_reason
 ), marked_opportunity as (
   update seo_opportunities o
   set canonical_site_fix_id = $1, canonical_read_only = true,
@@ -7090,7 +7090,7 @@ with marked_action as (
     and o.canonical_read_only = false
   returning o.id
 )
-select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition from marked_action
+select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition, marked_action.measurement_policy_version, marked_action.measurement_policy, marked_action.measuring_started_at, marked_action.absolute_terminal_at, marked_action.measurement_terminal_reason from marked_action
 `
 
 type MarkLegacyDuplicateCanonicalReadOnlyParams struct {
@@ -7138,6 +7138,11 @@ type MarkLegacyDuplicateCanonicalReadOnlyRow struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	MeasurementPolicyVersion   string             `json:"measurement_policy_version"`
+	MeasurementPolicy          json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt         pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt         pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason  *string            `json:"measurement_terminal_reason"`
 }
 
 func (q *Queries) MarkLegacyDuplicateCanonicalReadOnly(ctx context.Context, arg MarkLegacyDuplicateCanonicalReadOnlyParams) (MarkLegacyDuplicateCanonicalReadOnlyRow, error) {
@@ -7186,6 +7191,11 @@ func (q *Queries) MarkLegacyDuplicateCanonicalReadOnly(ctx context.Context, arg 
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -7197,7 +7207,7 @@ with marked_action as (
       legacy_migration_disposition = 'review', updated_at = now()
   where a.project_id = $2 and a.id = $3
     and a.canonical_read_only = false and a.canonical_site_fix_id is null
-  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition
+  returning a.id, a.project_id, a.opportunity_id, a.action_type, a.status, a.target_article_id, a.target_url, a.normalized_target_url, a.target_content_hash_before, a.target_content_hash_after, a.draft_article_id, a.baseline_window, a.measurement_window, a.published_at, a.outcome_summary, a.created_at, a.updated_at, a.asset_type, a.target_surface_id, a.risk_reasons, a.evidence_snapshot, a.input_snapshot, a.output_snapshot, a.diff_snapshot, a.review_required, a.approved_by, a.approved_at, a.verified_at, a.verification_snapshot, a.approval_source, a.routing_source, a.work_type, a.status_reason, a.canonical_site_fix_id, a.canonical_read_only, a.legacy_migration_batch_id, a.legacy_migration_disposition, a.measurement_policy_version, a.measurement_policy, a.measuring_started_at, a.absolute_terminal_at, a.measurement_terminal_reason
 ), marked_opportunity as (
   update seo_opportunities o
   set canonical_read_only = true, legacy_migration_batch_id = $1,
@@ -7207,7 +7217,7 @@ with marked_action as (
     and o.canonical_read_only = false
   returning o.id
 )
-select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition from marked_action
+select marked_action.id, marked_action.project_id, marked_action.opportunity_id, marked_action.action_type, marked_action.status, marked_action.target_article_id, marked_action.target_url, marked_action.normalized_target_url, marked_action.target_content_hash_before, marked_action.target_content_hash_after, marked_action.draft_article_id, marked_action.baseline_window, marked_action.measurement_window, marked_action.published_at, marked_action.outcome_summary, marked_action.created_at, marked_action.updated_at, marked_action.asset_type, marked_action.target_surface_id, marked_action.risk_reasons, marked_action.evidence_snapshot, marked_action.input_snapshot, marked_action.output_snapshot, marked_action.diff_snapshot, marked_action.review_required, marked_action.approved_by, marked_action.approved_at, marked_action.verified_at, marked_action.verification_snapshot, marked_action.approval_source, marked_action.routing_source, marked_action.work_type, marked_action.status_reason, marked_action.canonical_site_fix_id, marked_action.canonical_read_only, marked_action.legacy_migration_batch_id, marked_action.legacy_migration_disposition, marked_action.measurement_policy_version, marked_action.measurement_policy, marked_action.measuring_started_at, marked_action.absolute_terminal_at, marked_action.measurement_terminal_reason from marked_action
 `
 
 type MarkLegacyMigrationReviewReadOnlyParams struct {
@@ -7254,6 +7264,11 @@ type MarkLegacyMigrationReviewReadOnlyRow struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	MeasurementPolicyVersion   string             `json:"measurement_policy_version"`
+	MeasurementPolicy          json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt         pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt         pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason  *string            `json:"measurement_terminal_reason"`
 }
 
 func (q *Queries) MarkLegacyMigrationReviewReadOnly(ctx context.Context, arg MarkLegacyMigrationReviewReadOnlyParams) (MarkLegacyMigrationReviewReadOnlyRow, error) {
@@ -7297,6 +7312,11 @@ func (q *Queries) MarkLegacyMigrationReviewReadOnly(ctx context.Context, arg Mar
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -8759,7 +8779,7 @@ set canonical_site_fix_id = null, canonical_read_only = false,
     updated_at = now()
 where project_id = $2 and id = $3
   and legacy_migration_batch_id = $4
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type RestoreLegacyContentActionFromLedgerParams struct {
@@ -8815,6 +8835,11 @@ func (q *Queries) RestoreLegacyContentActionFromLedger(ctx context.Context, arg 
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }

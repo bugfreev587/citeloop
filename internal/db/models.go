@@ -12,24 +12,29 @@ import (
 )
 
 type ActionMeasurement struct {
-	ID                    uuid.UUID          `json:"id"`
-	ProjectID             uuid.UUID          `json:"project_id"`
-	ContentActionID       uuid.UUID          `json:"content_action_id"`
-	ArticleID             pgtype.UUID        `json:"article_id"`
-	CheckpointDay         int32              `json:"checkpoint_day"`
-	WindowStart           pgtype.Date        `json:"window_start"`
-	WindowEnd             pgtype.Date        `json:"window_end"`
-	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
-	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
-	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
-	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
-	OutcomeLabel          string             `json:"outcome_label"`
-	OutcomeReason         string             `json:"outcome_reason"`
-	AttributionConfidence string             `json:"attribution_confidence"`
-	Confounders           json.RawMessage    `json:"confounders"`
-	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	ContentActionID          uuid.UUID          `json:"content_action_id"`
+	ArticleID                pgtype.UUID        `json:"article_id"`
+	CheckpointDay            int32              `json:"checkpoint_day"`
+	WindowStart              pgtype.Date        `json:"window_start"`
+	WindowEnd                pgtype.Date        `json:"window_end"`
+	SeoMetrics               json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics               json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics               json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics         json.RawMessage    `json:"execution_metrics"`
+	OutcomeLabel             string             `json:"outcome_label"`
+	OutcomeReason            string             `json:"outcome_reason"`
+	AttributionConfidence    string             `json:"attribution_confidence"`
+	Confounders              json.RawMessage    `json:"confounders"`
+	ComputedAt               pgtype.Timestamptz `json:"computed_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	CheckpointRole           string             `json:"checkpoint_role"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	CheckpointAttempt        int32              `json:"checkpoint_attempt"`
+	DataQualityState         string             `json:"data_quality_state"`
+	SourceFreshness          json.RawMessage    `json:"source_freshness"`
 }
 
 type AdminGeoProviderCredential struct {
@@ -211,6 +216,11 @@ type ContentAction struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	MeasurementPolicyVersion   string             `json:"measurement_policy_version"`
+	MeasurementPolicy          json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt         pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt         pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason  *string            `json:"measurement_terminal_reason"`
 }
 
 type ContentInventory struct {

@@ -65,6 +65,9 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	if !strings.Contains(source, "TickWorkflow") || !strings.Contains(source, "@every 10s") {
 		t.Fatal("Start must register TickWorkflow every 10 seconds")
 	}
+	if !strings.Contains(source, "TickMeasurements") || !strings.Contains(source, "@every 1h") {
+		t.Fatal("Start must register TickMeasurements every hour")
+	}
 	if !strings.Contains(source, "TickReviewOverdue") || !strings.Contains(source, "@every 30m") {
 		t.Fatal("Start must register TickReviewOverdue every 30 minutes")
 	}

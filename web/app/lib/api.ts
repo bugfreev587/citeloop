@@ -598,6 +598,11 @@ export type SEOContentAction = {
   work_type?: SEOWorkTypeKey | null;
   baseline_window?: any;
   measurement_window?: any;
+  measurement_policy_version?: string;
+  measurement_policy?: any;
+  measuring_started_at?: any;
+  absolute_terminal_at?: any;
+  measurement_terminal_reason?: string | null;
   published_at?: any;
   outcome_summary?: any;
   created_at?: any;
@@ -741,6 +746,11 @@ export type ActionMeasurement = {
   outcome_reason: string;
   attribution_confidence: "high" | "medium" | "low" | "none" | string;
   confounders: any[];
+  checkpoint_role: "baseline" | "early" | "primary" | "follow_up" | string;
+  measurement_policy_version: string;
+  checkpoint_attempt: number;
+  data_quality_state: "complete" | "partial" | "insufficient" | "provider_unavailable" | "stale" | string;
+  source_freshness: any;
   computed_at?: any;
   created_at?: any;
   updated_at?: any;
@@ -1501,6 +1511,11 @@ function normalizeSEOContentAction(raw: any): SEOContentAction {
     verification_snapshot: data.verification_snapshot ?? null,
     baseline_window: data.baseline_window ?? {},
     measurement_window: data.measurement_window ?? {},
+    measurement_policy_version: data.measurement_policy_version ?? "legacy-v0",
+    measurement_policy: data.measurement_policy ?? {},
+    measuring_started_at: data.measuring_started_at ?? undefined,
+    absolute_terminal_at: data.absolute_terminal_at ?? undefined,
+    measurement_terminal_reason: data.measurement_terminal_reason ?? null,
     published_at: data.published_at ?? undefined,
     outcome_summary: data.outcome_summary ?? {},
     created_at: data.created_at ?? undefined,
@@ -1703,6 +1718,11 @@ function normalizeActionMeasurement(raw: any): ActionMeasurement {
     outcome_reason: data.outcome_reason ?? "No comparable before/after data is available yet.",
     attribution_confidence: data.attribution_confidence ?? "low",
     confounders: arrayFrom(data.confounders),
+    checkpoint_role: data.checkpoint_role ?? "primary",
+    measurement_policy_version: data.measurement_policy_version ?? "legacy-measurement-v1",
+    checkpoint_attempt: Number(data.checkpoint_attempt ?? 1),
+    data_quality_state: data.data_quality_state ?? "insufficient",
+    source_freshness: data.source_freshness ?? {},
     computed_at: data.computed_at ?? undefined,
     created_at: data.created_at ?? undefined,
     updated_at: data.updated_at ?? undefined,

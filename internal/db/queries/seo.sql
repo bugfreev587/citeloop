@@ -1452,6 +1452,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,
@@ -1995,33 +2000,54 @@ where ca.project_id = sqlc.arg(project_id)
       and alias.disposition in ('duplicate','doctor_merge')
   )
   and (
-    ca.published_at is null
+    coalesce(ca.measuring_started_at, ca.published_at) is null
     or ca.measurement_window = '{}'::jsonb
+    or ca.absolute_terminal_at <= sqlc.arg(now_at)::timestamptz
+    or not exists (
+      select 1 from action_measurements baseline
+      where baseline.project_id = ca.project_id
+        and baseline.content_action_id = ca.id
+        and baseline.checkpoint_role = 'baseline'
+        and baseline.measurement_policy_version = ca.measurement_policy_version
+    )
     or exists (
       select 1
       from jsonb_array_elements(coalesce(ca.measurement_window->'checkpoints', '[]'::jsonb)) checkpoint
       where coalesce(checkpoint->>'status', 'scheduled') = 'scheduled'
-        and ca.published_at + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= sqlc.arg(now_at)::timestamptz
+        and coalesce(ca.measuring_started_at, ca.published_at)
+          + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= sqlc.arg(now_at)::timestamptz
     )
   )
 order by ca.published_at asc nulls first, ca.updated_at asc
 limit sqlc.arg(limit_rows)
 for update of ca skip locked;
 
+-- name: BindLegacyMeasuringContentActionPolicy :one
+update content_actions set
+  status = status,
+  updated_at = updated_at
+where id = sqlc.arg(id)
+  and project_id = sqlc.arg(project_id)
+  and status = 'measuring'
+  and measuring_started_at is null
+returning *;
+
 -- name: UpdateContentActionOutcomeSummary :one
 update content_actions set
   status = sqlc.arg(status)::text,
   outcome_summary = sqlc.arg(outcome_summary)::jsonb,
   measurement_window = sqlc.arg(measurement_window)::jsonb,
+  measurement_terminal_reason = coalesce(sqlc.narg(measurement_terminal_reason), measurement_terminal_reason),
   updated_at = now()
 where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
 returning *;
 
--- name: UpsertActionMeasurement :one
+-- name: InsertActionMeasurementCheckpoint :exec
 insert into action_measurements
   (project_id, content_action_id, article_id, checkpoint_day, window_start, window_end,
    seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason,
-   attribution_confidence, confounders, computed_at)
+   attribution_confidence, confounders, computed_at, checkpoint_role,
+   measurement_policy_version, checkpoint_attempt, data_quality_state, source_freshness)
 values (
   sqlc.arg(project_id),
   sqlc.arg(content_action_id),
@@ -2037,23 +2063,14 @@ values (
   sqlc.arg(outcome_reason),
   sqlc.arg(attribution_confidence),
   sqlc.arg(confounders)::jsonb,
-  sqlc.arg(computed_at)
+  sqlc.arg(computed_at),
+  sqlc.arg(checkpoint_role),
+  sqlc.arg(measurement_policy_version),
+  sqlc.arg(checkpoint_attempt),
+  sqlc.arg(data_quality_state),
+  sqlc.arg(source_freshness)::jsonb
 )
-on conflict (project_id, content_action_id, checkpoint_day) do update set
-  article_id = coalesce(excluded.article_id, action_measurements.article_id),
-  window_start = excluded.window_start,
-  window_end = excluded.window_end,
-  seo_metrics = excluded.seo_metrics,
-  ga4_metrics = excluded.ga4_metrics,
-  geo_metrics = excluded.geo_metrics,
-  execution_metrics = excluded.execution_metrics,
-  outcome_label = excluded.outcome_label,
-  outcome_reason = excluded.outcome_reason,
-  attribution_confidence = excluded.attribution_confidence,
-  confounders = excluded.confounders,
-  computed_at = excluded.computed_at,
-  updated_at = now()
-returning *;
+on conflict (project_id, content_action_id, checkpoint_day) do nothing;
 
 -- name: ListActionMeasurementsForProject :many
 select * from action_measurements
@@ -2083,6 +2100,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,
@@ -2153,6 +2175,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,

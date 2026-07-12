@@ -80,6 +80,72 @@ func (q *Queries) AppendGrowthCutoverSessionEntry(ctx context.Context, arg Appen
 	return i, err
 }
 
+const bindLegacyMeasuringContentActionPolicy = `-- name: BindLegacyMeasuringContentActionPolicy :one
+update content_actions set
+  status = status,
+  updated_at = updated_at
+where id = $1
+  and project_id = $2
+  and status = 'measuring'
+  and measuring_started_at is null
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
+`
+
+type BindLegacyMeasuringContentActionPolicyParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+func (q *Queries) BindLegacyMeasuringContentActionPolicy(ctx context.Context, arg BindLegacyMeasuringContentActionPolicyParams) (ContentAction, error) {
+	row := q.db.QueryRow(ctx, bindLegacyMeasuringContentActionPolicy, arg.ID, arg.ProjectID)
+	var i ContentAction
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.OpportunityID,
+		&i.ActionType,
+		&i.Status,
+		&i.TargetArticleID,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetContentHashBefore,
+		&i.TargetContentHashAfter,
+		&i.DraftArticleID,
+		&i.BaselineWindow,
+		&i.MeasurementWindow,
+		&i.PublishedAt,
+		&i.OutcomeSummary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssetType,
+		&i.TargetSurfaceID,
+		&i.RiskReasons,
+		&i.EvidenceSnapshot,
+		&i.InputSnapshot,
+		&i.OutputSnapshot,
+		&i.DiffSnapshot,
+		&i.ReviewRequired,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.VerifiedAt,
+		&i.VerificationSnapshot,
+		&i.ApprovalSource,
+		&i.RoutingSource,
+		&i.WorkType,
+		&i.StatusReason,
+		&i.CanonicalSiteFixID,
+		&i.CanonicalReadOnly,
+		&i.LegacyMigrationBatchID,
+		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
+	)
+	return i, err
+}
+
 const claimPageUpdateDraftForApply = `-- name: ClaimPageUpdateDraftForApply :one
 with candidate as (
   select page_update_drafts.id from page_update_drafts
@@ -555,7 +621,7 @@ on conflict (project_id, opportunity_id, action_type) do update set
   routing_source = excluded.routing_source,
   work_type = excluded.work_type,
   updated_at = now()
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type CreateContentActionParams struct {
@@ -629,6 +695,11 @@ func (q *Queries) CreateContentAction(ctx context.Context, arg CreateContentActi
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -1214,7 +1285,7 @@ updated_action as (
   from candidate
   where ca.id = candidate.id
     and ca.project_id = candidate.project_id
-  returning ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition
+  returning ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition, ca.measurement_policy_version, ca.measurement_policy, ca.measuring_started_at, ca.absolute_terminal_at, ca.measurement_terminal_reason
 ),
 updated_opportunity as (
   update seo_opportunities so set
@@ -1225,7 +1296,7 @@ updated_opportunity as (
     and so.project_id = candidate.project_id
   returning so.id, so.project_id, so.type, so.status, so.priority_score, so.confidence, so.page_url, so.normalized_page_url, so.article_id, so.topic_id, so.query, so.evidence, so.recommended_action, so.expected_impact, so.effort, so.risk_level, so.created_by_run_id, so.created_at, so.updated_at, so.opportunity_key, so.snoozed_until, so.snooze_reason, so.unsnoozed_at, so.opportunity_identity_key, so.evidence_fingerprint, so.canonical_site_fix_id, so.canonical_read_only, so.legacy_migration_batch_id, so.legacy_migration_disposition, so.canonical_growth, so.growth_spec_state, so.growth_spec_version, so.growth_spec_origin, so.growth_spec, so.growth_spec_missing, so.decision_ready_at
 )
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from updated_action
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason from updated_action
 `
 
 type DismissSEOContentActionAndOpportunityParams struct {
@@ -1271,6 +1342,11 @@ type DismissSEOContentActionAndOpportunityRow struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	MeasurementPolicyVersion   string             `json:"measurement_policy_version"`
+	MeasurementPolicy          json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt         pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt         pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason  *string            `json:"measurement_terminal_reason"`
 }
 
 func (q *Queries) DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error) {
@@ -1314,6 +1390,11 @@ func (q *Queries) DismissSEOContentActionAndOpportunity(ctx context.Context, arg
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -1752,7 +1833,7 @@ func (q *Queries) GetCanonicalGrowthOpportunityByWorkSignatureForUpdate(ctx cont
 }
 
 const getContentAction = `-- name: GetContentAction :one
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from content_actions
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason from content_actions
 where id = $1 and project_id = $2
 `
 
@@ -1802,13 +1883,18 @@ func (q *Queries) GetContentAction(ctx context.Context, arg GetContentActionPara
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
 
 const getGrowthExecutionChainForUpdate = `-- name: GetGrowthExecutionChainForUpdate :one
 with locked_actions as materialized (
-  select action.id, action.project_id, action.opportunity_id, action.action_type, action.status, action.target_article_id, action.target_url, action.normalized_target_url, action.target_content_hash_before, action.target_content_hash_after, action.draft_article_id, action.baseline_window, action.measurement_window, action.published_at, action.outcome_summary, action.created_at, action.updated_at, action.asset_type, action.target_surface_id, action.risk_reasons, action.evidence_snapshot, action.input_snapshot, action.output_snapshot, action.diff_snapshot, action.review_required, action.approved_by, action.approved_at, action.verified_at, action.verification_snapshot, action.approval_source, action.routing_source, action.work_type, action.status_reason, action.canonical_site_fix_id, action.canonical_read_only, action.legacy_migration_batch_id, action.legacy_migration_disposition from content_actions action
+  select action.id, action.project_id, action.opportunity_id, action.action_type, action.status, action.target_article_id, action.target_url, action.normalized_target_url, action.target_content_hash_before, action.target_content_hash_after, action.draft_article_id, action.baseline_window, action.measurement_window, action.published_at, action.outcome_summary, action.created_at, action.updated_at, action.asset_type, action.target_surface_id, action.risk_reasons, action.evidence_snapshot, action.input_snapshot, action.output_snapshot, action.diff_snapshot, action.review_required, action.approved_by, action.approved_at, action.verified_at, action.verification_snapshot, action.approval_source, action.routing_source, action.work_type, action.status_reason, action.canonical_site_fix_id, action.canonical_read_only, action.legacy_migration_batch_id, action.legacy_migration_disposition, action.measurement_policy_version, action.measurement_policy, action.measuring_started_at, action.absolute_terminal_at, action.measurement_terminal_reason from content_actions action
   where action.project_id = $2
     and action.opportunity_id = $3
   order by action.id
@@ -1841,7 +1927,7 @@ with locked_actions as materialized (
   order by draft.id
   for update of draft
 ), locked_measurements as materialized (
-  select measurement.id, measurement.project_id, measurement.content_action_id, measurement.article_id, measurement.checkpoint_day, measurement.window_start, measurement.window_end, measurement.seo_metrics, measurement.ga4_metrics, measurement.geo_metrics, measurement.execution_metrics, measurement.outcome_label, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.computed_at, measurement.created_at, measurement.updated_at from action_measurements measurement
+  select measurement.id, measurement.project_id, measurement.content_action_id, measurement.article_id, measurement.checkpoint_day, measurement.window_start, measurement.window_end, measurement.seo_metrics, measurement.ga4_metrics, measurement.geo_metrics, measurement.execution_metrics, measurement.outcome_label, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.computed_at, measurement.created_at, measurement.updated_at, measurement.checkpoint_role, measurement.measurement_policy_version, measurement.checkpoint_attempt, measurement.data_quality_state, measurement.source_freshness from action_measurements measurement
   join locked_actions action on action.id = measurement.content_action_id
   where measurement.project_id = $2
   order by measurement.id
@@ -2089,6 +2175,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,
@@ -2150,6 +2241,11 @@ type GetResultsActionRowRow struct {
 	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
 	BaselineWindow               json.RawMessage    `json:"baseline_window"`
 	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	MeasurementPolicyVersion     string             `json:"measurement_policy_version"`
+	MeasurementPolicy            json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt           pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt           pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason    *string            `json:"measurement_terminal_reason"`
 	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
 	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
@@ -2197,6 +2293,11 @@ func (q *Queries) GetResultsActionRow(ctx context.Context, arg GetResultsActionR
 		&i.DraftArticleID,
 		&i.BaselineWindow,
 		&i.MeasurementWindow,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 		&i.PublishedAt,
 		&i.OutcomeSummary,
 		&i.CreatedAt,
@@ -2502,6 +2603,86 @@ func (q *Queries) GetWorkSignatureForGrowthEvidenceMergeForUpdate(ctx context.Co
 	return i, err
 }
 
+const insertActionMeasurementCheckpoint = `-- name: InsertActionMeasurementCheckpoint :exec
+insert into action_measurements
+  (project_id, content_action_id, article_id, checkpoint_day, window_start, window_end,
+   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason,
+   attribution_confidence, confounders, computed_at, checkpoint_role,
+   measurement_policy_version, checkpoint_attempt, data_quality_state, source_freshness)
+values (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7::jsonb,
+  $8::jsonb,
+  $9::jsonb,
+  $10::jsonb,
+  $11,
+  $12,
+  $13,
+  $14::jsonb,
+  $15,
+  $16,
+  $17,
+  $18,
+  $19,
+  $20::jsonb
+)
+on conflict (project_id, content_action_id, checkpoint_day) do nothing
+`
+
+type InsertActionMeasurementCheckpointParams struct {
+	ProjectID                uuid.UUID          `json:"project_id"`
+	ContentActionID          uuid.UUID          `json:"content_action_id"`
+	ArticleID                pgtype.UUID        `json:"article_id"`
+	CheckpointDay            int32              `json:"checkpoint_day"`
+	WindowStart              pgtype.Date        `json:"window_start"`
+	WindowEnd                pgtype.Date        `json:"window_end"`
+	SeoMetrics               json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics               json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics               json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics         json.RawMessage    `json:"execution_metrics"`
+	OutcomeLabel             string             `json:"outcome_label"`
+	OutcomeReason            string             `json:"outcome_reason"`
+	AttributionConfidence    string             `json:"attribution_confidence"`
+	Confounders              json.RawMessage    `json:"confounders"`
+	ComputedAt               pgtype.Timestamptz `json:"computed_at"`
+	CheckpointRole           string             `json:"checkpoint_role"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	CheckpointAttempt        int32              `json:"checkpoint_attempt"`
+	DataQualityState         string             `json:"data_quality_state"`
+	SourceFreshness          json.RawMessage    `json:"source_freshness"`
+}
+
+func (q *Queries) InsertActionMeasurementCheckpoint(ctx context.Context, arg InsertActionMeasurementCheckpointParams) error {
+	_, err := q.db.Exec(ctx, insertActionMeasurementCheckpoint,
+		arg.ProjectID,
+		arg.ContentActionID,
+		arg.ArticleID,
+		arg.CheckpointDay,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.SeoMetrics,
+		arg.Ga4Metrics,
+		arg.GeoMetrics,
+		arg.ExecutionMetrics,
+		arg.OutcomeLabel,
+		arg.OutcomeReason,
+		arg.AttributionConfidence,
+		arg.Confounders,
+		arg.ComputedAt,
+		arg.CheckpointRole,
+		arg.MeasurementPolicyVersion,
+		arg.CheckpointAttempt,
+		arg.DataQualityState,
+		arg.SourceFreshness,
+	)
+	return err
+}
+
 const insertSEORun = `-- name: InsertSEORun :one
 insert into seo_runs
   (project_id, agent, status, started_at, finished_at, cost_usd, input, output, error)
@@ -2682,7 +2863,7 @@ func (q *Queries) LinkSEODoctorFindingToAction(ctx context.Context, arg LinkSEOD
 }
 
 const listActionMeasurementsForAction = `-- name: ListActionMeasurementsForAction :many
-select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at from action_measurements
+select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at, checkpoint_role, measurement_policy_version, checkpoint_attempt, data_quality_state, source_freshness from action_measurements
 where project_id = $1
   and content_action_id = $2
 order by checkpoint_day asc, computed_at asc
@@ -2721,6 +2902,11 @@ func (q *Queries) ListActionMeasurementsForAction(ctx context.Context, arg ListA
 			&i.ComputedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CheckpointRole,
+			&i.MeasurementPolicyVersion,
+			&i.CheckpointAttempt,
+			&i.DataQualityState,
+			&i.SourceFreshness,
 		); err != nil {
 			return nil, err
 		}
@@ -2733,7 +2919,7 @@ func (q *Queries) ListActionMeasurementsForAction(ctx context.Context, arg ListA
 }
 
 const listActionMeasurementsForProject = `-- name: ListActionMeasurementsForProject :many
-select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at from action_measurements
+select id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at, checkpoint_role, measurement_policy_version, checkpoint_attempt, data_quality_state, source_freshness from action_measurements
 where project_id = $1
   and ($2::uuid is null or content_action_id = $2)
 order by computed_at desc, checkpoint_day desc
@@ -2774,6 +2960,11 @@ func (q *Queries) ListActionMeasurementsForProject(ctx context.Context, arg List
 			&i.ComputedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CheckpointRole,
+			&i.MeasurementPolicyVersion,
+			&i.CheckpointAttempt,
+			&i.DataQualityState,
+			&i.SourceFreshness,
 		); err != nil {
 			return nil, err
 		}
@@ -2865,7 +3056,7 @@ func (q *Queries) ListActiveLegacyGrowthOpportunities(ctx context.Context, arg L
 }
 
 const listContentActions = `-- name: ListContentActions :many
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from content_actions
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason from content_actions
 where project_id = $1
   and ($2::text = '' or status = $2)
   and ($3::timestamptz is null or created_at < $3)
@@ -2932,6 +3123,11 @@ func (q *Queries) ListContentActions(ctx context.Context, arg ListContentActions
 			&i.CanonicalReadOnly,
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicy,
+			&i.MeasuringStartedAt,
+			&i.AbsoluteTerminalAt,
+			&i.MeasurementTerminalReason,
 		); err != nil {
 			return nil, err
 		}
@@ -3081,7 +3277,7 @@ func (q *Queries) ListDoctorPagePriorityInputs(ctx context.Context, arg ListDoct
 }
 
 const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions :many
-select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition from content_actions ca
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition, ca.measurement_policy_version, ca.measurement_policy, ca.measuring_started_at, ca.absolute_terminal_at, ca.measurement_terminal_reason from content_actions ca
 where ca.project_id = $1
   and ca.status = 'measuring'
   and not exists (
@@ -3094,13 +3290,22 @@ where ca.project_id = $1
       and alias.disposition in ('duplicate','doctor_merge')
   )
   and (
-    ca.published_at is null
+    coalesce(ca.measuring_started_at, ca.published_at) is null
     or ca.measurement_window = '{}'::jsonb
+    or ca.absolute_terminal_at <= $2::timestamptz
+    or not exists (
+      select 1 from action_measurements baseline
+      where baseline.project_id = ca.project_id
+        and baseline.content_action_id = ca.id
+        and baseline.checkpoint_role = 'baseline'
+        and baseline.measurement_policy_version = ca.measurement_policy_version
+    )
     or exists (
       select 1
       from jsonb_array_elements(coalesce(ca.measurement_window->'checkpoints', '[]'::jsonb)) checkpoint
       where coalesce(checkpoint->>'status', 'scheduled') = 'scheduled'
-        and ca.published_at + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= $2::timestamptz
+        and coalesce(ca.measuring_started_at, ca.published_at)
+          + (coalesce(nullif(checkpoint->>'day', '')::int, 0) * interval '1 day') <= $2::timestamptz
     )
   )
 order by ca.published_at asc nulls first, ca.updated_at asc
@@ -3161,6 +3366,11 @@ func (q *Queries) ListDueMeasuringContentActions(ctx context.Context, arg ListDu
 			&i.CanonicalReadOnly,
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicy,
+			&i.MeasuringStartedAt,
+			&i.AbsoluteTerminalAt,
+			&i.MeasurementTerminalReason,
 		); err != nil {
 			return nil, err
 		}
@@ -3650,6 +3860,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,
@@ -3727,6 +3942,11 @@ type ListResultsActionRowsRow struct {
 	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
 	BaselineWindow               json.RawMessage    `json:"baseline_window"`
 	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	MeasurementPolicyVersion     string             `json:"measurement_policy_version"`
+	MeasurementPolicy            json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt           pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt           pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason    *string            `json:"measurement_terminal_reason"`
 	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
 	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
@@ -3785,6 +4005,11 @@ func (q *Queries) ListResultsActionRows(ctx context.Context, arg ListResultsActi
 			&i.DraftArticleID,
 			&i.BaselineWindow,
 			&i.MeasurementWindow,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicy,
+			&i.MeasuringStartedAt,
+			&i.AbsoluteTerminalAt,
+			&i.MeasurementTerminalReason,
 			&i.PublishedAt,
 			&i.OutcomeSummary,
 			&i.CreatedAt,
@@ -4356,7 +4581,7 @@ func (q *Queries) ListStalePageUpdateDrafts(ctx context.Context, arg ListStalePa
 }
 
 const listUnplannedContentActions = `-- name: ListUnplannedContentActions :many
-select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition from content_actions ca
+select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition, ca.measurement_policy_version, ca.measurement_policy, ca.measuring_started_at, ca.absolute_terminal_at, ca.measurement_terminal_reason from content_actions ca
 left join topics t
   on t.source_content_action_id = ca.id
 where ca.project_id = $1
@@ -4442,6 +4667,11 @@ func (q *Queries) ListUnplannedContentActions(ctx context.Context, arg ListUnpla
 			&i.CanonicalReadOnly,
 			&i.LegacyMigrationBatchID,
 			&i.LegacyMigrationDisposition,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicy,
+			&i.MeasuringStartedAt,
+			&i.AbsoluteTerminalAt,
+			&i.MeasurementTerminalReason,
 		); err != nil {
 			return nil, err
 		}
@@ -4466,6 +4696,11 @@ select
   ca.draft_article_id,
   ca.baseline_window,
   ca.measurement_window,
+  ca.measurement_policy_version,
+  ca.measurement_policy,
+  ca.measuring_started_at,
+  ca.absolute_terminal_at,
+  ca.measurement_terminal_reason,
   ca.published_at,
   ca.outcome_summary,
   ca.created_at,
@@ -4528,6 +4763,11 @@ type ListVisibilityActionRowsRow struct {
 	DraftArticleID               pgtype.UUID        `json:"draft_article_id"`
 	BaselineWindow               json.RawMessage    `json:"baseline_window"`
 	MeasurementWindow            json.RawMessage    `json:"measurement_window"`
+	MeasurementPolicyVersion     string             `json:"measurement_policy_version"`
+	MeasurementPolicy            json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt           pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt           pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason    *string            `json:"measurement_terminal_reason"`
 	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
 	OutcomeSummary               json.RawMessage    `json:"outcome_summary"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
@@ -4581,6 +4821,11 @@ func (q *Queries) ListVisibilityActionRows(ctx context.Context, arg ListVisibili
 			&i.DraftArticleID,
 			&i.BaselineWindow,
 			&i.MeasurementWindow,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicy,
+			&i.MeasuringStartedAt,
+			&i.AbsoluteTerminalAt,
+			&i.MeasurementTerminalReason,
 			&i.PublishedAt,
 			&i.OutcomeSummary,
 			&i.CreatedAt,
@@ -4630,7 +4875,7 @@ with locked_opportunity as materialized (
     and opportunity.id = $2
   for update
 ), locked_actions as materialized (
-  select selected.id, selected.project_id, selected.opportunity_id, selected.action_type, selected.status, selected.target_article_id, selected.target_url, selected.normalized_target_url, selected.target_content_hash_before, selected.target_content_hash_after, selected.draft_article_id, selected.baseline_window, selected.measurement_window, selected.published_at, selected.outcome_summary, selected.created_at, selected.updated_at, selected.asset_type, selected.target_surface_id, selected.risk_reasons, selected.evidence_snapshot, selected.input_snapshot, selected.output_snapshot, selected.diff_snapshot, selected.review_required, selected.approved_by, selected.approved_at, selected.verified_at, selected.verification_snapshot, selected.approval_source, selected.routing_source, selected.work_type, selected.status_reason, selected.canonical_site_fix_id, selected.canonical_read_only, selected.legacy_migration_batch_id, selected.legacy_migration_disposition
+  select selected.id, selected.project_id, selected.opportunity_id, selected.action_type, selected.status, selected.target_article_id, selected.target_url, selected.normalized_target_url, selected.target_content_hash_before, selected.target_content_hash_after, selected.draft_article_id, selected.baseline_window, selected.measurement_window, selected.published_at, selected.outcome_summary, selected.created_at, selected.updated_at, selected.asset_type, selected.target_surface_id, selected.risk_reasons, selected.evidence_snapshot, selected.input_snapshot, selected.output_snapshot, selected.diff_snapshot, selected.review_required, selected.approved_by, selected.approved_at, selected.verified_at, selected.verification_snapshot, selected.approval_source, selected.routing_source, selected.work_type, selected.status_reason, selected.canonical_site_fix_id, selected.canonical_read_only, selected.legacy_migration_batch_id, selected.legacy_migration_disposition, selected.measurement_policy_version, selected.measurement_policy, selected.measuring_started_at, selected.absolute_terminal_at, selected.measurement_terminal_reason
   from content_actions selected
   join locked_opportunity opportunity on opportunity.project_id = selected.project_id
     and opportunity.id = selected.opportunity_id
@@ -4644,7 +4889,7 @@ with locked_opportunity as materialized (
   order by selected_article.id
   for update of selected_article
 ), selected_target as (
-  select action.id, action.project_id, action.opportunity_id, action.action_type, action.status, action.target_article_id, action.target_url, action.normalized_target_url, action.target_content_hash_before, action.target_content_hash_after, action.draft_article_id, action.baseline_window, action.measurement_window, action.published_at, action.outcome_summary, action.created_at, action.updated_at, action.asset_type, action.target_surface_id, action.risk_reasons, action.evidence_snapshot, action.input_snapshot, action.output_snapshot, action.diff_snapshot, action.review_required, action.approved_by, action.approved_at, action.verified_at, action.verification_snapshot, action.approval_source, action.routing_source, action.work_type, action.status_reason, action.canonical_site_fix_id, action.canonical_read_only, action.legacy_migration_batch_id, action.legacy_migration_disposition, article.id as selected_article_id
+  select action.id, action.project_id, action.opportunity_id, action.action_type, action.status, action.target_article_id, action.target_url, action.normalized_target_url, action.target_content_hash_before, action.target_content_hash_after, action.draft_article_id, action.baseline_window, action.measurement_window, action.published_at, action.outcome_summary, action.created_at, action.updated_at, action.asset_type, action.target_surface_id, action.risk_reasons, action.evidence_snapshot, action.input_snapshot, action.output_snapshot, action.diff_snapshot, action.review_required, action.approved_by, action.approved_at, action.verified_at, action.verification_snapshot, action.approval_source, action.routing_source, action.work_type, action.status_reason, action.canonical_site_fix_id, action.canonical_read_only, action.legacy_migration_batch_id, action.legacy_migration_disposition, action.measurement_policy_version, action.measurement_policy, action.measuring_started_at, action.absolute_terminal_at, action.measurement_terminal_reason, article.id as selected_article_id
   from locked_actions action
   left join locked_articles article on article.project_id = action.project_id and article.id = action.draft_article_id
   order by
@@ -4780,7 +5025,7 @@ update content_actions set
   updated_at = now()
 where id = $1 and project_id = $2
   and status not in ('returned','dismissed','published','measuring','completed')
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type MarkContentActionDraftReadyParams struct {
@@ -4830,6 +5075,11 @@ func (q *Queries) MarkContentActionDraftReady(ctx context.Context, arg MarkConte
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -4840,7 +5090,7 @@ update content_actions set
   published_at = now(),
   updated_at = now()
 where project_id = $1 and draft_article_id = $2
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type MarkContentActionMeasuringForDraftArticleParams struct {
@@ -4889,6 +5139,11 @@ func (q *Queries) MarkContentActionMeasuringForDraftArticle(ctx context.Context,
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -4915,7 +5170,7 @@ updated_action as (
   from candidate
   where ca.id = candidate.id
     and ca.project_id = candidate.project_id
-  returning ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition
+  returning ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition, ca.measurement_policy_version, ca.measurement_policy, ca.measuring_started_at, ca.absolute_terminal_at, ca.measurement_terminal_reason
 ),
 updated_opportunity as (
   update seo_opportunities so set
@@ -4938,7 +5193,7 @@ withdrawn_article as (
     and a.status in ('generating','pending_review','approved')
   returning a.id
 )
-select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition from updated_action
+select id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason from updated_action
 `
 
 type MarkContentActionReturnedToOpportunityParams struct {
@@ -4984,6 +5239,11 @@ type MarkContentActionReturnedToOpportunityRow struct {
 	CanonicalReadOnly          bool               `json:"canonical_read_only"`
 	LegacyMigrationBatchID     pgtype.UUID        `json:"legacy_migration_batch_id"`
 	LegacyMigrationDisposition string             `json:"legacy_migration_disposition"`
+	MeasurementPolicyVersion   string             `json:"measurement_policy_version"`
+	MeasurementPolicy          json.RawMessage    `json:"measurement_policy"`
+	MeasuringStartedAt         pgtype.Timestamptz `json:"measuring_started_at"`
+	AbsoluteTerminalAt         pgtype.Timestamptz `json:"absolute_terminal_at"`
+	MeasurementTerminalReason  *string            `json:"measurement_terminal_reason"`
 }
 
 // Withdraw the in-progress draft so a returned opportunity does not leave an
@@ -5029,6 +5289,11 @@ func (q *Queries) MarkContentActionReturnedToOpportunity(ctx context.Context, ar
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -5039,7 +5304,7 @@ update content_actions set
   output_snapshot = coalesce(output_snapshot, '{}'::jsonb) || jsonb_build_object('publisher_result', $1::jsonb),
   updated_at = now()
 where id = $2 and project_id = $3
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type MarkContentActionSiteFixPRResultParams struct {
@@ -5089,6 +5354,11 @@ func (q *Queries) MarkContentActionSiteFixPRResult(ctx context.Context, arg Mark
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -5100,7 +5370,7 @@ update content_actions set
   verification_snapshot = $3::jsonb,
   updated_at = now()
 where id = $4 and project_id = $5
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type MarkContentActionVerificationParams struct {
@@ -5158,6 +5428,11 @@ func (q *Queries) MarkContentActionVerification(ctx context.Context, arg MarkCon
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -5398,7 +5673,7 @@ update content_actions set
 from verified_application
 where content_actions.id = verified_application.content_action_id
   and content_actions.project_id = $4
-returning content_actions.id, content_actions.project_id, content_actions.opportunity_id, content_actions.action_type, content_actions.status, content_actions.target_article_id, content_actions.target_url, content_actions.normalized_target_url, content_actions.target_content_hash_before, content_actions.target_content_hash_after, content_actions.draft_article_id, content_actions.baseline_window, content_actions.measurement_window, content_actions.published_at, content_actions.outcome_summary, content_actions.created_at, content_actions.updated_at, content_actions.asset_type, content_actions.target_surface_id, content_actions.risk_reasons, content_actions.evidence_snapshot, content_actions.input_snapshot, content_actions.output_snapshot, content_actions.diff_snapshot, content_actions.review_required, content_actions.approved_by, content_actions.approved_at, content_actions.verified_at, content_actions.verification_snapshot, content_actions.approval_source, content_actions.routing_source, content_actions.work_type, content_actions.status_reason, content_actions.canonical_site_fix_id, content_actions.canonical_read_only, content_actions.legacy_migration_batch_id, content_actions.legacy_migration_disposition
+returning content_actions.id, content_actions.project_id, content_actions.opportunity_id, content_actions.action_type, content_actions.status, content_actions.target_article_id, content_actions.target_url, content_actions.normalized_target_url, content_actions.target_content_hash_before, content_actions.target_content_hash_after, content_actions.draft_article_id, content_actions.baseline_window, content_actions.measurement_window, content_actions.published_at, content_actions.outcome_summary, content_actions.created_at, content_actions.updated_at, content_actions.asset_type, content_actions.target_surface_id, content_actions.risk_reasons, content_actions.evidence_snapshot, content_actions.input_snapshot, content_actions.output_snapshot, content_actions.diff_snapshot, content_actions.review_required, content_actions.approved_by, content_actions.approved_at, content_actions.verified_at, content_actions.verification_snapshot, content_actions.approval_source, content_actions.routing_source, content_actions.work_type, content_actions.status_reason, content_actions.canonical_site_fix_id, content_actions.canonical_read_only, content_actions.legacy_migration_batch_id, content_actions.legacy_migration_disposition, content_actions.measurement_policy_version, content_actions.measurement_policy, content_actions.measuring_started_at, content_actions.absolute_terminal_at, content_actions.measurement_terminal_reason
 `
 
 type MarkSiteChangeApplicationAndContentActionVerifiedParams struct {
@@ -5458,6 +5733,11 @@ func (q *Queries) MarkSiteChangeApplicationAndContentActionVerified(ctx context.
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -6595,7 +6875,7 @@ update content_actions set
   verification_snapshot = $12::jsonb,
   updated_at = now()
 where id = $13 and project_id = $14
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type UpdateContentActionExecutionMetadataParams struct {
@@ -6671,6 +6951,11 @@ func (q *Queries) UpdateContentActionExecutionMetadata(ctx context.Context, arg 
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -6680,17 +6965,19 @@ update content_actions set
   status = $1::text,
   outcome_summary = $2::jsonb,
   measurement_window = $3::jsonb,
+  measurement_terminal_reason = coalesce($4, measurement_terminal_reason),
   updated_at = now()
-where id = $4 and project_id = $5
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+where id = $5 and project_id = $6
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type UpdateContentActionOutcomeSummaryParams struct {
-	Status            string          `json:"status"`
-	OutcomeSummary    json.RawMessage `json:"outcome_summary"`
-	MeasurementWindow json.RawMessage `json:"measurement_window"`
-	ID                uuid.UUID       `json:"id"`
-	ProjectID         uuid.UUID       `json:"project_id"`
+	Status                    string          `json:"status"`
+	OutcomeSummary            json.RawMessage `json:"outcome_summary"`
+	MeasurementWindow         json.RawMessage `json:"measurement_window"`
+	MeasurementTerminalReason *string         `json:"measurement_terminal_reason"`
+	ID                        uuid.UUID       `json:"id"`
+	ProjectID                 uuid.UUID       `json:"project_id"`
 }
 
 func (q *Queries) UpdateContentActionOutcomeSummary(ctx context.Context, arg UpdateContentActionOutcomeSummaryParams) (ContentAction, error) {
@@ -6698,6 +6985,7 @@ func (q *Queries) UpdateContentActionOutcomeSummary(ctx context.Context, arg Upd
 		arg.Status,
 		arg.OutcomeSummary,
 		arg.MeasurementWindow,
+		arg.MeasurementTerminalReason,
 		arg.ID,
 		arg.ProjectID,
 	)
@@ -6740,6 +7028,11 @@ func (q *Queries) UpdateContentActionOutcomeSummary(ctx context.Context, arg Upd
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -6750,7 +7043,7 @@ update content_actions set
   status_reason = null,
   updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition
+returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
 
 type UpdateContentActionStatusParams struct {
@@ -6800,6 +7093,11 @@ func (q *Queries) UpdateContentActionStatus(ctx context.Context, arg UpdateConte
 		&i.CanonicalReadOnly,
 		&i.LegacyMigrationBatchID,
 		&i.LegacyMigrationDisposition,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicy,
+		&i.MeasuringStartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.MeasurementTerminalReason,
 	)
 	return i, err
 }
@@ -7148,105 +7446,6 @@ func (q *Queries) UpdateSEOOpportunityStatus(ctx context.Context, arg UpdateSEOO
 		&i.GrowthSpec,
 		&i.GrowthSpecMissing,
 		&i.DecisionReadyAt,
-	)
-	return i, err
-}
-
-const upsertActionMeasurement = `-- name: UpsertActionMeasurement :one
-insert into action_measurements
-  (project_id, content_action_id, article_id, checkpoint_day, window_start, window_end,
-   seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason,
-   attribution_confidence, confounders, computed_at)
-values (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7::jsonb,
-  $8::jsonb,
-  $9::jsonb,
-  $10::jsonb,
-  $11,
-  $12,
-  $13,
-  $14::jsonb,
-  $15
-)
-on conflict (project_id, content_action_id, checkpoint_day) do update set
-  article_id = coalesce(excluded.article_id, action_measurements.article_id),
-  window_start = excluded.window_start,
-  window_end = excluded.window_end,
-  seo_metrics = excluded.seo_metrics,
-  ga4_metrics = excluded.ga4_metrics,
-  geo_metrics = excluded.geo_metrics,
-  execution_metrics = excluded.execution_metrics,
-  outcome_label = excluded.outcome_label,
-  outcome_reason = excluded.outcome_reason,
-  attribution_confidence = excluded.attribution_confidence,
-  confounders = excluded.confounders,
-  computed_at = excluded.computed_at,
-  updated_at = now()
-returning id, project_id, content_action_id, article_id, checkpoint_day, window_start, window_end, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, outcome_label, outcome_reason, attribution_confidence, confounders, computed_at, created_at, updated_at
-`
-
-type UpsertActionMeasurementParams struct {
-	ProjectID             uuid.UUID          `json:"project_id"`
-	ContentActionID       uuid.UUID          `json:"content_action_id"`
-	ArticleID             pgtype.UUID        `json:"article_id"`
-	CheckpointDay         int32              `json:"checkpoint_day"`
-	WindowStart           pgtype.Date        `json:"window_start"`
-	WindowEnd             pgtype.Date        `json:"window_end"`
-	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
-	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
-	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
-	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
-	OutcomeLabel          string             `json:"outcome_label"`
-	OutcomeReason         string             `json:"outcome_reason"`
-	AttributionConfidence string             `json:"attribution_confidence"`
-	Confounders           json.RawMessage    `json:"confounders"`
-	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
-}
-
-func (q *Queries) UpsertActionMeasurement(ctx context.Context, arg UpsertActionMeasurementParams) (ActionMeasurement, error) {
-	row := q.db.QueryRow(ctx, upsertActionMeasurement,
-		arg.ProjectID,
-		arg.ContentActionID,
-		arg.ArticleID,
-		arg.CheckpointDay,
-		arg.WindowStart,
-		arg.WindowEnd,
-		arg.SeoMetrics,
-		arg.Ga4Metrics,
-		arg.GeoMetrics,
-		arg.ExecutionMetrics,
-		arg.OutcomeLabel,
-		arg.OutcomeReason,
-		arg.AttributionConfidence,
-		arg.Confounders,
-		arg.ComputedAt,
-	)
-	var i ActionMeasurement
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.ContentActionID,
-		&i.ArticleID,
-		&i.CheckpointDay,
-		&i.WindowStart,
-		&i.WindowEnd,
-		&i.SeoMetrics,
-		&i.Ga4Metrics,
-		&i.GeoMetrics,
-		&i.ExecutionMetrics,
-		&i.OutcomeLabel,
-		&i.OutcomeReason,
-		&i.AttributionConfidence,
-		&i.Confounders,
-		&i.ComputedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
