@@ -1035,6 +1035,43 @@ func TestCanonicalDoctorSiteFixHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("dismiss Doctor link is project scoped and presentation only", func(t *testing.T) {
+		dismissedAt := time.Date(2026, time.July, 12, 18, 30, 0, 0, time.UTC)
+		dismissedBy := "default"
+		dismissed := DoctorSiteFixResponse{SiteFix: fix}
+		dismissed.DoctorLinkDismissedAt = pgtype.Timestamptz{Time: dismissedAt, Valid: true}
+		dismissed.DoctorLinkDismissedBy = &dismissedBy
+		service := &doctorSiteFixServiceStub{dismissFix: dismissed}
+		lifecycle := &doctorSiteFixLifecycleServiceStub{}
+		response := serveSiteFixLifecycleRequest(t, service, lifecycle, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String()+"/dismiss-link")
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if service.dismissCalls != 1 || service.dismissProject != projectID || service.dismissFixID != fixID || service.dismissBy != "default" || service.dismissAt.IsZero() {
+			t.Fatalf("dismiss scope/actor = %+v", service)
+		}
+		if !strings.Contains(response.Body.String(), `"doctor_link_dismissed_by":"default"`) || !strings.Contains(response.Body.String(), `"status":"proposed"`) {
+			t.Fatalf("dismiss response omitted metadata or lifecycle: %s", response.Body.String())
+		}
+		if lifecycle.applyFix != uuid.Nil || lifecycle.verifyFix != uuid.Nil || lifecycle.terminateFix != uuid.Nil {
+			t.Fatalf("dismiss invoked lifecycle mutation: %+v", lifecycle)
+		}
+
+		bad := serveSiteFixRequest(t, service, http.MethodPost, "/api/projects/"+projectID.String()+"/doctor/site-fixes/not-a-uuid/dismiss-link")
+		if bad.Code != http.StatusBadRequest || service.dismissCalls != 1 {
+			t.Fatalf("invalid fix id status=%d calls=%d", bad.Code, service.dismissCalls)
+		}
+	})
+
+	t.Run("dismiss Doctor link is idempotent and preserves not found", func(t *testing.T) {
+		service := &doctorSiteFixServiceStub{dismissErr: pgx.ErrNoRows}
+		path := "/api/projects/" + projectID.String() + "/doctor/site-fixes/" + fixID.String() + "/dismiss-link"
+		response := serveSiteFixRequest(t, service, http.MethodPost, path)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	})
+
 	t.Run("not found remains project scoped", func(t *testing.T) {
 		service := &doctorSiteFixServiceStub{getErr: pgx.ErrNoRows}
 		response := serveSiteFixRequest(t, service, http.MethodGet, "/api/projects/"+projectID.String()+"/doctor/site-fixes/"+fixID.String())
@@ -1192,6 +1229,13 @@ type doctorSiteFixServiceStub struct {
 	approveErr     error
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
+	dismissFix     DoctorSiteFixResponse
+	dismissErr     error
+	dismissCalls   int
+	dismissProject uuid.UUID
+	dismissFixID   uuid.UUID
+	dismissBy      string
+	dismissAt      time.Time
 }
 
 type doctorSiteFixLifecycleServiceStub struct {
@@ -1500,6 +1544,12 @@ func (s *doctorSiteFixServiceStub) Get(_ context.Context, projectID, fixID uuid.
 func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID uuid.UUID, _ time.Time) (DoctorSiteFixResponse, error) {
 	s.approveProject, s.approveFixID = projectID, fixID
 	return s.approveFix, s.approveErr
+}
+
+func (s *doctorSiteFixServiceStub) DismissDoctorLink(_ context.Context, projectID, fixID uuid.UUID, dismissedBy string, dismissedAt time.Time) (DoctorSiteFixResponse, error) {
+	s.dismissCalls++
+	s.dismissProject, s.dismissFixID, s.dismissBy, s.dismissAt = projectID, fixID, dismissedBy, dismissedAt
+	return s.dismissFix, s.dismissErr
 }
 
 func functionSource(t *testing.T, source, start, end string) string {
