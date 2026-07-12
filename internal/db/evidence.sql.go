@@ -304,7 +304,7 @@ with locked_run as (
     and attempt.attempt_number = $6
     and attempt.collection_owner_token = $7
     and attempt.status = 'running'
-  returning id, locked_run.project_id, source, normalized_target, target_kind, window_start, window_end, collection_spec, collection_spec_fingerprint, locked_run.collection_owner_token, locked_run.attempt_number, locked_run.lease_expires_at, error_history, requested_by, locked_run.status, locked_run.error_summary, locked_run.started_at, locked_run.finished_at, locked_run.created_at, updated_at, run_id, attempt.project_id, attempt.attempt_number, attempt.collection_owner_token, attempt.status, attempt.error_summary, attempt.started_at, attempt.lease_expires_at, attempt.finished_at, attempt.created_at
+  returning attempt.run_id, attempt.project_id, attempt.attempt_number, attempt.collection_owner_token, attempt.status, attempt.error_summary, attempt.started_at, attempt.lease_expires_at, attempt.finished_at, attempt.created_at
 ), finished_run as (
   update evidence_runs run set
     status = finished_attempt.status, error_summary = finished_attempt.error_summary,
