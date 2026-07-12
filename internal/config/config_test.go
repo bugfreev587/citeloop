@@ -51,12 +51,6 @@ func TestParseDefaults(t *testing.T) {
 	if _, ok := c.NextPublishSlot(time.Time{}, time.Now()); ok {
 		t.Fatal("default config must not schedule publishing automatically")
 	}
-	if c.OpportunityFindingSourceMix != OpportunityFindingSourceAll {
-		t.Fatalf("opportunity_finding_source_mix default = %q, want all", c.OpportunityFindingSourceMix)
-	}
-	if c.AIDiscoveryAutomation != AIDiscoveryAutomationSemiAutomatic {
-		t.Fatalf("ai_discovery_automation default = %q, want semi_automatic", c.AIDiscoveryAutomation)
-	}
 }
 
 func TestParseKeepsExplicitPublishModes(t *testing.T) {
@@ -97,56 +91,16 @@ func TestParseNormalizesLegacyAutoPublishModeWithInvalidInterval(t *testing.T) {
 	}
 }
 
-func TestParseKeepsExplicitOpportunityFindingSettings(t *testing.T) {
-	for _, mode := range []string{OpportunityFindingSourceAll, OpportunityFindingSourceSignalScan, OpportunityFindingSourceAIDiscovery} {
-		c, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"` + mode + `"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c.OpportunityFindingSourceMix != mode {
-			t.Fatalf("opportunity_finding_source_mix = %q, want %q", c.OpportunityFindingSourceMix, mode)
-		}
+func TestParseIncompleteCapabilityPayloadFailsClosedForProviderCalls(t *testing.T) {
+	cfg, err := Parse(json.RawMessage(`{"site_url":"https://example.com"}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, automation := range []string{AIDiscoveryAutomationAutomatic, AIDiscoveryAutomationSemiAutomatic, AIDiscoveryAutomationManual} {
-		c, err := Parse(json.RawMessage(`{"ai_discovery_automation":"` + automation + `"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c.AIDiscoveryAutomation != automation {
-			t.Fatalf("ai_discovery_automation = %q, want %q", c.AIDiscoveryAutomation, automation)
-		}
+	if !cfg.GrowthSignalEnabled || cfg.GrowthAIEnabled || cfg.GrowthAIRunPolicy != GrowthAIRunPolicyManualOnly {
+		t.Fatalf("incomplete config did not fail closed: %+v", cfg)
 	}
-}
-
-func TestParseMigratesLegacyDiscoveryAuthorityWithoutExpandingProviderCalls(t *testing.T) {
-	tests := []struct {
-		name      string
-		raw       string
-		signal    bool
-		growthAI  bool
-		growthRun string
-	}{
-		{name: "all automatic", raw: `{"opportunity_finding_source_mix":"all","ai_discovery_automation":"automatic"}`, signal: true, growthAI: true, growthRun: GrowthAIRunPolicyScheduledOnly},
-		{name: "signal manual", raw: `{"opportunity_finding_source_mix":"signal_scan","ai_discovery_automation":"manual"}`, signal: true, growthAI: false, growthRun: GrowthAIRunPolicyManualOnly},
-		{name: "AI only semi automatic", raw: `{"opportunity_finding_source_mix":"ai_discovery","ai_discovery_automation":"semi_automatic"}`, signal: false, growthAI: true, growthRun: GrowthAIRunPolicyOnDemandRecommended},
-		{name: "legacy defaults", raw: `{}`, signal: true, growthAI: true, growthRun: GrowthAIRunPolicyOnDemandRecommended},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := Parse(json.RawMessage(tt.raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.GrowthSignalEnabled != tt.signal || cfg.GrowthAIEnabled != tt.growthAI || cfg.GrowthAIRunPolicy != tt.growthRun {
-				t.Fatalf("migrated config=%+v", cfg)
-			}
-			if cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
-				t.Fatalf("legacy config silently gained Doctor AI authority: %+v", cfg)
-			}
-			if cfg.CapabilityPolicyVersion != CapabilityPolicyVersionV1 {
-				t.Fatalf("capability policy version=%d", cfg.CapabilityPolicyVersion)
-			}
-		})
+	if cfg.DoctorAIEnabled || cfg.DoctorAIRunPolicy != DoctorAIRunPolicyManualOnly {
+		t.Fatalf("incomplete config gained Doctor AI authority: %+v", cfg)
 	}
 }
 
@@ -197,13 +151,11 @@ func TestOpportunityFindingStagesUseExactTriggerAuthority(t *testing.T) {
 	}
 }
 
-func TestOpportunityFindingStagesUseCapabilityPolicyInsteadOfLegacyProductModes(t *testing.T) {
+func TestOpportunityFindingStagesUseCapabilityPolicy(t *testing.T) {
 	cfg := Default()
 	cfg.GrowthSignalEnabled = false
 	cfg.GrowthAIEnabled = true
 	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyManualOnly
-	cfg.OpportunityFindingSourceMix = OpportunityFindingSourceAll
-	cfg.AIDiscoveryAutomation = AIDiscoveryAutomationAutomatic
 
 	if got := cfg.OpportunityFindingStages(true); got.SignalScan || got.AIDiscovery {
 		t.Fatalf("legacy fields expanded scheduled authority: %+v", got)
@@ -255,7 +207,7 @@ func TestParsePreservesExplicitPreVersionDoctorConsent(t *testing.T) {
 		t.Fatalf("explicit pre-version Doctor revocation/policy was lost: %+v", disabled)
 	}
 
-	absent, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"all"}`))
+	absent, err := Parse(json.RawMessage(`{"site_url":"https://example.com"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,19 +259,6 @@ func TestOpportunityFindingStagesManualRunTriggersEnabledAIDiscovery(t *testing.
 	stages = cfg.OpportunityFindingStages(false)
 	if stages.SignalScan || !stages.AIDiscovery {
 		t.Fatalf("manual semi-automatic AI-only run stages = %+v, want AI Discovery only", stages)
-	}
-}
-
-func TestParseNormalizesInvalidOpportunityFindingSettings(t *testing.T) {
-	c, err := Parse(json.RawMessage(`{"opportunity_finding_source_mix":"unknown","ai_discovery_automation":"always"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.OpportunityFindingSourceMix != OpportunityFindingSourceAll {
-		t.Fatalf("invalid opportunity_finding_source_mix normalized to %q, want all", c.OpportunityFindingSourceMix)
-	}
-	if c.AIDiscoveryAutomation != AIDiscoveryAutomationSemiAutomatic {
-		t.Fatalf("invalid ai_discovery_automation normalized to %q, want semi_automatic", c.AIDiscoveryAutomation)
 	}
 }
 

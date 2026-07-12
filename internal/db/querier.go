@@ -109,6 +109,7 @@ type Querier interface {
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
 	DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error
 	DismissMigrationReviewItem(ctx context.Context, arg DismissMigrationReviewItemParams) (MigrationReviewItem, error)
+	DismissPendingMigrationReviewItemsForBatch(ctx context.Context, arg DismissPendingMigrationReviewItemsForBatchParams) (int64, error)
 	DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error)
 	DismissSEODoctorFinding(ctx context.Context, arg DismissSEODoctorFindingParams) (SeoDoctorFinding, error)
 	EnqueueWorkflowEvent(ctx context.Context, arg EnqueueWorkflowEventParams) (WorkflowEvent, error)

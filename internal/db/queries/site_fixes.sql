@@ -1599,6 +1599,20 @@ set status = 'dismissed', resolution_snapshot = sqlc.arg(resolution_snapshot)::j
 where project_id = sqlc.arg(project_id) and id = sqlc.arg(object_id) and status = 'pending'
 returning *;
 
+-- name: DismissPendingMigrationReviewItemsForBatch :execrows
+update migration_review_items
+set status = 'dismissed',
+    resolution_snapshot = jsonb_build_object(
+      'reason', 'migration_rolled_back',
+      'migration_batch_id', sqlc.arg(migration_batch_id)::uuid
+    ),
+    resolved_by = sqlc.arg(resolved_by),
+    resolved_at = sqlc.arg(resolved_at),
+    updated_at = now()
+where project_id = sqlc.arg(project_id)
+  and migration_batch_id = sqlc.arg(migration_batch_id)
+  and status = 'pending';
+
 -- name: RollbackLegacySiteFixMigration :one
 with authority as materialized (
   select pwa.*

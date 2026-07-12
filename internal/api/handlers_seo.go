@@ -215,16 +215,14 @@ type GrowthLearningFeedItem struct {
 }
 
 type OpportunityFindingStatus struct {
-	SourceMix             string                          `json:"source_mix"`
-	AIDiscoveryAutomation string                          `json:"ai_discovery_automation"`
-	GrowthSignalEnabled   bool                            `json:"growth_signal_enabled"`
-	GrowthAIEnabled       bool                            `json:"growth_ai_enabled"`
-	GrowthAIRunPolicy     string                          `json:"growth_ai_run_policy"`
-	ManualMode            bool                            `json:"manual_mode"`
-	LastRun               *OpportunityFindingRun          `json:"last_run,omitempty"`
-	NextFindingAt         *time.Time                      `json:"next_finding_at,omitempty"`
-	Summary               []OpportunityFindingSummaryItem `json:"summary"`
-	Counts                OpportunityFindingCounts        `json:"counts"`
+	GrowthSignalEnabled bool                            `json:"growth_signal_enabled"`
+	GrowthAIEnabled     bool                            `json:"growth_ai_enabled"`
+	GrowthAIRunPolicy   string                          `json:"growth_ai_run_policy"`
+	ManualMode          bool                            `json:"manual_mode"`
+	LastRun             *OpportunityFindingRun          `json:"last_run,omitempty"`
+	NextFindingAt       *time.Time                      `json:"next_finding_at,omitempty"`
+	Summary             []OpportunityFindingSummaryItem `json:"summary"`
+	Counts              OpportunityFindingCounts        `json:"counts"`
 }
 
 type OpportunityFindingRun struct {
@@ -441,16 +439,14 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 		attachOpportunityFindingStageProgress(lastRun, stageRows)
 	}
 	status := OpportunityFindingStatus{
-		SourceMix:             cfg.OpportunityFindingSourceMix,
-		AIDiscoveryAutomation: cfg.AIDiscoveryAutomation,
-		GrowthSignalEnabled:   cfg.GrowthSignalEnabled,
-		GrowthAIEnabled:       cfg.GrowthAIEnabled,
-		GrowthAIRunPolicy:     cfg.GrowthAIRunPolicy,
-		ManualMode:            opportunityFindingManualMode(cfg),
-		LastRun:               lastRun,
-		NextFindingAt:         nextOpportunityFindingAt(time.Now().UTC(), cfg),
-		Summary:               opportunityFindingSummary(latestRun, cfg, counts),
-		Counts:                counts,
+		GrowthSignalEnabled: cfg.GrowthSignalEnabled,
+		GrowthAIEnabled:     cfg.GrowthAIEnabled,
+		GrowthAIRunPolicy:   cfg.GrowthAIRunPolicy,
+		ManualMode:          opportunityFindingManualMode(cfg),
+		LastRun:             lastRun,
+		NextFindingAt:       nextOpportunityFindingAt(time.Now().UTC(), cfg),
+		Summary:             opportunityFindingSummary(latestRun, cfg, counts),
+		Counts:              counts,
 	}
 	return status, nil
 }
@@ -606,7 +602,7 @@ func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts 
 	if run != nil && len(run.Output) > 0 {
 		_ = json.Unmarshal(run.Output, &output)
 	}
-	if cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceAll || cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan {
+	if cfg.GrowthSignalEnabled {
 		detail := "No evidence matching run recorded yet"
 		tone := "amber"
 		if run != nil {

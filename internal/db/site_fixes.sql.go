@@ -2269,6 +2269,41 @@ func (q *Queries) DismissMigrationReviewItem(ctx context.Context, arg DismissMig
 	return i, err
 }
 
+const dismissPendingMigrationReviewItemsForBatch = `-- name: DismissPendingMigrationReviewItemsForBatch :execrows
+update migration_review_items
+set status = 'dismissed',
+    resolution_snapshot = jsonb_build_object(
+      'reason', 'migration_rolled_back',
+      'migration_batch_id', $1::uuid
+    ),
+    resolved_by = $2,
+    resolved_at = $3,
+    updated_at = now()
+where project_id = $4
+  and migration_batch_id = $1
+  and status = 'pending'
+`
+
+type DismissPendingMigrationReviewItemsForBatchParams struct {
+	MigrationBatchID uuid.UUID          `json:"migration_batch_id"`
+	ResolvedBy       *string            `json:"resolved_by"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+}
+
+func (q *Queries) DismissPendingMigrationReviewItemsForBatch(ctx context.Context, arg DismissPendingMigrationReviewItemsForBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissPendingMigrationReviewItemsForBatch,
+		arg.MigrationBatchID,
+		arg.ResolvedBy,
+		arg.ResolvedAt,
+		arg.ProjectID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const failCanonicalSiteFixGitHubPRClaim = `-- name: FailCanonicalSiteFixGitHubPRClaim :one
 with authority as materialized (
   select pwa.project_id,
