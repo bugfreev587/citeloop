@@ -260,7 +260,6 @@ func (c ProjectConfig) AllowsGrowthAI(trigger GrowthAITrigger) bool {
 	case GrowthAITriggerManual:
 		return c.GrowthAIRunPolicy == GrowthAIRunPolicyManualOnly ||
 			c.GrowthAIRunPolicy == GrowthAIRunPolicyOnDemandRecommended ||
-			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly ||
 			c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
 	case GrowthAITriggerScheduled:
 		return c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledOnly || c.GrowthAIRunPolicy == GrowthAIRunPolicyScheduledAndEvent
@@ -288,13 +287,18 @@ func (c ProjectConfig) AllowsDoctorAI(trigger DoctorAITrigger) bool {
 }
 
 func (c ProjectConfig) OpportunityFindingStages(automatic bool) OpportunityFindingStages {
-	stages := OpportunityFindingStages{SignalScan: c.GrowthSignalEnabled}
 	trigger := GrowthAITriggerManual
 	if automatic {
 		trigger = GrowthAITriggerScheduled
 	}
-	stages.AIDiscovery = c.AllowsGrowthAI(trigger)
-	return stages
+	return c.OpportunityFindingStagesForTrigger(trigger)
+}
+
+func (c ProjectConfig) OpportunityFindingStagesForTrigger(trigger GrowthAITrigger) OpportunityFindingStages {
+	return OpportunityFindingStages{
+		SignalScan:  c.GrowthSignalEnabled,
+		AIDiscovery: c.AllowsGrowthAI(trigger),
+	}
 }
 
 // Parse decodes a projects.config jsonb payload, filling defaults for zero values.

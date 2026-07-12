@@ -82,6 +82,8 @@ func main() {
 	sched := scheduler.New(pool, llmP, searchP, blog, log)
 	sched.BlogBaseURL = env.BlogBaseURL
 	sched.SEOData = seoData
+	// AI-answer observation now runs only inside the canonical Opportunity
+	// Finding workflow; there is no standalone weekly GEO opportunity writer.
 	sched.GEOProviderRunBudgetUSD = env.GEOProviderRunBudgetUSD
 	sched.NotificationSecret = env.NotificationSecretKey
 	sched.ResendAPIKey = env.ResendAPIKey
