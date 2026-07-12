@@ -14,6 +14,7 @@ import {
   SEODoctorReport,
   SEOOpportunity,
   SEOOverview,
+  SiteFix,
   Topic,
   VisibilitySummary,
   friendlyApiError,
@@ -181,6 +182,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [seoOverview, setSeoOverview] = useState<SEOOverview | null>(null);
   const [visibilitySummary, setVisibilitySummary] = useState<VisibilitySummary | null>(null);
   const [doctorReport, setDoctorReport] = useState<SEODoctorReport | null>(null);
+  const [doctorSiteFixes, setDoctorSiteFixes] = useState<SiteFix[]>([]);
   const [accountProjects, setAccountProjects] = useState<Project[]>([]);
   const [autopilotReadiness, setAutopilotReadiness] = useState<AutopilotReadiness | null>(null);
   const { notify } = useToast();
@@ -193,7 +195,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const refresh = useCallback(async () => {
     setApiError(null);
     try {
-      const [p, profileRow, inventoryRows, t, r, pub, app, failed, verifying, dist, runRows, insightRunRows, overview, summary, doctorData, projectRows, readinessData] = await Promise.all([
+      const [p, profileRow, inventoryRows, t, r, pub, app, failed, verifying, dist, runRows, insightRunRows, overview, summary, doctorData, projectRows, readinessData, siteFixRows] = await Promise.all([
         api.getProject(projectId),
         api.getProfile(projectId).catch(() => null),
         api.listInventory(projectId).catch(() => []),
@@ -211,6 +213,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         api.getSEODoctor(projectId).catch(() => null),
         api.listProjects().catch(() => []),
         api.getAutopilotReadiness(projectId).catch(() => null),
+        api.listDoctorSiteFixes(projectId).catch(() => []),
       ]);
       setProject(p);
       setProfile(profileRow);
@@ -229,6 +232,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       setDoctorReport(doctorData);
       setAccountProjects(projectRows);
       setAutopilotReadiness(readinessData);
+      setDoctorSiteFixes(siteFixRows);
       return { profile: profileRow, inventory: inventoryRows, insightRuns: insightRunRows };
     } catch (e: any) {
       setApiError(friendlyApiError(e));
@@ -524,7 +528,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const visibleHumanActionItems = humanActionItems.slice(0, VISIBLE_HUMAN_ACTION_LIMIT);
   const hiddenHumanActionItems = humanActionItems.slice(VISIBLE_HUMAN_ACTION_LIMIT);
   const operationsHealthBlocker = automationWarnings[0] ?? null;
-  const growthControlCards = [
+  const opportunitiesControlCards = [
     {
       title: "Opportunities",
       label: highestPriorityOpportunity ? "Ready to decide" : "Watching",
@@ -547,7 +551,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     },
     {
       title: "Impact Reports",
-      label: measurementResultNeedsAttention ? "Needs attention" : "Measuring",
+      label: measurementResultNeedsAttention ? "Needs attention" : "Delayed measurement",
       detail: measurementResultNeedsAttention?.summary ?? "Published or applied actions are tracked against conservative outcome windows.",
       href: `/projects/${projectId}/results`,
       icon: BarChart3,
@@ -597,6 +601,44 @@ export function Workspace({ projectId }: { projectId: string }) {
   const doctorCounts = doctorReport?.human_report?.issue_counts ?? {};
   const doctorBlockingCount = Number(doctorCounts.P0 ?? 0);
   const doctorIssueCount = Number(doctorCounts.P0 ?? 0) + Number(doctorCounts.P1 ?? 0) + Number(doctorCounts.P2 ?? 0);
+  const activeDoctorFixCount = doctorSiteFixes.filter((fix) => ["proposed", "draft", "approved", "applying", "applied", "awaiting_deploy", "verifying", "failed_retryable", "reopened"].includes(fix.status)).length;
+  const verifiedDoctorFixCount = doctorSiteFixes.filter((fix) => fix.status === "verified").length;
+  const doctorFixAttentionCount = doctorSiteFixes.filter((fix) => ["failed_terminal", "terminated"].includes(fix.status)).length;
+  const doctorControlCards = [
+    {
+      title: "Findings",
+      label: `${doctorIssueCount} active`,
+      detail: "Broken and optimization findings from the latest Doctor evidence.",
+      href: `/projects/${projectId}/doctor`,
+      icon: Stethoscope,
+      tone: doctorBlockingCount ? "red" : doctorIssueCount ? "amber" : "green",
+    },
+    {
+      title: "Site Fixes",
+      label: `${activeDoctorFixCount} in repair`,
+      detail: "Proposed through deploy and verification, with no Growth measurement window.",
+      href: `/projects/${projectId}/site-fixes`,
+      icon: FileText,
+      tone: activeDoctorFixCount ? "blue" : "neutral",
+    },
+    {
+      title: "Immediate verification",
+      label: `${verifiedDoctorFixCount} verified`,
+      detail: doctorFixAttentionCount
+        ? `${doctorFixAttentionCount} closed repair needs a new Doctor revision before retrying.`
+        : "Doctor closes only after acceptance tests re-read the repaired evidence.",
+      href: `/projects/${projectId}/site-fixes`,
+      icon: CheckCircle2,
+      tone: doctorFixAttentionCount ? "red" : verifiedDoctorFixCount ? "green" : "neutral",
+    },
+  ] satisfies Array<{
+    title: string;
+    label: string;
+    detail: string;
+    href: string;
+    icon: typeof BarChart3;
+    tone: StageTone;
+  }>;
   const doctorProgress = Math.max(0, Math.min(100, Number(doctorRun?.progress_percent ?? 0)));
   const otherProjects = accountProjects.filter((candidate) => candidate.id !== projectId);
   const metricGridCards = [
@@ -830,14 +872,49 @@ export function Workspace({ projectId }: { projectId: string }) {
         })}
       </section>
 
-      <section>
+      <section data-home-doctor-control>
         <SectionHeader
-          title="Growth Control Center"
-          eyebrow="Opportunities, content, results"
+          title="Doctor Control Center"
+          eyebrow="Diagnosis, repair, immediate verification"
+          action={<Badge tone={doctorBlockingCount || doctorFixAttentionCount ? "red" : doctorIssueCount || activeDoctorFixCount ? "amber" : "green"}>Independent repair loop</Badge>}
+        />
+        <div className="grid gap-3 md:grid-cols-3">
+          {doctorControlCards.map((card) => {
+            const CardIcon = card.icon;
+            return (
+              <a
+                key={card.title}
+                href={card.href}
+                className="group flex min-h-[150px] flex-col rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-500 ring-1 ring-slate-100 transition-colors group-hover:text-[#d93820]">
+                    <CardIcon aria-hidden="true" size={17} />
+                  </span>
+                  <Badge tone={card.tone}>{card.label}</Badge>
+                </div>
+                <div className="mt-3 min-w-0">
+                  <h2 className="text-sm font-bold leading-5 text-slate-950">{card.title}</h2>
+                  <p className="mt-2 line-clamp-3 text-[13px] font-semibold leading-5 text-slate-600">{card.detail}</p>
+                </div>
+                <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-bold text-slate-400 transition-colors group-hover:text-[#d93820]">
+                  Open
+                  <ArrowRight aria-hidden="true" size={14} />
+                </span>
+              </a>
+            );
+          })}
+        </div>
+      </section>
+
+      <section data-home-opportunities-control>
+        <SectionHeader
+          title="Opportunities Control Center"
+          eyebrow="Growth work, delayed measurement, learning"
           action={<Badge tone={humanActionItems.length > 0 ? "amber" : "green"}>{humanActionItems.length} open gates</Badge>}
         />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          {growthControlCards.map((card) => {
+          {opportunitiesControlCards.map((card) => {
             const CardIcon = card.icon;
             return (
               <a

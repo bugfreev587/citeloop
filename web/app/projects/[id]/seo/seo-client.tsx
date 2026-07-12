@@ -28,6 +28,7 @@ import {
   SEOPolicy,
   SEOWatchlistItem,
   SafeModeEvent,
+  SiteFix,
   ResultsAction,
   VisibilityActionInLoop,
   VisibilityLifecycleStage,
@@ -994,6 +995,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [actions, setActions] = useState<SEOContentAction[]>([]);
   const [resultsActions, setResultsActions] = useState<ResultsAction[]>([]);
   const [growthLearnings, setGrowthLearnings] = useState<GrowthLearning[]>([]);
+  const [doctorSiteFixes, setDoctorSiteFixes] = useState<SiteFix[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
   const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
   const [executionResult, setExecutionResult] = useState<AutopilotExecuteResult | null>(null);
@@ -1082,6 +1084,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         geoResult,
         briefRowsResult,
         publisherRowsResult,
+        doctorSiteFixRowsResult,
       ] = await Promise.allSettled([
         api.getSEOOverview(projectId),
         api.getVisibilitySummary(projectId),
@@ -1104,6 +1107,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.getGEOOverview(projectId),
         api.listGEOAssetBriefs(projectId, { limit: 50 }),
         api.listPublisherConnections(projectId),
+        mode === "results" ? api.listDoctorSiteFixes(projectId) : Promise.resolve([] as SiteFix[]),
       ]);
       if (refreshSequence !== refreshSequenceRef.current) return;
 
@@ -1128,6 +1132,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const geoData = settledValue(geoResult);
       const briefRows = settledValue(briefRowsResult);
       const publisherRows = settledValue(publisherRowsResult);
+      const doctorSiteFixRows = settledValue(doctorSiteFixRowsResult);
 
       if (overviewData) setOverview(overviewData);
       if (summaryData) setVisibilitySummary(summaryData);
@@ -1147,6 +1152,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (geoData) setGeoOverview(geoData);
       if (briefRows) setAssetBriefs(briefRows);
       if (publisherRows) setPublisherConnections(publisherRows);
+      if (doctorSiteFixRows) setDoctorSiteFixes(doctorSiteFixRows);
       if (settings || overviewData) {
         const nextProperty = settings?.property ?? overviewData?.property ?? null;
         setSEOProperty(nextProperty);
@@ -1162,7 +1168,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (refreshSequence !== refreshSequenceRef.current) return;
       setMessage({ title: "SEO data unavailable", detail: e.message, tone: "red" });
     }
-  }, [api, projectId]);
+  }, [api, mode, projectId]);
 
   useEffect(() => {
     void refreshOpportunityFindingStatus().catch((e: any) => {
@@ -1401,6 +1407,16 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     { waiting: 0, too_early: 0, blocked: 0, completed: 0 },
   );
   const measurementExceptions = attributionMeasuredActions.filter((action) => ["negative", "mixed", "inconclusive", "insufficient_data"].includes(actionMeasurementState(action).key));
+  const doctorVerificationCounts = doctorSiteFixes.reduce(
+    (counts, fix) => {
+      if (fix.status === "verified") counts.verified += 1;
+      else if (["applying", "applied", "awaiting_deploy", "verifying"].includes(fix.status)) counts.deploying += 1;
+      else if (["failed_retryable", "reopened"].includes(fix.status)) counts.retryable += 1;
+      else if (["failed_terminal", "terminated"].includes(fix.status)) counts.terminal += 1;
+      return counts;
+    },
+    { verified: 0, deploying: 0, retryable: 0, terminal: 0 },
+  );
 
   useEffect(() => {
     if (mode !== "results" || !requestedResultActionID || attributionActions.length === 0) return;
@@ -2360,6 +2376,43 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
 
       {mode === "results" && (
         <div className="space-y-7" data-results-actions={resultsActions.length}>
+          <section data-results-doctor-verification>
+            <SectionHeader
+              title="Doctor repair outcomes"
+              eyebrow="Immediate verification"
+              action={
+                <Link
+                  href={`/projects/${projectId}/site-fixes`}
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Open Site Fixes
+                </Link>
+              }
+            />
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  { label: "Verified", value: doctorVerificationCounts.verified, tone: "green" as const },
+                  { label: "Applied / deploying", value: doctorVerificationCounts.deploying, tone: "blue" as const },
+                  { label: "Retryable", value: doctorVerificationCounts.retryable, tone: "amber" as const },
+                  { label: "Closed after failure", value: doctorVerificationCounts.terminal, tone: "red" as const },
+                ].map((item) => (
+                  <Link key={item.label} href={`/projects/${projectId}/site-fixes`} className="rounded-lg border border-slate-100 bg-slate-50 p-3 transition hover:border-slate-300 hover:bg-white">
+                    <Badge tone={item.tone}>{item.label}</Badge>
+                    <div className="mt-3 text-2xl font-bold text-slate-950">{item.value}</div>
+                  </Link>
+                ))}
+              </div>
+              <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">Applied Site Fixes close only after deploy and acceptance-test verification. They do not enter Growth measurement.</p>
+            </div>
+          </section>
+
+          <section data-results-growth-measurement className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+            <div className="text-xs font-bold uppercase tracking-[0.12em] text-blue-700">Delayed growth outcomes</div>
+            <h2 className="mt-2 text-lg font-bold text-slate-950">Growth measurement & learning</h2>
+            <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">Published Growth Actions close at finite checkpoints with an outcome and a directional learning or measurement-quality record.</p>
+          </section>
+
           <section>
             <SectionHeader
               title="Impact Reports"

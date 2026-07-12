@@ -498,7 +498,7 @@ test("Phase 5 pages separate growth operating outputs", () => {
   const nextAnalysisStart = seo.indexOf('{mode === "analysis" && (', resultsStart + 1);
   const resultsBlock = seo.slice(resultsStart, nextAnalysisStart);
 
-  for (const copy of ["Growth Control Center", "Opportunities", "Action Portfolio", "Impact Reports", "Operations health", "Learning signal"]) {
+  for (const copy of ["Doctor Control Center", "Opportunities Control Center", "Opportunities", "Action Portfolio", "Impact Reports", "Operations health", "Learning signal"]) {
     assert.match(`${workspace}\n${seo}\n${topics}\n${activity}`, new RegExp(copy));
   }
   assert.match(workspace, /highestPriorityOpportunity/);
