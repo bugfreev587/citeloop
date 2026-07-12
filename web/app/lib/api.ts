@@ -781,6 +781,30 @@ export type ResultsAction = SEOContentAction & {
   measurements: ActionMeasurement[];
 };
 
+export type GrowthLearning = {
+  id: string;
+  project_id: string;
+  opportunity_id: string;
+  content_action_id: string;
+  article_id?: string | null;
+  artifact_url?: string | null;
+  learning_summary: string;
+  applicability: any;
+  scoring_eligible: boolean;
+  learning_version: string;
+  action_family: string;
+  target_identity: any;
+  audience: any;
+  primary_metric: string;
+  outcome_label: string;
+  terminal_reason: string;
+  measurement_policy_version: string;
+  baseline_snapshot: any;
+  checkpoint_snapshot: any;
+  outcome_snapshot: any;
+  created_at?: any;
+};
+
 export type VisibilityLifecycleStage =
   | "detected"
   | "added_to_plan"
@@ -1771,6 +1795,33 @@ function normalizeResultsAction(raw: any): ResultsAction {
   };
 }
 
+function normalizeGrowthLearning(raw: any): GrowthLearning {
+  const data = raw ?? {};
+  return {
+    id: data.id ?? "",
+    project_id: data.project_id ?? "",
+    opportunity_id: data.opportunity_id ?? "",
+    content_action_id: data.content_action_id ?? "",
+    article_id: data.article_id ?? null,
+    artifact_url: data.artifact_url ?? null,
+    learning_summary: data.learning_summary ?? "",
+    applicability: data.applicability ?? {},
+    scoring_eligible: Boolean(data.scoring_eligible),
+    learning_version: data.learning_version ?? "",
+    action_family: data.action_family ?? "",
+    target_identity: data.target_identity ?? {},
+    audience: data.audience ?? [],
+    primary_metric: data.primary_metric ?? "",
+    outcome_label: data.outcome_label ?? "",
+    terminal_reason: data.terminal_reason ?? "",
+    measurement_policy_version: data.measurement_policy_version ?? "",
+    baseline_snapshot: data.baseline_snapshot ?? {},
+    checkpoint_snapshot: data.checkpoint_snapshot ?? {},
+    outcome_snapshot: data.outcome_snapshot ?? {},
+    created_at: data.created_at ?? null,
+  };
+}
+
 const visibilityLifecycleStages: VisibilityLifecycleStage[] = [
   "detected",
   "added_to_plan",
@@ -2582,11 +2633,11 @@ export function createApi(auth?: AuthOptions) {
     return req<any>(`/projects/${id}/seo/analyze`, { method: "POST" }, auth);
   },
   getOpportunityFindingStatus: async (id: string): Promise<OpportunityFindingStatus> => {
-    const raw = await req<any>(`/projects/${id}/seo/opportunity-finding/status`, undefined, auth);
+    const raw = await req<any>(`/projects/${id}/opportunities/status`, undefined, auth);
     return normalizeOpportunityFindingStatus(raw);
   },
   runOpportunityFinding: async (id: string): Promise<{ status: OpportunityFindingStatus; sync?: any; analyze?: any }> => {
-    const raw = await req<any>(`/projects/${id}/seo/opportunity-finding/run`, { method: "POST" }, auth);
+    const raw = await req<any>(`/projects/${id}/opportunities/runs`, { method: "POST" }, auth);
     return { ...raw, status: normalizeOpportunityFindingStatus(raw?.status ?? raw) };
   },
   getSEOSettings: async (id: string): Promise<{ property?: SEOProperty | null; integrations: SEOIntegration[] }> => {
@@ -2770,8 +2821,11 @@ export function createApi(auth?: AuthOptions) {
     if (options.limit) params.set("limit", String(options.limit));
     if (options.cursor) params.set("cursor", options.cursor);
     const suffix = params.toString() ? `?${params}` : "";
-    const raw = await req<any[]>(`/projects/${id}/seo/opportunities${suffix}`, undefined, auth);
+    const raw = await req<any[]>(`/projects/${id}/opportunities${suffix}`, undefined, auth);
     return arrayFrom(raw);
+  },
+  getSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOOpportunity> => {
+    return req<SEOOpportunity>(`/projects/${id}/opportunities/${opportunityID}`, undefined, auth);
   },
   acceptSEOOpportunity: async (id: string, opportunityID: string): Promise<SEOContentAction> => {
     return req<SEOContentAction>(`/projects/${id}/seo/opportunities/${opportunityID}/accept`, { method: "POST" }, auth);
@@ -2843,8 +2897,16 @@ export function createApi(auth?: AuthOptions) {
     if (options.limit) params.set("limit", String(options.limit));
     if (options.cursor) params.set("cursor", options.cursor);
     const suffix = params.toString() ? `?${params}` : "";
-    const raw = await req<any[]>(`/projects/${id}/seo/actions${suffix}`, undefined, auth);
-    return arrayFrom(raw);
+    const raw = await req<any[]>(`/projects/${id}/growth-actions${suffix}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeResultsAction);
+  },
+  getGrowthActionMeasurement: async (id: string, actionID: string): Promise<ResultsAction> => {
+    const raw = await req<any>(`/projects/${id}/growth-actions/${actionID}/measurement`, undefined, auth);
+    return normalizeResultsAction(raw);
+  },
+  listGrowthLearnings: async (id: string, limit = 50): Promise<GrowthLearning[]> => {
+    const raw = await req<any[]>(`/projects/${id}/growth-learnings?limit=${limit}`, undefined, auth);
+    return arrayFrom(raw).map(normalizeGrowthLearning);
   },
   planSEOContentAction: async (id: string, actionID: string, body: { publish_strategy?: string; publish_to?: string } = {}): Promise<Topic> => {
     const raw = await req<any>(

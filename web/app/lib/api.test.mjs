@@ -234,7 +234,7 @@ test("project config exposes content plan auto advance and defaults it off", asy
   }
 });
 
-test("Opportunity Finding status and manual run APIs call the SEO endpoints", async () => {
+test("Opportunity Finding status and manual run APIs call the canonical endpoints", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -254,7 +254,7 @@ test("Opportunity Finding status and manual run APIs call the SEO endpoints", as
           current_stage: "ai_hypotheses",
           stage_progress: [{ stage: "evidence_refresh", order: 1, status: "succeeded", attempt_number: 1, request_fingerprint: "sha256:test", summary: { gsc: "completed" } }],
         },
-        summary: [{ label: "Signal Scan", detail: "2 signals matched or updated" }],
+        summary: [{ label: "Evidence matching", detail: "2 signals matched or updated" }],
       }),
     };
   };
@@ -265,12 +265,12 @@ test("Opportunity Finding status and manual run APIs call the SEO endpoints", as
     const status = await client.getOpportunityFindingStatus("project-1");
     await client.runOpportunityFinding("project-1");
 
-    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/seo/opportunity-finding/status");
-    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/seo/opportunity-finding/run");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/opportunities/status");
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/opportunities/runs");
     assert.equal(calls[1].init.method, "POST");
     assert.equal(status.source_mix, "all");
     assert.equal(status.manual_mode, true);
-    assert.equal(status.summary[0].label, "Signal Scan");
+    assert.equal(status.summary[0].label, "Evidence matching");
     assert.equal(status.last_run.progress_percent, 33);
     assert.equal(status.last_run.current_stage, "ai_hypotheses");
     assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
@@ -1396,10 +1396,10 @@ test("SEO APIs call project scoped endpoints", async () => {
         if (url.endsWith("/seo/briefs/latest")) {
           return { mode: "cold_start", title: "Brief", actions: [], blockers: [], measurement_updates: [] };
         }
-        if (url.includes("/seo/opportunities") && !url.endsWith("/actions")) {
+        if (url.includes("/opportunities") && !url.endsWith("/actions")) {
           return [{ id: "opp-1", type: "indexing_anomaly", status: "open" }];
         }
-        if (url.includes("/seo/actions")) {
+        if (url.includes("/growth-actions")) {
           return [{ id: "action-1", status: "ready_for_review" }];
         }
         if (url.endsWith("/seo/autopilot/objectives")) {
@@ -1462,10 +1462,10 @@ test("SEO APIs call project scoped endpoints", async () => {
     assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/seo/sync");
     assert.equal(calls[3].init.method, "POST");
     assert.equal(calls[4].url, "https://api.example.test/api/projects/project-1/seo/briefs/latest");
-    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/seo/opportunities?status=open&limit=10");
+    assert.equal(calls[5].url, "https://api.example.test/api/projects/project-1/opportunities?status=open&limit=10");
     assert.equal(calls[6].url, "https://api.example.test/api/projects/project-1/seo/opportunities/opp-1/actions");
     assert.equal(calls[6].init.method, "POST");
-    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/seo/actions?limit=10");
+    assert.equal(calls[7].url, "https://api.example.test/api/projects/project-1/growth-actions?limit=10");
     assert.equal(calls[8].url, "https://api.example.test/api/projects/project-1/seo/autopilot/objectives");
     assert.equal(calls[9].url, "https://api.example.test/api/projects/project-1/seo/autopilot/objectives");
     assert.equal(calls[9].init.method, "POST");

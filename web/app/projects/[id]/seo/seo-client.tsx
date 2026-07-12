@@ -11,6 +11,7 @@ import {
   AutopilotReadiness,
   GEOAssetBrief,
   GEOCompetitor,
+  GrowthLearning,
   GSCConnection,
   GEOOverview,
   GEOPrompt,
@@ -549,6 +550,40 @@ function compactEvidenceText(evidence: any) {
   return String(evidence);
 }
 
+function decisionReadySpec(opportunity: SEOOpportunity) {
+  const spec = opportunity.growth_spec;
+  return spec && typeof spec === "object" && !Array.isArray(spec) && "hypothesis" in spec ? spec : null;
+}
+
+function growthBaselineText(opportunity: SEOOpportunity) {
+  const baseline = decisionReadySpec(opportunity)?.baseline;
+  if (!baseline) return "Not established";
+  const sample = baseline.sample_size ? ` · n=${baseline.sample_size}` : "";
+  return `${baseline.source} · ${baseline.metric}: ${metric(baseline.value, 2)}${sample}`;
+}
+
+function growthThresholdText(opportunity: SEOOpportunity) {
+  const threshold = decisionReadySpec(opportunity)?.expected_change?.decision_threshold;
+  if (!threshold) return "Not established";
+  return `${humanizeInternalType(threshold.kind)} ${metric(threshold.value, 2)}`;
+}
+
+function growthFreshnessText(opportunity: SEOOpportunity) {
+  const baseline = decisionReadySpec(opportunity)?.baseline;
+  if (!baseline?.window_end) return "Unknown";
+  return `Through ${formatDate(baseline.window_end)}`;
+}
+
+function growthMeasurementPolicyText(opportunity: SEOOpportunity) {
+  const policy = decisionReadySpec(opportunity)?.measurement_policy;
+  if (!policy) return "Not established";
+  const checkpoints = [policy.early_signal_offset_days, policy.primary_checkpoint_offset_days, ...(policy.follow_up_offsets_days ?? [])]
+    .filter((day) => Number.isFinite(day))
+    .map((day) => `D+${day}`)
+    .join(" / ");
+  return `${policy.policy_version} · ${checkpoints || "no checkpoints"} · terminal by D+${policy.max_measuring_duration_days}`;
+}
+
 
 type ActionMeasurementKey = "waiting" | "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
 type ActionMeasurementState = {
@@ -958,6 +993,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
   const [resultsActions, setResultsActions] = useState<ResultsAction[]>([]);
+  const [growthLearnings, setGrowthLearnings] = useState<GrowthLearning[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
   const [readiness, setReadiness] = useState<AutopilotReadiness | null>(null);
   const [executionResult, setExecutionResult] = useState<AutopilotExecuteResult | null>(null);
@@ -1036,6 +1072,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         watchlistRowsResult,
         actionRowsResult,
         resultsRowsResult,
+        growthLearningsResult,
         policyResult,
         readinessResult,
         objectiveRowsResult,
@@ -1057,6 +1094,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
         api.listSEOWatchlist(projectId, { limit: 50 }),
         api.listSEOContentActions(projectId, { limit: 50 }),
         api.listResultsActions(projectId, { limit: 50 }),
+        api.listGrowthLearnings(projectId, 50),
         api.getSEOPolicy(projectId),
         api.getAutopilotReadiness(projectId),
         api.listSEOObjectives(projectId),
@@ -1080,6 +1118,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const watchlistRows = settledValue(watchlistRowsResult);
       const actionRows = settledValue(actionRowsResult);
       const resultsRows = settledValue(resultsRowsResult);
+      const learningRows = settledValue(growthLearningsResult);
       const policyData = settledValue(policyResult);
       const readinessData = settledValue(readinessResult);
       const objectiveRows = settledValue(objectiveRowsResult);
@@ -1098,6 +1137,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (watchlistRows) setWatchlist(watchlistRows);
       if (actionRows) setActions(actionRows);
       if (resultsRows) setResultsActions(resultsRows);
+      if (learningRows) setGrowthLearnings(learningRows);
       if (policyData) setPolicy(policyData);
       if (readinessData) setReadiness(readinessData);
       if (objectiveRows) setObjectives(objectiveRows);
@@ -3301,6 +3341,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const publishedTitle = resultPublishedArticleTitle(action);
       const publishedURL = resultPublishedArticleUrl(action);
       const sourceURL = resultSourceEvidenceUrl(action);
+      const actionMeasurements = (action as ResultsAction).measurements ?? [];
+      const actionLearnings = growthLearnings.filter((learning) => learning.content_action_id === action.id);
 
       return (
         <div className="fixed inset-0 z-30">
@@ -3356,6 +3398,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     <div className="text-xs font-semibold uppercase text-slate-400">Measurement window</div>
                     <div className="mt-1 font-medium text-slate-700">{measurementWindowLabel(action.measurement_window)}</div>
                   </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Absolute deadline</div>
+                    <div className="mt-1 font-medium text-slate-700">{formatDate(action.absolute_terminal_at ?? null)}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Linked artifact</div>
+                    <div className="mt-1 break-words font-medium text-slate-700">{publishedURL || action.target_url || "Pending execution"}</div>
+                  </div>
                 </section>
 
                 <section className="rounded-xl border border-slate-200 p-4">
@@ -3377,6 +3427,56 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                       <div className="text-xs font-semibold uppercase text-slate-400">Verified</div>
                       <div className="mt-1 font-medium text-slate-700">{formatDate(action.verified_at ?? null)}</div>
                     </div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Measurement checkpoints</div>
+                  {actionMeasurements.length ? (
+                    <div className="mt-3 grid gap-2">
+                      {actionMeasurements.map((checkpoint) => (
+                        <div key={checkpoint.id} className="grid gap-2 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-4">
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Checkpoint role</div>
+                            <div className="mt-1 font-medium text-slate-700">{humanizeInternalType(checkpoint.checkpoint_role)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Window</div>
+                            <div className="mt-1 font-medium text-slate-700">D+{checkpoint.checkpoint_day}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Outcome</div>
+                            <div className="mt-1 font-medium text-slate-700">{humanizeInternalType(checkpoint.outcome_label)}</div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase text-slate-400">Data quality</div>
+                            <div className="mt-1 font-medium text-slate-700">{humanizeInternalType(checkpoint.data_quality_state)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-600">No checkpoint is due yet.</p>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Growth learning</div>
+                  {actionLearnings.length ? (
+                    <div className="mt-3 space-y-3">
+                      {actionLearnings.map((learning) => (
+                        <div key={learning.id} className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-950">
+                          <div className="font-semibold">{learning.learning_summary}</div>
+                          <div className="mt-1 text-xs font-medium text-emerald-800">{humanizeInternalType(learning.outcome_label)} · {learning.primary_metric} · {learning.learning_version}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-600">Learning is created when the action reaches a terminal measured outcome.</p>
+                  )}
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <div className="text-xs font-semibold uppercase text-slate-400">Terminal reason</div>
+                    <div className="mt-1 text-sm font-medium text-slate-700">{action.measurement_terminal_reason || actionLearnings[0]?.terminal_reason || "Not terminal"}</div>
                   </div>
                 </section>
 
@@ -3504,6 +3604,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const destination = destinationForWorkType(workType);
       const cta = ctaForWorkType(workType);
       const evidence = selectedOpportunity.evidence;
+      const growthSpec = decisionReadySpec(selectedOpportunity);
       const dataSourceNotes =
         evidence && typeof evidence === "object" && !Array.isArray(evidence) && "data_source_notes" in evidence
           ? String((evidence as Record<string, any>).data_source_notes)
@@ -3634,6 +3735,56 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                     <div className="text-xs font-semibold uppercase text-slate-400">Approval source</div>
                     <div className="mt-1 font-medium leading-5 text-slate-700">Human opportunity approval</div>
                   </div>
+                </section>
+
+                <section className="rounded-xl border border-slate-200 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Decision contract</div>
+                  {growthSpec ? (
+                    <div className="mt-3 grid gap-4 text-sm sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-semibold uppercase text-slate-400">Hypothesis</div>
+                        <div className="mt-1 font-medium leading-6 text-slate-700">{growthSpec.hypothesis}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Baseline</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{growthBaselineText(selectedOpportunity)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Source freshness</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{growthFreshnessText(selectedOpportunity)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Primary metric</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{humanizeInternalType(growthSpec.primary_metric)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Expected direction</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{humanizeInternalType(growthSpec.expected_change.direction)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Decision threshold</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{growthThresholdText(selectedOpportunity)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Audience</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{growthSpec.audience.join(" / ")}</div>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <div className="text-xs font-semibold uppercase text-slate-400">Measurement policy</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{growthMeasurementPolicyText(selectedOpportunity)}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Absolute deadline</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">D+{growthSpec.measurement_policy.max_measuring_duration_days} after measurement begins</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold uppercase text-slate-400">Attribution model</div>
+                        <div className="mt-1 font-medium leading-5 text-slate-700">{humanizeInternalType(growthSpec.attribution_model)}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm leading-6 text-amber-800">Legacy in-flight work has no reconstructed baseline. New approvals require a complete decision-ready contract.</p>
+                  )}
                 </section>
 
                 <section className="rounded-xl border border-slate-200 p-4">
