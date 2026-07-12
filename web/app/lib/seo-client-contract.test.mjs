@@ -133,6 +133,16 @@ test("Analysis page exposes Opportunity Finding run status", async () => {
   assert.notEqual(panelEnd, -1, "seo-client.tsx missing OpportunityFindingStatusPanel boundary");
   assert.equal(panelSource.includes("{manualMode && ("), false, "Run finding should be available from the status card in automatic mode too");
   assert.match(panelSource, /<Button size="sm" variant="primary" onClick=\{onRun\} disabled=\{!!busy \|\| runActive\}>/);
+  assert.equal(
+    panelSource.includes("data-opportunity-finding-error"),
+    true,
+    "failed Opportunity Finding must keep its actionable error visible after the toast expires",
+  );
+  assert.equal(
+    panelSource.includes("status.last_run.error"),
+    true,
+    "failed Opportunity Finding must render the durable workflow error",
+  );
   for (const expected of [
     'status?.last_run?.status === "queued"',
     'status?.last_run?.status === "running"',

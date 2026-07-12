@@ -905,6 +905,17 @@ function OpportunityFindingStatusPanel({
         </div>
       </div>
 
+      {runStatus === "failed" && status?.last_run?.error && (
+        <div
+          data-opportunity-finding-error
+          role="alert"
+          className="mt-4 rounded-lg border border-red-200 bg-white/85 px-3 py-2 text-sm text-red-900"
+        >
+          <div className="font-bold">Last finding needs attention</div>
+          <div className="mt-1 leading-5">{status.last_run.error}</div>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         {summary.slice(0, 5).map((item) => (
           <div key={`${item.label}-${item.detail}`} className="rounded-lg bg-white/75 px-3 py-2 ring-1 ring-white/80">
