@@ -30,13 +30,47 @@ func TestActionMeasurementsSchemaAndQueriesExist(t *testing.T) {
 		"attribution_confidence",
 		"confounders",
 		"unique (project_id, content_action_id, checkpoint_day)",
-		"-- name: UpsertActionMeasurement :one",
+		"-- name: InsertActionMeasurementCheckpoint :exec",
+		"on conflict (project_id, content_action_id, checkpoint_day) do nothing",
 		"-- name: ListActionMeasurementsForProject :many",
 		"-- name: ListActionMeasurementsForAction :many",
 		"-- name: ListResultsActionRows :many",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("measurement attribution contract missing %q", want)
+		}
+	}
+}
+
+func TestResultsAndVisibilityExposeFiniteMeasurementLifecycle(t *testing.T) {
+	queries, err := os.ReadFile("queries/seo.sql")
+	if err != nil {
+		t.Fatalf("read seo queries: %v", err)
+	}
+	source := string(queries)
+	for _, queryName := range []string{
+		"-- name: ListVisibilityActionRows :many",
+		"-- name: ListResultsActionRows :many",
+		"-- name: GetResultsActionRow :one",
+	} {
+		start := strings.Index(source, queryName)
+		if start < 0 {
+			t.Fatalf("query missing %s", queryName)
+		}
+		block := source[start:]
+		if next := strings.Index(block[len(queryName):], "-- name:"); next >= 0 {
+			block = block[:len(queryName)+next]
+		}
+		for _, want := range []string{
+			"ca.measurement_policy_version",
+			"ca.measurement_policy",
+			"ca.measuring_started_at",
+			"ca.absolute_terminal_at",
+			"ca.measurement_terminal_reason",
+		} {
+			if !strings.Contains(block, want) {
+				t.Fatalf("%s missing %q", queryName, want)
+			}
 		}
 	}
 }

@@ -23,6 +23,7 @@ type Querier interface {
 	ApproveArticleForProject(ctx context.Context, arg ApproveArticleForProjectParams) (Article, error)
 	ApproveCanonicalSiteFix(ctx context.Context, arg ApproveCanonicalSiteFixParams) (ApproveCanonicalSiteFixRow, error)
 	ArchiveTopicForProject(ctx context.Context, arg ArchiveTopicForProjectParams) (Topic, error)
+	BindLegacyMeasuringContentActionPolicy(ctx context.Context, arg BindLegacyMeasuringContentActionPolicyParams) (ContentAction, error)
 	ClaimCanonicalSiteFixApplying(ctx context.Context, arg ClaimCanonicalSiteFixApplyingParams) (ClaimCanonicalSiteFixApplyingRow, error)
 	ClaimCanonicalSiteFixGitHubPR(ctx context.Context, arg ClaimCanonicalSiteFixGitHubPRParams) (SiteChangeApplication, error)
 	ClaimDoctorAIOnDemandProcessing(ctx context.Context, arg ClaimDoctorAIOnDemandProcessingParams) (DoctorAiOnDemandTrigger, error)
@@ -210,6 +211,7 @@ type Querier interface {
 	IncrementArticleRecoveryAttempt(ctx context.Context, arg IncrementArticleRecoveryAttemptParams) (Article, error)
 	IncrementConflictBucketVersions(ctx context.Context, arg IncrementConflictBucketVersionsParams) ([]WorkConflictBucket, error)
 	IncrementTopicRecoveryAttempt(ctx context.Context, arg IncrementTopicRecoveryAttemptParams) (Topic, error)
+	InsertActionMeasurementCheckpoint(ctx context.Context, arg InsertActionMeasurementCheckpointParams) error
 	InsertAutopilotAuditEvent(ctx context.Context, arg InsertAutopilotAuditEventParams) (AutopilotAuditEvent, error)
 	InsertAutopilotRun(ctx context.Context, arg InsertAutopilotRunParams) (AutopilotRun, error)
 	InsertEnforcedWorkSignature(ctx context.Context, arg InsertEnforcedWorkSignatureParams) (WorkSignatureRegistry, error)
@@ -504,7 +506,6 @@ type Querier interface {
 	UpdateTopicStatus(ctx context.Context, arg UpdateTopicStatusParams) (Topic, error)
 	UpdateTopicStatusForProject(ctx context.Context, arg UpdateTopicStatusForProjectParams) (Topic, error)
 	UpsertAICrawlerAccessSnapshot(ctx context.Context, arg UpsertAICrawlerAccessSnapshotParams) (AiCrawlerAccessSnapshot, error)
-	UpsertActionMeasurement(ctx context.Context, arg UpsertActionMeasurementParams) (ActionMeasurement, error)
 	UpsertCrawlerAccessOpportunity(ctx context.Context, arg UpsertCrawlerAccessOpportunityParams) (UpsertCrawlerAccessOpportunityRow, error)
 	UpsertDefaultPublisherConnection(ctx context.Context, arg UpsertDefaultPublisherConnectionParams) (PublisherConnection, error)
 	UpsertDiscoveryArbitrationEvaluationConfig(ctx context.Context, arg UpsertDiscoveryArbitrationEvaluationConfigParams) (DiscoveryArbitrationConfig, error)

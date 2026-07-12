@@ -49,6 +49,9 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	_, _ = c.AddFunc("*/5 * * * *", func() { s.TickScheduledTopics(ctx) })
 	// Daily SEO data sync and opportunity analysis after content generation.
 	_, _ = c.AddFunc("0 3 * * *", func() { s.TickSEO(ctx) })
+	// Finite Growth measurement lifecycle: advance due checkpoints and enforce
+	// absolute terminal deadlines even when no workflow event is emitted.
+	_, _ = c.AddFunc("@every 1h", func() { s.TickMeasurements(ctx) })
 	// Weekly user-facing SEO Doctor health reports.
 	_, _ = c.AddFunc("@weekly", func() { s.TickSEODoctor(ctx) })
 	// Publish pass every 5 minutes so approved canonicals go out near their slot.
@@ -70,6 +73,6 @@ func (s *Scheduler) Start(ctx context.Context) *cron.Cron {
 	// Workflow worker pass every 10 seconds for durable growth-loop advancement.
 	_, _ = c.AddFunc("@every 10s", func() { s.TickWorkflow(ctx) })
 	c.Start()
-	slog.Default().Info("scheduler started", "generate", "every 5m", "scheduled_topics", "every 5m", "seo", "daily@03:00", "seo_doctor", "weekly", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "context_refresh", "weekly", "notifications", "every 10s", "workflow", "every 10s")
+	slog.Default().Info("scheduler started", "generate", "every 5m", "scheduled_topics", "every 5m", "seo", "daily@03:00", "measurements", "every 1h", "seo_doctor", "weekly", "publish", "every 5m", "review_overdue", "every 30m", "review_recovery", "every 2m", "geo", "weekly", "context_refresh", "weekly", "notifications", "every 10s", "workflow", "every 10s")
 	return c
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/measurement"
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -182,6 +183,22 @@ func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UU
 	return s.handleMeasurementWindowDue(ctx, projectID)
 }
 
+// TickMeasurements guarantees that every measuring Growth Action advances even
+// when no workflow event was enqueued. Per-project advisory locks and immutable
+// checkpoint inserts make retries safe.
+func (s *Scheduler) TickMeasurements(ctx context.Context) {
+	projects, err := db.New(s.Pool).ListProjects(ctx)
+	if err != nil {
+		s.Log.Error("measurement tick list projects failed", "err", err)
+		return
+	}
+	for _, project := range projects {
+		if err := s.RecomputeMeasurements(ctx, project.ID); err != nil {
+			s.Log.Error("measurement tick failed", "project", project.ID, "err", err)
+		}
+	}
+}
+
 func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uuid.UUID) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -202,23 +219,32 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 		return err
 	}
 	for _, action := range actions {
-		window, completed, remaining := completeDueMeasurementCheckpoints(action.MeasurementWindow, action.PublishedAt, now)
+		if !action.MeasuringStartedAt.Valid {
+			action, err = q.BindLegacyMeasuringContentActionPolicy(ctx, db.BindLegacyMeasuringContentActionPolicyParams{
+				ID: action.ID, ProjectID: action.ProjectID,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		window, completed, remaining, terminalReason := completeActionMeasurementCheckpoints(action, now)
 		status := "measuring"
 		if remaining == 0 {
 			status = "completed"
 		}
 		outcome := measurementOutcomeSummary(action, status, completed, remaining, now, window)
 		for _, measurement := range actionMeasurementsFromWindow(action, window, now) {
-			if _, err := q.UpsertActionMeasurement(ctx, measurement); err != nil {
+			if err := q.InsertActionMeasurementCheckpoint(ctx, measurement); err != nil {
 				return err
 			}
 		}
 		if _, err := q.UpdateContentActionOutcomeSummary(ctx, db.UpdateContentActionOutcomeSummaryParams{
-			ID:                action.ID,
-			ProjectID:         projectID,
-			Status:            status,
-			OutcomeSummary:    outcome,
-			MeasurementWindow: window,
+			ID:                        action.ID,
+			ProjectID:                 projectID,
+			Status:                    status,
+			OutcomeSummary:            outcome,
+			MeasurementWindow:         window,
+			MeasurementTerminalReason: terminalReason,
 		}); err != nil {
 			return err
 		}
@@ -226,29 +252,56 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 	return tx.Commit(ctx)
 }
 
+func completeActionMeasurementCheckpoints(action db.ContentAction, now time.Time) (json.RawMessage, int, int, *string) {
+	policy, err := measurement.Parse(action.MeasurementPolicy)
+	if err != nil {
+		policy = measurement.LegacyPolicy()
+	}
+	start := action.MeasuringStartedAt
+	if !start.Valid {
+		start = action.PublishedAt
+	}
+	if !start.Valid {
+		start = pgtype.Timestamptz{Time: now.UTC(), Valid: true}
+	}
+	deadline := action.AbsoluteTerminalAt
+	if !deadline.Valid {
+		deadline = pgtype.Timestamptz{Time: policy.AbsoluteTerminalAt(start.Time), Valid: true}
+	}
+	window, completed, remaining, terminalReason := completeDueMeasurementCheckpointsWithPolicy(
+		action.MeasurementWindow, start, deadline, policy, now,
+	)
+	if terminalReason == "" {
+		return window, completed, remaining, nil
+	}
+	return window, completed, remaining, &terminalReason
+}
+
 func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.Timestamptz, now time.Time) (json.RawMessage, int, int) {
+	policy := measurement.LegacyPolicy()
+	deadline := pgtype.Timestamptz{}
+	if publishedAt.Valid {
+		deadline = pgtype.Timestamptz{Time: policy.AbsoluteTerminalAt(publishedAt.Time), Valid: true}
+	}
+	window, completed, remaining, _ := completeDueMeasurementCheckpointsWithPolicy(raw, publishedAt, deadline, policy, now)
+	return window, completed, remaining
+}
+
+func completeDueMeasurementCheckpointsWithPolicy(raw json.RawMessage, startedAt, absoluteTerminalAt pgtype.Timestamptz, policy measurement.Policy, now time.Time) (json.RawMessage, int, int, string) {
 	window := map[string]any{}
 	if len(raw) > 0 && json.Valid(raw) {
 		_ = json.Unmarshal(raw, &window)
 	}
 	window["last_checked_at"] = now.Format(time.RFC3339)
-
-	checkpoints, _ := window["checkpoints"].([]any)
-	if len(checkpoints) == 0 {
-		window["state"] = "completed"
-		window["latest_outcome"] = "insufficient_data"
-		window["outcome_label"] = "insufficient_data"
-		window["outcome_reason"] = measurementInsufficientDataReason()
-		return mustJSON(window), 0, 0
-	}
+	window["policy_version"] = policy.PolicyVersion
+	checkpoints := normalizeMeasurementCheckpoints(window["checkpoints"], policy)
+	window["checkpoints"] = checkpoints
+	deadlineReached := absoluteTerminalAt.Valid && !absoluteTerminalAt.Time.UTC().After(now.UTC())
 
 	completedNow := 0
 	remainingScheduled := 0
 	for _, item := range checkpoints {
-		checkpoint, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
+		checkpoint := item
 		status := strings.TrimSpace(fmt.Sprint(checkpoint["status"]))
 		if status == "" {
 			status = "scheduled"
@@ -257,13 +310,19 @@ func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.T
 			continue
 		}
 		day := measurementCheckpointDay(checkpoint["day"])
-		if measurementCheckpointDue(publishedAt, day, now) {
-			checkpoint["status"] = "completed"
+		if deadlineReached || measurementCheckpointDue(startedAt, day, now) {
+			if deadlineReached && !measurementCheckpointDue(startedAt, day, now) {
+				checkpoint["status"] = "expired"
+			} else {
+				checkpoint["status"] = "completed"
+			}
 			checkpoint["completed_at"] = now.Format(time.RFC3339)
 			checkpoint["outcome"] = "insufficient_data"
 			checkpoint["outcome_label"] = "insufficient_data"
 			checkpoint["outcome_reason"] = measurementInsufficientDataReason()
 			checkpoint["attribution_confidence"] = "low"
+			checkpoint["data_quality_state"] = "insufficient"
+			checkpoint["source_freshness"] = map[string]any{}
 			checkpoint["confounders"] = measurementDefaultConfounders()
 			completedNow++
 			continue
@@ -279,7 +338,40 @@ func completeDueMeasurementCheckpoints(raw json.RawMessage, publishedAt pgtype.T
 	window["latest_outcome"] = "insufficient_data"
 	window["outcome_label"] = "insufficient_data"
 	window["outcome_reason"] = measurementInsufficientDataReason()
-	return mustJSON(window), completedNow, remainingScheduled
+	terminalReason := ""
+	if deadlineReached {
+		terminalReason = "absolute_deadline_reached"
+		window["state"] = "completed"
+		window["terminal_reason"] = terminalReason
+		remainingScheduled = 0
+	} else if remainingScheduled == 0 {
+		terminalReason = "measurement_checkpoints_completed"
+		window["terminal_reason"] = terminalReason
+	}
+	return mustJSON(window), completedNow, remainingScheduled, terminalReason
+}
+
+func normalizeMeasurementCheckpoints(raw any, policy measurement.Policy) []map[string]any {
+	existing := map[int]map[string]any{}
+	if values, ok := raw.([]any); ok {
+		for _, value := range values {
+			if checkpoint, ok := value.(map[string]any); ok {
+				existing[measurementCheckpointDay(checkpoint["day"])] = checkpoint
+			}
+		}
+	}
+	checkpoints := make([]map[string]any, 0, len(policy.Checkpoints()))
+	for _, definition := range policy.Checkpoints() {
+		checkpoint := existing[definition.Day]
+		if checkpoint == nil {
+			checkpoint = map[string]any{"day": definition.Day, "status": "scheduled"}
+		}
+		checkpoint["day"] = definition.Day
+		checkpoint["role"] = string(definition.Role)
+		checkpoint["attempt"] = definition.Attempt
+		checkpoints = append(checkpoints, checkpoint)
+	}
+	return checkpoints
 }
 
 func measurementCheckpointDay(value any) int {
@@ -309,7 +401,7 @@ func measurementCheckpointDue(publishedAt pgtype.Timestamptz, day int, now time.
 	return !dueAt.After(now)
 }
 
-func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessage, now time.Time) []db.UpsertActionMeasurementParams {
+func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessage, now time.Time) []db.InsertActionMeasurementCheckpointParams {
 	var data map[string]any
 	if len(window) == 0 || !json.Valid(window) || json.Unmarshal(window, &data) != nil {
 		return nil
@@ -318,17 +410,25 @@ func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessag
 	if len(checkpoints) == 0 {
 		return nil
 	}
-	measurements := make([]db.UpsertActionMeasurementParams, 0, len(checkpoints))
+	measurements := make([]db.InsertActionMeasurementCheckpointParams, 0, len(checkpoints))
 	for _, item := range checkpoints {
 		checkpoint, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(fmt.Sprint(checkpoint["status"])) != "completed" {
+		status := strings.TrimSpace(fmt.Sprint(checkpoint["status"]))
+		if status != "completed" && status != "expired" {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(checkpoint["completed_at"])) != now.UTC().Format(time.RFC3339) {
 			continue
 		}
 		day := measurementCheckpointDay(checkpoint["day"])
-		windowStart, windowEnd := measurementWindowDates(action.PublishedAt, day, now)
+		measurementStart := action.MeasuringStartedAt
+		if !measurementStart.Valid {
+			measurementStart = action.PublishedAt
+		}
+		windowStart, windowEnd := measurementWindowDates(measurementStart, day, now)
 		articleID := action.DraftArticleID
 		if !articleID.Valid {
 			articleID = action.TargetArticleID
@@ -349,22 +449,27 @@ func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessag
 		if confounders == nil {
 			confounders = measurementDefaultConfounders()
 		}
-		measurements = append(measurements, db.UpsertActionMeasurementParams{
-			ProjectID:             action.ProjectID,
-			ContentActionID:       action.ID,
-			ArticleID:             articleID,
-			CheckpointDay:         int32(day),
-			WindowStart:           windowStart,
-			WindowEnd:             windowEnd,
-			SeoMetrics:            json.RawMessage(`{}`),
-			Ga4Metrics:            json.RawMessage(`{}`),
-			GeoMetrics:            json.RawMessage(`{}`),
-			ExecutionMetrics:      measurementExecutionMetrics(action, data, checkpoint),
-			OutcomeLabel:          outcomeLabel,
-			OutcomeReason:         outcomeReason,
-			AttributionConfidence: confidence,
-			Confounders:           mustJSON(confounders),
-			ComputedAt:            pgtype.Timestamptz{Time: now, Valid: true},
+		measurements = append(measurements, db.InsertActionMeasurementCheckpointParams{
+			ProjectID:                action.ProjectID,
+			ContentActionID:          action.ID,
+			ArticleID:                articleID,
+			CheckpointDay:            int32(day),
+			WindowStart:              windowStart,
+			WindowEnd:                windowEnd,
+			SeoMetrics:               json.RawMessage(`{}`),
+			Ga4Metrics:               json.RawMessage(`{}`),
+			GeoMetrics:               json.RawMessage(`{}`),
+			ExecutionMetrics:         measurementExecutionMetrics(action, data, checkpoint),
+			OutcomeLabel:             outcomeLabel,
+			OutcomeReason:            outcomeReason,
+			AttributionConfidence:    confidence,
+			Confounders:              mustJSON(confounders),
+			ComputedAt:               pgtype.Timestamptz{Time: now, Valid: true},
+			CheckpointRole:           firstNonEmptyString(fmt.Sprint(checkpoint["role"]), string(measurement.RolePrimary)),
+			MeasurementPolicyVersion: firstNonEmptyString(action.MeasurementPolicyVersion, measurement.LegacyPolicy().PolicyVersion),
+			CheckpointAttempt:        int32(max(1, measurementCheckpointDay(checkpoint["attempt"]))),
+			DataQualityState:         firstNonEmptyString(fmt.Sprint(checkpoint["data_quality_state"]), "insufficient"),
+			SourceFreshness:          mustJSON(firstNonNil(checkpoint["source_freshness"], map[string]any{})),
 		})
 	}
 	return measurements
@@ -392,25 +497,33 @@ func measurementOutcomeSummary(action db.ContentAction, status string, completed
 	}
 	outcomeLabel := "insufficient_data"
 	outcomeReason := measurementInsufficientDataReason()
+	terminalReason := strings.TrimSpace(fmt.Sprint(windowData["terminal_reason"]))
+	if terminalReason == "<nil>" {
+		terminalReason = ""
+	}
 	if status == "completed" {
 		outcomeReason = "Measurement window closed, but comparative search or engagement data is still insufficient for reliable attribution."
+		if terminalReason == "absolute_deadline_reached" {
+			outcomeReason = "The immutable measurement deadline was reached; remaining checkpoints terminalized as insufficient data."
+		}
 	}
 	return mustJSON(map[string]any{
-		"action_id":               action.ID.String(),
-		"attribution_confidence":  "low",
-		"computed_at":             now.Format(time.RFC3339),
-		"completed_checkpoints":   completed,
-		"confounders":             measurementDefaultConfounders(),
-		"outcome_label":           outcomeLabel,
-		"outcome_reason":          outcomeReason,
-		"outcome_summary":         outcomeLabel,
-		"primary_metric":          primaryMetric,
-		"remaining_checkpoints":   remaining,
-		"result":                  outcomeLabel,
-		"state":                   outcomeLabel,
-		"status":                  status,
-		"summary":                 outcomeReason,
-		"legacy_outcome_fallback": "inconclusive",
+		"action_id":                   action.ID.String(),
+		"attribution_confidence":      "low",
+		"computed_at":                 now.Format(time.RFC3339),
+		"completed_checkpoints":       completed,
+		"confounders":                 measurementDefaultConfounders(),
+		"outcome_label":               outcomeLabel,
+		"outcome_reason":              outcomeReason,
+		"outcome_summary":             outcomeLabel,
+		"primary_metric":              primaryMetric,
+		"remaining_checkpoints":       remaining,
+		"result":                      outcomeLabel,
+		"state":                       outcomeLabel,
+		"status":                      status,
+		"summary":                     outcomeReason,
+		"legacy_outcome_fallback":     "inconclusive",
+		"measurement_terminal_reason": terminalReason,
 	})
 }
 
@@ -449,6 +562,15 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func (s *Scheduler) handleContentPlanCreated(ctx context.Context, projectID uuid.UUID) error {
