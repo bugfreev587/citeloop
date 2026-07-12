@@ -5,6 +5,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/db"
 )
 
 func TestCeilDiv(t *testing.T) {
@@ -104,15 +107,33 @@ func TestDailySEOTickRunsAutomaticAIDiscoveryWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := functionBody(t, string(raw), "func (s *Scheduler) runOpportunityFindingForProject")
+	body := functionBody(t, string(raw), "func (s *Scheduler) executeOpportunityFindingStage")
 	for _, want := range []string{
 		"OpportunityFindingStages(scheduled)",
-		"opportunityfinding.RunAIDiscovery",
-		"runSEOForProjectWithTrigger",
+		"opportunityfinding.RefreshAIDiscoveryEvidence",
+		"opportunityfinding.MaterializeAIDiscoveryHypotheses",
+		"runner.Sync",
+		"runner.Analyze",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("daily opportunity finding must include configured AI Discovery; missing %q", want)
 		}
+	}
+}
+
+func TestOpportunityFindingTriggerComesFromDurableEventPayload(t *testing.T) {
+	event := db.WorkflowEvent{Payload: []byte(`{"trigger":"scheduled"}`)}
+	trigger, scheduled, err := opportunityFindingTrigger(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trigger != config.GrowthAITriggerScheduled || !scheduled {
+		t.Fatalf("trigger=%q scheduled=%v", trigger, scheduled)
+	}
+	event.Payload = []byte(`{"trigger":"manual"}`)
+	trigger, scheduled, err = opportunityFindingTrigger(event)
+	if err != nil || trigger != config.GrowthAITriggerManual || scheduled {
+		t.Fatalf("manual trigger=%q scheduled=%v err=%v", trigger, scheduled, err)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/growthwork"
 	"github.com/citeloop/citeloop/internal/llm"
+	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
@@ -199,12 +200,25 @@ type OpportunityFindingStatus struct {
 }
 
 type OpportunityFindingRun struct {
-	ID         uuid.UUID  `json:"id"`
-	Status     string     `json:"status"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	DurationMs int64      `json:"duration_ms"`
-	Error      *string    `json:"error,omitempty"`
+	ID              uuid.UUID                         `json:"id"`
+	Status          string                            `json:"status"`
+	StartedAt       *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt      *time.Time                        `json:"finished_at,omitempty"`
+	DurationMs      int64                             `json:"duration_ms"`
+	Error           *string                           `json:"error,omitempty"`
+	StageProgress   []OpportunityFindingStageProgress `json:"stage_progress,omitempty"`
+	ProgressPercent int                               `json:"progress_percent"`
+	CurrentStage    string                            `json:"current_stage,omitempty"`
+}
+
+type OpportunityFindingStageProgress struct {
+	Stage              string         `json:"stage"`
+	Order              int16          `json:"order"`
+	Status             string         `json:"status"`
+	AttemptNumber      int32          `json:"attempt_number"`
+	RequestFingerprint string         `json:"request_fingerprint"`
+	Summary            map[string]any `json:"summary"`
+	Error              *string        `json:"error,omitempty"`
 }
 
 type OpportunityFindingSummaryItem struct {
@@ -388,6 +402,16 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 		return OpportunityFindingStatus{}, err
 	}
 	counts := opportunityFindingCounts(countRows)
+	lastRun := opportunityFindingRunView(latestRun, latestWorkflow)
+	if opportunityFindingWorkflowOwnsRun(lastRun, latestWorkflow) {
+		stageRows, err := s.Q.ListOpportunityFindingStages(ctx, db.ListOpportunityFindingStagesParams{
+			ProjectID: projectID, WorkflowEventID: latestWorkflow.ID,
+		})
+		if err != nil {
+			return OpportunityFindingStatus{}, err
+		}
+		attachOpportunityFindingStageProgress(lastRun, stageRows)
+	}
 	status := OpportunityFindingStatus{
 		SourceMix:             cfg.OpportunityFindingSourceMix,
 		AIDiscoveryAutomation: cfg.AIDiscoveryAutomation,
@@ -395,12 +419,55 @@ func (s *Server) opportunityFindingStatus(ctx context.Context, projectID uuid.UU
 		GrowthAIEnabled:       cfg.GrowthAIEnabled,
 		GrowthAIRunPolicy:     cfg.GrowthAIRunPolicy,
 		ManualMode:            opportunityFindingManualMode(cfg),
-		LastRun:               opportunityFindingRunView(latestRun, latestWorkflow),
+		LastRun:               lastRun,
 		NextFindingAt:         nextOpportunityFindingAt(time.Now().UTC(), cfg),
 		Summary:               opportunityFindingSummary(latestRun, cfg, counts),
 		Counts:                counts,
 	}
 	return status, nil
+}
+
+func opportunityFindingWorkflowOwnsRun(run *OpportunityFindingRun, event *db.WorkflowEvent) bool {
+	return run != nil && event != nil && run.ID == event.ID
+}
+
+func opportunityFindingStageProgress(rows []db.OpportunityFindingStageCheckpoint) ([]OpportunityFindingStageProgress, int, string) {
+	progress := make([]OpportunityFindingStageProgress, 0, len(rows))
+	completed := 0
+	current := ""
+	for _, row := range rows {
+		summary := map[string]any{}
+		_ = json.Unmarshal(row.OutputSummary, &summary)
+		progress = append(progress, OpportunityFindingStageProgress{
+			Stage: row.Stage, Order: row.StageOrder, Status: row.Status,
+			AttemptNumber: row.AttemptNumber, RequestFingerprint: row.RequestFingerprint,
+			Summary: summary, Error: row.Error,
+		})
+		if row.Status == "running" && current == "" {
+			current = row.Stage
+		}
+		if row.Status != "running" {
+			completed++
+		}
+	}
+	percent := completed * 100 / len(opportunityfinding.OrderedStages)
+	return progress, percent, current
+}
+
+func attachOpportunityFindingStageProgress(run *OpportunityFindingRun, rows []db.OpportunityFindingStageCheckpoint) {
+	if run == nil {
+		return
+	}
+	run.StageProgress, run.ProgressPercent, run.CurrentStage = opportunityFindingStageProgress(rows)
+	if run.Status != "completed" {
+		return
+	}
+	for _, stage := range run.StageProgress {
+		if stage.Status == "partial" || stage.Status == "failed" {
+			run.Status = "partial"
+			return
+		}
+	}
 }
 
 func (s *Server) latestOpportunityFindingRun(ctx context.Context, projectID uuid.UUID) (*db.SeoRun, *db.WorkflowEvent, error) {

@@ -15,6 +15,7 @@ import (
 type Querier interface {
 	AcknowledgeSEOPolicyRecoveryPlan(ctx context.Context, arg AcknowledgeSEOPolicyRecoveryPlanParams) (SeoPolicy, error)
 	AcquireEvidenceRun(ctx context.Context, arg AcquireEvidenceRunParams) (AcquireEvidenceRunRow, error)
+	AcquireOpportunityFindingStage(ctx context.Context, arg AcquireOpportunityFindingStageParams) (OpportunityFindingStageCheckpoint, error)
 	ActiveOpportunityFindingWorkflowEvent(ctx context.Context, projectID uuid.UUID) (WorkflowEvent, error)
 	AggregateAICallsForObject(ctx context.Context, arg AggregateAICallsForObjectParams) (AggregateAICallsForObjectRow, error)
 	AppendCanonicalSiteFixVerification(ctx context.Context, arg AppendCanonicalSiteFixVerificationParams) (SiteFixVerification, error)
@@ -137,6 +138,7 @@ type Querier interface {
 	FinishEvidenceRun(ctx context.Context, arg FinishEvidenceRunParams) (FinishEvidenceRunRow, error)
 	FinishGEORun(ctx context.Context, arg FinishGEORunParams) (GeoRun, error)
 	FinishGrowthCutoverSession(ctx context.Context, arg FinishGrowthCutoverSessionParams) (GrowthCutoverSession, error)
+	FinishOpportunityFindingStage(ctx context.Context, arg FinishOpportunityFindingStageParams) (OpportunityFindingStageCheckpoint, error)
 	FinishQueuedAICallSkipped(ctx context.Context, arg FinishQueuedAICallSkippedParams) (AiCallRecord, error)
 	FinishSEORun(ctx context.Context, arg FinishSEORunParams) (SeoRun, error)
 	GetAICallRecord(ctx context.Context, arg GetAICallRecordParams) (AiCallRecord, error)
@@ -309,6 +311,7 @@ type Querier interface {
 	ListNotificationDeliveries(ctx context.Context, arg ListNotificationDeliveriesParams) ([]NotificationDelivery, error)
 	ListNotificationSubscriptions(ctx context.Context, projectID uuid.UUID) ([]NotificationSubscription, error)
 	ListOpenSiteChangePRApplications(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
+	ListOpportunityFindingStages(ctx context.Context, arg ListOpportunityFindingStagesParams) ([]OpportunityFindingStageCheckpoint, error)
 	ListOverdueReviewArticles(ctx context.Context, arg ListOverdueReviewArticlesParams) ([]Article, error)
 	ListPageDecayOpportunityRollups(ctx context.Context, arg ListPageDecayOpportunityRollupsParams) ([]ListPageDecayOpportunityRollupsRow, error)
 	ListPendingNotificationDeliveries(ctx context.Context, limit int32) ([]ListPendingNotificationDeliveriesRow, error)

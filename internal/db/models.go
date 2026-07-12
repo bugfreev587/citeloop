@@ -909,6 +909,25 @@ type NotificationSubscription struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type OpportunityFindingStageCheckpoint struct {
+	ID                 uuid.UUID          `json:"id"`
+	ProjectID          uuid.UUID          `json:"project_id"`
+	WorkflowEventID    uuid.UUID          `json:"workflow_event_id"`
+	Stage              string             `json:"stage"`
+	StageOrder         int16              `json:"stage_order"`
+	RequestFingerprint string             `json:"request_fingerprint"`
+	Status             string             `json:"status"`
+	AttemptNumber      int32              `json:"attempt_number"`
+	OwnerToken         uuid.UUID          `json:"owner_token"`
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	OutputSummary      json.RawMessage    `json:"output_summary"`
+	Error              *string            `json:"error"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PagePerformanceDaily struct {
 	ProjectID          uuid.UUID          `json:"project_id"`
 	PropertyID         uuid.UUID          `json:"property_id"`

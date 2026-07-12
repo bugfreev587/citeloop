@@ -36,14 +36,40 @@ func TestSchedulerWorkflowHandlerRunsManualOpportunityFinding(t *testing.T) {
 	for _, want := range []string{
 		"case workflow.EventOpportunityFindingRequested:",
 		"handleOpportunityFindingRequested",
-		"runOpportunityFindingForProject",
-		"runOpportunityFindingForProject(ctx, q, project, false)",
-		"workflow.Permanent(err)",
-		"opportunityfinding.RunAIDiscovery",
+		"handleOpportunityFindingRequested(ctx, event)",
+		"opportunityfinding.RunCheckpointedWorkflow",
+		"opportunityfinding.StageEvidenceRefresh",
+		"opportunityfinding.StageDeterministicSignals",
+		"opportunityfinding.StageAIHypotheses",
+		"opportunityfinding.StageArbitration",
+		"opportunityfinding.StageMaterialization",
+		"opportunityfinding.StageSummary",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scheduler durable Opportunity Finding handler missing %q", want)
 		}
+	}
+	handler := functionBody(t, body, "func (s *Scheduler) handleOpportunityFindingRequested")
+	checkpointCall := strings.Index(handler, "opportunityfinding.RunCheckpointedWorkflow")
+	if checkpointCall < 0 || !strings.Contains(handler[checkpointCall:], "return err") {
+		t.Fatal("checkpoint infrastructure failures must return to the workflow retry policy")
+	}
+}
+
+func TestScheduledOpportunityFindingUsesTheSameDurableWorkflow(t *testing.T) {
+	source, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	tick := functionBody(t, body, "func (s *Scheduler) TickSEO")
+	for _, want := range []string{"enqueueScheduledOpportunityFinding", "EventOpportunityFindingRequested"} {
+		if !strings.Contains(tick+body, want) {
+			t.Fatalf("scheduled finding must use durable workflow; missing %q", want)
+		}
+	}
+	if strings.Contains(tick, "runOpportunityFindingForProject") {
+		t.Fatal("scheduled finding must not bypass the durable workflow")
 	}
 }
 

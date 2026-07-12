@@ -74,6 +74,34 @@ func TestRunAIDiscoveryReturnsPromptListErrors(t *testing.T) {
 	}
 }
 
+func TestAIDiscoverySeparatesEvidenceRefreshFromHypothesisMaterialization(t *testing.T) {
+	projectID := uuid.New()
+	store := &fakePromptStore{prompts: []db.GeoPrompt{{ID: uuid.New(), ProjectID: projectID, PromptText: "citation tools", Status: "active"}}}
+	service := &fakeAIDiscoveryService{}
+
+	evidenceResult, err := RefreshAIDiscoveryEvidence(context.Background(), projectID, store, service, AIDiscoveryOptions{})
+	if err != nil {
+		t.Fatalf("RefreshAIDiscoveryEvidence error: %v", err)
+	}
+	if want := []string{"crawler_audit", "observe_provider", "external_surfaces"}; !reflect.DeepEqual(service.calls, want) {
+		t.Fatalf("evidence calls = %#v, want %#v", service.calls, want)
+	}
+	if evidenceResult.OpportunityCount != 0 || evidenceResult.ObservationCount != 1 {
+		t.Fatalf("evidence result = %+v", evidenceResult)
+	}
+
+	hypothesisResult, err := MaterializeAIDiscoveryHypotheses(context.Background(), projectID, service)
+	if err != nil {
+		t.Fatalf("MaterializeAIDiscoveryHypotheses error: %v", err)
+	}
+	if want := []string{"crawler_audit", "observe_provider", "external_surfaces", "analyze"}; !reflect.DeepEqual(service.calls, want) {
+		t.Fatalf("all calls = %#v, want %#v", service.calls, want)
+	}
+	if hypothesisResult.OpportunityCount != 1 || hypothesisResult.AssetBriefCount != 1 {
+		t.Fatalf("hypothesis result = %+v", hypothesisResult)
+	}
+}
+
 type fakePromptStore struct {
 	prompts []db.GeoPrompt
 	err     error

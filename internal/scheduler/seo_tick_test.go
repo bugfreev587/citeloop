@@ -41,6 +41,14 @@ func (f *fakeSEORunner) Brief(ctx context.Context, projectID uuid.UUID) (seopkg.
 	return seopkg.Brief{Mode: "opportunities"}, nil
 }
 
+func (f *fakeSEORunner) EnsureGrowthOpportunityReservations(context.Context, uuid.UUID) error {
+	f.calls = append(f.calls, "arbitrate")
+	if f.errAt == "arbitrate" {
+		return errors.New("arbitration failed")
+	}
+	return nil
+}
+
 func (f *fakeSEORunner) StartDoctorRun(ctx context.Context, req seopkg.DoctorRunRequest) (db.SeoDoctorRun, bool, error) {
 	f.calls = append(f.calls, "doctor_start:"+string(req.Trigger))
 	if f.errAt == "doctor_start" {
