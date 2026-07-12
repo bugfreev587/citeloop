@@ -30,6 +30,15 @@ select * from site_fixes
 where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id);
 
+-- name: DismissCanonicalSiteFixDoctorLink :one
+update site_fixes
+set doctor_link_dismissed_at = coalesce(doctor_link_dismissed_at, sqlc.arg(dismissed_at)::timestamptz),
+    doctor_link_dismissed_by = coalesce(doctor_link_dismissed_by, sqlc.arg(dismissed_by)::text)
+where id = sqlc.arg(id)
+  and project_id = sqlc.arg(project_id)
+  and doctor_finding_id is not null
+returning *;
+
 -- name: ListCanonicalSiteFixes :many
 select * from site_fixes
 where project_id = sqlc.arg(project_id)

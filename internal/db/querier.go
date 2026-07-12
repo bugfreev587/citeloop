@@ -108,6 +108,7 @@ type Querier interface {
 	// the (topic, kind, platform) unique index. Published/approved rows are kept.
 	DeleteRecoverableArticlesForTopic(ctx context.Context, arg DeleteRecoverableArticlesForTopicParams) error
 	DeleteShadowWorkSignatureForCandidate(ctx context.Context, arg DeleteShadowWorkSignatureForCandidateParams) error
+	DismissCanonicalSiteFixDoctorLink(ctx context.Context, arg DismissCanonicalSiteFixDoctorLinkParams) (SiteFix, error)
 	DismissMigrationReviewItem(ctx context.Context, arg DismissMigrationReviewItemParams) (MigrationReviewItem, error)
 	DismissPendingMigrationReviewItemsForBatch(ctx context.Context, arg DismissPendingMigrationReviewItemsForBatchParams) (int64, error)
 	DismissSEOContentActionAndOpportunity(ctx context.Context, arg DismissSEOContentActionAndOpportunityParams) (DismissSEOContentActionAndOpportunityRow, error)

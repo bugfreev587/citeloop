@@ -173,6 +173,32 @@ func TestDoctorSiteFixSchemaContract(t *testing.T) {
 	}
 }
 
+func TestDoctorRecentFindingLinkDismissalSchemaContract(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0083_doctor_recent_finding_links.sql"))
+	if err != nil {
+		t.Fatalf("read Doctor recent finding links migration: %v", err)
+	}
+	migration := strings.ToLower(string(raw))
+	for _, required := range []string{
+		"alter table site_fixes",
+		"add column if not exists doctor_link_dismissed_at timestamptz",
+		"add column if not exists doctor_link_dismissed_by text",
+		"constraint site_fixes_doctor_link_dismissal_pair",
+		"doctor_link_dismissed_at is null and doctor_link_dismissed_by is null",
+		"doctor_link_dismissed_at is not null and doctor_link_dismissed_by is not null",
+		"validate constraint site_fixes_doctor_link_dismissal_pair",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Fatalf("Doctor recent finding link migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"drop column doctor_finding_id", "doctor_finding_id = null", "status =", "delete from site_fixes"} {
+		if strings.Contains(migration, forbidden) {
+			t.Fatalf("Doctor link dismissal migration must preserve Site Fix lifecycle and provenance; found %q", forbidden)
+		}
+	}
+}
+
 func TestDoctorSiteFixSchemaContractReviewGaps(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "migrations", "0048_doctor_site_fixes.sql"))
 	if err != nil {
