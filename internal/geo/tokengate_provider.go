@@ -55,6 +55,10 @@ func (p TokenGateAnswerProvider) Name() string {
 	return "tokengate_" + scope
 }
 
+func (p TokenGateAnswerProvider) EvidenceIdentity() AnswerProviderEvidenceIdentity {
+	return AnswerProviderEvidenceIdentity{Model: p.model, ProviderVersion: "tokengate:" + p.baseURL}
+}
+
 func (p TokenGateAnswerProvider) Engine() string {
 	return firstNonBlank(p.engine, strings.Title(p.scope))
 }

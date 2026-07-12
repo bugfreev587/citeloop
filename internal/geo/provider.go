@@ -23,12 +23,19 @@ const (
 	ObservationStateProviderUnavailable = "provider_unavailable"
 	DefaultPerplexityBaseURL            = "https://api.perplexity.ai"
 	DefaultPerplexityModel              = "sonar-pro"
+	MaxAnswerEvidencePrompts            = 10
 )
 
 type AnswerProvider interface {
 	Name() string
+	EvidenceIdentity() AnswerProviderEvidenceIdentity
 	Available() bool
 	Observe(ctx context.Context, prompts []db.GeoPrompt) ([]ProviderObservation, float64, error)
+}
+
+type AnswerProviderEvidenceIdentity struct {
+	Model           string
+	ProviderVersion string
 }
 
 type ProviderObservation struct {
@@ -72,6 +79,9 @@ type SkippedPrompt struct {
 
 func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID, req ObserveAnswerProviderRequest) (ObserveAnswerProviderResult, error) {
 	now := s.now()
+	if req.MaxPrompts <= 0 || req.MaxPrompts > MaxAnswerEvidencePrompts {
+		req.MaxPrompts = MaxAnswerEvidencePrompts
+	}
 	providerName := "provider_unavailable"
 	if s.AnswerProvider != nil && s.AnswerProvider.Name() != "" {
 		providerName = s.AnswerProvider.Name()
@@ -124,9 +134,13 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 		return finish("degraded", result, 0, nil)
 	}
 	if s.AnswerProvider == nil || !s.AnswerProvider.Available() {
+		evidenceObservedAt, err := s.recordAnswerProviderUnavailableEvidence(ctx, projectID, run.ID, prompts, req, now)
+		if err != nil {
+			return finish("error", result, 0, err)
+		}
 		result.SkippedEngines = append(result.SkippedEngines, req.Engine)
 		for _, prompt := range prompts {
-			observation, err := s.createProviderUnavailableObservation(ctx, projectID, run.ID, prompt, req)
+			observation, err := s.createProviderUnavailableObservation(ctx, projectID, run.ID, prompt, req, evidenceObservedAt)
 			if err != nil {
 				return finish("error", result, 0, err)
 			}
@@ -135,7 +149,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 		return finish("degraded", result, 0, nil)
 	}
 
-	providerRows, costUSD, providerErr := s.AnswerProvider.Observe(ctx, prompts)
+	providerRows, costUSD, evidenceObservedAt, providerErr := s.collectAnswerProviderEvidence(ctx, projectID, run.ID, prompts, req, providerName, now)
 	if providerErr != nil {
 		result.SkippedEngines = appendUniqueString(result.SkippedEngines, req.Engine)
 	}
@@ -145,7 +159,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 		return finish("error", result, costUSD, err)
 	}
 	for _, providerRow := range providerRows {
-		observation, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, now)
+		observation, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, evidenceObservedAt)
 		if err != nil {
 			return finish("error", result, costUSD, err)
 		}
@@ -165,7 +179,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 	return finish(status, result, costUSD, providerErr)
 }
 
-func (s Service) createProviderUnavailableObservation(ctx context.Context, projectID, runID uuid.UUID, prompt db.GeoPrompt, req ObserveAnswerProviderRequest) (db.GeoObservation, error) {
+func (s Service) createProviderUnavailableObservation(ctx context.Context, projectID, runID uuid.UUID, prompt db.GeoPrompt, req ObserveAnswerProviderRequest, observedAt time.Time) (db.GeoObservation, error) {
 	return s.Q.CreateGEOObservation(ctx, db.CreateGEOObservationParams{
 		ProjectID:               projectID,
 		RunID:                   runID,
@@ -185,7 +199,7 @@ func (s Service) createProviderUnavailableObservation(ctx context.Context, proje
 		AnswerSummary:           "Answer provider is not configured or unavailable.",
 		EvidenceSnippets:        jsonBytes([]string{}),
 		Confidence:              ConfidenceLow,
-		ObservedAt:              pgutil.TS(s.now()),
+		ObservedAt:              pgutil.TS(observedAt),
 	})
 }
 
@@ -316,6 +330,10 @@ func NewPerplexityProvider(apiKey, baseURL, model string, client *http.Client) P
 
 func (p PerplexityProvider) Name() string {
 	return ProviderPerplexitySonar
+}
+
+func (p PerplexityProvider) EvidenceIdentity() AnswerProviderEvidenceIdentity {
+	return AnswerProviderEvidenceIdentity{Model: p.Model, ProviderVersion: "perplexity-api:" + p.BaseURL}
 }
 
 func (p PerplexityProvider) Engine() string {

@@ -1578,6 +1578,7 @@ func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries,
 func (s *Scheduler) geoService(ctx context.Context, q *db.Queries, comparator discovery.SemanticComparator) geo.Service {
 	return geo.Service{
 		Q:              q,
+		EvidenceStore:  q,
 		GrowthWriter:   growthwork.NewService(s.Pool, q, comparator),
 		HTTPClient:     s.httpClient,
 		AnswerProvider: s.geoAnswerProvider(ctx),

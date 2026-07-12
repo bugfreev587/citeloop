@@ -16,6 +16,10 @@ func (f fakeGEOAnswerProvider) Name() string {
 	return "fake_answer_provider"
 }
 
+func (f fakeGEOAnswerProvider) EvidenceIdentity() geo.AnswerProviderEvidenceIdentity {
+	return geo.AnswerProviderEvidenceIdentity{Model: "fake-model", ProviderVersion: "fake-provider-v1"}
+}
+
 func (f fakeGEOAnswerProvider) Available() bool {
 	return f.available
 }

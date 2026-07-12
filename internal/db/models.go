@@ -430,6 +430,84 @@ type DoctorSiteFixPreparationLease struct {
 	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
 }
 
+type EvidenceConsumption struct {
+	ID            uuid.UUID          `json:"id"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	EvidenceRunID uuid.UUID          `json:"evidence_run_id"`
+	AttemptNumber int32              `json:"attempt_number"`
+	ConsumerType  string             `json:"consumer_type"`
+	ConsumerID    uuid.UUID          `json:"consumer_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type EvidenceObservation struct {
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	RunID                uuid.UUID          `json:"run_id"`
+	AttemptNumber        int32              `json:"attempt_number"`
+	Source               string             `json:"source"`
+	SourceObservationKey string             `json:"source_observation_key"`
+	NormalizedTarget     string             `json:"normalized_target"`
+	TargetKind           string             `json:"target_kind"`
+	EvidenceState        string             `json:"evidence_state"`
+	Facts                json.RawMessage    `json:"facts"`
+	RawSnapshot          json.RawMessage    `json:"raw_snapshot"`
+	Confidence           pgtype.Numeric     `json:"confidence"`
+	Completeness         pgtype.Numeric     `json:"completeness"`
+	Provider             *string            `json:"provider"`
+	Model                *string            `json:"model"`
+	ProviderVersion      *string            `json:"provider_version"`
+	PromptVersion        *string            `json:"prompt_version"`
+	CallStatus           *string            `json:"call_status"`
+	PromptTokens         int64              `json:"prompt_tokens"`
+	CompletionTokens     int64              `json:"completion_tokens"`
+	TotalTokens          int64              `json:"total_tokens"`
+	CostUsd              pgtype.Numeric     `json:"cost_usd"`
+	PrivacyState         string             `json:"privacy_state"`
+	PermissionState      string             `json:"permission_state"`
+	ErrorCode            *string            `json:"error_code"`
+	ObservedAt           pgtype.Timestamptz `json:"observed_at"`
+	WindowStart          pgtype.Date        `json:"window_start"`
+	WindowEnd            pgtype.Date        `json:"window_end"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
+type EvidenceRun struct {
+	ID                        uuid.UUID          `json:"id"`
+	ProjectID                 uuid.UUID          `json:"project_id"`
+	Source                    string             `json:"source"`
+	NormalizedTarget          string             `json:"normalized_target"`
+	TargetKind                string             `json:"target_kind"`
+	WindowStart               pgtype.Date        `json:"window_start"`
+	WindowEnd                 pgtype.Date        `json:"window_end"`
+	CollectionSpec            json.RawMessage    `json:"collection_spec"`
+	CollectionSpecFingerprint string             `json:"collection_spec_fingerprint"`
+	CollectionOwnerToken      uuid.UUID          `json:"collection_owner_token"`
+	AttemptNumber             int32              `json:"attempt_number"`
+	LeaseExpiresAt            pgtype.Timestamptz `json:"lease_expires_at"`
+	ErrorHistory              json.RawMessage    `json:"error_history"`
+	RequestedBy               json.RawMessage    `json:"requested_by"`
+	Status                    string             `json:"status"`
+	ErrorSummary              *string            `json:"error_summary"`
+	StartedAt                 pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EvidenceRunAttempt struct {
+	RunID                uuid.UUID          `json:"run_id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	AttemptNumber        int32              `json:"attempt_number"`
+	CollectionOwnerToken uuid.UUID          `json:"collection_owner_token"`
+	Status               string             `json:"status"`
+	ErrorSummary         *string            `json:"error_summary"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
+	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
 type GenerationRun struct {
 	ID        uuid.UUID          `json:"id"`
 	ProjectID uuid.UUID          `json:"project_id"`

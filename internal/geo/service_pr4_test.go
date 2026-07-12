@@ -243,6 +243,10 @@ func (f fakeAnswerProvider) Name() string {
 	return "fake_answer_provider"
 }
 
+func (f fakeAnswerProvider) EvidenceIdentity() AnswerProviderEvidenceIdentity {
+	return AnswerProviderEvidenceIdentity{Model: "fake-model", ProviderVersion: "fake-provider-v1"}
+}
+
 func (f fakeAnswerProvider) Available() bool {
 	if f.available {
 		return true
