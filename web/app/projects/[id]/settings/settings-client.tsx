@@ -415,7 +415,7 @@ const growthAIRunPolicies: Array<{
   {
     value: "scheduled_only",
     label: "Scheduled only",
-    summary: "Keep legacy scheduled authority",
+    summary: "Keep scheduled authority",
     detail: "AI can run during scheduled Opportunity Finding, but events cannot start new provider calls.",
   },
   {
