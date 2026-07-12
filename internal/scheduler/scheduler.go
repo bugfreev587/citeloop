@@ -30,6 +30,7 @@ import (
 	"github.com/citeloop/citeloop/internal/geo"
 	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/growthwork"
+	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/measurement"
 	"github.com/citeloop/citeloop/internal/notification"
@@ -250,15 +251,25 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 				return err
 			}
 		}
-		if _, err := q.UpdateContentActionOutcomeSummary(ctx, db.UpdateContentActionOutcomeSummaryParams{
+		updatedAction, err := q.UpdateContentActionOutcomeSummary(ctx, db.UpdateContentActionOutcomeSummaryParams{
 			ID:                        action.ID,
 			ProjectID:                 projectID,
 			Status:                    status,
 			OutcomeSummary:            outcome,
 			MeasurementWindow:         window,
 			MeasurementTerminalReason: terminalReason,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if status == "completed" {
+			reason := ""
+			if terminalReason != nil {
+				reason = *terminalReason
+			}
+			if err := learning.RecordTerminalOutcome(ctx, q, updatedAction, opportunity, window, outcome, reason); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit(ctx)

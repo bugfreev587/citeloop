@@ -28,6 +28,20 @@ func TestLegacyMeasuringPolicyBindsBeforeCheckpointEvaluation(t *testing.T) {
 	}
 }
 
+func TestTerminalLearningRecordsInsideMeasurementTransaction(t *testing.T) {
+	raw, err := os.ReadFile("scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	update := strings.Index(source, "q.UpdateContentActionOutcomeSummary")
+	record := strings.Index(source, "learning.RecordTerminalOutcome")
+	commit := strings.Index(source, "return tx.Commit(ctx)")
+	if update < 0 || record < update || commit < record {
+		t.Fatal("terminal action update and learning/quality record must commit in one transaction")
+	}
+}
+
 func TestMeasurementOutcomeSummaryExplainsInsufficientData(t *testing.T) {
 	action := db.ContentAction{
 		ID:        uuid.New(),

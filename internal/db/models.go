@@ -608,6 +608,18 @@ type GrowthCutoverSessionEntry struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
+type GrowthLearning struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	TerminalOutcomeID uuid.UUID          `json:"terminal_outcome_id"`
+	ContentActionID   uuid.UUID          `json:"content_action_id"`
+	LearningSummary   string             `json:"learning_summary"`
+	Applicability     json.RawMessage    `json:"applicability"`
+	ScoringEligible   bool               `json:"scoring_eligible"`
+	LearningVersion   string             `json:"learning_version"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type GrowthOpportunityWorkAlias struct {
 	ProjectID              uuid.UUID          `json:"project_id"`
 	LegacyOpportunityID    uuid.UUID          `json:"legacy_opportunity_id"`
@@ -617,6 +629,28 @@ type GrowthOpportunityWorkAlias struct {
 	WorkSignatureID        uuid.UUID          `json:"work_signature_id"`
 	Disposition            string             `json:"disposition"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthTerminalOutcome struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	CandidateID              pgtype.UUID        `json:"candidate_id"`
+	OpportunityID            uuid.UUID          `json:"opportunity_id"`
+	ContentActionID          uuid.UUID          `json:"content_action_id"`
+	ArticleID                pgtype.UUID        `json:"article_id"`
+	ArtifactUrl              string             `json:"artifact_url"`
+	ActionFamily             string             `json:"action_family"`
+	TargetIdentity           json.RawMessage    `json:"target_identity"`
+	Audience                 json.RawMessage    `json:"audience"`
+	PrimaryMetric            string             `json:"primary_metric"`
+	OutcomeLabel             string             `json:"outcome_label"`
+	RecordKind               string             `json:"record_kind"`
+	TerminalReason           string             `json:"terminal_reason"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	BaselineSnapshot         json.RawMessage    `json:"baseline_snapshot"`
+	CheckpointSnapshot       json.RawMessage    `json:"checkpoint_snapshot"`
+	OutcomeSnapshot          json.RawMessage    `json:"outcome_snapshot"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 }
 
 type GuardrailCheck struct {
@@ -659,6 +693,19 @@ type LegacyObjectAlias struct {
 	ProvenanceSnapshot  json.RawMessage    `json:"provenance_snapshot"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MeasurementQualityRecord struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	TerminalOutcomeID uuid.UUID          `json:"terminal_outcome_id"`
+	ContentActionID   uuid.UUID          `json:"content_action_id"`
+	DataQualityState  string             `json:"data_quality_state"`
+	QualityGaps       json.RawMessage    `json:"quality_gaps"`
+	Recommendation    string             `json:"recommendation"`
+	ScoringEligible   bool               `json:"scoring_eligible"`
+	QualityVersion    string             `json:"quality_version"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
 type MigrationBatch struct {
