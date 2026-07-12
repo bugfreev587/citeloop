@@ -59,10 +59,31 @@ func TestGrowthLearningQueryIsIdempotentAndLinksCanonicalObjects(t *testing.T) {
 		"insert into growth_learnings",
 		"insert into measurement_quality_records",
 		"-- name: listgrowthlearnings :many",
+		"-- name: listapplicablegrowthlearnings :many",
+		"jsonb_each_text(sqlc.arg(target_identity)::jsonb)",
+		"jsonb_array_elements_text(sqlc.arg(audience)::jsonb)",
+		"learning.scoring_eligible = true",
 		"-- name: listmeasurementqualityrecords :many",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("Growth learning query missing %q", want)
+		}
+	}
+}
+
+func TestCanonicalGrowthMergeKeepsLearningScoreAndProvenanceAligned(t *testing.T) {
+	raw, err := os.ReadFile("queries/seo.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"when sqlc.arg(evidence)::jsonb ? 'learning_scoring'",
+		"then sqlc.arg(incoming_priority_score)::numeric",
+		"jsonb_build_object('learning_scoring', sqlc.arg(evidence)::jsonb->'learning_scoring')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("canonical Growth merge missing %q", want)
 		}
 	}
 }

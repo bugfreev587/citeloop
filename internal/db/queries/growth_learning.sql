@@ -47,6 +47,33 @@ where learning.project_id = sqlc.arg(project_id)
 order by learning.created_at desc
 limit sqlc.arg(limit_rows);
 
+-- name: ListApplicableGrowthLearnings :many
+select learning.*, terminal.opportunity_id, terminal.candidate_id, terminal.article_id,
+  terminal.artifact_url, terminal.action_family, terminal.target_identity, terminal.audience,
+  terminal.primary_metric, terminal.outcome_label, terminal.terminal_reason,
+  terminal.measurement_policy_version, terminal.baseline_snapshot, terminal.checkpoint_snapshot,
+  terminal.outcome_snapshot
+from growth_learnings learning
+join growth_terminal_outcomes terminal on terminal.id = learning.terminal_outcome_id
+where learning.project_id = sqlc.arg(project_id)
+  and learning.scoring_eligible = true
+  and lower(btrim(terminal.action_family)) = lower(btrim(sqlc.arg(action_family)::text))
+  and lower(btrim(terminal.primary_metric)) = lower(btrim(sqlc.arg(primary_metric)::text))
+  and exists (
+    select 1
+    from jsonb_each_text(terminal.target_identity) historical(key, value)
+    join jsonb_each_text(sqlc.arg(target_identity)::jsonb) candidate(key, value)
+      on lower(rtrim(btrim(historical.value), '/')) = lower(rtrim(btrim(candidate.value), '/'))
+  )
+  and exists (
+    select 1
+    from jsonb_array_elements_text(terminal.audience) historical(value)
+    join jsonb_array_elements_text(sqlc.arg(audience)::jsonb) candidate(value)
+      on lower(btrim(historical.value)) = lower(btrim(candidate.value))
+  )
+order by learning.created_at desc
+limit sqlc.arg(limit_rows);
+
 -- name: ListMeasurementQualityRecords :many
 select quality.*, terminal.opportunity_id, terminal.candidate_id, terminal.article_id,
   terminal.artifact_url, terminal.action_family, terminal.target_identity, terminal.audience,

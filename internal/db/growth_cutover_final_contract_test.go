@@ -16,7 +16,7 @@ func TestDuplicateGrowthIsMergedHiddenAndExecutionFenced(t *testing.T) {
 		"mergecanonicalgrowthopportunityevidence",
 		"createduplicategrowthopportunityalias",
 		"merged_cross_source_evidence",
-		"priority_score = greatest",
+		"else greatest(opportunity.priority_score",
 		"confidence = greatest",
 		"'duplicate'",
 	} {
