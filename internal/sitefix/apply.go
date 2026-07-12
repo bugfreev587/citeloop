@@ -700,7 +700,7 @@ func (g LLMApplicationGenerator) completionRequest(fix db.SiteFix, generationCon
 	})
 	return llm.CompletionReq{
 		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Use only the supplied Product Context and observed page evidence. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
-		Prompt:  "Return a JSON object with patch_snapshot, diff_snapshot, resolution_criteria, source_file_paths, source_mapping_confidence, source_mapping_reason, and grounding. grounding must include context_profile_version, primary_intent_before, primary_intent_after, preserved_propositions, added_propositions, removed_propositions, unsupported_claims, and source_association_changes. added_propositions, removed_propositions, and unsupported_claims must be empty. Preserve the target URL and proposition set.\n" + string(prompt),
+		Prompt:  "Return exactly one JSON object with patch_snapshot (object), diff_snapshot (object), resolution_criteria (object), source_file_paths (string array), source_mapping_confidence (string), and source_mapping_reason (string). Do not return a grounding self-report; CiteLoop derives grounding from the approved evidence. Preserve the target URL, primary intent, and proposition set.\n" + string(prompt),
 		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 1400, DisableProviderFallback: true,
 	}
 }
@@ -715,6 +715,10 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, g
 	}
 	if !meaningfulJSON(generationContext.ProductProfile) || !meaningfulJSON(generationContext.ObservedEvidence) {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "missing_grounding_context"}, errors.New("Doctor fix generation requires Product Context and observed page evidence")
+	}
+	grounding, err := approvedGroundingSnapshot(fix, generationContext)
+	if err != nil {
+		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
 	}
 	req := g.completionRequest(fix, generationContext)
 	req.AttemptObserver = attempt
@@ -731,7 +735,6 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, g
 		SourceFilePaths         json.RawMessage `json:"source_file_paths"`
 		SourceMappingConfidence string          `json:"source_mapping_confidence"`
 		SourceMappingReason     string          `json:"source_mapping_reason"`
-		Grounding               json.RawMessage `json:"grounding"`
 	}
 	if err := decodeJSONObject(resp.Text, &generated); err != nil {
 		result.Status, result.ErrorCode = "failed", "invalid_response"
@@ -741,7 +744,7 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, g
 		TargetURL: target, NormalizedTargetURL: target, OpportunityKey: "doctor:" + fix.ID.String(),
 		SourceFilePaths: generated.SourceFilePaths, SourceMappingConfidence: firstNonEmpty(generated.SourceMappingConfidence, "low"),
 		SourceMappingReason: generated.SourceMappingReason, PatchSnapshot: generated.PatchSnapshot,
-		DiffSnapshot: generated.DiffSnapshot, ResolutionCriteria: generated.ResolutionCriteria, GroundingSnapshot: generated.Grounding,
+		DiffSnapshot: generated.DiffSnapshot, ResolutionCriteria: generated.ResolutionCriteria, GroundingSnapshot: grounding,
 		Status: "manual_apply_required",
 	}
 	var paths []string

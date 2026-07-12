@@ -250,6 +250,33 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 	}
 }
 
+func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
+	provider := &groundingProviderStub{response: `{
+		"patch_snapshot":{"change":"make supported fact extractable"},
+		"diff_snapshot":{"added_propositions":[]},
+		"resolution_criteria":{"acceptance":"supported fact remains sourced"},
+		"source_file_paths":["app/page.tsx"],
+		"source_mapping_confidence":"high",
+		"source_mapping_reason":"mapped from observed target"
+	}`}
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateApplicationPlan(fix, contextSnapshot, plan); err != nil {
+		t.Fatalf("system-derived grounding should validate without a model self-report: %v", err)
+	}
+	var grounding map[string]any
+	if err := json.Unmarshal(plan.GroundingSnapshot, &grounding); err != nil {
+		t.Fatal(err)
+	}
+	if grounding["context_profile_version"] != float64(7) || grounding["primary_intent_before"] != "describe product" {
+		t.Fatalf("grounding = %#v", grounding)
+	}
+}
+
 func TestDoctorAIApplicationRejectsNewFactsAndIntentDrift(t *testing.T) {
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
