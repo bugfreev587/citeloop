@@ -222,8 +222,52 @@ func TestArbitrationPrepareCallsProviderOutsideTransactionBoundary(t *testing.T)
 	if !equalStrings(store.events, wantEvents) {
 		t.Fatalf("events = %v, want %v", store.events, wantEvents)
 	}
-	if prepared.Decision != DecisionBlockOnOtherLine || prepared.Status != ArbitrationStatusPrepared {
+	if prepared.Decision != DecisionBlockOnOtherLine || prepared.Owner != OwnerOpportunities || prepared.Status != ArbitrationStatusPrepared {
 		t.Fatalf("prepared = %+v", prepared)
+	}
+}
+
+func TestArbitrationCreateCannotReassignCandidateOwner(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	existingID := uuid.New()
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: existingID, Owner: OwnerOpportunities, ExactSignatureHash: "different",
+		SignaturePayload: candidate.Identity.SignaturePayload,
+	}}
+	comparator.decision = SemanticDecision{
+		Decision: DecisionCreate, Owner: OwnerDoctor,
+		WorkSignature: candidate.Identity.ExactSignatureHash,
+		Reason:        "distinct Growth work", Confidence: 0.95, SemanticFingerprint: "distinct-growth-work",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionCreate || prepared.Owner != OwnerOpportunities || prepared.Status != ArbitrationStatusPrepared {
+		t.Fatalf("provider reassigned Growth create owner: %+v", prepared)
+	}
+}
+
+func TestArbitrationMergeDerivesOwnerFromCanonicalOverlap(t *testing.T) {
+	store, comparator, candidate := arbitrationFixture(t)
+	existingID := uuid.New()
+	store.snapshot.ActiveWorks = []SnapshotWork{{
+		ID: existingID, Owner: OwnerDoctor, ExactSignatureHash: "different",
+		SignaturePayload: candidate.Identity.SignaturePayload,
+	}}
+	comparator.decision = SemanticDecision{
+		Decision: DecisionMergeEvidence, Owner: OwnerOpportunities,
+		WorkSignature: candidate.Identity.ExactSignatureHash, Overlaps: []uuid.UUID{existingID},
+		Reason: "same canonical work", Confidence: 0.95, SemanticFingerprint: "same-work",
+	}
+
+	prepared, err := NewArbitrationService(store, comparator).Prepare(context.Background(), candidate.Candidate.ProjectID, candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Decision != DecisionMergeEvidence || prepared.Owner != OwnerDoctor || prepared.Status != ArbitrationStatusPrepared {
+		t.Fatalf("provider reassigned canonical merge owner: %+v", prepared)
 	}
 }
 
