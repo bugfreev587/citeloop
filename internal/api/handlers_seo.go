@@ -186,6 +186,34 @@ type ResultsAction struct {
 	Measurements                 []ActionMeasurement `json:"measurements"`
 }
 
+type GrowthLearningFeedItem struct {
+	ID                       uuid.UUID       `json:"id"`
+	ProjectID                uuid.UUID       `json:"project_id"`
+	OpportunityID            uuid.UUID       `json:"opportunity_id"`
+	ContentActionID          uuid.UUID       `json:"content_action_id"`
+	ArticleID                *uuid.UUID      `json:"article_id,omitempty"`
+	ArtifactURL              string          `json:"artifact_url,omitempty"`
+	RecordKind               string          `json:"record_kind"`
+	LearningSummary          string          `json:"learning_summary"`
+	Applicability            json.RawMessage `json:"applicability"`
+	ScoringEligible          bool            `json:"scoring_eligible"`
+	LearningVersion          string          `json:"learning_version"`
+	ActionFamily             string          `json:"action_family"`
+	TargetIdentity           json.RawMessage `json:"target_identity"`
+	Audience                 json.RawMessage `json:"audience"`
+	PrimaryMetric            string          `json:"primary_metric"`
+	OutcomeLabel             string          `json:"outcome_label"`
+	TerminalReason           string          `json:"terminal_reason"`
+	MeasurementPolicyVersion string          `json:"measurement_policy_version"`
+	BaselineSnapshot         json.RawMessage `json:"baseline_snapshot"`
+	CheckpointSnapshot       json.RawMessage `json:"checkpoint_snapshot"`
+	OutcomeSnapshot          json.RawMessage `json:"outcome_snapshot"`
+	DataQualityState         string          `json:"data_quality_state,omitempty"`
+	QualityGaps              json.RawMessage `json:"quality_gaps,omitempty"`
+	Recommendation           string          `json:"recommendation,omitempty"`
+	CreatedAt                *time.Time      `json:"created_at,omitempty"`
+}
+
 type OpportunityFindingStatus struct {
 	SourceMix             string                          `json:"source_mix"`
 	AIDiscoveryAutomation string                          `json:"ai_discovery_automation"`
@@ -2471,7 +2499,78 @@ func (s *Server) listGrowthLearnings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, emptySlice(learnings))
+	qualityRecords, err := s.Q.ListMeasurementQualityRecords(r.Context(), db.ListMeasurementQualityRecordsParams{
+		ProjectID: projectID,
+		LimitRows: int32(limit),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	feed := growthLearningFeed(learnings, qualityRecords)
+	if len(feed) > limit {
+		feed = feed[:limit]
+	}
+	writeJSON(w, http.StatusOK, emptySlice(feed))
+}
+
+func growthLearningFeed(learnings []db.ListGrowthLearningsRow, quality []db.ListMeasurementQualityRecordsRow) []GrowthLearningFeedItem {
+	feed := make([]GrowthLearningFeedItem, 0, len(learnings)+len(quality))
+	for _, learning := range learnings {
+		feed = append(feed, GrowthLearningFeedItem{
+			ID: learning.ID, ProjectID: learning.ProjectID, OpportunityID: learning.OpportunityID,
+			ContentActionID: learning.ContentActionID, ArticleID: optionalUUID(learning.ArticleID),
+			ArtifactURL: learning.ArtifactUrl, RecordKind: "directional_learning",
+			LearningSummary: learning.LearningSummary, Applicability: learning.Applicability,
+			ScoringEligible: learning.ScoringEligible, LearningVersion: learning.LearningVersion,
+			ActionFamily: learning.ActionFamily, TargetIdentity: learning.TargetIdentity, Audience: learning.Audience,
+			PrimaryMetric: learning.PrimaryMetric, OutcomeLabel: learning.OutcomeLabel,
+			TerminalReason: learning.TerminalReason, MeasurementPolicyVersion: learning.MeasurementPolicyVersion,
+			BaselineSnapshot: learning.BaselineSnapshot, CheckpointSnapshot: learning.CheckpointSnapshot,
+			OutcomeSnapshot: learning.OutcomeSnapshot, CreatedAt: optionalTime(learning.CreatedAt),
+		})
+	}
+	for _, record := range quality {
+		feed = append(feed, GrowthLearningFeedItem{
+			ID: record.ID, ProjectID: record.ProjectID, OpportunityID: record.OpportunityID,
+			ContentActionID: record.ContentActionID, ArticleID: optionalUUID(record.ArticleID),
+			ArtifactURL: record.ArtifactUrl, RecordKind: "measurement_quality",
+			LearningSummary: record.Recommendation, Applicability: json.RawMessage(`{}`),
+			ScoringEligible: record.ScoringEligible, LearningVersion: record.QualityVersion,
+			ActionFamily: record.ActionFamily, TargetIdentity: record.TargetIdentity, Audience: record.Audience,
+			PrimaryMetric: record.PrimaryMetric, OutcomeLabel: record.OutcomeLabel,
+			TerminalReason: record.TerminalReason, MeasurementPolicyVersion: record.MeasurementPolicyVersion,
+			BaselineSnapshot: record.BaselineSnapshot, CheckpointSnapshot: record.CheckpointSnapshot,
+			OutcomeSnapshot: record.OutcomeSnapshot, DataQualityState: record.DataQualityState,
+			QualityGaps: record.QualityGaps, Recommendation: record.Recommendation,
+			CreatedAt: optionalTime(record.CreatedAt),
+		})
+	}
+	sort.SliceStable(feed, func(i, j int) bool {
+		if feed[i].CreatedAt == nil {
+			return false
+		}
+		if feed[j].CreatedAt == nil {
+			return true
+		}
+		return feed[i].CreatedAt.After(*feed[j].CreatedAt)
+	})
+	return feed
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Time
 }
 
 func (s *Server) recomputeResults(w http.ResponseWriter, r *http.Request) {

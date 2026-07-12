@@ -788,6 +788,7 @@ export type GrowthLearning = {
   content_action_id: string;
   article_id?: string | null;
   artifact_url?: string | null;
+  record_kind: "directional_learning" | "measurement_quality" | string;
   learning_summary: string;
   applicability: any;
   scoring_eligible: boolean;
@@ -802,6 +803,9 @@ export type GrowthLearning = {
   baseline_snapshot: any;
   checkpoint_snapshot: any;
   outcome_snapshot: any;
+  data_quality_state?: string;
+  quality_gaps?: any[];
+  recommendation?: string;
   created_at?: any;
 };
 
@@ -1804,6 +1808,7 @@ function normalizeGrowthLearning(raw: any): GrowthLearning {
     content_action_id: data.content_action_id ?? "",
     article_id: data.article_id ?? null,
     artifact_url: data.artifact_url ?? null,
+    record_kind: data.record_kind ?? "directional_learning",
     learning_summary: data.learning_summary ?? "",
     applicability: data.applicability ?? {},
     scoring_eligible: Boolean(data.scoring_eligible),
@@ -1818,6 +1823,9 @@ function normalizeGrowthLearning(raw: any): GrowthLearning {
     baseline_snapshot: data.baseline_snapshot ?? {},
     checkpoint_snapshot: data.checkpoint_snapshot ?? {},
     outcome_snapshot: data.outcome_snapshot ?? {},
+    data_quality_state: data.data_quality_state ?? undefined,
+    quality_gaps: arrayFrom(data.quality_gaps),
+    recommendation: data.recommendation ?? undefined,
     created_at: data.created_at ?? null,
   };
 }

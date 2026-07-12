@@ -34,7 +34,7 @@ test("Opportunity review exposes the decision-ready hypothesis contract", () => 
 });
 
 test("Growth action details expose checkpoints, artifacts, outcomes, and learnings", () => {
-  for (const label of ["Checkpoint role", "Linked artifact", "Growth learning", "Terminal reason"]) {
+  for (const label of ["Checkpoint role", "Linked artifact", "Growth learning", "Measurement quality", "Terminal reason"]) {
     assert.equal(seoSource.includes(label), true, `seo-client.tsx missing ${label}`);
   }
 });
