@@ -172,6 +172,7 @@ type Querier interface {
 	GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error)
 	GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error)
 	GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error)
+	GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
 	GetInventoryItem(ctx context.Context, id uuid.UUID) (ContentInventory, error)
 	GetLatestCanonicalSiteFixApplication(ctx context.Context, arg GetLatestCanonicalSiteFixApplicationParams) (SiteChangeApplication, error)
