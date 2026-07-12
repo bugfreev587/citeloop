@@ -74,3 +74,33 @@ func TestMeasurementQueriesPersistCheckpointContractAndDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestGrowthMeasurementEvidenceQueryUsesRealSourceWindows(t *testing.T) {
+	raw, err := os.ReadFile("queries/seo.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, want := range []string{
+		"-- name: getgrowthmeasurementevidence :one",
+		"from search_performance_daily",
+		"from page_performance_daily",
+		"geo_observations",
+		"baseline_start",
+		"after_end",
+		"query_data_partial",
+		"gsc_after_updated_at",
+		"ga4_after_updated_at",
+		"geo_after_observed_at",
+		"geo_evidence_ids",
+		"baseline_geo_identity",
+		"identity.locale = observation.locale",
+		"observation.prompt_id is not null",
+		"count(distinct date)",
+		"and (clicks is not null or impressions is not null)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("real Growth measurement evidence query missing %q", want)
+		}
+	}
+}

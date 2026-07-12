@@ -228,6 +228,18 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 			}
 		}
 		window, completed, remaining, terminalReason := completeActionMeasurementCheckpoints(action, now)
+		opportunity, err := q.GetSEOOpportunity(ctx, db.GetSEOOpportunityParams{ID: action.OpportunityID, ProjectID: action.ProjectID})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		window, remaining, evaluatedTerminalReason, err := evaluateMeasurementCheckpoints(ctx, q, action, opportunity, window, now)
+		if err != nil {
+			return err
+		}
+		if evaluatedTerminalReason != "" {
+			terminalReason = &evaluatedTerminalReason
+		}
+		completed = newlyCompletedCheckpointCount(window, now)
 		status := "measuring"
 		if remaining == 0 {
 			status = "completed"
@@ -250,6 +262,23 @@ func (s *Scheduler) handleMeasurementWindowDue(ctx context.Context, projectID uu
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func newlyCompletedCheckpointCount(raw json.RawMessage, now time.Time) int {
+	var window map[string]any
+	if json.Unmarshal(raw, &window) != nil {
+		return 0
+	}
+	checkpoints, _ := window["checkpoints"].([]any)
+	completedAt := now.UTC().Format(time.RFC3339)
+	count := 0
+	for _, item := range checkpoints {
+		checkpoint, ok := item.(map[string]any)
+		if ok && strings.TrimSpace(stringFromAny(checkpoint["completed_at"])) == completedAt {
+			count++
+		}
+	}
+	return count
 }
 
 func completeActionMeasurementCheckpoints(action db.ContentAction, now time.Time) (json.RawMessage, int, int, *string) {
@@ -456,9 +485,9 @@ func actionMeasurementsFromWindow(action db.ContentAction, window json.RawMessag
 			CheckpointDay:            int32(day),
 			WindowStart:              windowStart,
 			WindowEnd:                windowEnd,
-			SeoMetrics:               json.RawMessage(`{}`),
-			Ga4Metrics:               json.RawMessage(`{}`),
-			GeoMetrics:               json.RawMessage(`{}`),
+			SeoMetrics:               mustJSON(firstNonNil(checkpoint["seo_metrics"], map[string]any{})),
+			Ga4Metrics:               mustJSON(firstNonNil(checkpoint["ga4_metrics"], map[string]any{})),
+			GeoMetrics:               mustJSON(firstNonNil(checkpoint["geo_metrics"], map[string]any{})),
 			ExecutionMetrics:         measurementExecutionMetrics(action, data, checkpoint),
 			OutcomeLabel:             outcomeLabel,
 			OutcomeReason:            outcomeReason,
@@ -480,7 +509,7 @@ func measurementWindowDates(publishedAt pgtype.Timestamptz, day int, now time.Ti
 	if publishedAt.Valid {
 		start = publishedAt.Time.UTC()
 	}
-	end := start.AddDate(0, 0, day)
+	end := start.AddDate(0, 0, max(0, day-1))
 	return pgtype.Date{Time: dateOnly(start), Valid: true}, pgtype.Date{Time: dateOnly(end), Valid: true}
 }
 
@@ -495,13 +524,15 @@ func measurementOutcomeSummary(action db.ContentAction, status string, completed
 	if len(window) > 0 && json.Valid(window) && json.Unmarshal(window, &windowData) == nil {
 		primaryMetric, _ = windowData["primary_metric"].(string)
 	}
-	outcomeLabel := "insufficient_data"
-	outcomeReason := measurementInsufficientDataReason()
+	outcomeLabel := firstNonEmptyString(stringFromAny(windowData["outcome_label"]), stringFromAny(windowData["latest_outcome"]), measurement.OutcomeInsufficientData)
+	outcomeReason := firstNonEmptyString(stringFromAny(windowData["outcome_reason"]), measurementInsufficientDataReason())
+	confidence := firstNonEmptyString(stringFromAny(windowData["attribution_confidence"]), "low")
+	confounders := firstNonNil(windowData["confounders"], measurementDefaultConfounders())
 	terminalReason := strings.TrimSpace(fmt.Sprint(windowData["terminal_reason"]))
 	if terminalReason == "<nil>" {
 		terminalReason = ""
 	}
-	if status == "completed" {
+	if status == "completed" && outcomeLabel == measurement.OutcomeInsufficientData {
 		outcomeReason = "Measurement window closed, but comparative search or engagement data is still insufficient for reliable attribution."
 		if terminalReason == "absolute_deadline_reached" {
 			outcomeReason = "The immutable measurement deadline was reached; remaining checkpoints terminalized as insufficient data."
@@ -509,10 +540,10 @@ func measurementOutcomeSummary(action db.ContentAction, status string, completed
 	}
 	return mustJSON(map[string]any{
 		"action_id":                   action.ID.String(),
-		"attribution_confidence":      "low",
+		"attribution_confidence":      confidence,
 		"computed_at":                 now.Format(time.RFC3339),
 		"completed_checkpoints":       completed,
-		"confounders":                 measurementDefaultConfounders(),
+		"confounders":                 confounders,
 		"outcome_label":               outcomeLabel,
 		"outcome_reason":              outcomeReason,
 		"outcome_summary":             outcomeLabel,

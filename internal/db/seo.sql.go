@@ -1980,6 +1980,181 @@ func (q *Queries) GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetG
 	return i, err
 }
 
+const getGrowthMeasurementEvidence = `-- name: GetGrowthMeasurementEvidence :one
+with measurement_input as (
+  select
+    $1::uuid as project_id,
+    btrim($2::text) as target_url,
+    $3::uuid as article_id,
+    lower(btrim($4::text)) as query,
+    $5::text[] as geo_evidence_ids,
+    $6::date as baseline_start,
+    $7::date as baseline_end,
+    $8::date as after_start,
+    $9::date as after_end
+), measurement_params as (
+  select measurement_input.project_id, measurement_input.target_url, measurement_input.article_id, measurement_input.query, measurement_input.geo_evidence_ids, measurement_input.baseline_start, measurement_input.baseline_end, measurement_input.after_start, measurement_input.after_end,
+    coalesce((
+      select article.canonical_url from articles article
+      where article.project_id = measurement_input.project_id
+        and article.id = measurement_input.article_id
+        and nullif(btrim(coalesce(article.canonical_url, '')), '') is not null
+      limit 1
+    ), '') as article_url
+  from measurement_input
+), gsc_rows as (
+  select daily.date, daily.clicks, daily.impressions, daily.position,
+         daily.query_data_partial, daily.updated_at
+  from search_performance_daily daily, measurement_params params
+  where daily.project_id = params.project_id
+    and params.query <> ''
+    and lower(btrim(daily.query)) = params.query
+    and (
+      (params.target_url = '' and params.article_url = '' and params.article_id is null)
+      or daily.normalized_page_url in (params.target_url, params.article_url)
+      or daily.page_url = params.article_url
+    )
+    and daily.date between params.baseline_start and params.after_end
+  union all
+  select daily.date, daily.clicks, daily.impressions, daily.weighted_position,
+         false as query_data_partial, daily.updated_at
+  from page_performance_daily daily, measurement_params params
+  where daily.project_id = params.project_id
+    and params.query = ''
+    and (
+      (params.target_url = '' and params.article_url = '' and params.article_id is null)
+      or daily.article_id = params.article_id
+      or daily.normalized_page_url in (params.target_url, params.article_url)
+      or daily.page_url = params.article_url
+    )
+    and daily.date between params.baseline_start and params.after_end
+), gsc_aggregate as (
+  select
+    coalesce(sum(clicks) filter (where date between params.baseline_start and params.baseline_end), 0)::float8 as gsc_baseline_clicks,
+    coalesce(sum(impressions) filter (where date between params.baseline_start and params.baseline_end), 0)::float8 as gsc_baseline_impressions,
+    coalesce(sum(position * impressions) filter (where date between params.baseline_start and params.baseline_end and impressions > 0)
+      / nullif(sum(impressions) filter (where date between params.baseline_start and params.baseline_end and impressions > 0), 0), 0)::float8 as gsc_baseline_position,
+    count(distinct date) filter (where date between params.baseline_start and params.baseline_end and (clicks is not null or impressions is not null))::int as gsc_baseline_rows,
+    coalesce(bool_or(query_data_partial) filter (where date between params.baseline_start and params.baseline_end), false) as gsc_baseline_partial,
+    max(date) filter (where date between params.baseline_start and params.baseline_end and (clicks is not null or impressions is not null)) as gsc_baseline_data_through,
+    max(updated_at) filter (where date between params.baseline_start and params.baseline_end and (clicks is not null or impressions is not null)) as gsc_baseline_updated_at,
+    coalesce(sum(clicks) filter (where date between params.after_start and params.after_end), 0)::float8 as gsc_after_clicks,
+    coalesce(sum(impressions) filter (where date between params.after_start and params.after_end), 0)::float8 as gsc_after_impressions,
+    coalesce(sum(position * impressions) filter (where date between params.after_start and params.after_end and impressions > 0)
+      / nullif(sum(impressions) filter (where date between params.after_start and params.after_end and impressions > 0), 0), 0)::float8 as gsc_after_position,
+    count(distinct date) filter (where date between params.after_start and params.after_end and (clicks is not null or impressions is not null))::int as gsc_after_rows,
+    coalesce(bool_or(query_data_partial) filter (where date between params.after_start and params.after_end), false) as gsc_after_partial,
+    max(date) filter (where date between params.after_start and params.after_end and (clicks is not null or impressions is not null)) as gsc_after_data_through,
+    max(updated_at) filter (where date between params.after_start and params.after_end and (clicks is not null or impressions is not null)) as gsc_after_updated_at
+  from measurement_params params left join gsc_rows on true
+  group by params.baseline_start, params.baseline_end, params.after_start, params.after_end
+), ga4_aggregate as (
+  select
+    coalesce(sum(daily.ga4_sessions) filter (where daily.date between params.baseline_start and params.baseline_end), 0)::float8 as ga4_baseline_sessions,
+    coalesce(sum(daily.ga4_engaged_sessions) filter (where daily.date between params.baseline_start and params.baseline_end), 0)::float8 as ga4_baseline_engaged_sessions,
+    coalesce(sum(daily.ga4_conversions) filter (where daily.date between params.baseline_start and params.baseline_end), 0)::float8 as ga4_baseline_key_events,
+    count(distinct daily.date) filter (where daily.date between params.baseline_start and params.baseline_end and daily.ga4_sessions is not null)::int as ga4_baseline_rows,
+    max(daily.date) filter (where daily.date between params.baseline_start and params.baseline_end and daily.ga4_sessions is not null) as ga4_baseline_data_through,
+    max(daily.updated_at) filter (where daily.date between params.baseline_start and params.baseline_end and daily.ga4_sessions is not null) as ga4_baseline_updated_at,
+    coalesce(sum(daily.ga4_sessions) filter (where daily.date between params.after_start and params.after_end), 0)::float8 as ga4_after_sessions,
+    coalesce(sum(daily.ga4_engaged_sessions) filter (where daily.date between params.after_start and params.after_end), 0)::float8 as ga4_after_engaged_sessions,
+    coalesce(sum(daily.ga4_conversions) filter (where daily.date between params.after_start and params.after_end), 0)::float8 as ga4_after_key_events,
+    count(distinct daily.date) filter (where daily.date between params.after_start and params.after_end and daily.ga4_sessions is not null)::int as ga4_after_rows,
+    max(daily.date) filter (where daily.date between params.after_start and params.after_end and daily.ga4_sessions is not null) as ga4_after_data_through,
+    max(daily.updated_at) filter (where daily.date between params.after_start and params.after_end and daily.ga4_sessions is not null) as ga4_after_updated_at
+  from measurement_params params
+  left join page_performance_daily daily on daily.project_id = params.project_id
+    and (
+      (params.target_url = '' and params.article_url = '' and params.article_id is null)
+      or daily.article_id = params.article_id
+      or daily.normalized_page_url in (params.target_url, params.article_url)
+      or daily.page_url = params.article_url
+    )
+    and daily.date between params.baseline_start and params.after_end
+  group by params.baseline_start, params.baseline_end, params.after_start, params.after_end
+), baseline_geo_identity as (
+  select distinct observation.prompt_id, observation.engine, observation.locale
+  from measurement_params params
+  join geo_observations observation on observation.project_id = params.project_id
+    and observation.id::text = any(params.geo_evidence_ids)
+    and observation.prompt_id is not null
+), geo_scoped_observations as (
+  select observation.id, observation.project_id, observation.run_id, observation.prompt_id, observation.engine, observation.locale, observation.source_type, observation.brand_mentioned, observation.brand_position, observation.project_citation_count, observation.project_citation_rank_best, observation.project_cited_surface_ids, observation.cited_urls, observation.competitor_mentions, observation.competitor_citations, observation.observation_state, observation.answer_summary, observation.evidence_snippets, observation.confidence, observation.observed_at
+  from measurement_params params
+  join geo_observations observation on observation.project_id = params.project_id
+    and observation.observed_at::date between params.baseline_start and params.after_end
+  where (
+    cardinality(params.geo_evidence_ids) > 0
+    and exists (
+      select 1 from baseline_geo_identity identity
+      where identity.prompt_id = observation.prompt_id and identity.engine = observation.engine and identity.locale = observation.locale
+    )
+  )
+), geo_rows as (
+  select observation.observed_at, observation.project_citation_count::float8 as citation_value,
+    observation.brand_mentioned
+  from geo_scoped_observations observation
+  where observation.observation_state = 'observed'
+), geo_aggregate as (
+  select
+    coalesce(avg(citation_value) filter (where observed_at::date between params.baseline_start and params.baseline_end), 0)::float8 as geo_baseline_citations,
+    coalesce(avg(case when brand_mentioned then 1 else 0 end) filter (where observed_at::date between params.baseline_start and params.baseline_end), 0)::float8 as geo_baseline_brand_rate,
+    count(*) filter (where observed_at::date between params.baseline_start and params.baseline_end)::int as geo_baseline_rows,
+    max(observed_at) filter (where observed_at::date between params.baseline_start and params.baseline_end) as geo_baseline_observed_at,
+    coalesce(avg(citation_value) filter (where observed_at::date between params.after_start and params.after_end), 0)::float8 as geo_after_citations,
+    coalesce(avg(case when brand_mentioned then 1 else 0 end) filter (where observed_at::date between params.after_start and params.after_end), 0)::float8 as geo_after_brand_rate,
+    count(*) filter (where observed_at::date between params.after_start and params.after_end)::int as geo_after_rows,
+    max(observed_at) filter (where observed_at::date between params.after_start and params.after_end) as geo_after_observed_at
+  from measurement_params params left join geo_rows on true
+  group by params.baseline_start, params.baseline_end, params.after_start, params.after_end
+)
+select jsonb_build_object(
+  'gsc', to_jsonb(gsc_aggregate),
+  'ga4', to_jsonb(ga4_aggregate),
+  'geo', to_jsonb(geo_aggregate),
+  'providers', jsonb_build_object(
+    'gsc', coalesce((select integration.status from seo_integrations integration where integration.project_id = params.project_id and integration.provider = 'google_search_console' limit 1), 'missing'),
+    'ga4', coalesce((select integration.status from seo_integrations integration where integration.project_id = params.project_id and integration.provider = 'google_analytics' limit 1), 'missing'),
+    'geo', coalesce((select observation.observation_state from geo_scoped_observations observation order by observation.observed_at desc limit 1), 'missing')
+  ),
+  'windows', jsonb_build_object(
+    'baseline_start', params.baseline_start, 'baseline_end', params.baseline_end,
+    'after_start', params.after_start, 'after_end', params.after_end,
+    'target_url', params.target_url, 'article_id', params.article_id, 'article_url', params.article_url
+  )
+)::jsonb as evidence
+from measurement_params params, gsc_aggregate, ga4_aggregate, geo_aggregate
+`
+
+type GetGrowthMeasurementEvidenceParams struct {
+	ProjectID      uuid.UUID   `json:"project_id"`
+	TargetUrl      string      `json:"target_url"`
+	ArticleID      pgtype.UUID `json:"article_id"`
+	Query          string      `json:"query"`
+	GeoEvidenceIds []string    `json:"geo_evidence_ids"`
+	BaselineStart  pgtype.Date `json:"baseline_start"`
+	BaselineEnd    pgtype.Date `json:"baseline_end"`
+	AfterStart     pgtype.Date `json:"after_start"`
+	AfterEnd       pgtype.Date `json:"after_end"`
+}
+
+func (q *Queries) GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, getGrowthMeasurementEvidence,
+		arg.ProjectID,
+		arg.TargetUrl,
+		arg.ArticleID,
+		arg.Query,
+		arg.GeoEvidenceIds,
+		arg.BaselineStart,
+		arg.BaselineEnd,
+		arg.AfterStart,
+		arg.AfterEnd,
+	)
+	var evidence json.RawMessage
+	err := row.Scan(&evidence)
+	return evidence, err
+}
+
 const getGrowthOpportunityWorkAlias = `-- name: GetGrowthOpportunityWorkAlias :one
 select project_id, legacy_opportunity_id, canonical_object_type, canonical_opportunity_id, canonical_site_fix_id, work_signature_id, disposition, created_at from growth_opportunity_work_aliases
 where project_id = $1
