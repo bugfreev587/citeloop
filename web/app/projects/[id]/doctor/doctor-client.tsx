@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronRight, Clipboard, Code2, Play, RefreshCw, Stethoscope, Wrench, X } from "lucide-react";
-import { SEODoctorFinding, SEODoctorReport, SEODoctorRun } from "../../../lib/api";
+import { SEODoctorFinding, SEODoctorReport, SEODoctorRun, SiteFix } from "../../../lib/api";
 import { useApi } from "../../../lib/use-api";
 import { Badge, Button, ButtonProgress, EmptyState, Notice, SectionHeader, cx, formatDate } from "../../../components/ui";
 import { RightDrawer } from "../../../components/right-drawer";
@@ -390,6 +390,7 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const pendingRunNoticeID = useRef<string | null>(null);
   const initialSelectionHandled = useRef(false);
   const [report, setReport] = useState<SEODoctorReport | null>(null);
+  const [siteFixes, setSiteFixes] = useState<SiteFix[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -403,8 +404,12 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const next = await api.getSEODoctor(projectId);
+      const [next, fixes] = await Promise.all([
+        api.getSEODoctor(projectId),
+        api.listDoctorSiteFixes(projectId).catch(() => []),
+      ]);
       setReport(next);
+      setSiteFixes(fixes);
       const pendingRunID = pendingRunNoticeID.current;
       if (pendingRunID && next.run?.id === pendingRunID && !isActiveRun(next.run)) {
         pendingRunNoticeID.current = null;
@@ -446,6 +451,17 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
   const healthScore = run?.health_score ?? report?.human_report?.health_score ?? null;
   const lastRunAt = doctorRunTimestamp(run);
   const stageLabel = doctorRunStageLabel(run);
+  const repairCounts = siteFixes.reduce(
+    (counts, fix) => {
+      if (["proposed", "draft"].includes(fix.status)) counts.proposed += 1;
+      else if (fix.status === "approved") counts.approved += 1;
+      else if (["applying", "applied", "awaiting_deploy", "verifying", "failed_retryable", "reopened"].includes(fix.status)) counts.executing += 1;
+      else if (fix.status === "verified") counts.verified += 1;
+      else if (["failed_terminal", "terminated"].includes(fix.status)) counts.attention += 1;
+      return counts;
+    },
+    { proposed: 0, approved: 0, executing: 0, verified: 0, attention: 0 },
+  );
   const selectedFinding = useMemo(
     () => visibleFindings.find((finding) => finding.id === selectedFindingID) ?? null,
     [visibleFindings, selectedFindingID],
@@ -592,6 +608,46 @@ export function DoctorClient({ projectId, initialFindingId }: { projectId: strin
         <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
           Run Doctor refreshes this report from the latest crawl checks. Refresh SEO data first when you need a fresh recrawl.
         </p>
+      </section>
+
+      <section data-doctor-repair-loop className="space-y-3">
+        <SectionHeader
+          title="Doctor repair loop"
+          eyebrow="Immediate verification"
+          action={
+            <a
+              href={`/projects/${projectId}/site-fixes`}
+              className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Open Site Fixes
+            </a>
+          }
+        />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              { label: "Proposed", value: repairCounts.proposed, tone: "neutral" as const },
+              { label: "Approved", value: repairCounts.approved, tone: "blue" as const },
+              { label: "Applied / deploying", value: repairCounts.executing, tone: "amber" as const },
+              { label: "Verified", value: repairCounts.verified, tone: "green" as const },
+              { label: "Needs attention", value: repairCounts.attention, tone: "red" as const },
+            ].map((item) => (
+              <a
+                key={item.label}
+                href={`/projects/${projectId}/site-fixes`}
+                className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 transition hover:border-slate-300 hover:bg-white"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase text-slate-500">{item.label}</span>
+                  <Badge tone={item.tone}>{item.value}</Badge>
+                </div>
+              </a>
+            ))}
+          </div>
+          <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">
+            Doctor ends when acceptance tests re-read the repaired evidence and mark the Site Fix verified. It never enters Growth Measuring.
+          </p>
+        </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-4">
