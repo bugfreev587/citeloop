@@ -3343,6 +3343,8 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       const sourceURL = resultSourceEvidenceUrl(action);
       const actionMeasurements = (action as ResultsAction).measurements ?? [];
       const actionLearnings = growthLearnings.filter((learning) => learning.content_action_id === action.id);
+      const directionalLearnings = actionLearnings.filter((learning) => learning.record_kind === "directional_learning");
+      const qualityRecords = actionLearnings.filter((learning) => learning.record_kind === "measurement_quality");
 
       return (
         <div className="fixed inset-0 z-30">
@@ -3461,19 +3463,30 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
                 </section>
 
                 <section className="rounded-xl border border-slate-200 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Growth learning</div>
-                  {actionLearnings.length ? (
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Growth learning &amp; Measurement quality</div>
+                  {directionalLearnings.length ? (
                     <div className="mt-3 space-y-3">
-                      {actionLearnings.map((learning) => (
+                      {directionalLearnings.map((learning) => (
                         <div key={learning.id} className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-950">
                           <div className="font-semibold">{learning.learning_summary}</div>
                           <div className="mt-1 text-xs font-medium text-emerald-800">{humanizeInternalType(learning.outcome_label)} · {learning.primary_metric} · {learning.learning_version}</div>
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="mt-2 text-sm text-slate-600">Learning is created when the action reaches a terminal measured outcome.</p>
-                  )}
+                  ) : null}
+                  {qualityRecords.length ? (
+                    <div className="mt-3 space-y-3">
+                      {qualityRecords.map((record) => (
+                        <div key={record.id} className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">
+                          <div className="font-semibold">Measurement quality · {humanizeInternalType(record.data_quality_state || "insufficient")}</div>
+                          <div className="mt-1 leading-5">{record.recommendation || record.learning_summary}</div>
+                          {record.quality_gaps?.length ? <div className="mt-2 text-xs text-amber-800">Gap: {record.quality_gaps.slice(0, 3).join(" / ")}</div> : null}
+                          <div className="mt-2 text-xs font-semibold text-amber-800">Not used for directional scoring</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {!actionLearnings.length ? <p className="mt-2 text-sm text-slate-600">A learning or measurement-quality record is created when the action reaches a terminal measured outcome.</p> : null}
                   <div className="mt-3 border-t border-slate-100 pt-3">
                     <div className="text-xs font-semibold uppercase text-slate-400">Terminal reason</div>
                     <div className="mt-1 text-sm font-medium text-slate-700">{action.measurement_terminal_reason || actionLearnings[0]?.terminal_reason || "Not terminal"}</div>

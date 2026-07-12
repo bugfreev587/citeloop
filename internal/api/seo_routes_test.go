@@ -9,11 +9,32 @@ import (
 	"testing"
 
 	"github.com/citeloop/citeloop/internal/config"
+	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
+
+func TestGrowthLearningFeedIncludesMeasurementQuality(t *testing.T) {
+	record := db.ListMeasurementQualityRecordsRow{
+		ID: uuid.New(), ProjectID: uuid.New(), OpportunityID: uuid.New(), ContentActionID: uuid.New(),
+		DataQualityState: "insufficient", QualityGaps: json.RawMessage(`["missing GA4"]`),
+		Recommendation: "Reconnect analytics before opening another action.", QualityVersion: "quality-v1",
+		OutcomeLabel: "insufficient_data", TerminalReason: "absolute_deadline_reached",
+	}
+	feed := growthLearningFeed(nil, []db.ListMeasurementQualityRecordsRow{record})
+	if len(feed) != 1 {
+		t.Fatalf("feed length = %d, want 1", len(feed))
+	}
+	got := feed[0]
+	if got.RecordKind != "measurement_quality" || got.DataQualityState != record.DataQualityState || got.Recommendation != record.Recommendation {
+		t.Fatalf("measurement quality mapping = %#v", got)
+	}
+	if got.ScoringEligible {
+		t.Fatal("measurement quality must not become directional scoring input")
+	}
+}
 
 func TestSEORoutesAreRegistered(t *testing.T) {
 	router := (&Server{}).Router()
