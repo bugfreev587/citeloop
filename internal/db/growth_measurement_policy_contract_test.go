@@ -62,6 +62,7 @@ func TestMeasurementQueriesPersistCheckpointContractAndDeadline(t *testing.T) {
 		"absolute_terminal_at <= sqlc.arg(now_at)::timestamptz",
 		"-- name: bindlegacymeasuringcontentactionpolicy :one",
 		"and measuring_started_at is null",
+		"and ca.canonical_read_only = false",
 		"checkpoint_role",
 		"measurement_policy_version",
 		"checkpoint_attempt",
