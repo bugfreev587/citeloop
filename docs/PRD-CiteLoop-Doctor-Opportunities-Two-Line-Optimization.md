@@ -1633,6 +1633,8 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 
 ## 20. Acceptance Criteria
 
+最终执行与生产验收记录见 [`PRD-CiteLoop-Doctor-Opportunities-Two-Line-Acceptance-Audit.md`](./PRD-CiteLoop-Doctor-Opportunities-Two-Line-Acceptance-Audit.md)。
+
 ### 20.1 Product boundary
 
 1. 用户只需要理解 Doctor 和 Opportunities 两条 discovery 产品线。
