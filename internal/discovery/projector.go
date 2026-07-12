@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/growthspec"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -91,6 +92,24 @@ func ProjectSEOOpportunity(opportunity db.SeoOpportunity) Candidate {
 	if spec.artifactIntent == ArtifactCreateNewAsset {
 		candidate.IntendedSlugOrCanonical = evidenceString(opportunity.Evidence, "intended_slug_or_canonical")
 	}
+	if opportunity.CanonicalGrowth && opportunity.GrowthSpecOrigin == "forward" {
+		switch opportunity.GrowthSpecState {
+		case growthspec.StateNeedsEvidence:
+			return holdCandidateWithStatus(candidate, StatusNeedsEvidence, growthSpecHoldReason(opportunity))
+		case growthspec.StateNeedsSpecification:
+			return holdCandidateWithStatus(candidate, StatusNeedsSpecification, growthSpecHoldReason(opportunity))
+		case growthspec.StateDecisionReady:
+			var typed growthspec.Spec
+			if err := json.Unmarshal(opportunity.GrowthSpec, &typed); err != nil || typed.SchemaVersion != growthspec.VersionV1 || strings.TrimSpace(typed.PrimaryMetric) == "" || len(typed.Audience) == 0 {
+				return holdCandidate(candidate, "forward Growth specification is malformed")
+			}
+			candidate.PrimarySuccessMetric = typed.PrimaryMetric
+			candidate.AudienceIdentity = append([]string(nil), typed.Audience...)
+			candidate.EvidenceIDs = append(candidate.EvidenceIDs, typed.Baseline.EvidenceIDs...)
+		default:
+			return holdCandidate(candidate, "forward Growth work has no specification state")
+		}
+	}
 	return finalizeProjectedCandidate(candidate)
 }
 
@@ -119,9 +138,21 @@ func finalizeProjectedCandidate(candidate Candidate) Candidate {
 }
 
 func holdCandidate(candidate Candidate, reason string) Candidate {
-	candidate.Status = StatusNeedsSpecification
+	return holdCandidateWithStatus(candidate, StatusNeedsSpecification, reason)
+}
+
+func holdCandidateWithStatus(candidate Candidate, status CandidateStatus, reason string) Candidate {
+	candidate.Status = status
 	candidate.HoldReason = reason
 	return candidate
+}
+
+func growthSpecHoldReason(opportunity db.SeoOpportunity) string {
+	missing := rawStringList(opportunity.GrowthSpecMissing)
+	if len(missing) == 0 {
+		return "Growth specification is incomplete"
+	}
+	return "Growth specification is missing: " + strings.Join(missing, ", ")
 }
 
 func doctorWorkSpec(issueType string) (legacyWorkSpec, bool) {

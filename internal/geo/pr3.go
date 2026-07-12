@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
@@ -284,7 +285,7 @@ func (s Service) createAssetBrief(ctx context.Context, projectID, runID, opportu
 }
 
 func observationEvidence(observation db.GeoObservation) map[string]any {
-	return map[string]any{
+	evidence := map[string]any{
 		"source":                 "geo_observations",
 		"reason":                 "geo_citation_source_gap",
 		"why_now":                "A recorded answer-engine observation shows citation coverage missing or weaker than competitor/source evidence.",
@@ -294,13 +295,22 @@ func observationEvidence(observation db.GeoObservation) map[string]any {
 		"data_source_notes":      []string{"geo_observations", "answer_engine_observation"},
 		"idempotency_key":        strings.Join([]string{"geo_observations", observation.Engine, observation.ID.String()}, "|"),
 		"observation_id":         observation.ID,
+		"run_id":                 observation.RunID,
 		"engine":                 observation.Engine,
 		"source_type":            observation.SourceType,
+		"observation_state":      observation.ObservationState,
 		"cited_urls":             rawJSONList(observation.CitedUrls),
 		"competitor_citations":   rawJSONList(observation.CompetitorCitations),
 		"project_citation_count": observation.ProjectCitationCount,
 		"brand_mentioned":        observation.BrandMentioned,
 	}
+	if observation.PromptID.Valid {
+		evidence["prompt_id"] = observation.PromptID.Bytes
+	}
+	if observation.ObservedAt.Valid {
+		evidence["observed_at"] = observation.ObservedAt.Time.UTC().Format(time.RFC3339)
+	}
+	return evidence
 }
 
 func assetTypeForIntent(intent string, competitorGap bool) string {
