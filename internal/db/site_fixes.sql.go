@@ -1988,7 +1988,7 @@ insert into migration_review_items (
   $6, $7, $8::jsonb,
   $9::jsonb, 'pending'
 )
-returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at
+returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at
 `
 
 type CreateMigrationReviewItemParams struct {
@@ -2032,6 +2032,8 @@ func (q *Queries) CreateMigrationReviewItem(ctx context.Context, arg CreateMigra
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.InternalOwner,
+		&i.DueAt,
 	)
 	return i, err
 }
@@ -2229,7 +2231,7 @@ update migration_review_items
 set status = 'dismissed', resolution_snapshot = $1::jsonb,
     resolved_by = $2, resolved_at = $3, updated_at = now()
 where project_id = $4 and id = $5 and status = 'pending'
-returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at
+returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at
 `
 
 type DismissMigrationReviewItemParams struct {
@@ -2265,6 +2267,8 @@ func (q *Queries) DismissMigrationReviewItem(ctx context.Context, arg DismissMig
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.InternalOwner,
+		&i.DueAt,
 	)
 	return i, err
 }
@@ -3288,6 +3292,41 @@ func (q *Queries) GetMigrationCurrentSnapshot(ctx context.Context, arg GetMigrat
 	var snapshot json.RawMessage
 	err := row.Scan(&snapshot)
 	return snapshot, err
+}
+
+const getMigrationReviewItem = `-- name: GetMigrationReviewItem :one
+select id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at from migration_review_items
+where project_id = $1 and id = $2
+`
+
+type GetMigrationReviewItemParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetMigrationReviewItem(ctx context.Context, arg GetMigrationReviewItemParams) (MigrationReviewItem, error) {
+	row := q.db.QueryRow(ctx, getMigrationReviewItem, arg.ProjectID, arg.ID)
+	var i MigrationReviewItem
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MigrationBatchID,
+		&i.SourceObjectType,
+		&i.SourceObjectID,
+		&i.ReasonCode,
+		&i.Reason,
+		&i.SourceSnapshot,
+		&i.ProposedResolution,
+		&i.Status,
+		&i.ResolutionSnapshot,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.InternalOwner,
+		&i.DueAt,
+	)
+	return i, err
 }
 
 const getNextMigrationRollbackEventSequence = `-- name: GetNextMigrationRollbackEventSequence :one
@@ -4586,7 +4625,7 @@ func (q *Queries) ListMigrationLedgerForBatch(ctx context.Context, arg ListMigra
 }
 
 const listMigrationReviewItemsForBatch = `-- name: ListMigrationReviewItemsForBatch :many
-select id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at from migration_review_items
+select id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at from migration_review_items
 where project_id = $1 and migration_batch_id = $2
 order by created_at, id
 `
@@ -4621,6 +4660,8 @@ func (q *Queries) ListMigrationReviewItemsForBatch(ctx context.Context, arg List
 			&i.ResolvedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.InternalOwner,
+			&i.DueAt,
 		); err != nil {
 			return nil, err
 		}
@@ -4668,6 +4709,68 @@ func (q *Queries) ListMigrationRollbackEventsForBatch(ctx context.Context, arg L
 			&i.OccurredAt,
 			&i.RolledBackAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOperationalMigrationReviewItems = `-- name: ListOperationalMigrationReviewItems :many
+select id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at from migration_review_items
+where project_id = $1
+  and ($2::text is null or status = $2::text)
+  and ($3::text is null or internal_owner = $3::text)
+  and created_at <= now() - ($4::bigint * interval '1 second')
+  and ($5::boolean = false or due_at <= now())
+order by due_at, created_at, id
+`
+
+type ListOperationalMigrationReviewItemsParams struct {
+	ProjectID     uuid.UUID `json:"project_id"`
+	Status        *string   `json:"status"`
+	InternalOwner *string   `json:"internal_owner"`
+	MinAgeSeconds int64     `json:"min_age_seconds"`
+	OverdueOnly   bool      `json:"overdue_only"`
+}
+
+func (q *Queries) ListOperationalMigrationReviewItems(ctx context.Context, arg ListOperationalMigrationReviewItemsParams) ([]MigrationReviewItem, error) {
+	rows, err := q.db.Query(ctx, listOperationalMigrationReviewItems,
+		arg.ProjectID,
+		arg.Status,
+		arg.InternalOwner,
+		arg.MinAgeSeconds,
+		arg.OverdueOnly,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MigrationReviewItem
+	for rows.Next() {
+		var i MigrationReviewItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.MigrationBatchID,
+			&i.SourceObjectType,
+			&i.SourceObjectID,
+			&i.ReasonCode,
+			&i.Reason,
+			&i.SourceSnapshot,
+			&i.ProposedResolution,
+			&i.Status,
+			&i.ResolutionSnapshot,
+			&i.ResolvedBy,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.InternalOwner,
+			&i.DueAt,
 		); err != nil {
 			return nil, err
 		}
@@ -8522,7 +8625,7 @@ set status = $1,
 where project_id = $5
   and id = $6
   and status = 'pending'
-returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at
+returning id, project_id, migration_batch_id, source_object_type, source_object_id, reason_code, reason, source_snapshot, proposed_resolution, status, resolution_snapshot, resolved_by, resolved_at, created_at, updated_at, internal_owner, due_at
 `
 
 type ResolveMigrationReviewItemParams struct {
@@ -8560,6 +8663,8 @@ func (q *Queries) ResolveMigrationReviewItem(ctx context.Context, arg ResolveMig
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.InternalOwner,
+		&i.DueAt,
 	)
 	return i, err
 }

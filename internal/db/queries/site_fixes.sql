@@ -884,6 +884,19 @@ where project_id = sqlc.arg(project_id)
   and status = 'pending'
 returning *;
 
+-- name: ListOperationalMigrationReviewItems :many
+select * from migration_review_items
+where project_id = sqlc.arg(project_id)
+  and (sqlc.narg(status)::text is null or status = sqlc.narg(status)::text)
+  and (sqlc.narg(internal_owner)::text is null or internal_owner = sqlc.narg(internal_owner)::text)
+  and created_at <= now() - (sqlc.arg(min_age_seconds)::bigint * interval '1 second')
+  and (sqlc.arg(overdue_only)::boolean = false or due_at <= now())
+order by due_at, created_at, id;
+
+-- name: GetMigrationReviewItem :one
+select * from migration_review_items
+where project_id = sqlc.arg(project_id) and id = sqlc.arg(id);
+
 -- name: AppendMigrationRollbackEvent :one
 insert into migration_rollback_events (
   id, project_id, migration_batch_id, migration_ledger_id, event_sequence,
