@@ -203,8 +203,12 @@ type semanticDecisionResponse struct {
 }
 
 func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecision, error) {
+	payload, err := semanticJSONPayload(raw)
+	if err != nil {
+		return SemanticDecision{}, err
+	}
 	var response semanticDecisionResponse
-	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(raw)))
+	decoder := json.NewDecoder(strings.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&response); err != nil {
 		return SemanticDecision{}, fmt.Errorf("decode semantic decision: %w", err)
@@ -262,6 +266,29 @@ func parseSemanticDecision(raw string, request SemanticRequest) (SemanticDecisio
 		Reason:        strings.TrimSpace(response.Reason),
 		Confidence:    response.Confidence,
 	}, nil
+}
+
+func semanticJSONPayload(raw string) (string, error) {
+	payload := strings.TrimSpace(raw)
+	if !strings.HasPrefix(payload, "```") {
+		return payload, nil
+	}
+	lineEnd := strings.IndexByte(payload, '\n')
+	if lineEnd < 0 {
+		return "", fmt.Errorf("semantic decision code fence is incomplete")
+	}
+	opening := strings.TrimSpace(payload[:lineEnd])
+	if opening != "```" && !strings.EqualFold(opening, "```json") {
+		return "", fmt.Errorf("semantic decision code fence must contain JSON")
+	}
+	if !strings.HasSuffix(payload, "```") {
+		return "", fmt.Errorf("semantic decision code fence is incomplete")
+	}
+	body := strings.TrimSpace(payload[lineEnd+1 : len(payload)-3])
+	if body == "" || strings.Contains(body, "```") {
+		return "", fmt.Errorf("semantic decision must contain one fenced JSON object")
+	}
+	return body, nil
 }
 
 func semanticFingerprint(identity Identity, model string) (string, error) {

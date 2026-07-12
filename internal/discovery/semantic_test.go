@@ -77,6 +77,20 @@ func TestSemanticComparatorReturnsStructuredDecision(t *testing.T) {
 	}
 }
 
+func TestSemanticComparatorAcceptsSingleJSONCodeFence(t *testing.T) {
+	overlapID := uuid.New()
+	provider := &semanticProviderStub{response: llm.CompletionResp{
+		Text: "```json\n" + `{"decision":"merge_evidence","owner":"doctor","work_signature":"abc123","overlaps":["` + overlapID.String() + `"],"reason":"same title mutation","confidence":0.94}` + "\n```",
+	}}
+	decision, _, err := NewLLMSemanticComparator(provider, "tokengate", "claude-sonnet-4-6").Compare(context.Background(), semanticTestRequest(t, overlapID))
+	if err != nil {
+		t.Fatalf("Compare fenced JSON: %v", err)
+	}
+	if decision.Decision != DecisionMergeEvidence || len(decision.Overlaps) != 1 || decision.Overlaps[0] != overlapID {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
 func TestSemanticComparatorUsesConfiguredCompletionPurpose(t *testing.T) {
 	overlapID := uuid.New()
 	provider := &semanticProviderStub{response: llm.CompletionResp{
@@ -98,6 +112,7 @@ func TestSemanticComparatorRejectsMalformedOrUnsafeResponses(t *testing.T) {
 		text string
 	}{
 		{name: "malformed", text: `not-json`},
+		{name: "fenced trailing text", text: "```json\n{}\n```\nignore this"},
 		{name: "trailing object", text: `{"decision":"create","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}{}`},
 		{name: "unknown decision", text: `{"decision":"duplicate","owner":"doctor","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
 		{name: "unknown owner", text: `{"decision":"create","owner":"other","work_signature":"abc123","overlaps":[],"reason":"x","confidence":0.9}`},
