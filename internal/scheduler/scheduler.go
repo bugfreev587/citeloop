@@ -172,7 +172,7 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	if err != nil {
 		return err
 	}
-	trigger, scheduled, err := opportunityFindingTrigger(event)
+	trigger, _, err := opportunityFindingTrigger(event)
 	if err != nil {
 		return workflow.Permanent(err)
 	}
@@ -180,7 +180,7 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	if err != nil {
 		return workflow.Permanent(err)
 	}
-	stages := cfg.OpportunityFindingStages(scheduled)
+	stages := cfg.OpportunityFindingStagesForTrigger(trigger)
 	observeRequest := s.geoObserveRequest()
 	inputs := map[string]any{
 		"version": "opportunity-finding/v1", "trigger": trigger,
@@ -191,7 +191,7 @@ func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event
 	summary, err := opportunityfinding.RunCheckpointedWorkflow(ctx, q, opportunityfinding.WorkflowRequest{
 		ProjectID: project.ID, WorkflowEventID: event.ID, Inputs: inputs, Now: s.currentTime,
 	}, func(stageCtx context.Context, stage opportunityfinding.Stage, progress []opportunityfinding.StageProgress) opportunityfinding.StageOutcome {
-		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, scheduled, observeRequest, stage, progress)
+		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, observeRequest, stage, progress)
 	})
 	if err != nil {
 		return err
@@ -217,6 +217,8 @@ func opportunityFindingTrigger(event db.WorkflowEvent) (config.GrowthAITrigger, 
 		return payload.Trigger, false, nil
 	case config.GrowthAITriggerScheduled:
 		return payload.Trigger, true, nil
+	case config.GrowthAITriggerEvent:
+		return payload.Trigger, false, nil
 	default:
 		return "", false, fmt.Errorf("unsupported Opportunity Finding trigger %q", payload.Trigger)
 	}
@@ -1070,12 +1072,11 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	p db.Project,
 	cfg config.ProjectConfig,
 	trigger config.GrowthAITrigger,
-	scheduled bool,
 	observeRequest geo.ObserveAnswerProviderRequest,
 	stage opportunityfinding.Stage,
 	progress []opportunityfinding.StageProgress,
 ) opportunityfinding.StageOutcome {
-	stages := cfg.OpportunityFindingStages(scheduled)
+	stages := cfg.OpportunityFindingStagesForTrigger(trigger)
 	if !stages.SignalScan && !stages.AIDiscovery && stage != opportunityfinding.StageSummary {
 		return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "disabled_by_project_authority"}}
 	}
@@ -1636,56 +1637,6 @@ func canonicalArticleID(articles []db.Article) uuid.UUID {
 		return articles[0].ID
 	}
 	return uuid.Nil
-}
-
-// TickGEO runs the weekly GEO observation loop (§12.3).
-func (s *Scheduler) TickGEO(ctx context.Context) {
-	if s.Pool == nil {
-		s.logger().Warn("geo tick skipped; database pool is not configured")
-		return
-	}
-	q := db.New(s.Pool)
-	projects, err := q.ListProjects(ctx)
-	if err != nil {
-		s.logger().Error("list projects for geo tick", "err", err)
-		return
-	}
-	for _, p := range projects {
-		if err := s.geoForProject(ctx, q, p); err != nil {
-			s.logger().Error("geo tick failed", "project", p.ID, "err", err)
-		}
-	}
-}
-
-func (s *Scheduler) geoForProject(ctx context.Context, q *db.Queries, p db.Project) error {
-	cfg, err := config.Parse(p.Config)
-	if err != nil {
-		return err
-	}
-	if !cfg.AllowsGrowthAI(config.GrowthAITriggerScheduled) {
-		return nil
-	}
-	comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, config.GrowthAITriggerScheduled)
-	result, err := s.runAIDiscoveryForProject(ctx, q, p.ID, comparator)
-	s.logger().Info(
-		"geo tick complete",
-		"project", p.ID,
-		"prompts", result.ActivePromptCount,
-		"prompt_set_generated", result.PromptSetGenerated,
-		"observations", result.ObservationCount,
-		"cost_usd", result.ObservationCostUSD,
-		"opportunities", result.OpportunityCount,
-		"errors", len(result.Errors),
-	)
-	return err
-}
-
-func (s *Scheduler) runAIDiscoveryForProject(ctx context.Context, q *db.Queries, projectID uuid.UUID, comparator discovery.SemanticComparator) (opportunityfinding.AIDiscoveryResult, error) {
-	svc := s.geoService(ctx, q, comparator)
-	result, err := opportunityfinding.RunAIDiscovery(ctx, projectID, q, svc, opportunityfinding.AIDiscoveryOptions{
-		ObserveRequest: s.geoObserveRequest(),
-	})
-	return result, err
 }
 
 func (s *Scheduler) geoService(ctx context.Context, q *db.Queries, comparator discovery.SemanticComparator) geo.Service {

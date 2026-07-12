@@ -154,20 +154,45 @@ func TestGrowthAIPolicySeparatesManualScheduledAndEventAuthority(t *testing.T) {
 	cfg := Default()
 	cfg.GrowthAIEnabled = true
 	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
-	if !cfg.AllowsGrowthAI(GrowthAITriggerManual) || !cfg.AllowsGrowthAI(GrowthAITriggerScheduled) {
-		t.Fatal("scheduled_only must retain explicit and legacy scheduled calls")
+	if cfg.AllowsGrowthAI(GrowthAITriggerManual) || !cfg.AllowsGrowthAI(GrowthAITriggerScheduled) {
+		t.Fatal("scheduled_only must preserve only the legacy scheduled provider-call trigger")
 	}
 	if cfg.AllowsGrowthAI(GrowthAITriggerEvent) {
 		t.Fatal("scheduled_only must not silently authorize event-driven provider calls")
 	}
 	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledAndEvent
-	if !cfg.AllowsGrowthAI(GrowthAITriggerEvent) {
-		t.Fatal("scheduled_and_event must authorize an explicitly confirmed event call")
+	for _, trigger := range []GrowthAITrigger{GrowthAITriggerManual, GrowthAITriggerEvent, GrowthAITriggerScheduled} {
+		if !cfg.AllowsGrowthAI(trigger) {
+			t.Fatalf("scheduled_and_event must authorize %s with manual > event > scheduled precedence", trigger)
+		}
 	}
 	cfg.GrowthAIEnabled = false
 	for _, trigger := range []GrowthAITrigger{GrowthAITriggerManual, GrowthAITriggerScheduled, GrowthAITriggerEvent} {
 		if cfg.AllowsGrowthAI(trigger) {
 			t.Fatalf("disabled Growth AI authorized %s", trigger)
+		}
+	}
+}
+
+func TestOpportunityFindingStagesUseExactTriggerAuthority(t *testing.T) {
+	cfg := Default()
+	cfg.GrowthSignalEnabled = true
+	cfg.GrowthAIEnabled = true
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledOnly
+	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerManual); !got.SignalScan || got.AIDiscovery {
+		t.Fatalf("scheduled_only manual stages expanded AI authority: %+v", got)
+	}
+	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerEvent); !got.SignalScan || got.AIDiscovery {
+		t.Fatalf("scheduled_only event stages expanded AI authority: %+v", got)
+	}
+	if got := cfg.OpportunityFindingStagesForTrigger(GrowthAITriggerScheduled); !got.SignalScan || !got.AIDiscovery {
+		t.Fatalf("scheduled_only scheduled stages lost authority: %+v", got)
+	}
+
+	cfg.GrowthAIRunPolicy = GrowthAIRunPolicyScheduledAndEvent
+	for _, trigger := range []GrowthAITrigger{GrowthAITriggerManual, GrowthAITriggerEvent, GrowthAITriggerScheduled} {
+		if got := cfg.OpportunityFindingStagesForTrigger(trigger); !got.SignalScan || !got.AIDiscovery {
+			t.Fatalf("scheduled_and_event stages for %s = %+v", trigger, got)
 		}
 	}
 }

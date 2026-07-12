@@ -48,10 +48,6 @@ func TestSchedulerExposesSEODoctorTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickSEODoctor
 }
 
-func TestSchedulerExposesGEOTick(t *testing.T) {
-	var _ func(*Scheduler, context.Context) = (*Scheduler).TickGEO
-}
-
 func TestSchedulerExposesContextRefreshTick(t *testing.T) {
 	var _ func(*Scheduler, context.Context) = (*Scheduler).TickContextRefresh
 }
@@ -80,8 +76,8 @@ func TestStartRegistersNotificationTick(t *testing.T) {
 	if !strings.Contains(source, "TickSEODoctor") || !strings.Contains(source, "@weekly") {
 		t.Fatal("Start must register TickSEODoctor weekly")
 	}
-	if !strings.Contains(source, "TickGEO") || !strings.Contains(source, "@weekly") {
-		t.Fatal("Start must register TickGEO weekly")
+	if strings.Contains(source, "TickGEO") || strings.Contains(source, `"geo", "weekly"`) {
+		t.Fatal("Start must not retain standalone weekly GEO opportunity authority")
 	}
 	if !strings.Contains(source, "TickContextRefresh") || !strings.Contains(source, "@weekly") {
 		t.Fatal("Start must register TickContextRefresh weekly")
@@ -109,7 +105,7 @@ func TestDailySEOTickRunsAutomaticAIDiscoveryWhenConfigured(t *testing.T) {
 	}
 	body := functionBody(t, string(raw), "func (s *Scheduler) executeOpportunityFindingStage")
 	for _, want := range []string{
-		"OpportunityFindingStages(scheduled)",
+		"OpportunityFindingStagesForTrigger(trigger)",
 		"opportunityfinding.RefreshAIDiscoveryEvidence",
 		"opportunityfinding.MaterializeAIDiscoveryHypotheses",
 		"runner.Sync",
@@ -134,6 +130,11 @@ func TestOpportunityFindingTriggerComesFromDurableEventPayload(t *testing.T) {
 	trigger, scheduled, err = opportunityFindingTrigger(event)
 	if err != nil || trigger != config.GrowthAITriggerManual || scheduled {
 		t.Fatalf("manual trigger=%q scheduled=%v err=%v", trigger, scheduled, err)
+	}
+	event.Payload = []byte(`{"trigger":"event"}`)
+	trigger, scheduled, err = opportunityFindingTrigger(event)
+	if err != nil || trigger != config.GrowthAITriggerEvent || scheduled {
+		t.Fatalf("event trigger=%q scheduled=%v err=%v", trigger, scheduled, err)
 	}
 }
 
