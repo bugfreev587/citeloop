@@ -41,6 +41,8 @@ func ProjectDoctorFinding(finding db.SeoDoctorFinding) Candidate {
 		ArtifactIntent:          ArtifactRepairExistingSurface,
 		SuggestedOwner:          OwnerDoctor,
 		VerificationMode:        VerificationImmediate,
+		TopicEntityIdentity:     []string{},
+		AudienceIdentity:        []string{},
 		EvidenceFingerprint:     fingerprintJSON(finding.Evidence),
 		EvidenceIDs:             nonZeroUUIDs(finding.RunID.String()),
 		Confidence:              1,

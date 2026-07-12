@@ -61,6 +61,29 @@ func TestCreatorCreatesCanonicalDoctorSiteFix(t *testing.T) {
 	}
 }
 
+func TestCreatorAcceptsPersistedEmptyDoctorIdentitySets(t *testing.T) {
+	projectID, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
+	finding := canonicalFinding(projectID, findingID)
+	candidate := canonicalDiscoveryCandidateForFinding(finding, candidateID)
+	// PostgresRepository normalizes nil topic/audience identity sets to JSON
+	// arrays before persistence. The locked snapshot must compare against that
+	// canonical representation rather than treating [] as different from nil.
+	candidate.TopicEntityIdentity = json.RawMessage(`[]`)
+	candidate.AudienceIdentity = json.RawMessage(`[]`)
+	storage := &creatorDBStub{candidate: candidate, finding: finding}
+
+	_, err := (Creator{}).CreateInTransaction(context.Background(), db.New(storage), discovery.ReservedWork{
+		ProjectID: projectID, CandidateID: candidateID, DecisionID: uuid.New(),
+		WorkSignatureID: uuid.New(), Owner: discovery.OwnerDoctor,
+	})
+	if err != nil {
+		t.Fatalf("CreateInTransaction: %v", err)
+	}
+	if storage.createCalls != 1 {
+		t.Fatalf("create calls = %d, want 1", storage.createCalls)
+	}
+}
+
 func TestCreatorRejectsInvalidDoctorWork(t *testing.T) {
 	baseProject, findingID, candidateID := uuid.New(), uuid.New(), uuid.New()
 	baseFinding := canonicalFinding(baseProject, findingID)
