@@ -275,6 +275,7 @@ type Querier interface {
 	ListGEOVisibilityScores(ctx context.Context, arg ListGEOVisibilityScoresParams) ([]GeoVisibilityScore, error)
 	ListGenerationRuns(ctx context.Context, arg ListGenerationRunsParams) ([]GenerationRun, error)
 	ListGrowthCutoverSessionEntries(ctx context.Context, arg ListGrowthCutoverSessionEntriesParams) ([]GrowthCutoverSessionEntry, error)
+	ListGrowthLearnings(ctx context.Context, arg ListGrowthLearningsParams) ([]ListGrowthLearningsRow, error)
 	ListInventory(ctx context.Context, projectID uuid.UUID) ([]ContentInventory, error)
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]AiCrawlerAccessSnapshot, error)
 	ListLatestCanonicalSiteFixApplications(ctx context.Context, arg ListLatestCanonicalSiteFixApplicationsParams) ([]SiteChangeApplication, error)
@@ -282,6 +283,7 @@ type Querier interface {
 	ListLegacyApplicationsForMigrationUpdate(ctx context.Context, arg ListLegacyApplicationsForMigrationUpdateParams) ([]SiteChangeApplication, error)
 	ListLegacyTechnicalActionsForMigration(ctx context.Context, projectID uuid.UUID) ([]ListLegacyTechnicalActionsForMigrationRow, error)
 	ListLegacyTechnicalOpportunitiesWithoutActions(ctx context.Context, projectID uuid.UUID) ([]ListLegacyTechnicalOpportunitiesWithoutActionsRow, error)
+	ListMeasurementQualityRecords(ctx context.Context, arg ListMeasurementQualityRecordsParams) ([]ListMeasurementQualityRecordsRow, error)
 	ListMergedSiteChangeApplicationsForVerification(ctx context.Context, projectID uuid.UUID) ([]SiteChangeApplication, error)
 	ListMigrationBucketsForUpdate(ctx context.Context, arg ListMigrationBucketsForUpdateParams) ([]WorkConflictBucket, error)
 	ListMigrationLedgerForBatch(ctx context.Context, arg ListMigrationLedgerForBatchParams) ([]MigrationLedger, error)
@@ -400,6 +402,7 @@ type Querier interface {
 	// Consecutive failures heuristic for alerting (§5.2/§5.4).
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
+	RecordGrowthTerminalOutcome(ctx context.Context, arg RecordGrowthTerminalOutcomeParams) error
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
 	RejectArticleForProject(ctx context.Context, arg RejectArticleForProjectParams) (Article, error)
