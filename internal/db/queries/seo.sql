@@ -1990,6 +1990,7 @@ returning *;
 select ca.* from content_actions ca
 where ca.project_id = sqlc.arg(project_id)
   and ca.status = 'measuring'
+  and ca.canonical_read_only = false
   and not exists (
     select 1 from product_writer_authority authority
     where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
@@ -2029,6 +2030,7 @@ update content_actions set
 where id = sqlc.arg(id)
   and project_id = sqlc.arg(project_id)
   and status = 'measuring'
+  and canonical_read_only = false
   and measuring_started_at is null
 returning *;
 

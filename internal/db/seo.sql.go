@@ -87,6 +87,7 @@ update content_actions set
 where id = $1
   and project_id = $2
   and status = 'measuring'
+  and canonical_read_only = false
   and measuring_started_at is null
 returning id, project_id, opportunity_id, action_type, status, target_article_id, target_url, normalized_target_url, target_content_hash_before, target_content_hash_after, draft_article_id, baseline_window, measurement_window, published_at, outcome_summary, created_at, updated_at, asset_type, target_surface_id, risk_reasons, evidence_snapshot, input_snapshot, output_snapshot, diff_snapshot, review_required, approved_by, approved_at, verified_at, verification_snapshot, approval_source, routing_source, work_type, status_reason, canonical_site_fix_id, canonical_read_only, legacy_migration_batch_id, legacy_migration_disposition, measurement_policy_version, measurement_policy, measuring_started_at, absolute_terminal_at, measurement_terminal_reason
 `
@@ -3280,6 +3281,7 @@ const listDueMeasuringContentActions = `-- name: ListDueMeasuringContentActions 
 select ca.id, ca.project_id, ca.opportunity_id, ca.action_type, ca.status, ca.target_article_id, ca.target_url, ca.normalized_target_url, ca.target_content_hash_before, ca.target_content_hash_after, ca.draft_article_id, ca.baseline_window, ca.measurement_window, ca.published_at, ca.outcome_summary, ca.created_at, ca.updated_at, ca.asset_type, ca.target_surface_id, ca.risk_reasons, ca.evidence_snapshot, ca.input_snapshot, ca.output_snapshot, ca.diff_snapshot, ca.review_required, ca.approved_by, ca.approved_at, ca.verified_at, ca.verification_snapshot, ca.approval_source, ca.routing_source, ca.work_type, ca.status_reason, ca.canonical_site_fix_id, ca.canonical_read_only, ca.legacy_migration_batch_id, ca.legacy_migration_disposition, ca.measurement_policy_version, ca.measurement_policy, ca.measuring_started_at, ca.absolute_terminal_at, ca.measurement_terminal_reason from content_actions ca
 where ca.project_id = $1
   and ca.status = 'measuring'
+  and ca.canonical_read_only = false
   and not exists (
     select 1 from product_writer_authority authority
     where authority.project_id = ca.project_id and authority.product = 'opportunities' and authority.write_fenced = true
