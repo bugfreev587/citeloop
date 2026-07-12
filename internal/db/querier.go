@@ -239,6 +239,7 @@ type Querier interface {
 	ListActiveWorkForLegacyMigration(ctx context.Context, projectID uuid.UUID) ([]ListActiveWorkForLegacyMigrationRow, error)
 	ListAdminProjects(ctx context.Context) ([]Project, error)
 	ListAdminUsers(ctx context.Context) ([]ListAdminUsersRow, error)
+	ListApplicableGrowthLearnings(ctx context.Context, arg ListApplicableGrowthLearningsParams) ([]ListApplicableGrowthLearningsRow, error)
 	// ListApprovableForProject lists pending_review drafts QA has cleared, for
 	// hands-off auto-approval when the project runs in auto-advance mode.
 	ListApprovableForProject(ctx context.Context, arg ListApprovableForProjectParams) ([]Article, error)

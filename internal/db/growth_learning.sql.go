@@ -13,6 +13,120 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listApplicableGrowthLearnings = `-- name: ListApplicableGrowthLearnings :many
+select learning.id, learning.project_id, learning.terminal_outcome_id, learning.content_action_id, learning.learning_summary, learning.applicability, learning.scoring_eligible, learning.learning_version, learning.created_at, terminal.opportunity_id, terminal.candidate_id, terminal.article_id,
+  terminal.artifact_url, terminal.action_family, terminal.target_identity, terminal.audience,
+  terminal.primary_metric, terminal.outcome_label, terminal.terminal_reason,
+  terminal.measurement_policy_version, terminal.baseline_snapshot, terminal.checkpoint_snapshot,
+  terminal.outcome_snapshot
+from growth_learnings learning
+join growth_terminal_outcomes terminal on terminal.id = learning.terminal_outcome_id
+where learning.project_id = $1
+  and learning.scoring_eligible = true
+  and lower(btrim(terminal.action_family)) = lower(btrim($2::text))
+  and lower(btrim(terminal.primary_metric)) = lower(btrim($3::text))
+  and exists (
+    select 1
+    from jsonb_each_text(terminal.target_identity) historical(key, value)
+    join jsonb_each_text($4::jsonb) candidate(key, value)
+      on lower(rtrim(btrim(historical.value), '/')) = lower(rtrim(btrim(candidate.value), '/'))
+  )
+  and exists (
+    select 1
+    from jsonb_array_elements_text(terminal.audience) historical(value)
+    join jsonb_array_elements_text($5::jsonb) candidate(value)
+      on lower(btrim(historical.value)) = lower(btrim(candidate.value))
+  )
+order by learning.created_at desc
+limit $6
+`
+
+type ListApplicableGrowthLearningsParams struct {
+	ProjectID      uuid.UUID       `json:"project_id"`
+	ActionFamily   string          `json:"action_family"`
+	PrimaryMetric  string          `json:"primary_metric"`
+	TargetIdentity json.RawMessage `json:"target_identity"`
+	Audience       json.RawMessage `json:"audience"`
+	LimitRows      int32           `json:"limit_rows"`
+}
+
+type ListApplicableGrowthLearningsRow struct {
+	ID                       uuid.UUID          `json:"id"`
+	ProjectID                uuid.UUID          `json:"project_id"`
+	TerminalOutcomeID        uuid.UUID          `json:"terminal_outcome_id"`
+	ContentActionID          uuid.UUID          `json:"content_action_id"`
+	LearningSummary          string             `json:"learning_summary"`
+	Applicability            json.RawMessage    `json:"applicability"`
+	ScoringEligible          bool               `json:"scoring_eligible"`
+	LearningVersion          string             `json:"learning_version"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	OpportunityID            uuid.UUID          `json:"opportunity_id"`
+	CandidateID              pgtype.UUID        `json:"candidate_id"`
+	ArticleID                pgtype.UUID        `json:"article_id"`
+	ArtifactUrl              string             `json:"artifact_url"`
+	ActionFamily             string             `json:"action_family"`
+	TargetIdentity           json.RawMessage    `json:"target_identity"`
+	Audience                 json.RawMessage    `json:"audience"`
+	PrimaryMetric            string             `json:"primary_metric"`
+	OutcomeLabel             string             `json:"outcome_label"`
+	TerminalReason           string             `json:"terminal_reason"`
+	MeasurementPolicyVersion string             `json:"measurement_policy_version"`
+	BaselineSnapshot         json.RawMessage    `json:"baseline_snapshot"`
+	CheckpointSnapshot       json.RawMessage    `json:"checkpoint_snapshot"`
+	OutcomeSnapshot          json.RawMessage    `json:"outcome_snapshot"`
+}
+
+func (q *Queries) ListApplicableGrowthLearnings(ctx context.Context, arg ListApplicableGrowthLearningsParams) ([]ListApplicableGrowthLearningsRow, error) {
+	rows, err := q.db.Query(ctx, listApplicableGrowthLearnings,
+		arg.ProjectID,
+		arg.ActionFamily,
+		arg.PrimaryMetric,
+		arg.TargetIdentity,
+		arg.Audience,
+		arg.LimitRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListApplicableGrowthLearningsRow
+	for rows.Next() {
+		var i ListApplicableGrowthLearningsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TerminalOutcomeID,
+			&i.ContentActionID,
+			&i.LearningSummary,
+			&i.Applicability,
+			&i.ScoringEligible,
+			&i.LearningVersion,
+			&i.CreatedAt,
+			&i.OpportunityID,
+			&i.CandidateID,
+			&i.ArticleID,
+			&i.ArtifactUrl,
+			&i.ActionFamily,
+			&i.TargetIdentity,
+			&i.Audience,
+			&i.PrimaryMetric,
+			&i.OutcomeLabel,
+			&i.TerminalReason,
+			&i.MeasurementPolicyVersion,
+			&i.BaselineSnapshot,
+			&i.CheckpointSnapshot,
+			&i.OutcomeSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGrowthLearnings = `-- name: ListGrowthLearnings :many
 select learning.id, learning.project_id, learning.terminal_outcome_id, learning.content_action_id, learning.learning_summary, learning.applicability, learning.scoring_eligible, learning.learning_version, learning.created_at, terminal.opportunity_id, terminal.candidate_id, terminal.article_id,
   terminal.artifact_url, terminal.action_family, terminal.target_identity, terminal.audience,

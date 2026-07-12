@@ -20,6 +20,7 @@ import (
 	"github.com/citeloop/citeloop/internal/discovery"
 	"github.com/citeloop/citeloop/internal/googledata"
 	"github.com/citeloop/citeloop/internal/growthwork"
+	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/publisher"
@@ -617,6 +618,10 @@ func (s Service) generateSearchMetricOpportunities(ctx context.Context, projectI
 		return 0, err
 	}
 	candidates := searchMetricOpportunityCandidates(toSearchQueryRollups(queryRows, observedMetadataByNormalizedURL(checkRows)), toPageDecayRollups(decayRows))
+	candidates, err = applySearchLearningScores(ctx, candidates, learning.NewProjectScorer(s.Q, projectID))
+	if err != nil {
+		return 0, err
+	}
 	generated := 0
 	for _, candidate := range candidates {
 		query := strings.TrimSpace(candidate.Query)
@@ -686,6 +691,10 @@ func (s Service) generateActionableSEOOpportunities(ctx context.Context, project
 		toInventoryEvidenceRollups(inventoryRows, prop),
 		toSearchQueryRollups(queryRows),
 	)
+	candidates, err = applyActionableLearningScores(ctx, candidates, learning.NewProjectScorer(s.Q, projectID))
+	if err != nil {
+		return 0, err
+	}
 	generated := 0
 	for _, candidate := range candidates {
 		query := strings.TrimSpace(candidate.Query)

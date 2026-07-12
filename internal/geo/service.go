@@ -46,6 +46,7 @@ type Store interface {
 	CreateGEOObservation(ctx context.Context, arg db.CreateGEOObservationParams) (db.GeoObservation, error)
 	ListGEOObservations(ctx context.Context, arg db.ListGEOObservationsParams) ([]db.GeoObservation, error)
 	ListGEOObservationsForRun(ctx context.Context, arg db.ListGEOObservationsForRunParams) ([]db.GeoObservation, error)
+	ListApplicableGrowthLearnings(ctx context.Context, arg db.ListApplicableGrowthLearningsParams) ([]db.ListApplicableGrowthLearningsRow, error)
 	CreateGEOVisibilityScore(ctx context.Context, arg db.CreateGEOVisibilityScoreParams) (db.GeoVisibilityScore, error)
 	GetLatestGEOVisibilityScore(ctx context.Context, projectID uuid.UUID) (db.GeoVisibilityScore, error)
 	ListGEOVisibilityScores(ctx context.Context, arg db.ListGEOVisibilityScoresParams) ([]db.GeoVisibilityScore, error)

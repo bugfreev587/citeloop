@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/learning"
 	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/google/uuid"
@@ -106,10 +107,15 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	for _, prompt := range prompts {
 		promptByID[prompt.ID] = prompt
 	}
+	scorer := learning.NewProjectScorer(s.Q, projectID)
 
 	seen := map[string]struct{}{}
 	for _, observation := range observations {
 		for _, gap := range gapsForObservation(observation, promptByID) {
+			gap, err = applyGEOLearningScore(ctx, gap, scorer)
+			if err != nil {
+				return finish("error", result, err)
+			}
 			key := gap.Type + "\x00" + gap.PromptText
 			if _, ok := seen[key]; ok {
 				continue
@@ -140,6 +146,22 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		}
 	}
 	return finish("ok", result, nil)
+}
+
+func applyGEOLearningScore(ctx context.Context, gap geoGap, scorer learning.CandidateScorer) (geoGap, error) {
+	result, err := scorer.ScoreCandidate(ctx, learning.CandidateContext(gap.Priority, gap.Type, "", gap.PromptText, gap.Evidence))
+	if err != nil {
+		return geoGap{}, err
+	}
+	if len(result.LearningIDs) == 0 {
+		return gap, nil
+	}
+	gap.Priority = result.AdjustedScore
+	if gap.Evidence == nil {
+		gap.Evidence = map[string]any{}
+	}
+	gap.Evidence["learning_scoring"] = result.Provenance()
+	return gap, nil
 }
 
 func (s Service) AcceptGEOAssetBrief(ctx context.Context, projectID, briefID uuid.UUID) (AcceptGEOAssetBriefResult, error) {

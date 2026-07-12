@@ -1,12 +1,36 @@
 package seo
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/citeloop/citeloop/internal/learning"
 )
+
+func applySearchLearningScores(ctx context.Context, candidates []searchMetricOpportunityCandidate, scorer learning.CandidateScorer) ([]searchMetricOpportunityCandidate, error) {
+	for i := range candidates {
+		candidate := &candidates[i]
+		result, err := scorer.ScoreCandidate(ctx, learning.CandidateContext(
+			candidate.PriorityScore, candidate.Type, candidate.NormalizedPageURL, candidate.Query, candidate.Evidence,
+		))
+		if err != nil {
+			return nil, err
+		}
+		if len(result.LearningIDs) == 0 {
+			continue
+		}
+		candidate.PriorityScore = result.AdjustedScore
+		if candidate.Evidence == nil {
+			candidate.Evidence = map[string]any{}
+		}
+		candidate.Evidence["learning_scoring"] = result.Provenance()
+	}
+	return candidates, nil
+}
 
 const searchOpportunityScoringVersion = "gsc_metric_v2"
 

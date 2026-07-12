@@ -3,10 +3,12 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
+	"github.com/citeloop/citeloop/internal/pgutil"
 	"github.com/google/uuid"
 )
 
@@ -16,6 +18,12 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 	promptID := uuid.New()
 	store := &geoStoreStub{
 		runID: runID,
+		growthLearnings: []db.ListApplicableGrowthLearningsRow{{
+			ID: uuid.New(), ScoringEligible: true, ActionFamily: "geo_project_mentioned_without_citation",
+			PrimaryMetric: "ai_citation_count", OutcomeLabel: "positive",
+			TargetIdentity: json.RawMessage(`{"query":"best social scheduling tools"}`),
+			Audience:       json.RawMessage(`["people searching for best social scheduling tools"]`),
+		}},
 		prompts: []db.GeoPrompt{{
 			ID:          promptID,
 			ProjectID:   projectID,
@@ -84,6 +92,11 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 		for _, key := range []string{"source", "why_now", "scoring_method", "scoring_version", "idempotency_key"} {
 			if evidence[key] == nil || evidence[key] == "" {
 				t.Fatalf("%s evidence missing %q in %#v", opportunity.Type, key, evidence)
+			}
+		}
+		if opportunity.Type == "geo_project_mentioned_without_citation" {
+			if math.Abs(pgutil.Float(opportunity.PriorityScore)-81) > 0.000001 || evidence["learning_scoring"] == nil {
+				t.Fatalf("GEO opportunity missing applied learning score: %+v evidence=%#v", opportunity, evidence)
 			}
 		}
 	}

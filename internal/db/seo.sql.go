@@ -6113,8 +6113,16 @@ with locked_signature as (
       'merged_cross_source_evidence',
       coalesce(opportunity.evidence->'merged_cross_source_evidence', '[]'::jsonb)
         || jsonb_build_array($3::jsonb)
-    ),
-    priority_score = greatest(opportunity.priority_score, $4::numeric),
+    ) || case
+      when $3::jsonb ? 'learning_scoring'
+        then jsonb_build_object('learning_scoring', $3::jsonb->'learning_scoring')
+      else '{}'::jsonb
+    end,
+    priority_score = case
+      when $3::jsonb ? 'learning_scoring'
+        then $4::numeric
+      else greatest(opportunity.priority_score, $4::numeric)
+    end,
     confidence = greatest(opportunity.confidence, $5::numeric),
     evidence_fingerprint = $6,
     growth_spec_state = case when $7::text = 'decision_ready' then $7::text else opportunity.growth_spec_state end,
