@@ -349,7 +349,18 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	base.AICallID = callID
 	base.Disposition = DispositionSemanticComparison
 	base.Decision = decision.Decision
-	base.Owner = decision.Owner
+	// The semantic provider classifies overlap, not product authority. New and
+	// blocked work stays on the candidate's line; only an evidence merge adopts
+	// the owner of the existing canonical work selected by arbitration.
+	base.Owner = ownerForCandidate(candidate.Candidate)
+	if decision.Decision == DecisionMergeEvidence {
+		if mergeOwner, ok := ownerForSemanticMerge(decision.Overlaps, snapshot.ActiveWorks); ok {
+			base.Owner = mergeOwner
+		} else {
+			base.Decision = DecisionHold
+			base.Reason = "semantic evidence merge did not resolve to one active canonical owner"
+		}
+	}
 	base.OverlapWorkIDs = append([]uuid.UUID(nil), decision.Overlaps...)
 	if decision.Decision == DecisionCreate && len(deterministicHardDependencies) > 0 {
 		base.Decision = DecisionBlockOnOtherLine
@@ -368,6 +379,10 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	base.Provider = firstNonEmpty(usage.Provider, config.Provider)
 	base.Model = firstNonEmpty(usage.Model, config.Model)
 	base.PromptVersion = firstNonEmpty(usage.PromptVersion, SemanticPromptVersionV1)
+	if base.Decision == DecisionHold {
+		base.Status = ArbitrationStatusHeld
+		return s.persistHold(ctx, candidate, snapshot, base)
+	}
 	if decision.Confidence < config.ConfidenceThreshold {
 		base.Decision = DecisionHold
 		base.Reason = fmt.Sprintf("semantic confidence %.4f is below threshold %.4f", decision.Confidence, config.ConfidenceThreshold)
@@ -397,6 +412,25 @@ func (s *ArbitrationService) Prepare(ctx context.Context, projectID, candidateID
 	}
 	base.Status = ArbitrationStatusPrepared
 	return s.store.SavePreparedDecision(ctx, base)
+}
+
+func ownerForSemanticMerge(overlapIDs []uuid.UUID, active []SnapshotWork) (Owner, bool) {
+	activeByID := make(map[uuid.UUID]Owner, len(active))
+	for _, work := range active {
+		activeByID[work.ID] = work.Owner
+	}
+	owner := Owner("")
+	for _, id := range overlapIDs {
+		candidate, ok := activeByID[id]
+		if !ok || (candidate != OwnerDoctor && candidate != OwnerOpportunities) {
+			return "", false
+		}
+		if owner != "" && owner != candidate {
+			return "", false
+		}
+		owner = candidate
+	}
+	return owner, owner != ""
 }
 
 func unionUUIDs(left, right []uuid.UUID) []uuid.UUID {
