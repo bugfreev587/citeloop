@@ -29,6 +29,13 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 		{name: "runs", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/runs"},
 		{name: "opportunity finding status", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunity-finding/status"},
 		{name: "opportunity finding run", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/opportunity-finding/run"},
+		{name: "canonical opportunity run", method: http.MethodPost, path: "/api/projects/not-a-uuid/opportunities/runs"},
+		{name: "canonical opportunity status", method: http.MethodGet, path: "/api/projects/not-a-uuid/opportunities/status"},
+		{name: "canonical opportunities", method: http.MethodGet, path: "/api/projects/not-a-uuid/opportunities"},
+		{name: "canonical opportunity detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/opportunities/not-an-id"},
+		{name: "canonical growth actions", method: http.MethodGet, path: "/api/projects/not-a-uuid/growth-actions"},
+		{name: "canonical growth action measurement", method: http.MethodGet, path: "/api/projects/not-a-uuid/growth-actions/not-an-id/measurement"},
+		{name: "canonical growth learnings", method: http.MethodGet, path: "/api/projects/not-a-uuid/growth-learnings"},
 		{name: "opportunities", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunities"},
 		{name: "opportunity detail", method: http.MethodGet, path: "/api/projects/not-a-uuid/seo/opportunities/not-an-id"},
 		{name: "accept", method: http.MethodPost, path: "/api/projects/not-a-uuid/seo/opportunities/not-an-id/accept"},
@@ -83,6 +90,31 @@ func TestSEORoutesAreRegistered(t *testing.T) {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestCanonicalOpportunityLoopRoutesAreRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	want := []string{
+		"POST /api/projects/{projectID}/opportunities/runs",
+		"GET /api/projects/{projectID}/opportunities/status",
+		"GET /api/projects/{projectID}/opportunities",
+		"GET /api/projects/{projectID}/opportunities/{opportunityID}",
+		"GET /api/projects/{projectID}/growth-actions",
+		"GET /api/projects/{projectID}/growth-actions/{actionID}/measurement",
+		"GET /api/projects/{projectID}/growth-learnings",
+	}
+	registered := make(map[string]bool)
+	if err := chi.Walk(router.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range want {
+		if !registered[route] {
+			t.Errorf("canonical Opportunities route is not registered: %s", route)
+		}
 	}
 }
 

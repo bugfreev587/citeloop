@@ -579,7 +579,7 @@ func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts 
 		_ = json.Unmarshal(run.Output, &output)
 	}
 	if cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceAll || cfg.OpportunityFindingSourceMix == config.OpportunityFindingSourceSignalScan {
-		detail := "No Signal Scan run recorded yet"
+		detail := "No evidence matching run recorded yet"
 		tone := "amber"
 		if run != nil {
 			tone = "green"
@@ -589,7 +589,7 @@ func opportunityFindingSummary(run *db.SeoRun, cfg config.ProjectConfig, counts 
 				detail = "No new decision-ready findings"
 			}
 		}
-		items = append(items, OpportunityFindingSummaryItem{Label: "Signal Scan", Detail: detail, Tone: tone})
+		items = append(items, OpportunityFindingSummaryItem{Label: "Evidence matching", Detail: detail, Tone: tone})
 	}
 	for _, note := range output.DataSourceNotes {
 		if item, ok := opportunityFindingSummaryFromNote(note); ok {
@@ -2446,6 +2446,32 @@ func (s *Server) getResultsAction(w http.ResponseWriter, r *http.Request) {
 	action := resultsActionFromGetRow(row)
 	attachResultsMeasurements(&action, measurements)
 	writeJSON(w, http.StatusOK, action)
+}
+
+func (s *Server) listGrowthLearnings(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	limit, err := parseLimit(r, 50, 100)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad limit")
+		return
+	}
+	if s.Q == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	learnings, err := s.Q.ListGrowthLearnings(r.Context(), db.ListGrowthLearningsParams{
+		ProjectID: projectID,
+		LimitRows: int32(limit),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, emptySlice(learnings))
 }
 
 func (s *Server) recomputeResults(w http.ResponseWriter, r *http.Request) {

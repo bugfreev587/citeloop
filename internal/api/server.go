@@ -148,6 +148,16 @@ func (s *Server) Router() http.Handler {
 			r.Get("/results/actions", s.listResultsActions)
 			r.Get("/results/actions/{actionID}", s.getResultsAction)
 			r.Post("/results/recompute", s.recomputeResults)
+			// Opportunities is the canonical Growth loop surface. Keep the
+			// legacy /seo routes below as compatibility aliases while new clients
+			// use product-domain names that do not expose implementation details.
+			r.Post("/opportunities/runs", s.runOpportunityFinding)
+			r.Get("/opportunities/status", s.getOpportunityFindingStatus)
+			r.Get("/opportunities", s.listSEOOpportunities)
+			r.Get("/opportunities/{opportunityID}", s.getSEOOpportunity)
+			r.Get("/growth-actions", s.listResultsActions)
+			r.Get("/growth-actions/{actionID}/measurement", s.getResultsAction)
+			r.Get("/growth-learnings", s.listGrowthLearnings)
 			r.Route("/seo", func(r chi.Router) {
 				r.Get("/overview", s.getSEOOverview)
 				r.Post("/sync", s.syncSEO)
