@@ -373,14 +373,10 @@ with candidates as (
   for update skip locked
 )
 update workflow_events set
-  status = case when event_type = 'opportunity_finding.requested' then 'dead' else 'pending' end,
-  run_after = case when event_type = 'opportunity_finding.requested' then run_after else now() end,
+  status = 'pending',
+  run_after = now(),
   locked_at = null,
-  processed_at = case when event_type = 'opportunity_finding.requested' then now() else processed_at end,
-  error = case
-    when event_type = 'opportunity_finding.requested' then 'worker interrupted; explicit retry required to avoid repeating billable stages'
-    else coalesce(error, 'reclaimed after worker timeout')
-  end,
+  error = coalesce(error, 'reclaimed after worker timeout'),
   updated_at = now()
 where id in (select id from candidates)
 returning id, project_id, event_type, entity_type, entity_id, dedupe_key, payload, status, attempts, run_after, locked_at, processed_at, error, created_at, updated_at

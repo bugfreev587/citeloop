@@ -63,9 +63,10 @@ func TestWorkflowEventQueriesExposeDurableWorkerSemantics(t *testing.T) {
 	if !strings.Contains(reclaimStuckWorkflowEvents, "status = 'running'") || !strings.Contains(reclaimStuckWorkflowEvents, "interval '30 minutes'") {
 		t.Fatal("ReclaimStuckWorkflowEvents must avoid reclaiming long LLM generation work before thirty minutes")
 	}
-	if !strings.Contains(reclaimStuckWorkflowEvents, "event_type = 'opportunity_finding.requested'") ||
-		!strings.Contains(reclaimStuckWorkflowEvents, "explicit retry required to avoid repeating billable stages") {
-		t.Fatal("stuck manual Opportunity Finding must dead-letter instead of replaying uncheckpointed billable stages")
+	if strings.Contains(reclaimStuckWorkflowEvents, "event_type = 'opportunity_finding.requested'") ||
+		!strings.Contains(reclaimStuckWorkflowEvents, "status = 'pending'") ||
+		!strings.Contains(reclaimStuckWorkflowEvents, "reclaimed after worker timeout") {
+		t.Fatal("stuck checkpointed Opportunity Finding must return to the retry queue")
 	}
 	for name, contract := range map[string]struct{ query, attemptPredicate string }{
 		"success": {markWorkflowEventSucceeded, "attempts = $2"},

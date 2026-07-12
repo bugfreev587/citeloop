@@ -44,6 +44,15 @@ type AIDiscoveryStep struct {
 }
 
 func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
+	evidenceResult, err := RefreshAIDiscoveryEvidence(ctx, projectID, store, service, opts)
+	if err != nil {
+		return evidenceResult, err
+	}
+	hypothesisResult, err := MaterializeAIDiscoveryHypotheses(ctx, projectID, service)
+	return mergeAIDiscoveryResults(evidenceResult, hypothesisResult), err
+}
+
+func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
 	result := AIDiscoveryResult{}
 	prompts, err := store.ListActiveGEOPrompts(ctx, projectID)
 	if err != nil {
@@ -78,12 +87,38 @@ func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore,
 
 	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
 	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
+	return result, nil
+}
 
+func MaterializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, service AIDiscoveryService) (AIDiscoveryResult, error) {
+	result := AIDiscoveryResult{}
 	analyzed, err := service.AnalyzeObservations(ctx, projectID, geo.AnalyzeObservationsRequest{Limit: 100})
 	result.OpportunityCount = len(analyzed.Opportunities)
 	result.AssetBriefCount = len(analyzed.AssetBriefs)
 	result.recordStep("analyze", analyzed.Run.Status, len(analyzed.Opportunities), 0, err)
 	return result, nil
+}
+
+func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
+	merged := AIDiscoveryResult{}
+	for _, result := range results {
+		merged.PromptSetGenerated = merged.PromptSetGenerated || result.PromptSetGenerated
+		if result.ActivePromptCount > 0 {
+			merged.ActivePromptCount = result.ActivePromptCount
+		}
+		merged.ObservationCount += result.ObservationCount
+		merged.ObservationCostUSD += result.ObservationCostUSD
+		merged.OpportunityCount += result.OpportunityCount
+		merged.AssetBriefCount += result.AssetBriefCount
+		merged.Steps = append(merged.Steps, result.Steps...)
+		for name, message := range result.Errors {
+			if merged.Errors == nil {
+				merged.Errors = map[string]string{}
+			}
+			merged.Errors[name] = message
+		}
+	}
+	return merged
 }
 
 func (r *AIDiscoveryResult) recordStep(name, status string, count int, costUSD float64, err error) {

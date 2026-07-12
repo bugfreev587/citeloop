@@ -246,7 +246,14 @@ test("Opportunity Finding status and manual run APIs call the SEO endpoints", as
         source_mix: "all",
         ai_discovery_automation: "manual",
         manual_mode: true,
-        last_run: { id: "run-1", status: "completed", started_at: "2026-07-06T03:00:00Z" },
+        last_run: {
+          id: "run-1",
+          status: "running",
+          started_at: "2026-07-06T03:00:00Z",
+          progress_percent: 33,
+          current_stage: "ai_hypotheses",
+          stage_progress: [{ stage: "evidence_refresh", order: 1, status: "succeeded", attempt_number: 1, request_fingerprint: "sha256:test", summary: { gsc: "completed" } }],
+        },
         summary: [{ label: "Signal Scan", detail: "2 signals matched or updated" }],
       }),
     };
@@ -264,6 +271,9 @@ test("Opportunity Finding status and manual run APIs call the SEO endpoints", as
     assert.equal(status.source_mix, "all");
     assert.equal(status.manual_mode, true);
     assert.equal(status.summary[0].label, "Signal Scan");
+    assert.equal(status.last_run.progress_percent, 33);
+    assert.equal(status.last_run.current_stage, "ai_hypotheses");
+    assert.equal(status.last_run.stage_progress[0].summary.gsc, "completed");
   } finally {
     globalThis.fetch = originalFetch;
   }

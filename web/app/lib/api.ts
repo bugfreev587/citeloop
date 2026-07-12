@@ -486,6 +486,17 @@ export type OpportunityFindingRun = {
   finished_at?: any;
   duration_ms?: number;
   error?: string | null;
+  stage_progress: Array<{
+    stage: string;
+    order: number;
+    status: string;
+    attempt_number: number;
+    request_fingerprint: string;
+    summary: Record<string, any>;
+    error?: string | null;
+  }>;
+  progress_percent: number;
+  current_stage?: string | null;
 };
 
 export type OpportunityFindingStatus = {
@@ -1455,6 +1466,17 @@ function normalizeOpportunityFindingStatus(raw: any): OpportunityFindingStatus {
           finished_at: data.last_run.finished_at ?? null,
           duration_ms: Number(data.last_run.duration_ms ?? 0),
           error: data.last_run.error ?? null,
+          stage_progress: arrayFrom<any>(data.last_run.stage_progress).map((stage) => ({
+            stage: String(stage?.stage ?? ""),
+            order: Number(stage?.order ?? 0),
+            status: String(stage?.status ?? ""),
+            attempt_number: Number(stage?.attempt_number ?? 0),
+            request_fingerprint: String(stage?.request_fingerprint ?? ""),
+            summary: stage?.summary && typeof stage.summary === "object" ? stage.summary : {},
+            error: stage?.error ?? null,
+          })),
+          progress_percent: Number(data.last_run.progress_percent ?? 0),
+          current_stage: data.last_run.current_stage ?? null,
         }
       : null,
     next_finding_at: data.next_finding_at ?? null,

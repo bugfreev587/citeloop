@@ -59,6 +59,7 @@ type seoRunner interface {
 	Sync(context.Context, uuid.UUID, string) (seopkg.SyncResult, error)
 	Analyze(context.Context, uuid.UUID) (seopkg.SyncResult, error)
 	Brief(context.Context, uuid.UUID) (seopkg.Brief, error)
+	EnsureGrowthOpportunityReservations(context.Context, uuid.UUID) error
 	StartDoctorRun(context.Context, seopkg.DoctorRunRequest) (db.SeoDoctorRun, bool, error)
 	RunDoctor(context.Context, uuid.UUID, uuid.UUID) (seopkg.DoctorReport, error)
 }
@@ -148,7 +149,7 @@ func (s *Scheduler) TickWorkflow(ctx context.Context) {
 func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEvent) error {
 	switch event.EventType {
 	case workflow.EventOpportunityFindingRequested:
-		return s.handleOpportunityFindingRequested(ctx, event.ProjectID)
+		return s.handleOpportunityFindingRequested(ctx, event)
 	case workflow.EventOpportunityReviewed:
 		return s.handleOpportunityReviewed(ctx, event.ProjectID)
 	case workflow.EventOpportunityBatchDone:
@@ -165,19 +166,60 @@ func (s *Scheduler) handleWorkflowEvent(ctx context.Context, event db.WorkflowEv
 	}
 }
 
-func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, projectID uuid.UUID) error {
+func (s *Scheduler) handleOpportunityFindingRequested(ctx context.Context, event db.WorkflowEvent) error {
 	q := db.New(s.Pool)
-	project, err := q.GetProject(ctx, projectID)
+	project, err := q.GetProject(ctx, event.ProjectID)
 	if err != nil {
 		return err
 	}
-	if err := s.runOpportunityFindingForProject(ctx, q, project, false); err != nil {
-		// Until per-stage checkpoints land, rerunning the whole pipeline can repeat
-		// a successful billable provider step. Surface the failure for an explicit
-		// user retry instead of multiplying cost automatically.
+	trigger, scheduled, err := opportunityFindingTrigger(event)
+	if err != nil {
 		return workflow.Permanent(err)
 	}
+	cfg, err := config.Parse(project.Config)
+	if err != nil {
+		return workflow.Permanent(err)
+	}
+	stages := cfg.OpportunityFindingStages(scheduled)
+	observeRequest := s.geoObserveRequest()
+	inputs := map[string]any{
+		"version": "opportunity-finding/v1", "trigger": trigger,
+		"signal_scan": stages.SignalScan, "ai_discovery": stages.AIDiscovery,
+		"blog_base_url": s.BlogBaseURL, "observe_request": observeRequest,
+	}
+	runner := s.newSEORunner(q, (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger))
+	summary, err := opportunityfinding.RunCheckpointedWorkflow(ctx, q, opportunityfinding.WorkflowRequest{
+		ProjectID: project.ID, WorkflowEventID: event.ID, Inputs: inputs, Now: s.currentTime,
+	}, func(stageCtx context.Context, stage opportunityfinding.Stage, progress []opportunityfinding.StageProgress) opportunityfinding.StageOutcome {
+		return s.executeOpportunityFindingStage(stageCtx, q, runner, project, cfg, trigger, scheduled, observeRequest, stage, progress)
+	})
+	if err != nil {
+		return err
+	}
+	s.logger().Info("opportunity finding workflow complete", "project", project.ID, "workflow_event", event.ID, "status", summary.Status, "stage_errors", summary.ErrorCount)
 	return nil
+}
+
+func opportunityFindingTrigger(event db.WorkflowEvent) (config.GrowthAITrigger, bool, error) {
+	payload := struct {
+		Trigger config.GrowthAITrigger `json:"trigger"`
+	}{}
+	if len(event.Payload) > 0 {
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", false, fmt.Errorf("decode Opportunity Finding trigger: %w", err)
+		}
+	}
+	if payload.Trigger == "" {
+		payload.Trigger = config.GrowthAITriggerManual
+	}
+	switch payload.Trigger {
+	case config.GrowthAITriggerManual:
+		return payload.Trigger, false, nil
+	case config.GrowthAITriggerScheduled:
+		return payload.Trigger, true, nil
+	default:
+		return "", false, fmt.Errorf("unsupported Opportunity Finding trigger %q", payload.Trigger)
+	}
 }
 
 func (s *Scheduler) RecomputeMeasurements(ctx context.Context, projectID uuid.UUID) error {
@@ -1015,54 +1057,125 @@ func (s *Scheduler) TickSEO(ctx context.Context) {
 		return
 	}
 	for _, p := range projects {
-		if err := s.runOpportunityFindingForProject(ctx, q, p, true); err != nil {
-			s.logger().Error("opportunity finding tick failed", "project", p.ID, "err", err)
+		if err := s.enqueueScheduledOpportunityFinding(ctx, p); err != nil {
+			s.logger().Error("enqueue scheduled opportunity finding failed", "project", p.ID, "err", err)
 		}
 	}
 }
 
-func (s *Scheduler) runOpportunityFindingForProject(ctx context.Context, q *db.Queries, p db.Project, scheduled bool) error {
-	cfg, err := config.Parse(p.Config)
-	if err != nil {
-		return err
-	}
+func (s *Scheduler) executeOpportunityFindingStage(
+	ctx context.Context,
+	q *db.Queries,
+	runner seoRunner,
+	p db.Project,
+	cfg config.ProjectConfig,
+	trigger config.GrowthAITrigger,
+	scheduled bool,
+	observeRequest geo.ObserveAnswerProviderRequest,
+	stage opportunityfinding.Stage,
+	progress []opportunityfinding.StageProgress,
+) opportunityfinding.StageOutcome {
 	stages := cfg.OpportunityFindingStages(scheduled)
-	trigger := config.GrowthAITriggerManual
-	if scheduled {
-		trigger = config.GrowthAITriggerScheduled
+	if !stages.SignalScan && !stages.AIDiscovery && stage != opportunityfinding.StageSummary {
+		return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "disabled_by_project_authority"}}
 	}
-	runErrors := make([]error, 0, 2)
-	if stages.SignalScan {
-		if err := s.runSEOForProjectWithTrigger(ctx, q, p, cfg, trigger); err != nil {
-			runErrors = append(runErrors, fmt.Errorf("signal scan: %w", err))
+	switch stage {
+	case opportunityfinding.StageEvidenceRefresh:
+		summary := map[string]any{}
+		runErrors := make([]error, 0, 2)
+		if stages.SignalScan {
+			result, err := runner.Sync(ctx, p.ID, s.BlogBaseURL)
+			summary["signal_scan"] = result
+			if err != nil {
+				runErrors = append(runErrors, fmt.Errorf("signal evidence refresh: %w", err))
+			}
+		} else {
+			summary["signal_scan"] = map[string]any{"status": "skipped"}
 		}
-	}
-	if stages.AIDiscovery {
+		if stages.AIDiscovery {
+			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
+			geoService := s.geoService(ctx, q, comparator)
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest})
+			summary["ai_discovery"] = result
+			if err == nil {
+				err = opportunityFindingStepErrors(result.Errors)
+			}
+			if err != nil {
+				runErrors = append(runErrors, fmt.Errorf("AI evidence refresh: %w", err))
+			}
+		} else {
+			summary["ai_discovery"] = map[string]any{"status": "skipped"}
+		}
+		return opportunityfinding.StageOutcome{Summary: summary, Err: errors.Join(runErrors...)}
+	case opportunityfinding.StageDeterministicSignals:
+		if !stages.SignalScan {
+			return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "growth_signal_disabled"}}
+		}
+		result, err := runner.Analyze(ctx, p.ID)
+		return opportunityfinding.StageOutcome{Summary: map[string]any{"signal_scan": result}, Err: err}
+	case opportunityfinding.StageAIHypotheses:
+		if !stages.AIDiscovery {
+			return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "growth_ai_not_authorized"}}
+		}
 		comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
-		result, err := opportunityfinding.RunAIDiscovery(ctx, p.ID, q, s.geoService(ctx, q, comparator), opportunityfinding.AIDiscoveryOptions{
-			ObserveRequest: s.geoObserveRequest(),
-		})
+		geoService := s.geoService(ctx, q, comparator)
+		result, err := opportunityfinding.MaterializeAIDiscoveryHypotheses(ctx, p.ID, geoService)
 		if err == nil {
 			err = opportunityFindingStepErrors(result.Errors)
 		}
-		if err != nil {
-			runErrors = append(runErrors, fmt.Errorf("ai discovery: %w", err))
+		return opportunityfinding.StageOutcome{Summary: map[string]any{"ai_discovery": result}, Err: err}
+	case opportunityfinding.StageArbitration:
+		err := runner.EnsureGrowthOpportunityReservations(ctx, p.ID)
+		return opportunityfinding.StageOutcome{Summary: map[string]any{"canonical_reservations_checked": err == nil}, Err: err}
+	case opportunityfinding.StageMaterialization:
+		brief, err := runner.Brief(ctx, p.ID)
+		return opportunityfinding.StageOutcome{Summary: map[string]any{
+			"mode": brief.Mode, "actions": len(brief.Actions), "blockers": len(brief.Blockers), "geo_opportunities": len(brief.GEOOpportunities),
+		}, Err: err}
+	case opportunityfinding.StageSummary:
+		counts := map[string]int{"succeeded": 0, "partial": 0, "failed": 0, "skipped": 0}
+		for _, item := range progress {
+			counts[item.Status]++
 		}
-		s.logger().Info(
-			"ai discovery tick complete",
-			"project", p.ID,
-			"prompts", result.ActivePromptCount,
-			"prompt_set_generated", result.PromptSetGenerated,
-			"observations", result.ObservationCount,
-			"cost_usd", result.ObservationCostUSD,
-			"opportunities", result.OpportunityCount,
-			"errors", len(result.Errors),
-		)
+		return opportunityfinding.StageOutcome{Summary: map[string]any{"stage_counts": counts, "trigger": trigger}}
+	default:
+		return opportunityfinding.StageOutcome{Err: fmt.Errorf("unknown Opportunity Finding stage %q", stage)}
 	}
-	if !stages.SignalScan && !stages.AIDiscovery {
-		s.logger().Info("opportunity finding tick skipped by settings", "project", p.ID)
+}
+
+func (s *Scheduler) enqueueScheduledOpportunityFinding(ctx context.Context, project db.Project) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	return errors.Join(runErrors...)
+	defer tx.Rollback(ctx)
+	lockName := workflowEventDedupeKey(workflow.EventOpportunityFindingRequested, project.ID)
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtextextended($1, 0))", lockName); err != nil {
+		return err
+	}
+	q := db.New(tx)
+	if _, err := q.ActiveOpportunityFindingWorkflowEvent(ctx, project.ID); err == nil {
+		return tx.Commit(ctx)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	requestID := uuid.New()
+	payload, err := json.Marshal(map[string]any{"request_id": requestID, "trigger": config.GrowthAITriggerScheduled})
+	if err != nil {
+		return err
+	}
+	entityType := "project"
+	now := s.currentTime()
+	dateKey := now.UTC().Format("2006-01-02")
+	if _, err := q.EnqueueWorkflowEvent(ctx, db.EnqueueWorkflowEventParams{
+		ProjectID: project.ID, EventType: workflow.EventOpportunityFindingRequested,
+		EntityType: &entityType, EntityID: pgtype.UUID{Bytes: project.ID, Valid: true},
+		DedupeKey: workflowEventDedupeKey(workflow.EventOpportunityFindingRequested, project.ID, "scheduled", dateKey),
+		Payload:   payload, RunAfter: pgtype.Timestamptz{Time: now, Valid: true},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func opportunityFindingStepErrors(stepErrors map[string]string) error {

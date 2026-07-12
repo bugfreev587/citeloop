@@ -32,10 +32,49 @@ func TestOpportunityFindingStatusUsesRunHistoryAndProjectConfig(t *testing.T) {
 		"data_source_notes",
 		"generated_anomalies",
 		"latestOpportunityFindingRun",
+		"ListOpportunityFindingStages",
+		"StageProgress",
+		"ProgressPercent",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("opportunity finding status contract missing %q", want)
 		}
+	}
+}
+
+func TestOpportunityFindingStageProgressExposesDurableCheckpoints(t *testing.T) {
+	rows := []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "succeeded", AttemptNumber: 1, RequestFingerprint: "sha256:first", OutputSummary: []byte(`{"gsc":"completed"}`)},
+		{Stage: "deterministic_signals", StageOrder: 2, Status: "running", AttemptNumber: 2, RequestFingerprint: "sha256:second", OutputSummary: []byte(`{}`)},
+	}
+	progress, percent, current := opportunityFindingStageProgress(rows)
+	if len(progress) != 2 || percent != 16 || current != "deterministic_signals" {
+		t.Fatalf("progress=%#v percent=%d current=%q", progress, percent, current)
+	}
+	if progress[0].Summary["gsc"] != "completed" || progress[1].AttemptNumber != 2 {
+		t.Fatalf("stage progress lost checkpoint metadata: %#v", progress)
+	}
+}
+
+func TestOpportunityFindingRunSurfacesTerminalPartialStageSummary(t *testing.T) {
+	run := &OpportunityFindingRun{Status: "completed"}
+	errText := "GA4 permission denied"
+	attachOpportunityFindingStageProgress(run, []db.OpportunityFindingStageCheckpoint{
+		{Stage: "evidence_refresh", StageOrder: 1, Status: "partial", AttemptNumber: 1, RequestFingerprint: "sha256:first", OutputSummary: []byte(`{"gsc":"completed"}`), Error: &errText},
+		{Stage: "summary", StageOrder: 6, Status: "succeeded", AttemptNumber: 1, RequestFingerprint: "sha256:last", OutputSummary: []byte(`{"error_count":1}`)},
+	})
+	if run.Status != "partial" || run.ProgressPercent != 33 || len(run.StageProgress) != 2 {
+		t.Fatalf("partial run = %#v", run)
+	}
+}
+
+func TestOpportunityFindingStagesOnlyAttachToTheirWorkflowRun(t *testing.T) {
+	workflow := &db.WorkflowEvent{ID: uuid.New()}
+	if opportunityFindingWorkflowOwnsRun(&OpportunityFindingRun{ID: uuid.New()}, workflow) {
+		t.Fatal("stale workflow checkpoints attached to a newer standalone analyzer run")
+	}
+	if !opportunityFindingWorkflowOwnsRun(&OpportunityFindingRun{ID: workflow.ID}, workflow) {
+		t.Fatal("workflow checkpoints were not attached to their own run")
 	}
 }
 
