@@ -101,4 +101,13 @@ func TestLegacyGrowthCutoverRecoversTargetFromExecutionArtifact(t *testing.T) {
 			t.Fatalf("legacy Growth cutover target recovery missing %q", want)
 		}
 	}
+	for _, nullableText := range []string{
+		"coalesce(opportunity.evidence->>'intended_slug_or_canonical', ''::text)::text as evidence_intended",
+		"coalesce(article.seo_meta->>'canonical_url', ''::text)::text as seo_canonical_url",
+		"coalesce(article.seo_meta->>'slug', ''::text)::text as seo_slug",
+	} {
+		if strings.Count(source, nullableText) != 2 {
+			t.Fatalf("both legacy target reads must normalize nullable text; %q count = %d", nullableText, strings.Count(source, nullableText))
+		}
+	}
 }

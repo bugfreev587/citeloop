@@ -1922,7 +1922,7 @@ func (q *Queries) GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrow
 
 const getLegacyGrowthIntendedTarget = `-- name: GetLegacyGrowthIntendedTarget :one
 select
-  (opportunity.evidence->>'intended_slug_or_canonical')::text as evidence_intended,
+  coalesce(opportunity.evidence->>'intended_slug_or_canonical', ''::text)::text as evidence_intended,
   opportunity.page_url as opportunity_page_url,
   coalesce(action.id, '00000000-0000-0000-0000-000000000000'::uuid) as action_id,
   action.updated_at as action_updated_at,
@@ -1933,8 +1933,8 @@ select
   article.published_at as article_published_at,
   article.canonical_url as article_canonical_url,
   article.external_url as article_external_url,
-  (article.seo_meta->>'canonical_url')::text as seo_canonical_url,
-  (article.seo_meta->>'slug')::text as seo_slug
+  coalesce(article.seo_meta->>'canonical_url', ''::text)::text as seo_canonical_url,
+  coalesce(article.seo_meta->>'slug', ''::text)::text as seo_slug
 from seo_opportunities opportunity
 left join content_actions action
   on action.project_id = opportunity.project_id and action.opportunity_id = opportunity.id
@@ -4655,7 +4655,7 @@ with locked_opportunity as materialized (
   limit 1
 )
 select
-  (opportunity.evidence->>'intended_slug_or_canonical')::text as evidence_intended,
+  coalesce(opportunity.evidence->>'intended_slug_or_canonical', ''::text)::text as evidence_intended,
   opportunity.page_url as opportunity_page_url,
   coalesce(action.id, '00000000-0000-0000-0000-000000000000'::uuid) as action_id,
   action.updated_at as action_updated_at,
@@ -4666,8 +4666,8 @@ select
   article.published_at as article_published_at,
   article.canonical_url as article_canonical_url,
   article.external_url as article_external_url,
-  (article.seo_meta->>'canonical_url')::text as seo_canonical_url,
-  (article.seo_meta->>'slug')::text as seo_slug
+  coalesce(article.seo_meta->>'canonical_url', ''::text)::text as seo_canonical_url,
+  coalesce(article.seo_meta->>'slug', ''::text)::text as seo_slug
 from locked_opportunity opportunity
 left join selected_target action on true
 left join locked_articles article
