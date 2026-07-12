@@ -40,6 +40,7 @@ test("settings replaces legacy discovery modes with independent AI consent contr
   assert.doesNotMatch(panel, /ai_discovery_automation/);
   assert.doesNotMatch(panel, />\s*Signal Scan\s*</);
   assert.doesNotMatch(panel, />\s*AI Discovery\s*</);
+  assert.doesNotMatch(settings, /legacy scheduled authority/i);
 });
 
 test("each AI line saves only its own authority fields", () => {
