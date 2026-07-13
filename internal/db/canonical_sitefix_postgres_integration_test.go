@@ -323,12 +323,11 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}
 	})
 
-	t.Run("apply failure reopens without verification retry", func(t *testing.T) {
-		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "github_pr_open")
-		reason := "closed PR"
-		app, err := New(pool).MarkCanonicalSiteFixApplyFailure(ctx, MarkCanonicalSiteFixApplyFailureParams{ProjectID: pid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true}, ApplicationID: aid, FailureReason: &reason})
-		if err != nil || app.Status != "needs_follow_up" {
-			t.Fatalf("apply failure app=%+v err=%v", app, err)
+	t.Run("controlled PR creation failure reopens without verification retry", func(t *testing.T) {
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "needs_follow_up")
+		failureCode := "github_pr_failed"
+		if _, err := pool.Exec(ctx, `update site_change_applications set failure_reason=$3 where project_id=$1 and id=$2`, pid, aid, failureCode); err != nil {
+			t.Fatal(err)
 		}
 		var fixState, signatureState string
 		if err := pool.QueryRow(ctx, `select sf.status,w.status from site_fixes sf join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where sf.project_id=$1 and sf.id=$2`, pid, fid).Scan(&fixState, &signatureState); err != nil {
@@ -337,9 +336,23 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		if fixState != "applying" || signatureState != "executing" {
 			t.Fatalf("fix=%s signature=%s", fixState, signatureState)
 		}
-		app, err = New(pool).ReopenCanonicalSiteFixApply(ctx, ReopenCanonicalSiteFixApplyParams{ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true}})
+		app, err := New(pool).ReopenCanonicalSiteFixApply(ctx, ReopenCanonicalSiteFixApplyParams{ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true}})
 		if err != nil || app.Status != "ready_for_pr" {
 			t.Fatalf("reopen app=%+v err=%v", app, err)
+		}
+	})
+
+	t.Run("PR-backed follow up cannot reopen PR creation", func(t *testing.T) {
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "needs_follow_up")
+		if _, err := pool.Exec(ctx, `update site_change_applications set failure_reason='github_pr_failed',github_pr_number=47,github_pr_url='https://github.example/pr/47',github_pr_state='closed' where project_id=$1 and id=$2`, pid, aid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := New(pool).ReopenCanonicalSiteFixApply(ctx, ReopenCanonicalSiteFixApplyParams{ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true}}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("PR-backed application reopened PR creation: %v", err)
+		}
+		var status string
+		if err := pool.QueryRow(ctx, `select status from site_change_applications where project_id=$1 and id=$2`, pid, aid).Scan(&status); err != nil || status != "needs_follow_up" {
+			t.Fatalf("PR-backed application status=%q err=%v", status, err)
 		}
 	})
 
@@ -471,7 +484,15 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	})
 
 	t.Run("verification and marker application commit atomically", func(t *testing.T) {
-		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "verifying", "verifying", "verification_pending")
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "awaiting_deploy", "awaiting_deploy", "deployment_pending")
+		deployedAt := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		verifying, err := New(pool).MarkCanonicalSiteFixVerifying(ctx, MarkCanonicalSiteFixVerifyingParams{
+			SiteFixID: fid, ProjectID: pid, ApplicationID: aid,
+			DeploymentSnapshot: []byte(`{"source":"production_probe","result":"observed"}`), DeployedAt: deployedAt,
+		})
+		if err != nil || verifying.Status != "verifying" || !verifying.AppliedAt.Valid || !verifying.DeployedAt.Valid {
+			t.Fatalf("deployment evidence transition fix=%+v err=%v", verifying, err)
+		}
 		call, err := New(pool).CreateAICallRecord(ctx, CreateAICallRecordParams{ProjectID: pid, Stage: "verification", LinkedObjectType: "site_fix", LinkedObjectID: fid, Provider: "fixture", Model: "fixture", PromptVersion: "v1", RequestFingerprint: "atomic", Status: "ok"})
 		if err != nil {
 			t.Fatal(err)
@@ -485,27 +506,30 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 			t.Fatal(err)
 		}
 		tq := New(tx)
-		if _, err := tq.MarkCanonicalSiteFixVerified(ctx, MarkCanonicalSiteFixVerifiedParams{SiteFixID: fid, ProjectID: pid, ApplicationID: aid, DeploymentSnapshot: []byte(`{}`), VerificationSnapshot: []byte(`{"result":"passed"}`), VerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+		if _, err := tq.MarkDoctorAIOnDemandLifecycleApplied(ctx, MarkDoctorAIOnDemandLifecycleAppliedParams{ProjectID: pid, SiteFixID: fid, RequestID: requestID, AiCallID: pgtype.UUID{Bytes: call.ID, Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
-		wrongCall := pgtype.UUID{Bytes: uuid.New(), Valid: true}
-		if _, err := tq.MarkDoctorAIOnDemandLifecycleApplied(ctx, MarkDoctorAIOnDemandLifecycleAppliedParams{ProjectID: pid, SiteFixID: fid, RequestID: requestID, AiCallID: wrongCall}); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("wrong marker CAS=%v", err)
+		if _, err := tq.MarkCanonicalSiteFixVerified(ctx, MarkCanonicalSiteFixVerifiedParams{SiteFixID: fid, ProjectID: pid, ApplicationID: uuid.New(), DeploymentSnapshot: []byte(`{"source":"production_probe","result":"observed"}`), VerificationSnapshot: []byte(`{"result":"passed"}`), VerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("wrong application verification CAS=%v", err)
 		}
 		_ = tx.Rollback(ctx)
 		var fixState string
 		if err := pool.QueryRow(ctx, `select status from site_fixes where project_id=$1 and id=$2`, pid, fid).Scan(&fixState); err != nil || fixState != "verifying" {
 			t.Fatalf("rollback fix=%s err=%v", fixState, err)
 		}
+		var markerApplied bool
+		if err := pool.QueryRow(ctx, `select lifecycle_applied_at is not null from doctor_ai_on_demand_triggers where request_id=$1`, requestID).Scan(&markerApplied); err != nil || markerApplied {
+			t.Fatalf("rollback marker applied=%v err=%v", markerApplied, err)
+		}
 		tx, err = pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tq = New(tx)
-		if _, err := tq.MarkCanonicalSiteFixVerified(ctx, MarkCanonicalSiteFixVerifiedParams{SiteFixID: fid, ProjectID: pid, ApplicationID: aid, DeploymentSnapshot: []byte(`{}`), VerificationSnapshot: []byte(`{"result":"passed"}`), VerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+		if _, err := tq.MarkDoctorAIOnDemandLifecycleApplied(ctx, MarkDoctorAIOnDemandLifecycleAppliedParams{ProjectID: pid, SiteFixID: fid, RequestID: requestID, AiCallID: pgtype.UUID{Bytes: call.ID, Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tq.MarkDoctorAIOnDemandLifecycleApplied(ctx, MarkDoctorAIOnDemandLifecycleAppliedParams{ProjectID: pid, SiteFixID: fid, RequestID: requestID, AiCallID: pgtype.UUID{Bytes: call.ID, Valid: true}}); err != nil {
+		if _, err := tq.MarkCanonicalSiteFixVerified(ctx, MarkCanonicalSiteFixVerifiedParams{SiteFixID: fid, ProjectID: pid, ApplicationID: aid, DeploymentSnapshot: []byte(`{"source":"production_probe","result":"observed"}`), VerificationSnapshot: []byte(`{"result":"passed"}`), VerifiedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -514,6 +538,9 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		var applied bool
 		if err := pool.QueryRow(ctx, `select status='verified' from site_fixes where project_id=$1 and id=$2`, pid, fid).Scan(&applied); err != nil || !applied {
 			t.Fatalf("atomic commit applied=%v err=%v", applied, err)
+		}
+		if err := pool.QueryRow(ctx, `select lifecycle_applied_at is not null from doctor_ai_on_demand_triggers where request_id=$1`, requestID).Scan(&markerApplied); err != nil || !markerApplied {
+			t.Fatalf("atomic commit marker applied=%v err=%v", markerApplied, err)
 		}
 	})
 
@@ -564,7 +591,7 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `update ai_call_records set prompt_tokens=4,completion_tokens=5,total_tokens=9,cost_usd=0.5 where project_id=$1 and id=$2`, pid, marker.AiCallID); err != nil {
+		if _, err := pool.Exec(ctx, `update ai_call_records set status='running',started_at=now(),prompt_tokens=4,completion_tokens=5,total_tokens=9,cost_usd=0.5 where project_id=$1 and id=$2`, pid, marker.AiCallID); err != nil {
 			t.Fatal(err)
 		}
 		reason := "terminal integration"
@@ -585,8 +612,8 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}
 		lateProvider, lateModel := "late-provider", "late-model"
 		late, err := New(pool).FinishCanonicalAICallFenced(ctx, FinishCanonicalAICallFencedParams{Status: "ok", ResolvedProvider: &lateProvider, ResolvedModel: &lateModel, PromptTokens: 11, CompletionTokens: 12, TotalTokens: 23, CostUsd: lateCost, ID: uuid.UUID(marker.AiCallID.Bytes), ProjectID: pid})
-		if err != nil || late.Status != "failed" || late.ErrorCode == nil || *late.ErrorCode != "doctor_ai_marker_rejected" || late.Provider != "late-provider" || late.Model != "late-model" || late.TotalTokens != 23 {
-			t.Fatalf("late fenced finish=%+v err=%v", late, err)
+		if err != nil || late.Status != "failed" || late.ErrorCode == nil || *late.ErrorCode != "doctor_ai_marker_rejected" || late.Provider != "fixture-provider" || late.Model != "fixture-model" || late.TotalTokens != 9 {
+			t.Fatalf("duplicate late finish overwrote terminal accounting: row=%+v err=%v", late, err)
 		}
 		if _, err := New(pool).ConsumeDoctorAIOnDemandProcessing(ctx, ConsumeDoctorAIOnDemandProcessingParams{ResultSnapshot: []byte(`{"decision":"passed"}`), ProjectID: pid, SiteFixID: fid, RequestID: requestID, ProcessingToken: pgtype.UUID{Bytes: token, Valid: true}, AiCallID: marker.AiCallID}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("old worker consume was not fenced: %v", err)
@@ -659,7 +686,13 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if _, err := pool.Exec(ctx, `update site_change_applications set status='verified' where project_id=$1 and id=$2; update site_fixes set status='verified' where project_id=$1 and id=$3; update work_signature_registry w set status='verified',active=false from site_fixes sf where sf.project_id=$1 and sf.id=$3 and w.project_id=sf.project_id and w.id=sf.work_signature_id`, pid, aid, fid); err != nil {
+				if _, err := pool.Exec(ctx, `update site_change_applications set status='verified' where project_id=$1 and id=$2`, pid, aid); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `update site_fixes set status='verified' where project_id=$1 and id=$2`, pid, fid); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `update work_signature_registry w set status='verified',active=false from site_fixes sf where sf.project_id=$1 and sf.id=$2 and w.project_id=sf.project_id and w.id=sf.work_signature_id`, pid, fid); err != nil {
 					t.Fatal(err)
 				}
 				markers, err := New(pool).ListDoctorAIOnDemandConsumedUnapplied(ctx, pid)
