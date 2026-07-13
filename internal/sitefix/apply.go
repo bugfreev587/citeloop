@@ -20,6 +20,7 @@ import (
 var (
 	ErrLifecycleConflict      = errors.New("canonical Site Fix lifecycle conflict")
 	ErrPatchGroundingRejected = errors.New("independent patch grounding verification rejected the canonical Site Fix")
+	errInvalidModelResponse   = errors.New("model response must contain exactly one JSON object")
 )
 
 type GenerationCall struct {
@@ -312,6 +313,9 @@ func safePreparationFailureCode(err error) string {
 	}
 	if errors.Is(err, ErrPatchGroundingRejected) {
 		return "grounding_rejected"
+	}
+	if errors.Is(err, errInvalidModelResponse) {
+		return "invalid_response"
 	}
 	message := strings.ToLower(err.Error())
 	switch {
@@ -915,14 +919,40 @@ func firstTargetURL(raw json.RawMessage) (string, error) {
 }
 
 func decodeJSONObject(text string, out any) error {
-	trimmed := strings.TrimSpace(text)
+	trimmed := stripMarkdownCodeFence(strings.TrimSpace(text))
 	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
-		return errors.New("provider response must contain exactly one JSON object")
+		return errInvalidModelResponse
 	}
 	if err := json.Unmarshal([]byte(trimmed), out); err != nil {
-		return errors.New("provider response must contain exactly one valid JSON object")
+		return errInvalidModelResponse
 	}
 	return nil
+}
+
+// stripMarkdownCodeFence unwraps a response that is exactly one fenced code
+// block (``` or ```json), a formatting habit some models keep even in JSON
+// mode. Responses with prose around or beyond the fence are returned as-is.
+func stripMarkdownCodeFence(text string) string {
+	if !strings.HasPrefix(text, "```") || !strings.HasSuffix(text, "```") {
+		return text
+	}
+	body := text[3:]
+	newline := strings.IndexByte(body, '\n')
+	if newline < 0 {
+		return text
+	}
+	if strings.ContainsAny(body[:newline], "{}") {
+		return text
+	}
+	body = body[newline+1:]
+	if !strings.HasSuffix(body, "```") {
+		return text
+	}
+	body = strings.TrimSpace(strings.TrimSuffix(body, "```"))
+	if strings.Contains(body, "```") {
+		return text
+	}
+	return body
 }
 
 func firstNonEmpty(values ...string) string {
