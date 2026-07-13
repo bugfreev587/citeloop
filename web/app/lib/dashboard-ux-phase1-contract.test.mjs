@@ -1953,7 +1953,7 @@ test("content plan polls accepted opportunity actions until topics appear", () =
 
   assert.match(topics, /api\.getVisibilitySummary\(projectId\)/);
   assert.match(topics, /summaryPendingPlanActions/);
-  assert.match(topics, /\["added_to_plan", "planned", "drafting", "ready_for_review"\]\.includes\(action\.lifecycle_stage\)/);
+  assert.match(topics, /isActiveContentPlanLoopAction\(action\)/);
   assert.match(topics, /hasPendingPlanActions/);
   assert.match(topics, /autoEnabled && summaryPendingPlanActions > 0 && topics\.length === 0/);
   assert.match(topics, /const hasDueScheduled = autoEnabled && topics\.some/);

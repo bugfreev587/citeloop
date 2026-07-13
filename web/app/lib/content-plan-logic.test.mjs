@@ -121,6 +121,23 @@ test("hasReviewableDraft only links actions with pending Review drafts", async (
   );
 });
 
+test("Content Plan never renders returned or dismissed actions from stale visibility payloads", async () => {
+  const { isActiveContentPlanLoopAction } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    isActiveContentPlanLoopAction({ status: "ready_for_review", lifecycle_stage: "added_to_plan", opportunity_status: "converted" }),
+    true,
+  );
+  assert.equal(
+    isActiveContentPlanLoopAction({ status: "returned", lifecycle_stage: "added_to_plan", opportunity_status: "open" }),
+    false,
+  );
+  assert.equal(
+    isActiveContentPlanLoopAction({ status: "dismissed", lifecycle_stage: "added_to_plan", opportunity_status: "dismissed" }),
+    false,
+  );
+});
+
 test("publish strategy recommendations follow brief-first PRD defaults", async () => {
   const {
     normalizePublishStrategy,

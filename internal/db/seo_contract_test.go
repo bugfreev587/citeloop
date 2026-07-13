@@ -128,6 +128,18 @@ func TestReturnContentActionWithdrawsDraftUsingArticleSchema(t *testing.T) {
 	}
 }
 
+func TestListVisibilityActionRowsExcludesReturnedAndDismissedActions(t *testing.T) {
+	query := strings.ToLower(listVisibilityActionRows)
+	for _, want := range []string{
+		"where ca.project_id = $1",
+		"ca.status not in ('returned','dismissed')",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("ListVisibilityActionRows must exclude terminal reconsideration actions; missing %q in %s", want, query)
+		}
+	}
+}
+
 func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
 	query := strings.ToLower(listLatestTechnicalChecks)
 	for _, want := range []string{
