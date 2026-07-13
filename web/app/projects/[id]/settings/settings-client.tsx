@@ -29,7 +29,9 @@ import { normalizeNumeric } from "../../../lib/normalize";
 import { readinessGateActionFor } from "../../../lib/automation-readiness";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import {
+  createGithubPRReadinessRequestOrder,
   createGithubPRReadinessRefreshCoordinator,
+  GithubPRReadinessRequestScope,
   GithubPRReadinessRefreshMode,
 } from "../../../lib/github-pr-readiness-refresh";
 import { useApi } from "../../../lib/use-api";
@@ -176,11 +178,6 @@ function githubPRReadinessPresentation(status?: GithubPRReadiness["status"]) {
 }
 
 const githubPRReadinessCheckError = "We couldn't check GitHub readiness. Review the connection and try again.";
-
-type GithubReadinessRequestScope = {
-  projectId: string;
-  epoch: number;
-};
 
 const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
@@ -581,14 +578,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [githubReadinessErrorState, setGithubReadinessError] = useState<string | null>(null);
   const [githubReadinessStateProjectId, setGithubReadinessStateProjectId] = useState(projectId);
   const githubReadinessMountedRef = useRef(false);
-  const githubReadinessProjectEpochRef = useRef<GithubReadinessRequestScope>({ projectId, epoch: 0 });
-  if (githubReadinessProjectEpochRef.current.projectId !== projectId) {
-    githubReadinessProjectEpochRef.current = {
-      projectId,
-      epoch: githubReadinessProjectEpochRef.current.epoch + 1,
-    };
+  const githubReadinessRequestOrderRef = useRef<ReturnType<typeof createGithubPRReadinessRequestOrder> | null>(null);
+  if (!githubReadinessRequestOrderRef.current) {
+    githubReadinessRequestOrderRef.current = createGithubPRReadinessRequestOrder(projectId);
   }
-  const githubReadinessRequestScope = githubReadinessProjectEpochRef.current;
+  const githubReadinessRequestScope = githubReadinessRequestOrderRef.current.forProject(projectId);
   const githubPRReadiness = githubReadinessStateProjectId === projectId ? githubPRReadinessState : null;
   const githubReadinessBusy = githubReadinessStateProjectId === projectId ? githubReadinessBusyState : null;
   const githubReadinessError = githubReadinessStateProjectId === projectId ? githubReadinessErrorState : null;
@@ -633,9 +627,14 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     };
   }, []);
 
-  const isCurrentGithubReadinessRequest = useCallback((scope: GithubReadinessRequestScope) => {
-    const current = githubReadinessProjectEpochRef.current;
-    return githubReadinessMountedRef.current && current.projectId === scope.projectId && current.epoch === scope.epoch;
+  const isCurrentGithubReadinessRequest = useCallback((scope: GithubPRReadinessRequestScope) => {
+    return githubReadinessMountedRef.current && Boolean(githubReadinessRequestOrderRef.current?.isCurrent(scope));
+  }, []);
+
+  const invalidateGithubReadinessRequests = useCallback((scope: GithubPRReadinessRequestScope) => {
+    const nextScope = githubReadinessRequestOrderRef.current!.invalidate(scope);
+    if (nextScope) setGithubReadinessBusy(null);
+    return nextScope;
   }, []);
 
   useEffect(() => {
@@ -818,8 +817,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     }
   }, [api, githubReadinessRequestScope, isCurrentGithubReadinessRequest]);
 
-  const refreshStoredGithubPRReadiness = useCallback(async (): Promise<GithubPRReadiness | null> => {
-    const requestScope = githubReadinessRequestScope;
+  const refreshStoredGithubPRReadiness = useCallback(async (
+    requestScope: GithubPRReadinessRequestScope = githubReadinessRequestScope,
+  ): Promise<GithubPRReadiness | null> => {
     if (isCurrentGithubReadinessRequest(requestScope)) setGithubReadinessError(null);
     try {
       const nextReadiness = await api.getGithubPRReadiness(requestScope.projectId);
@@ -1471,12 +1471,15 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     setMessage(null);
     try {
       const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
+      const disabledReadinessScope = connection.kind === "github_nextjs" && !enabled
+        ? invalidateGithubReadinessRequests(githubReadinessRequestScope)
+        : null;
       setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
       if (connection.kind === "github_nextjs") {
         if (enabled) {
           await refreshGithubPRReadiness("after-mutation");
-        } else {
-          await refreshStoredGithubPRReadiness();
+        } else if (disabledReadinessScope) {
+          await refreshStoredGithubPRReadiness(disabledReadinessScope);
         }
       }
       setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });

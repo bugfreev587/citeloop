@@ -791,7 +791,8 @@ test("GitHub PR readiness refreshes on Publisher entry and successful GitHub mut
   assert.match(saveCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
   assert.match(revokeCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
   assert.match(testPublisher, /await refreshGithubPRReadiness\("after-mutation"\)/);
-  assert.match(toggleConnection, /if \(connection\.kind === "github_nextjs"\)[\s\S]*if \(enabled\)[\s\S]*await refreshGithubPRReadiness\("after-mutation"\)[\s\S]*else[\s\S]*await refreshStoredGithubPRReadiness\(\)/);
+  assert.match(toggleConnection, /const disabledReadinessScope = connection\.kind === "github_nextjs" && !enabled[\s\S]*invalidateGithubReadinessRequests\(githubReadinessRequestScope\)[\s\S]*setPublisherConnections/);
+  assert.match(toggleConnection, /if \(connection\.kind === "github_nextjs"\)[\s\S]*if \(enabled\)[\s\S]*await refreshGithubPRReadiness\("after-mutation"\)[\s\S]*else if \(disabledReadinessScope\)[\s\S]*await refreshStoredGithubPRReadiness\(disabledReadinessScope\)/);
   assert.doesNotMatch(toggleConnection, /else[\s\S]*checkGithubPRReadiness/);
 });
 
@@ -802,9 +803,11 @@ test("GitHub PR readiness fails closed and isolates requests across project chan
     settings.indexOf("const githubReadinessRefreshCoordinator"),
   );
 
-  assert.match(settings, /githubReadinessProjectEpochRef/);
-  assert.match(settings, /githubReadinessProjectEpochRef\.current\.projectId !== projectId/);
-  assert.match(settings, /githubReadinessProjectEpochRef\.current = \{[\s\S]*projectId,[\s\S]*epoch:/);
+  assert.match(settings, /createGithubPRReadinessRequestOrder/);
+  assert.match(settings, /githubReadinessRequestOrderRef/);
+  assert.match(settings, /githubReadinessRequestOrderRef\.current\.forProject\(projectId\)/);
+  assert.match(settings, /githubReadinessRequestOrderRef\.current\?\.isCurrent\(scope\)/);
+  assert.match(settings, /githubReadinessRequestOrderRef\.current!\.invalidate\(scope\)/);
   assert.match(settings, /setGithubPRReadiness\(null\)[\s\S]*setGithubReadinessBusy\(null\)[\s\S]*setGithubReadinessError\(null\)/);
   assert.match(runCheck, /requestScope/);
   assert.match(runCheck, /isCurrentGithubReadinessRequest\(requestScope\)/);

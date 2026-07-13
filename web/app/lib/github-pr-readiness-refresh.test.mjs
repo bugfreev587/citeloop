@@ -30,6 +30,49 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
+test("a disable GET invalidates a late live POST result for the same project", async () => {
+  const { createGithubPRReadinessRequestOrder } = await loadRefreshCoordinatorModule();
+  const order = createGithubPRReadinessRequestOrder("project-1");
+  const livePOST = deferred();
+  let renderedReadiness = null;
+
+  async function applyWhenCurrent(scope, response) {
+    const readiness = await response;
+    if (order.isCurrent(scope)) renderedReadiness = readiness;
+  }
+
+  const livePOSTScope = order.forProject("project-1");
+  const pendingPOST = applyWhenCurrent(livePOSTScope, livePOST.promise);
+
+  const disableGETScope = order.invalidate(livePOSTScope);
+  assert.ok(disableGETScope);
+  await applyWhenCurrent(disableGETScope, Promise.resolve({ status: "not_connected" }));
+  assert.deepEqual(renderedReadiness, { status: "not_connected" });
+
+  livePOST.resolve({ status: "ready" });
+  await pendingPOST;
+  assert.deepEqual(
+    renderedReadiness,
+    { status: "not_connected" },
+    "a POST started before disable must not repaint the newer persisted result",
+  );
+});
+
+test("request order synchronously invalidates results from the previous project", async () => {
+  const { createGithubPRReadinessRequestOrder } = await loadRefreshCoordinatorModule();
+  const order = createGithubPRReadinessRequestOrder("project-1");
+  const oldProjectScope = order.forProject("project-1");
+
+  const newProjectScope = order.forProject("project-2");
+
+  assert.equal(order.isCurrent(oldProjectScope), false);
+  assert.equal(order.isCurrent(newProjectScope), true);
+  assert.equal(newProjectScope.projectId, "project-2");
+  assert.equal(newProjectScope.epoch, oldProjectScope.epoch + 1);
+  assert.equal(order.invalidate(oldProjectScope), null, "a stale handler must not invalidate the current project");
+  assert.equal(order.isCurrent(newProjectScope), true);
+});
+
 test("normal readiness refreshes share the in-flight generation", async () => {
   const { createGithubPRReadinessRefreshCoordinator } = await loadRefreshCoordinatorModule();
   const firstRun = deferred();

@@ -1,5 +1,33 @@
 export type GithubPRReadinessRefreshMode = "normal" | "after-mutation";
 
+export type GithubPRReadinessRequestScope = Readonly<{
+  projectId: string;
+  epoch: number;
+}>;
+
+export function createGithubPRReadinessRequestOrder(initialProjectId: string) {
+  let current: GithubPRReadinessRequestScope = { projectId: initialProjectId, epoch: 0 };
+
+  function next(projectId: string) {
+    current = { projectId, epoch: current.epoch + 1 };
+    return current;
+  }
+
+  return {
+    forProject(projectId: string) {
+      return current.projectId === projectId ? current : next(projectId);
+    },
+    invalidate(scope: GithubPRReadinessRequestScope) {
+      return current.projectId === scope.projectId && current.epoch === scope.epoch
+        ? next(scope.projectId)
+        : null;
+    },
+    isCurrent(scope: GithubPRReadinessRequestScope) {
+      return current.projectId === scope.projectId && current.epoch === scope.epoch;
+    },
+  };
+}
+
 type GenerationPromise<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
