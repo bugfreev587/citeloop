@@ -773,9 +773,10 @@ test("publisher settings own live GitHub PR readiness checks and render every st
 test("GitHub PR readiness refreshes on Publisher entry and successful GitHub mutations", () => {
   const settings = read("projects/[id]/settings/settings-client.tsx");
   const activeTabEffect = settings.slice(
-    settings.indexOf('if (activeSettingsTab !== "publisher") return;'),
+    settings.indexOf("const enteredPublisher = githubReadinessPublisherEntryTrackerRef"),
     settings.indexOf("const refreshGSCConnection"),
   );
+  assert.match(activeTabEffect, /shouldRefresh\(projectId, activeSettingsTab\)/);
   assert.match(activeTabEffect, /refreshGithubPRReadiness\(\)/);
   assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(window\.location\.hash\)\)/);
   assert.match(settings, /url\.searchParams\.get\("github"\) !== "connected"[\s\S]*setActiveSettingsTab\("publisher"\)/);
@@ -811,11 +812,16 @@ test("GitHub PR readiness fails closed and isolates requests across project chan
   assert.match(settings, /setGithubPRReadiness\(null\)[\s\S]*setGithubReadinessBusy\(null\)[\s\S]*setGithubReadinessError\(null\)/);
   assert.match(runCheck, /requestScope/);
   assert.match(runCheck, /isCurrentGithubReadinessRequest\(requestScope\)/);
+  const staleGuard = runCheck.indexOf("if (!isCurrentGithubReadinessRequest(requestScope)) return null;");
+  const livePOST = runCheck.indexOf("api.checkGithubPRReadiness(requestScope.projectId)");
+  assert.ok(staleGuard >= 0 && staleGuard < livePOST, "stale queued checks must exit before sending a live POST");
   assert.match(runCheck, /setGithubPRReadiness\(\(current\) => \(\{[\s\S]*status: "error"/);
   assert.match(settings, /const githubPRReadinessCheckError = "We couldn't check GitHub readiness\. Review the connection and try again\."/);
   assert.match(runCheck, /detail: githubPRReadinessCheckError/);
   assert.doesNotMatch(runCheck, /finally[\s\S]*setGithubReadinessBusy\(null\)/);
   assert.match(settings, /createGithubPRReadinessRefreshCoordinator\([\s\S]*setGithubReadinessBusy\(draining \? "checking" : null\)/);
+  assert.match(settings, /createGithubPRReadinessPublisherEntryTracker/);
+  assert.match(settings, /githubReadinessPublisherEntryTrackerRef\.current!\.shouldRefresh\(projectId, activeSettingsTab\)/);
 });
 
 test("context profile editors collapse after saving", () => {

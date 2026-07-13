@@ -29,6 +29,7 @@ import { normalizeNumeric } from "../../../lib/normalize";
 import { readinessGateActionFor } from "../../../lib/automation-readiness";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
 import {
+  createGithubPRReadinessPublisherEntryTracker,
   createGithubPRReadinessRequestOrder,
   createGithubPRReadinessRefreshCoordinator,
   GithubPRReadinessRequestScope,
@@ -578,6 +579,10 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [githubReadinessErrorState, setGithubReadinessError] = useState<string | null>(null);
   const [githubReadinessStateProjectId, setGithubReadinessStateProjectId] = useState(projectId);
   const githubReadinessMountedRef = useRef(false);
+  const githubReadinessPublisherEntryTrackerRef = useRef<ReturnType<typeof createGithubPRReadinessPublisherEntryTracker> | null>(null);
+  if (!githubReadinessPublisherEntryTrackerRef.current) {
+    githubReadinessPublisherEntryTrackerRef.current = createGithubPRReadinessPublisherEntryTracker();
+  }
   const githubReadinessRequestOrderRef = useRef<ReturnType<typeof createGithubPRReadinessRequestOrder> | null>(null);
   if (!githubReadinessRequestOrderRef.current) {
     githubReadinessRequestOrderRef.current = createGithubPRReadinessRequestOrder(projectId);
@@ -793,9 +798,8 @@ export function SettingsClient({ projectId }: { projectId: string }) {
 
   const runGithubPRReadinessCheck = useCallback(async (): Promise<GithubPRReadiness | null> => {
     const requestScope = githubReadinessRequestScope;
-    if (isCurrentGithubReadinessRequest(requestScope)) {
-      setGithubReadinessError(null);
-    }
+    if (!isCurrentGithubReadinessRequest(requestScope)) return null;
+    setGithubReadinessError(null);
     try {
       const nextReadiness = await api.checkGithubPRReadiness(requestScope.projectId);
       if (isCurrentGithubReadinessRequest(requestScope)) {
@@ -855,11 +859,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   );
 
   useEffect(() => {
-    if (activeSettingsTab !== "publisher") return;
+    const enteredPublisher = githubReadinessPublisherEntryTrackerRef.current!.shouldRefresh(projectId, activeSettingsTab);
+    if (!enteredPublisher) return;
     // The GitHub callback saves the selected repository and branch before it
     // returns to #publisher, so this tab-owned effect performs the live check.
     void refreshGithubPRReadiness();
-  }, [activeSettingsTab, refreshGithubPRReadiness]);
+  }, [activeSettingsTab, projectId, refreshGithubPRReadiness]);
 
   const refreshGSCConnection = useCallback(async () => {
     try {

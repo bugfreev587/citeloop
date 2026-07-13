@@ -28,6 +28,21 @@ export function createGithubPRReadinessRequestOrder(initialProjectId: string) {
   };
 }
 
+export function createGithubPRReadinessPublisherEntryTracker() {
+  let previousProjectId: string | null = null;
+  let wasPublisher = false;
+
+  return {
+    shouldRefresh(projectId: string, activeTab: string) {
+      const isPublisher = activeTab === "publisher";
+      const shouldRefresh = isPublisher && (!wasPublisher || previousProjectId !== projectId);
+      previousProjectId = projectId;
+      wasPublisher = isPublisher;
+      return shouldRefresh;
+    },
+  };
+}
+
 type GenerationPromise<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;

@@ -30,27 +30,38 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
-test("a disable GET invalidates a late live POST result for the same project", async () => {
-  const { createGithubPRReadinessRequestOrder } = await loadRefreshCoordinatorModule();
+test("disable skips a queued stale POST and keeps its persisted GET result", async () => {
+  const {
+    createGithubPRReadinessRefreshCoordinator,
+    createGithubPRReadinessRequestOrder,
+  } = await loadRefreshCoordinatorModule();
   const order = createGithubPRReadinessRequestOrder("project-1");
   const livePOST = deferred();
+  const calls = [];
   let renderedReadiness = null;
 
-  async function applyWhenCurrent(scope, response) {
-    const readiness = await response;
-    if (order.isCurrent(scope)) renderedReadiness = readiness;
-  }
-
   const livePOSTScope = order.forProject("project-1");
-  const pendingPOST = applyWhenCurrent(livePOSTScope, livePOST.promise);
+  const coordinator = createGithubPRReadinessRefreshCoordinator(async () => {
+    if (!order.isCurrent(livePOSTScope)) return null;
+    calls.push("POST");
+    const readiness = await livePOST.promise;
+    if (order.isCurrent(livePOSTScope)) renderedReadiness = readiness;
+    return readiness;
+  });
+  const pendingPOST = coordinator.request();
+  const queuedPOST = coordinator.request("after-mutation");
+  assert.deepEqual(calls, ["POST"]);
 
   const disableGETScope = order.invalidate(livePOSTScope);
   assert.ok(disableGETScope);
-  await applyWhenCurrent(disableGETScope, Promise.resolve({ status: "not_connected" }));
+  calls.push("GET");
+  if (order.isCurrent(disableGETScope)) renderedReadiness = { status: "not_connected" };
   assert.deepEqual(renderedReadiness, { status: "not_connected" });
 
   livePOST.resolve({ status: "ready" });
   await pendingPOST;
+  await queuedPOST;
+  assert.deepEqual(calls, ["POST", "GET"], "the invalidated queued generation must not send another POST");
   assert.deepEqual(
     renderedReadiness,
     { status: "not_connected" },
@@ -71,6 +82,31 @@ test("request order synchronously invalidates results from the previous project"
   assert.equal(newProjectScope.epoch, oldProjectScope.epoch + 1);
   assert.equal(order.invalidate(oldProjectScope), null, "a stale handler must not invalidate the current project");
   assert.equal(order.isCurrent(newProjectScope), true);
+});
+
+test("Publisher entry refresh is stable across coordinator rebuilds and repeats only after leaving", async () => {
+  const { createGithubPRReadinessPublisherEntryTracker } = await loadRefreshCoordinatorModule();
+  const tracker = createGithubPRReadinessPublisherEntryTracker();
+  let livePOSTCalls = 0;
+
+  function render(projectId, activeTab) {
+    if (tracker.shouldRefresh(projectId, activeTab)) livePOSTCalls += 1;
+  }
+
+  render("project-1", "project");
+  render("project-1", "publisher");
+  assert.equal(livePOSTCalls, 1);
+
+  render("project-1", "publisher");
+  render("project-1", "publisher");
+  assert.equal(livePOSTCalls, 1, "an epoch or coordinator identity change is not a new tab entry");
+
+  render("project-1", "project");
+  render("project-1", "publisher");
+  assert.equal(livePOSTCalls, 2, "leaving and re-entering Publisher starts a fresh live check");
+
+  render("project-2", "publisher");
+  assert.equal(livePOSTCalls, 3, "a project change while Publisher is active starts that project's entry check");
 });
 
 test("normal readiness refreshes share the in-flight generation", async () => {
