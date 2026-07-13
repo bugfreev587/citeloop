@@ -421,7 +421,13 @@ func TestCanonicalSiteFixInitialPRObservationIsAtomicAcrossLifecycle(t *testing.
 		"merged_at = case when e.github_pr_state = 'merged'",
 		"set status = case when e.github_pr_state = 'merged' then 'awaiting_deploy' else 'applying' end",
 		"set status = case when transitioned.github_pr_state = 'merged' then 'awaiting_deploy' else 'executing' end",
+		"select recorded.* from recorded_application recorded",
+		"cross join transitioned",
+		"cross join signature_transition",
 	)
+	if strings.Contains(mark, "select app.* from site_change_applications app") {
+		t.Fatal("initial PR observation must return the DML CTE row, not a pre-update statement snapshot")
+	}
 	for _, forbidden := range []string{"applied_at =", "deployed_at ="} {
 		if strings.Contains(mark, forbidden) {
 			t.Fatalf("initial PR observation must not claim production application/deployment; found %q", forbidden)
@@ -568,7 +574,13 @@ func TestResetCanonicalSiteFixSourceConflictForReprepareIsClaimAndAuthorityFence
 		"set status = 'failed', failure_reason = sqlc.arg(reprepare_reason)",
 		"set status = 'preparing', failure_reason = sqlc.arg(reprepare_reason)",
 		"set status = 'preparing', active = true",
+		"select failed.* from failed_application failed",
+		"cross join transitioned",
+		"cross join signature_transition",
 	)
+	if strings.Contains(reset, "select app.* from site_change_applications app") {
+		t.Fatal("source-conflict reset must return the DML CTE row, not a pre-update statement snapshot")
+	}
 }
 
 func TestCanonicalApplyFailureNeverEntersVerificationRetryLifecycle(t *testing.T) {

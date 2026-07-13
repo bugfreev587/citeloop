@@ -1617,7 +1617,7 @@ func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefi
 		}
 		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, cause)
 	}
-	result.Application = app
+	result.Application = db.SiteChangeApplication(app)
 	return reloadCanonicalSiteFixAfterPRObservation(ctx, s.Q, result)
 }
 
@@ -1686,7 +1686,7 @@ func (s *Server) resetCanonicalSiteFixPRForReprepare(
 		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, ReprepareReason: reason,
 	})
 	if err == nil {
-		result.Application = app
+		result.Application = db.SiteChangeApplication(app)
 		return result, fmt.Errorf("%w: %s", errCanonicalSiteFixFreshReprepare, reason)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {

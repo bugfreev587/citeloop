@@ -3872,8 +3872,7 @@ with authority as materialized (
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
   returning w.id
 )
-select app.* from site_change_applications app
-join recorded_application recorded on recorded.id = app.id and recorded.project_id = app.project_id
+select recorded.* from recorded_application recorded
 cross join transitioned
 cross join signature_transition;
 
@@ -4097,8 +4096,7 @@ with authority as materialized (
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
   returning w.id
 )
-select app.* from site_change_applications app
-join failed_application failed on failed.id = app.id and failed.project_id = app.project_id
+select failed.* from failed_application failed
 cross join transitioned
 cross join signature_transition;
 

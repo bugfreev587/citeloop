@@ -5912,8 +5912,7 @@ with authority as materialized (
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
   returning w.id
 )
-select app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint from site_change_applications app
-join recorded_application recorded on recorded.id = app.id and recorded.project_id = app.project_id
+select recorded.id, recorded.project_id, recorded.source_opportunity_id, recorded.content_action_id, recorded.page_update_draft_id, recorded.application_kind, recorded.target_url, recorded.normalized_target_url, recorded.opportunity_key, recorded.publisher_connection_id, recorded.repo_full_name, recorded.base_branch, recorded.working_branch, recorded.base_commit_sha, recorded.head_commit_sha, recorded.source_file_path, recorded.source_file_paths, recorded.source_mapping_confidence, recorded.source_mapping_reason, recorded.base_file_sha, recorded.base_content_hash, recorded.proposed_content_hash, recorded.patch_snapshot, recorded.diff_snapshot, recorded.resolution_criteria, recorded.github_pr_number, recorded.github_pr_url, recorded.github_pr_state, recorded.deployment_snapshot, recorded.verification_snapshot, recorded.failure_reason, recorded.status, recorded.created_at, recorded.updated_at, recorded.pr_created_at, recorded.merged_at, recorded.deployed_at, recorded.verified_at, recorded.next_poll_at, recorded.next_notify_at, recorded.site_fix_id, recorded.pr_claim_token, recorded.pr_claim_expires_at, recorded.pr_claim_authority_fingerprint from recorded_application recorded
 cross join transitioned
 cross join signature_transition
 `
@@ -5940,7 +5939,54 @@ type MarkCanonicalSiteFixGitHubPRParams struct {
 	GithubPrUrl                 *string            `json:"github_pr_url"`
 }
 
-func (q *Queries) MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCanonicalSiteFixGitHubPRParams) (SiteChangeApplication, error) {
+type MarkCanonicalSiteFixGitHubPRRow struct {
+	ID                          uuid.UUID          `json:"id"`
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	SourceOpportunityID         pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID             pgtype.UUID        `json:"content_action_id"`
+	PageUpdateDraftID           pgtype.UUID        `json:"page_update_draft_id"`
+	ApplicationKind             string             `json:"application_kind"`
+	TargetUrl                   string             `json:"target_url"`
+	NormalizedTargetUrl         string             `json:"normalized_target_url"`
+	OpportunityKey              string             `json:"opportunity_key"`
+	PublisherConnectionID       pgtype.UUID        `json:"publisher_connection_id"`
+	RepoFullName                *string            `json:"repo_full_name"`
+	BaseBranch                  *string            `json:"base_branch"`
+	WorkingBranch               *string            `json:"working_branch"`
+	BaseCommitSha               *string            `json:"base_commit_sha"`
+	HeadCommitSha               *string            `json:"head_commit_sha"`
+	SourceFilePath              *string            `json:"source_file_path"`
+	SourceFilePaths             json.RawMessage    `json:"source_file_paths"`
+	SourceMappingConfidence     string             `json:"source_mapping_confidence"`
+	SourceMappingReason         string             `json:"source_mapping_reason"`
+	BaseFileSha                 *string            `json:"base_file_sha"`
+	BaseContentHash             *string            `json:"base_content_hash"`
+	ProposedContentHash         *string            `json:"proposed_content_hash"`
+	PatchSnapshot               json.RawMessage    `json:"patch_snapshot"`
+	DiffSnapshot                json.RawMessage    `json:"diff_snapshot"`
+	ResolutionCriteria          json.RawMessage    `json:"resolution_criteria"`
+	GithubPrNumber              *int32             `json:"github_pr_number"`
+	GithubPrUrl                 *string            `json:"github_pr_url"`
+	GithubPrState               *string            `json:"github_pr_state"`
+	DeploymentSnapshot          json.RawMessage    `json:"deployment_snapshot"`
+	VerificationSnapshot        json.RawMessage    `json:"verification_snapshot"`
+	FailureReason               *string            `json:"failure_reason"`
+	Status                      string             `json:"status"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PrCreatedAt                 pgtype.Timestamptz `json:"pr_created_at"`
+	MergedAt                    pgtype.Timestamptz `json:"merged_at"`
+	DeployedAt                  pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                  pgtype.Timestamptz `json:"verified_at"`
+	NextPollAt                  pgtype.Timestamptz `json:"next_poll_at"`
+	NextNotifyAt                pgtype.Timestamptz `json:"next_notify_at"`
+	SiteFixID                   pgtype.UUID        `json:"site_fix_id"`
+	PrClaimToken                pgtype.UUID        `json:"pr_claim_token"`
+	PrClaimExpiresAt            pgtype.Timestamptz `json:"pr_claim_expires_at"`
+	PrClaimAuthorityFingerprint *string            `json:"pr_claim_authority_fingerprint"`
+}
+
+func (q *Queries) MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCanonicalSiteFixGitHubPRParams) (MarkCanonicalSiteFixGitHubPRRow, error) {
 	row := q.db.QueryRow(ctx, markCanonicalSiteFixGitHubPR,
 		arg.ProjectID,
 		arg.PublisherConnectionID,
@@ -5962,7 +6008,7 @@ func (q *Queries) MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCano
 		arg.GithubPrNumber,
 		arg.GithubPrUrl,
 	)
-	var i SiteChangeApplication
+	var i MarkCanonicalSiteFixGitHubPRRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -9225,8 +9271,7 @@ with authority as materialized (
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
   returning w.id
 )
-select app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint from site_change_applications app
-join failed_application failed on failed.id = app.id and failed.project_id = app.project_id
+select failed.id, failed.project_id, failed.source_opportunity_id, failed.content_action_id, failed.page_update_draft_id, failed.application_kind, failed.target_url, failed.normalized_target_url, failed.opportunity_key, failed.publisher_connection_id, failed.repo_full_name, failed.base_branch, failed.working_branch, failed.base_commit_sha, failed.head_commit_sha, failed.source_file_path, failed.source_file_paths, failed.source_mapping_confidence, failed.source_mapping_reason, failed.base_file_sha, failed.base_content_hash, failed.proposed_content_hash, failed.patch_snapshot, failed.diff_snapshot, failed.resolution_criteria, failed.github_pr_number, failed.github_pr_url, failed.github_pr_state, failed.deployment_snapshot, failed.verification_snapshot, failed.failure_reason, failed.status, failed.created_at, failed.updated_at, failed.pr_created_at, failed.merged_at, failed.deployed_at, failed.verified_at, failed.next_poll_at, failed.next_notify_at, failed.site_fix_id, failed.pr_claim_token, failed.pr_claim_expires_at, failed.pr_claim_authority_fingerprint from failed_application failed
 cross join transitioned
 cross join signature_transition
 `
@@ -9239,7 +9284,54 @@ type ResetCanonicalSiteFixSourceConflictForReprepareParams struct {
 	ReprepareReason string      `json:"reprepare_reason"`
 }
 
-func (q *Queries) ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (SiteChangeApplication, error) {
+type ResetCanonicalSiteFixSourceConflictForReprepareRow struct {
+	ID                          uuid.UUID          `json:"id"`
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	SourceOpportunityID         pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID             pgtype.UUID        `json:"content_action_id"`
+	PageUpdateDraftID           pgtype.UUID        `json:"page_update_draft_id"`
+	ApplicationKind             string             `json:"application_kind"`
+	TargetUrl                   string             `json:"target_url"`
+	NormalizedTargetUrl         string             `json:"normalized_target_url"`
+	OpportunityKey              string             `json:"opportunity_key"`
+	PublisherConnectionID       pgtype.UUID        `json:"publisher_connection_id"`
+	RepoFullName                *string            `json:"repo_full_name"`
+	BaseBranch                  *string            `json:"base_branch"`
+	WorkingBranch               *string            `json:"working_branch"`
+	BaseCommitSha               *string            `json:"base_commit_sha"`
+	HeadCommitSha               *string            `json:"head_commit_sha"`
+	SourceFilePath              *string            `json:"source_file_path"`
+	SourceFilePaths             json.RawMessage    `json:"source_file_paths"`
+	SourceMappingConfidence     string             `json:"source_mapping_confidence"`
+	SourceMappingReason         string             `json:"source_mapping_reason"`
+	BaseFileSha                 *string            `json:"base_file_sha"`
+	BaseContentHash             *string            `json:"base_content_hash"`
+	ProposedContentHash         *string            `json:"proposed_content_hash"`
+	PatchSnapshot               json.RawMessage    `json:"patch_snapshot"`
+	DiffSnapshot                json.RawMessage    `json:"diff_snapshot"`
+	ResolutionCriteria          json.RawMessage    `json:"resolution_criteria"`
+	GithubPrNumber              *int32             `json:"github_pr_number"`
+	GithubPrUrl                 *string            `json:"github_pr_url"`
+	GithubPrState               *string            `json:"github_pr_state"`
+	DeploymentSnapshot          json.RawMessage    `json:"deployment_snapshot"`
+	VerificationSnapshot        json.RawMessage    `json:"verification_snapshot"`
+	FailureReason               *string            `json:"failure_reason"`
+	Status                      string             `json:"status"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PrCreatedAt                 pgtype.Timestamptz `json:"pr_created_at"`
+	MergedAt                    pgtype.Timestamptz `json:"merged_at"`
+	DeployedAt                  pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                  pgtype.Timestamptz `json:"verified_at"`
+	NextPollAt                  pgtype.Timestamptz `json:"next_poll_at"`
+	NextNotifyAt                pgtype.Timestamptz `json:"next_notify_at"`
+	SiteFixID                   pgtype.UUID        `json:"site_fix_id"`
+	PrClaimToken                pgtype.UUID        `json:"pr_claim_token"`
+	PrClaimExpiresAt            pgtype.Timestamptz `json:"pr_claim_expires_at"`
+	PrClaimAuthorityFingerprint *string            `json:"pr_claim_authority_fingerprint"`
+}
+
+func (q *Queries) ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (ResetCanonicalSiteFixSourceConflictForReprepareRow, error) {
 	row := q.db.QueryRow(ctx, resetCanonicalSiteFixSourceConflictForReprepare,
 		arg.ProjectID,
 		arg.ApplicationID,
@@ -9247,7 +9339,7 @@ func (q *Queries) ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Co
 		arg.PrClaimToken,
 		arg.ReprepareReason,
 	)
-	var i SiteChangeApplication
+	var i ResetCanonicalSiteFixSourceConflictForReprepareRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,

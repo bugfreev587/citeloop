@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -133,7 +134,7 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	saveArgs.WriterAuthorityFingerprint = winner.app.PrClaimAuthorityFingerprint
 	prepared, err := New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, saveArgs)
 	if err != nil || prepared.Status != "creating_pr" || prepared.BaseCommitSha == nil || *prepared.BaseCommitSha != baseCommit ||
-		prepared.BaseContentHash == nil || *prepared.BaseContentHash != baseHash || string(prepared.SourceFilePaths) != string(paths) {
+		prepared.BaseContentHash == nil || *prepared.BaseContentHash != baseHash || !canonicalSiteFixJSONEqual(prepared.SourceFilePaths, paths) {
 		t.Fatalf("prepared patch app=%+v err=%v", prepared, err)
 	}
 	prNumber := int32(41)
@@ -237,8 +238,14 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
 			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, ReprepareReason: "repository_source_conflict",
 		})
-		if err != nil || failed.Status != "failed" || failed.FailureReason == nil || *failed.FailureReason != "repository_source_conflict" || failed.PrClaimToken.Valid {
+		if err != nil {
 			t.Fatalf("reset application=%+v err=%v", failed, err)
+		}
+		if failed.Status != "failed" {
+			t.Fatalf("reset returned stale application status=%q, want failed", failed.Status)
+		}
+		if failed.FailureReason == nil || *failed.FailureReason != "repository_source_conflict" || failed.PrClaimToken.Valid {
+			t.Fatalf("reset returned application=%+v", failed)
 		}
 		var fixState, signatureState string
 		var signatureActive bool
@@ -887,6 +894,14 @@ type canonicalSiteFixGitHubReadinessTarget struct {
 	updatedAt    pgtype.Timestamptz
 	repoFullName string
 	baseBranch   string
+}
+
+func canonicalSiteFixJSONEqual(left, right []byte) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func insertReadyCanonicalSiteFixGitHubConnection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, projectID uuid.UUID, repoFullName, baseBranch, baseURL string) canonicalSiteFixGitHubReadinessTarget {
