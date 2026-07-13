@@ -67,10 +67,11 @@ Crawl + GSC + GA4 + AI Answers + Context + Publisher State
 Doctor 与 Opportunities 是唯二用户可见的新工作来源；Content Plan、Site Fixes、Review、Publish 和 Results 都是下游执行或结果 surface，不是 intake source。
 
 - Doctor finding 是新 Site Fix 的唯一产品来源，且该 Site Fix 必须有可立即执行的 acceptance tests。
-- 已接受的 AI-generated Opportunity 是新 Content Brief 的唯一产品来源；每个 Content Brief 必须保留 source Opportunity ID 与 AI provenance。
+- 已接受、且 materially creates or refreshes content 的 AI-generated Opportunity 是新 Content Brief 的唯一产品来源；每个 Content Brief 必须保留 source Opportunity ID 与 AI provenance。
 - 产品不提供 manual Opportunity 或 manual Content Brief intake，也不允许 Content Plan 通过 Topic、Brief 或其他 ad hoc form 创建新工作。
 - 用户仍可显式触发 AI Opportunity Finding。该操作只触发 AI searching/generation run；输出仍是 AI-generated candidate，必须经过 ownership arbitration 和 Opportunities acceptance，不能直接创建 Content Brief。
-- 历史 source-less Topics 只保留 legacy compatibility，不迁移、不 backfill，也不能被复用为新 Brief 来源。
+- 历史 source-less Topics 只保留 Content Plan Section 15.4 定义的 existing-record operations，不创建、不 clone、不迁移、不 backfill，也不能被复用为新 Brief 来源。
+- Owner 与 artifact 分开判断：pure link-only patch 若可立即验证则为 Doctor Site Fix；若成功必须等待 growth window 则为 Opportunities Growth Action。两者都不是 Content Brief；只有 materially creates or refreshes content 的 scope 才进入 Content Plan。
 
 Signal Scan 与 AI Discovery 不再是用户可见的独立产品线。它们成为内部 searching capabilities，由 Doctor 和 Opportunities 按各自目标调用。Token 成本不是首要优化目标；只要 evidence grounded、结果质量和闭环效果更好，产品允许积极使用 AI。
 
@@ -277,12 +278,14 @@ Dependency 必须进一步区分：
 | Context 中存在但当前页面未陈述的新事实，需要加入正文以争取 citation | Opportunities | 新增 evidence proposition，成功依赖观察窗口 |
 | 创建新的 comparison page | Opportunities | 新内容与增长假设 |
 | 内部链接为 0、broken 或指向 redirect chain | Doctor | link graph 可立即验证 |
-| 为提升特定 cluster 排名设计新 internal-link strategy | Opportunities | 目标是延迟排名结果 |
+| 为提升特定 cluster 排名设计 pure link-only internal-link strategy | Opportunities | 目标是延迟排名结果；创建 Growth Action，不创建 Content Brief |
 | GA4 tag 或 key event 未正确触发 | Doctor | instrumentation 可立即验证 |
 | landing page conversion rate 低，需要新 offer/copy | Opportunities | 成功依赖 conversion measurement |
 | 页面内容衰退 | Opportunities | 由历史表现变化驱动 |
 | robots 阻止 search/AI crawler | Doctor | robots contract 可立即验证 |
 | AI 没引用项目但引用竞品 | Opportunities | AI demand/citation gap |
+
+Artifact rule：owner 由 success contract 决定，destination 由实际交付物决定。Pure link-only work 无论归 Doctor 或 Opportunities，都不能进入 Content Plan；只有 materially creates or refreshes content 的 accepted Opportunity 才产生 Content Brief。
 
 ## 6. Target Product Architecture
 
@@ -703,7 +706,7 @@ Signal Scan 和 AI Discovery 保留为内部 capability 名称，可出现在 di
 
 没有 baseline 或可定义的 success metric 时，只能进入 `needs_evidence`，不能伪装成 decision-ready opportunity。
 
-Opportunity 必须由 searching/generation pipeline 产生并保留 AI provenance。用户可以触发该 pipeline，但不能绕过 candidate generation、ownership arbitration 或 acceptance 直接写入 Opportunity；只有 accepted Opportunity 才能创建 Content Brief。
+Opportunity 必须由 searching/generation pipeline 产生并保留 AI provenance。用户可以触发该 pipeline，但不能绕过 candidate generation、ownership arbitration 或 acceptance 直接写入 Opportunity；只有 accepted 且 materially creates or refreshes content 的 Opportunity 才能创建 Content Brief。
 
 ### 9.5 Opportunities lifecycle
 
@@ -1007,9 +1010,10 @@ decided_at
 
 #### Internal link zero + ranking cluster opportunity
 
-- 修复 zero/broken inlinks：Doctor。
-- 基于排名 hypothesis 的 cluster expansion：Opportunities。
-- Opportunity 可以消费 Doctor 修复后的 link graph，但不重复修链接。
+- 修复 zero/broken inlinks：Doctor -> Site Fix，完成后立即验证 link graph。
+- 基于 ranking hypothesis、只改变 links 的 cluster strategy：Opportunities -> Growth Action，以 growth window 验收。
+- 两项 pure link-only work 都不创建 Content Brief；只有 separate scope materially creates or refreshes content 时才进入 Content Plan。
+- Growth Action 可以消费 Doctor 修复后的 link graph，但不重复修链接。
 
 ## 11. AI Operating Model
 
@@ -1646,7 +1650,7 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 9. Snooze expiry、material-change fingerprint 和 previously reviewed evidence 必须保留。
 10. Legacy `mixed`、`insufficient_data` measurement outcome 原值保留，不折叠为 positive/negative/inconclusive。
 11. Legacy discovery settings 按 15.4 映射，迁移后 provider call authority 不扩大。
-12. 历史 source-less Topics 继续通过 legacy compatibility 访问，不迁移或 backfill 为 Content Brief，也不参与新工作 source counts。
+12. 历史 source-less Topics 按 Content Plan Section 15.4 继续允许现有记录的 view/edit、cancel/reschedule、draft/generate 和 archive/dismiss；不得 create、clone、backfill、migrate 或 seed 新工作，也不参与新工作 source counts。
 
 ## 20. Acceptance Criteria
 
@@ -1721,9 +1725,10 @@ Cost 指标用于优化 routing 和质量，不设置为优先于 outcome 的单
 
 48. Doctor 与 Opportunities 是唯二用户可见的新工作来源。
 49. 每个新 Site Fix 都能追溯到 Doctor finding，并以 immediate verification 作为 success contract。
-50. 每个新 Content Brief 都能追溯到已接受的 AI-generated Opportunity；Content Plan 不提供 manual Opportunity、Topic 或 Content Brief intake。
+50. 每个新 Content Brief 都能解析完整 logical provenance chain：source Opportunity ID、source Content Action ID、AI run/model/prompt/evidence provenance、唯一 acceptance timestamp 与 approval source，以及存在时的 internal Topic linkage；Content Plan 不提供 manual Opportunity、Topic 或 Content Brief intake。
 51. 用户触发 AI Opportunity Finding 时，系统创建带 AI provenance 的 candidate，并在 acceptance 前不创建 Content Brief。
-52. 历史 source-less Topics 保持 legacy compatibility，不迁移、不 backfill，也不能成为新 Brief source。
+52. 历史 source-less Topics 按 Content Plan Section 15.4 只允许现有记录的 view/edit、cancel/reschedule、draft/generate 和 archive/dismiss；不得 create、clone、backfill、migrate、seed 新工作或成为新 Brief source。
+53. Pure link-only work 依 success contract 路由为 Doctor Site Fix 或 Opportunities Growth Action；两者都不创建 Content Brief，除非另有 materially create/refresh content 的 accepted scope。
 
 ### 20.8 Executable Given/When/Then scenarios
 
