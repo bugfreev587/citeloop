@@ -47,6 +47,7 @@ const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
 // Doctor create/apply can include bounded arbitration, generation, and PR I/O.
 // Use the existing two-minute mutation ceiling instead of an unbounded wait.
 const DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS = 120_000;
+const GITHUB_PR_READINESS_CHECK_TIMEOUT_MS = 60_000;
 // Live LLM probes: the backend allows up to 30s for the completions, so the
 // browser must wait longer than the default API timeout.
 const LLM_CONNECTION_TEST_TIMEOUT_MS = 45_000;
@@ -2537,7 +2538,7 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(
       `/projects/${projectID}/integrations/github/pr-readiness/check`,
       { method: "POST" },
-      auth,
+      withMinimumTimeout(auth, GITHUB_PR_READINESS_CHECK_TIMEOUT_MS),
     );
     return normalizeGithubPRReadiness(raw);
   },

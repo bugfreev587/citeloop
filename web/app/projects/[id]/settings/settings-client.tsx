@@ -175,6 +175,13 @@ function githubPRReadinessPresentation(status?: GithubPRReadiness["status"]) {
   }
 }
 
+const githubPRReadinessCheckError = "We couldn't check GitHub readiness. Review the connection and try again.";
+
+type GithubReadinessRequestScope = {
+  projectId: string;
+  epoch: number;
+};
+
 const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
   "Copy the numeric Property ID from Admin > Property settings, or from the Analytics URL segment after p (for example p123456789).",
@@ -569,10 +576,22 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [devToUsername, setDevToUsername] = useState("");
   const [devToCredentialDraft, setDevToCredentialDraft] = useState("");
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
-  const [githubPRReadiness, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
-  const [githubReadinessBusy, setGithubReadinessBusy] = useState<"checking" | null>(null);
-  const [githubReadinessError, setGithubReadinessError] = useState<string | null>(null);
+  const [githubPRReadinessState, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
+  const [githubReadinessBusyState, setGithubReadinessBusy] = useState<"checking" | null>(null);
+  const [githubReadinessErrorState, setGithubReadinessError] = useState<string | null>(null);
+  const [githubReadinessStateProjectId, setGithubReadinessStateProjectId] = useState(projectId);
   const githubReadinessMountedRef = useRef(false);
+  const githubReadinessProjectEpochRef = useRef<GithubReadinessRequestScope>({ projectId, epoch: 0 });
+  if (githubReadinessProjectEpochRef.current.projectId !== projectId) {
+    githubReadinessProjectEpochRef.current = {
+      projectId,
+      epoch: githubReadinessProjectEpochRef.current.epoch + 1,
+    };
+  }
+  const githubReadinessRequestScope = githubReadinessProjectEpochRef.current;
+  const githubPRReadiness = githubReadinessStateProjectId === projectId ? githubPRReadinessState : null;
+  const githubReadinessBusy = githubReadinessStateProjectId === projectId ? githubReadinessBusyState : null;
+  const githubReadinessError = githubReadinessStateProjectId === projectId ? githubReadinessErrorState : null;
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
@@ -613,6 +632,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       githubReadinessMountedRef.current = false;
     };
   }, []);
+
+  const isCurrentGithubReadinessRequest = useCallback((scope: GithubReadinessRequestScope) => {
+    const current = githubReadinessProjectEpochRef.current;
+    return githubReadinessMountedRef.current && current.projectId === scope.projectId && current.epoch === scope.epoch;
+  }, []);
+
+  useEffect(() => {
+    setGithubReadinessStateProjectId(projectId);
+    setGithubPRReadiness(null);
+    setGithubReadinessBusy(null);
+    setGithubReadinessError(null);
+  }, [projectId]);
 
   useEffect(() => {
     function syncTabFromHash() {
@@ -762,31 +793,60 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   }, [refreshGithubIntegration, refreshPublisherConnections]);
 
   const runGithubPRReadinessCheck = useCallback(async (): Promise<GithubPRReadiness | null> => {
-    if (githubReadinessMountedRef.current) {
-      setGithubReadinessBusy("checking");
+    const requestScope = githubReadinessRequestScope;
+    if (isCurrentGithubReadinessRequest(requestScope)) {
       setGithubReadinessError(null);
     }
     try {
-      const nextReadiness = await api.checkGithubPRReadiness(projectId);
-      if (githubReadinessMountedRef.current) {
+      const nextReadiness = await api.checkGithubPRReadiness(requestScope.projectId);
+      if (isCurrentGithubReadinessRequest(requestScope)) {
         setGithubPRReadiness(nextReadiness);
       }
       return nextReadiness;
     } catch {
-      if (githubReadinessMountedRef.current) {
-        setGithubReadinessError("We couldn't check GitHub readiness. Review the connection and try again.");
+      if (isCurrentGithubReadinessRequest(requestScope)) {
+        setGithubPRReadiness((current) => ({
+          status: "error",
+          checked_at: null,
+          detail: githubPRReadinessCheckError,
+          ...(current?.repo ? { repo: current.repo } : {}),
+          ...(current?.branch ? { branch: current.branch } : {}),
+        }));
+        setGithubReadinessError(githubPRReadinessCheckError);
       }
       return null;
-    } finally {
-      if (githubReadinessMountedRef.current) {
-        setGithubReadinessBusy(null);
-      }
     }
-  }, [api, projectId]);
+  }, [api, githubReadinessRequestScope, isCurrentGithubReadinessRequest]);
+
+  const refreshStoredGithubPRReadiness = useCallback(async (): Promise<GithubPRReadiness | null> => {
+    const requestScope = githubReadinessRequestScope;
+    if (isCurrentGithubReadinessRequest(requestScope)) setGithubReadinessError(null);
+    try {
+      const nextReadiness = await api.getGithubPRReadiness(requestScope.projectId);
+      if (isCurrentGithubReadinessRequest(requestScope)) setGithubPRReadiness(nextReadiness);
+      return nextReadiness;
+    } catch {
+      if (isCurrentGithubReadinessRequest(requestScope)) {
+        setGithubPRReadiness((current) => ({
+          status: "error",
+          checked_at: null,
+          detail: githubPRReadinessCheckError,
+          ...(current?.repo ? { repo: current.repo } : {}),
+          ...(current?.branch ? { branch: current.branch } : {}),
+        }));
+        setGithubReadinessError(githubPRReadinessCheckError);
+      }
+      return null;
+    }
+  }, [api, githubReadinessRequestScope, isCurrentGithubReadinessRequest]);
 
   const githubReadinessRefreshCoordinator = useMemo(
-    () => createGithubPRReadinessRefreshCoordinator(runGithubPRReadinessCheck),
-    [runGithubPRReadinessCheck],
+    () => createGithubPRReadinessRefreshCoordinator(runGithubPRReadinessCheck, (draining) => {
+      if (isCurrentGithubReadinessRequest(githubReadinessRequestScope)) {
+        setGithubReadinessBusy(draining ? "checking" : null);
+      }
+    }),
+    [githubReadinessRequestScope, isCurrentGithubReadinessRequest, runGithubPRReadinessCheck],
   );
 
   const refreshGithubPRReadiness = useCallback(
@@ -1412,8 +1472,12 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
       setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
-      if (enabled) {
-        if (connection.kind === "github_nextjs") await refreshGithubPRReadiness("after-mutation");
+      if (connection.kind === "github_nextjs") {
+        if (enabled) {
+          await refreshGithubPRReadiness("after-mutation");
+        } else {
+          await refreshStoredGithubPRReadiness();
+        }
       }
       setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });
     } catch (e: any) {

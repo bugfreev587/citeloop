@@ -81,6 +81,31 @@ test("an after-mutation refresh waits for a generation after the in-flight check
   assert.equal(await afterMutation, "after mutation");
 });
 
+test("busy stays asserted while a queued physical refresh is still draining", async () => {
+  const { createGithubPRReadinessRefreshCoordinator } = await loadRefreshCoordinatorModule();
+  const runs = [deferred(), deferred()];
+  const busyChanges = [];
+  let executions = 0;
+  const coordinator = createGithubPRReadinessRefreshCoordinator(
+    () => runs[executions++].promise,
+    (busy) => busyChanges.push(busy),
+  );
+
+  const initial = coordinator.request();
+  const afterMutation = coordinator.request("after-mutation");
+  assert.deepEqual(busyChanges, [true]);
+
+  runs[0].resolve("initial");
+  await initial;
+  await flushMicrotasks();
+  assert.equal(executions, 2);
+  assert.deepEqual(busyChanges, [true], "busy must not clear between queued network checks");
+
+  runs[1].resolve("fresh");
+  assert.equal(await afterMutation, "fresh");
+  assert.deepEqual(busyChanges, [true, false]);
+});
+
 test("multiple mutations during one generation coalesce to one follow-up", async () => {
   const { createGithubPRReadinessRefreshCoordinator } = await loadRefreshCoordinatorModule();
   const runs = [deferred(), deferred()];

@@ -6,7 +6,10 @@ type GenerationPromise<T> = {
   reject: (error: unknown) => void;
 };
 
-export function createGithubPRReadinessRefreshCoordinator<T>(execute: () => Promise<T>) {
+export function createGithubPRReadinessRefreshCoordinator<T>(
+  execute: () => Promise<T>,
+  onDrainingChange?: (draining: boolean) => void,
+) {
   let requestedGeneration = 0;
   let completedGeneration = 0;
   let runningGeneration = 0;
@@ -48,6 +51,7 @@ export function createGithubPRReadinessRefreshCoordinator<T>(execute: () => Prom
       }
     } finally {
       draining = false;
+      onDrainingChange?.(false);
       if (completedGeneration < requestedGeneration) startDrain();
     }
   }
@@ -55,6 +59,7 @@ export function createGithubPRReadinessRefreshCoordinator<T>(execute: () => Prom
   function startDrain() {
     if (draining) return;
     draining = true;
+    onDrainingChange?.(true);
     void drain();
   }
 

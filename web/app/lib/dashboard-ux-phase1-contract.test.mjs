@@ -752,13 +752,14 @@ test("publisher settings own live GitHub PR readiness checks and render every st
   }
 
   assert.match(settings, /GithubPRReadiness/);
-  assert.match(settings, /const \[githubPRReadiness, setGithubPRReadiness\]/);
-  assert.match(settings, /const \[githubReadinessBusy, setGithubReadinessBusy\] = useState<"checking" \| null>\(null\)/);
-  assert.match(settings, /const \[githubReadinessError, setGithubReadinessError\]/);
+  assert.match(settings, /const \[githubPRReadinessState, setGithubPRReadiness\]/);
+  assert.match(settings, /const \[githubReadinessBusyState, setGithubReadinessBusy\] = useState<"checking" \| null>\(null\)/);
+  assert.match(settings, /const \[githubReadinessErrorState, setGithubReadinessError\]/);
+  assert.match(settings, /const githubPRReadiness = githubReadinessStateProjectId === projectId \? githubPRReadinessState : null/);
   assert.match(settings, /createGithubPRReadinessRefreshCoordinator/);
   assert.match(settings, /const githubReadinessRefreshCoordinator = useMemo/);
   assert.match(settings, /const refreshGithubPRReadiness = useCallback/);
-  assert.match(settings, /api\s*\.checkGithubPRReadiness\(projectId\)/);
+  assert.match(settings, /api\s*\.checkGithubPRReadiness\(requestScope\.projectId\)/);
   assert.match(settings, /aria-live="polite"/);
   assert.match(settings, /aria-busy=\{githubReadinessBusy === "checking"\}/);
   assert.match(settings, /disabled=\{githubReadinessBusy === "checking"\}/);
@@ -790,7 +791,28 @@ test("GitHub PR readiness refreshes on Publisher entry and successful GitHub mut
   assert.match(saveCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
   assert.match(revokeCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
   assert.match(testPublisher, /await refreshGithubPRReadiness\("after-mutation"\)/);
-  assert.match(toggleConnection, /if \(enabled\)[\s\S]*await refreshGithubPRReadiness\("after-mutation"\)/);
+  assert.match(toggleConnection, /if \(connection\.kind === "github_nextjs"\)[\s\S]*if \(enabled\)[\s\S]*await refreshGithubPRReadiness\("after-mutation"\)[\s\S]*else[\s\S]*await refreshStoredGithubPRReadiness\(\)/);
+  assert.doesNotMatch(toggleConnection, /else[\s\S]*checkGithubPRReadiness/);
+});
+
+test("GitHub PR readiness fails closed and isolates requests across project changes", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const runCheck = settings.slice(
+    settings.indexOf("const runGithubPRReadinessCheck"),
+    settings.indexOf("const githubReadinessRefreshCoordinator"),
+  );
+
+  assert.match(settings, /githubReadinessProjectEpochRef/);
+  assert.match(settings, /githubReadinessProjectEpochRef\.current\.projectId !== projectId/);
+  assert.match(settings, /githubReadinessProjectEpochRef\.current = \{[\s\S]*projectId,[\s\S]*epoch:/);
+  assert.match(settings, /setGithubPRReadiness\(null\)[\s\S]*setGithubReadinessBusy\(null\)[\s\S]*setGithubReadinessError\(null\)/);
+  assert.match(runCheck, /requestScope/);
+  assert.match(runCheck, /isCurrentGithubReadinessRequest\(requestScope\)/);
+  assert.match(runCheck, /setGithubPRReadiness\(\(current\) => \(\{[\s\S]*status: "error"/);
+  assert.match(settings, /const githubPRReadinessCheckError = "We couldn't check GitHub readiness\. Review the connection and try again\."/);
+  assert.match(runCheck, /detail: githubPRReadinessCheckError/);
+  assert.doesNotMatch(runCheck, /finally[\s\S]*setGithubReadinessBusy\(null\)/);
+  assert.match(settings, /createGithubPRReadinessRefreshCoordinator\([\s\S]*setGithubReadinessBusy\(draining \? "checking" : null\)/);
 });
 
 test("context profile editors collapse after saving", () => {

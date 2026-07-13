@@ -1438,6 +1438,34 @@ test("GitHub PR readiness live check uses the explicit POST endpoint and normali
   }
 });
 
+test("GitHub PR readiness live check keeps a bounded 60 second timeout", async () => {
+  const timeouts = [];
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+
+  globalThis.setTimeout = (handler, delay, ...args) => {
+    timeouts.push(delay);
+    return originalSetTimeout(handler, 0, ...args);
+  };
+  globalThis.clearTimeout = (id) => originalClearTimeout(id);
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: "ready" }),
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    await createApi({ token: "session-token", timeoutMs: 1 }).checkGithubPRReadiness("project-1");
+    assert.deepEqual(timeouts, [60_000]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("GitHub PR readiness accepts only the six known statuses and fails closed", async () => {
   const knownStatuses = [
     "not_connected",
