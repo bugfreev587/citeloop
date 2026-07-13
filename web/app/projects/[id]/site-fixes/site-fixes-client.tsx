@@ -40,6 +40,7 @@ import { useToast } from "../../../components/toast-provider";
 
 const CLOSED_STATUSES = new Set(["verified", "failed_terminal", "superseded", "migration_rolled_back"]);
 const SITE_FIX_POLL_INTERVAL_MS = 10_000;
+const SITE_FIX_JSON_VIEWPORT_CLASS = "box-content h-[7.5rem] min-h-[7.5rem] max-h-[30rem] resize-y overflow-auto select-text";
 
 function statusTone(status: SiteFix["status"]): "neutral" | "red" | "amber" | "green" | "blue" | "violet" {
   if (status === "verified") return "green";
@@ -182,7 +183,7 @@ function DetailBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4">
       <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{title}</h4>
-      <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-700">{prettyValue(value)}</pre>
+      <pre className={`mt-3 ${SITE_FIX_JSON_VIEWPORT_CLASS} whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 font-sans text-sm leading-6 text-slate-700`}>{prettyValue(value)}</pre>
     </section>
   );
 }
@@ -662,7 +663,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
                 <h4 className="text-sm font-bold">AI coding fix JSON</h4>
               </div>
               <p className="mt-2 text-xs leading-5 text-cyan-900">Copy this JSON into Codex or Claude Code when the repair needs implementation help.</p>
-              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100">{canonicalSiteFixAIJSON(selected)}</pre>
+              <pre className={`mt-3 ${SITE_FIX_JSON_VIEWPORT_CLASS} whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-3 text-xs leading-6 text-slate-100`}>{canonicalSiteFixAIJSON(selected)}</pre>
             </section>
 
             {selected.status === "verified" && (

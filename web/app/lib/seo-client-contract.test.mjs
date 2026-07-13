@@ -222,6 +222,15 @@ test("Canonical Site Fixes expose copyable repair JSON", async () => {
   }
 });
 
+test("Canonical Site Fix JSON blocks default to five resizable scrollable lines", async () => {
+  const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const SITE_FIX_JSON_VIEWPORT_CLASS = "[^"]*box-content[^"]*h-\[7\.5rem\][^"]*min-h-\[7\.5rem\][^"]*max-h-\[30rem\][^"]*resize-y[^"]*overflow-auto[^"]*select-text[^"]*"/);
+  assert.equal((source.match(/SITE_FIX_JSON_VIEWPORT_CLASS/g) ?? []).length, 3, "shared viewport class should be declared once and used by both JSON render paths");
+  assert.match(source, /function DetailBlock[\s\S]*<pre[\s\S]*SITE_FIX_JSON_VIEWPORT_CLASS/);
+  assert.match(source, /data-site-fix-ai-payload[\s\S]*<pre[\s\S]*SITE_FIX_JSON_VIEWPORT_CLASS/);
+});
+
 test("Canonical Site Fixes load and mutate only through Doctor lifecycle APIs", async () => {
   const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
   const refreshStart = source.indexOf("const refresh = useCallback(async () => {");
