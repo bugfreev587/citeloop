@@ -183,6 +183,7 @@ type Querier interface {
 	GetGEOPromptForProject(ctx context.Context, arg GetGEOPromptForProjectParams) (GeoPrompt, error)
 	GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error)
 	GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error)
+	GetGitHubPRReadinessForProject(ctx context.Context, projectID uuid.UUID) (PublisherConnection, error)
 	GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error)
 	GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
@@ -483,6 +484,7 @@ type Querier interface {
 	SelectUnlockableVariants(ctx context.Context) ([]Article, error)
 	SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Article, error)
 	SetCanonicalSiteFixNextPollAt(ctx context.Context, arg SetCanonicalSiteFixNextPollAtParams) error
+	SetGitHubPRReadinessIfUnchanged(ctx context.Context, arg SetGitHubPRReadinessIfUnchangedParams) (PublisherConnection, error)
 	SetGrowthCutoverSessionReviewRequired(ctx context.Context, arg SetGrowthCutoverSessionReviewRequiredParams) (GrowthCutoverSession, error)
 	SetPublisherConnectionCredentialRef(ctx context.Context, arg SetPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	SetPublisherConnectionEnabled(ctx context.Context, arg SetPublisherConnectionEnabledParams) (PublisherConnection, error)

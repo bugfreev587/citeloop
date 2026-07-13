@@ -12,6 +12,26 @@ select * from publisher_connections
 where project_id = $1 and kind = $2 and is_default
 limit 1;
 
+-- name: GetGitHubPRReadinessForProject :one
+select * from publisher_connections
+where project_id = sqlc.arg(project_id)
+  and kind = 'github_nextjs'
+  and is_default
+limit 1;
+
+-- name: SetGitHubPRReadinessIfUnchanged :one
+update publisher_connections
+set pr_readiness_status = sqlc.arg(pr_readiness_status),
+    pr_readiness_checked_at = sqlc.narg(pr_readiness_checked_at),
+    pr_readiness_detail = sqlc.narg(pr_readiness_detail),
+    updated_at = now()
+where id = sqlc.arg(connection_id)
+  and project_id = sqlc.arg(project_id)
+  and kind = 'github_nextjs'
+  and is_default
+  and updated_at = sqlc.arg(expected_updated_at)
+returning *;
+
 -- name: GetEnabledPublisherConnectionForProject :one
 select * from publisher_connections
 where project_id = $1
@@ -24,6 +44,12 @@ limit 1;
 -- name: SetPublisherConnectionEnabled :one
 update publisher_connections
 set enabled = $3,
+    pr_readiness_status = case
+      when kind = 'github_nextjs' and status = 'connected' and $3 then 'not_checked'
+      else 'not_connected'
+    end,
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
 returning *;
@@ -64,6 +90,14 @@ do update set
   config = excluded.config,
   last_verified_at = excluded.last_verified_at,
   last_error = excluded.last_error,
+  pr_readiness_status = case
+    when publisher_connections.kind = 'github_nextjs'
+      and excluded.status = 'connected'
+      and publisher_connections.enabled then 'not_checked'
+    else 'not_connected'
+  end,
+  pr_readiness_checked_at = null,
+  pr_readiness_detail = null,
   updated_at = now()
 returning *;
 
@@ -72,6 +106,12 @@ update publisher_connections
 set status = 'connected',
     last_verified_at = now(),
     last_error = null,
+    pr_readiness_status = case
+      when kind = 'github_nextjs' and enabled then 'not_checked'
+      else 'not_connected'
+    end,
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
 returning *;
@@ -80,6 +120,9 @@ returning *;
 update publisher_connections
 set status = 'error',
     last_error = $3,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
 returning *;
@@ -89,6 +132,9 @@ update publisher_connections
 set credential_ref = $3,
     status = 'missing',
     last_error = null,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
 returning *;
@@ -98,15 +144,37 @@ update publisher_connections
 set credential_ref = null,
     status = 'missing',
     last_error = null,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
 returning *;
 
 -- name: UpsertPublisherCredential :one
+with invalidated_connection as (
+  update publisher_connections
+  set pr_readiness_status = case
+        when kind = 'github_nextjs' and status = 'connected' and enabled then 'not_checked'
+        else 'not_connected'
+      end,
+      pr_readiness_checked_at = null,
+      pr_readiness_detail = null,
+      updated_at = now()
+  where id = sqlc.arg(connection_id)
+    and project_id = sqlc.arg(project_id)
+  returning id, project_id
+)
 insert into publisher_credentials
   (project_id, connection_id, kind, encrypted_value, redacted_value)
-values
-  ($1, $2, $3, $4, $5)
+select
+  sqlc.arg(project_id),
+  sqlc.arg(connection_id),
+  sqlc.arg(kind),
+  sqlc.arg(encrypted_value),
+  sqlc.arg(redacted_value)
+from invalidated_connection
+where true
 on conflict (project_id, connection_id, kind)
 do update set
   encrypted_value = excluded.encrypted_value,
@@ -131,11 +199,35 @@ where project_id = $1
 limit 1;
 
 -- name: RevokePublisherCredentialForConnection :one
-update publisher_credentials
+with invalidated_connection as (
+  update publisher_connections connection
+  set pr_readiness_status = case
+        when connection.kind = 'github_nextjs'
+          and connection.status = 'connected'
+          and connection.enabled then 'not_checked'
+        else 'not_connected'
+      end,
+      pr_readiness_checked_at = null,
+      pr_readiness_detail = null,
+      updated_at = now()
+  where connection.id = sqlc.arg(connection_id)
+    and connection.project_id = sqlc.arg(project_id)
+    and exists (
+      select 1
+      from publisher_credentials credential
+      where credential.project_id = connection.project_id
+        and credential.connection_id = connection.id
+        and credential.kind = sqlc.arg(kind)
+        and credential.revoked_at is null
+    )
+  returning connection.id, connection.project_id
+)
+update publisher_credentials credential
 set revoked_at = now(),
     updated_at = now()
-where project_id = $1
-  and connection_id = $2
-  and kind = $3
-  and revoked_at is null
-returning *;
+from invalidated_connection connection
+where credential.project_id = connection.project_id
+  and credential.connection_id = connection.id
+  and credential.kind = sqlc.arg(kind)
+  and credential.revoked_at is null
+returning credential.*;
