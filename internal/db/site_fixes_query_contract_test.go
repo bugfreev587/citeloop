@@ -540,6 +540,18 @@ func TestCanonicalSiteFixPreparationFailurePreservesRetryablePreparingState(t *t
 		"w.active = true",
 		"failure_reason = sqlc.arg(failure_code)",
 	)
+	// Every code safePreparationFailureCode can produce must be persistable,
+	// or recording a preparation failure surfaces as a lifecycle conflict.
+	requireQuerySQL(t, record,
+		"'repository_source_unavailable'",
+		"'source_selection_failed'",
+		"'provider_unavailable'",
+		"'invalid_response'",
+		"'invalid_repository_patch'",
+		"'grounding_rejected'",
+		"'preparation_interrupted'",
+		"'preparation_failed'",
+	)
 	for _, forbidden := range []string{"status = 'failed", "retry_count =", "failure_detail"} {
 		if strings.Contains(record, forbidden) {
 			t.Fatalf("preparation failure must remain retryable/preparing; found %q", forbidden)

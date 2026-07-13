@@ -8199,6 +8199,7 @@ where sf.project_id = $2
     'repository_source_unavailable',
     'source_selection_failed',
     'provider_unavailable',
+    'invalid_response',
     'invalid_repository_patch',
     'grounding_rejected',
     'preparation_interrupted',

@@ -186,14 +186,15 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("uncontrolled preparation failure was persisted: %v", err)
 		}
-		failureCode := "provider_unavailable"
-		fix, err := New(pool).RecordCanonicalSiteFixPreparationFailure(ctx, RecordCanonicalSiteFixPreparationFailureParams{
-			FailureCode: &failureCode,
-			ProjectID:   pid,
-			SiteFixID:   fid,
-		})
-		if err != nil || fix.Status != "preparing" || fix.FailureReason == nil || *fix.FailureReason != failureCode {
-			t.Fatalf("preparation failure fix=%+v err=%v", fix, err)
+		for _, failureCode := range []string{"provider_unavailable", "invalid_response"} {
+			fix, err := New(pool).RecordCanonicalSiteFixPreparationFailure(ctx, RecordCanonicalSiteFixPreparationFailureParams{
+				FailureCode: &failureCode,
+				ProjectID:   pid,
+				SiteFixID:   fid,
+			})
+			if err != nil || fix.Status != "preparing" || fix.FailureReason == nil || *fix.FailureReason != failureCode {
+				t.Fatalf("preparation failure code=%s fix=%+v err=%v", failureCode, fix, err)
+			}
 		}
 		var signatureState string
 		var signatureStillActive bool

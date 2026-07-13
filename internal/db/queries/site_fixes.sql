@@ -3293,6 +3293,7 @@ where sf.project_id = sqlc.arg(project_id)
     'repository_source_unavailable',
     'source_selection_failed',
     'provider_unavailable',
+    'invalid_response',
     'invalid_repository_patch',
     'grounding_rejected',
     'preparation_interrupted',
