@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type GitHubPRClient struct {
@@ -137,7 +138,7 @@ func (c *GitHubPRClient) ListTree(ctx context.Context, ref string) ([]GitHubTree
 		if strings.TrimSpace(entry.Type) != "blob" {
 			continue
 		}
-		path, err := safeRelativePath(entry.Path, "tree entry path")
+		path, err := validateRawGitTreePath(entry.Path, "tree entry path")
 		if err != nil {
 			return nil, err
 		}
@@ -198,10 +199,9 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 		return GitHubPRResult{}, fmt.Errorf("github token and repo are required for source-backed PR apply")
 	}
 
-	if existing, found, err := c.FindPullRequestByHead(ctx, prepared.WorkingBranch); err != nil {
+	existingPR, existingPRFound, err := c.FindPullRequestByHead(ctx, prepared.WorkingBranch)
+	if err != nil {
 		return GitHubPRResult{}, err
-	} else if found {
-		return existing, nil
 	}
 
 	baseCommitSHA, err := c.baseCommitSHA(ctx)
@@ -248,6 +248,17 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 	if err != nil {
 		return GitHubPRResult{}, err
 	}
+	if existingPRFound {
+		matches, err := c.gitCommitMatches(ctx, existingPR.HeadCommitSHA, desiredTreeSHA, baseCommitSHA)
+		if err != nil {
+			return GitHubPRResult{}, err
+		}
+		if !matches {
+			return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
+		}
+		existingPR.BaseCommitSHA = baseCommitSHA
+		return existingPR, nil
+	}
 
 	headCommitSHA, branchExists, err := c.refCommitSHAIfExists(ctx, prepared.WorkingBranch)
 	if err != nil {
@@ -292,6 +303,14 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 	number, prURL, state, err := c.openPullRequest(ctx, prepared.WorkingBranch, prepared.Title, prepared.Body)
 	if err != nil {
 		if existing, found, reconcileErr := c.FindPullRequestByHead(ctx, prepared.WorkingBranch); reconcileErr == nil && found {
+			matches, matchErr := c.gitCommitMatches(ctx, existing.HeadCommitSHA, desiredTreeSHA, baseCommitSHA)
+			if matchErr != nil {
+				return GitHubPRResult{}, matchErr
+			}
+			if !matches {
+				return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
+			}
+			existing.BaseCommitSHA = baseCommitSHA
 			return existing, nil
 		}
 		return GitHubPRResult{}, err
@@ -344,7 +363,7 @@ func prepareGitHubFileUpdatesInput(in GitHubFileUpdatesPRInput) (GitHubFileUpdat
 	in.Files = files
 	seen := make(map[string]struct{}, len(in.Files))
 	for i := range in.Files {
-		path, err := safeRelativePath(in.Files[i].Path, "source path")
+		path, err := validateRawGitTreePath(in.Files[i].Path, "source path")
 		if err != nil {
 			return GitHubFileUpdatesPRInput{}, err
 		}
@@ -360,6 +379,26 @@ func prepareGitHubFileUpdatesInput(in GitHubFileUpdatesPRInput) (GitHubFileUpdat
 	}
 	sort.Slice(in.Files, func(i, j int) bool { return in.Files[i].Path < in.Files[j].Path })
 	return in, nil
+}
+
+// validateRawGitTreePath validates a path exactly as GitHub returned it. A
+// percent sign is an ordinary Git filename byte here, not URL escaping, so
+// this function must never unescape, clean, trim, or otherwise rewrite input.
+func validateRawGitTreePath(raw, label string) (string, error) {
+	if raw == "" || strings.HasPrefix(raw, "/") || strings.Contains(raw, "\\") {
+		return "", fmt.Errorf("invalid %s %q", label, raw)
+	}
+	for _, r := range raw {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("invalid %s %q", label, raw)
+		}
+	}
+	for _, part := range strings.Split(raw, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("invalid %s %q", label, raw)
+		}
+	}
+	return raw, nil
 }
 
 func (c *GitHubPRClient) gitCommit(ctx context.Context, sha string) (gitHubCommit, error) {
