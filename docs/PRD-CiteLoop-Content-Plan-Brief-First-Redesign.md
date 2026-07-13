@@ -16,7 +16,7 @@ The target model is:
 - Doctor creates immediately verifiable Site Fixes.
 - Accepted AI-generated, content-producing Opportunities go to Content Plan as Content Briefs.
 - Content Plan's primary queue is Content Briefs.
-- Every newly created Content Brief retains its accepted source Opportunity.
+- Every newly created Content Brief exposes the complete logical provenance chain defined in Section 15.1.
 - Each Content Brief has a publish strategy: Blog, Syndication, or Both.
 - AI recommends a publish strategy and preselects it as the default.
 - Users can override the publish strategy in the Content Brief drawer before drafting.
@@ -36,13 +36,7 @@ Specifically, this PRD replaces:
 - Manual Topic creation as the primary manual creation workflow.
 - `/plan?topic=` as the preferred user-facing deep link target for new work.
 
-This PRD does not supersede `PRD-CiteLoop-Workflow-Handoff-Link-Cards.md`.
-
-The handoff card spec remains canonical:
-
-- Content Plan must keep a Sent to Review handoff area.
-- The handoff area is required, not optional.
-- After this redesign, the handoff should be derived from Content Brief / content action state first, with legacy Topic state used only as a compatibility fallback.
+`PRD-CiteLoop-Workflow-Handoff-Link-Cards.md` remains canonical only for link-card mechanics, deep-link behavior for an already valid work record, and exit-state display such as the required Sent to Review handoff area. It is not canonical for work creation, source eligibility, or queue routing. The Two-Line/source-boundary contract supersedes any older Handoff PRD clause that creates work, defines its source, or routes it; card rendering and handoff mechanics remain unchanged.
 
 This PRD also changes the routing interpretation from the currently implemented Opportunity queue behavior for some metadata work. Implementation must update the related PRDs and contract tests at the same time so the product rules do not conflict.
 
@@ -52,8 +46,8 @@ As of 2026-07-12, `PRD-CiteLoop-Doctor-Opportunities-Two-Line-Optimization.md` c
 
 - Doctor and Opportunities are the only user-visible sources of newly created work.
 - Doctor creates immediately verifiable Site Fixes; Opportunities creates measured Growth Actions, and only accepted work that materially creates or refreshes content becomes a Content Brief.
-- Content Plan provides no manual Topic/Opportunity/Brief intake. A user-triggered AI Opportunity Finding remains allowed, but its AI-generated output must be accepted in Opportunities first.
-- Existing source-less Topics keep only the backward-compatible operations in Section 15.4; they are never cloned, backfilled, or migrated into new work.
+- Content Plan provides no manual Topic/Opportunity/Brief intake. A user-triggered run creates only internal candidates; ownership arbitration happens before any user-visible record, an eligible growth candidate becomes a `needs_decision` AI Opportunity, and only acceptance creates a Growth Action or—when the scope materially creates or refreshes content—a Content Brief.
+- Pre-boundary or provenance-incomplete Topics—including source-less and partially linked records—keep only the backward-compatible operations in Section 15.4; they are never cloned, backfilled, or migrated into new work.
 
 ## 3. Background
 
@@ -101,7 +95,7 @@ The page should answer those questions through structure, not documentation.
 - Remove the user-facing Planned Topics section from Content Plan.
 - Make Content Briefs the primary Content Plan queue.
 - Make every newly created Content Plan item a Content Brief derived from an accepted AI-generated Opportunity whose scope materially creates or refreshes content.
-- Keep historical source-less Topics available only through legacy compatibility, outside the current-work source contract.
+- Keep pre-boundary or provenance-incomplete Topics available only through legacy compatibility, outside the current-work source contract.
 - Route immediately verifiable work through Doctor to Site Fixes before it reaches Content Plan.
 - Add a clear Publish to selector in the Content Brief drawer.
 - Let AI recommend Blog, Syndication, or Both with a short reason.
@@ -131,12 +125,14 @@ User-facing naming:
 
 | Current term | Proposed user-facing term | Notes |
 | --- | --- | --- |
-| Topic | Content Brief | Use for Opportunity-derived current work in Content Plan; legacy compatibility retains historical records without conversion. |
+| Topic | Content Brief | Use only for provenance-complete current work in Content Plan; legacy compatibility retains pre-boundary or provenance-incomplete records without conversion. |
 | Channel | Publish to / 发布渠道 | Use when selecting Blog / Syndication / Both. |
 | Canonical | Source Article / 主站原文 | Use for owned-site article. |
 | Syndication | Distribution Draft / 内容分发 | Use for external-platform variants. |
 | Content Action | Content Brief | Avoid exposing implementation language. |
 | Topic planned | Preparing draft | Use lifecycle language from the brief perspective. |
+
+In this PRD, a **current Content Brief** means work authorized by an accepted AI-generated Opportunity and backed by the complete logical provenance chain: source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists. A pre-boundary record that lacks any required relationship is legacy compatibility even if it already has an Opportunity, Content Action, or Topic link.
 
 ### 7.2 Topic Becomes Internal
 
@@ -159,12 +155,12 @@ That means:
 - Content Plan should not show pure technical fixes.
 - Content Plan should not show pure link-only actions. Only an accepted Opportunity whose scope materially creates or refreshes content can become a Content Brief.
 - Content Plan should not ask the user to create another Topic manually.
-- Content Plan should not accept a source-less or user-authored Opportunity/Brief record.
-- Historical Topics without a source Opportunity or content action remain legacy compatibility records; they are not migrated into Content Briefs.
+- Content Plan should not classify a user-authored or provenance-incomplete record as a current Content Brief.
+- Pre-boundary records that lack any required current-work provenance remain legacy compatibility records even when they already have an Opportunity, Content Action, or Topic link; they are not migrated into current Content Briefs.
 
 ## 8. Routing Rules
 
-AI-generated candidate ownership and Opportunity acceptance should route work into the correct queue.
+Every run produces internal candidates only. Ownership arbitration happens before product-object creation: a Doctor-owned candidate becomes a Doctor finding, while an eligible growth candidate becomes a `needs_decision` AI Opportunity in the user-visible Opportunities queue. Only acceptance of that Opportunity creates a Growth Action or, for scope that materially creates or refreshes content, a Content Brief.
 
 This PRD resolves metadata routing as follows:
 
@@ -352,10 +348,10 @@ Removing Topic cards must not remove scheduling.
 
 V1 decision:
 
-- Opportunity-linked Topics follow the normal Content Brief lifecycle. Their cards/drawers support view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through the linked Content Brief.
-- Source-less legacy Topics remain in the labeled compatibility surface. Existing records continue to support view/edit, cancel/reschedule, draft/generate, and archive/dismiss.
+- Provenance-complete current Topics follow the normal Content Brief lifecycle. They require an accepted AI-generated Opportunity and the complete source Opportunity/action, AI provenance, acceptance/approval, and applicable internal Topic relationships; their cards/drawers support view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through the Content Brief.
+- Pre-boundary or provenance-incomplete Topics remain in the labeled compatibility surface, including records with a source link but missing any required current-work provenance. Existing records continue to support view/edit, cancel/reschedule, draft/generate, and archive/dismiss.
 - Every legacy operation mutates or advances only the existing Topic. It cannot create, clone, backfill, migrate, or seed another Topic, Opportunity, Content Action, or Content Brief.
-- The scheduler can continue to use Topic internally, but the user-facing object for Opportunity-linked current work is the Content Brief; source-less records remain explicitly historical.
+- The scheduler can continue to use Topic internally, but the user-facing object for provenance-complete current work is the Content Brief; every pre-boundary or provenance-incomplete record remains explicitly legacy.
 
 ### 11.6 New-Work Source Boundary
 
@@ -365,9 +361,9 @@ V1 decision:
 
 - Every newly created Content Brief must have an accepted AI-generated source Opportunity whose scope materially creates or refreshes content.
 - Content Plan exposes no Topic, Opportunity, or Content Brief creation form or API contract.
-- The only new-work CTA from Content Plan opens Opportunities; only acceptance of a material-content Opportunity can create the Brief that returns to Content Plan.
-- A user-triggered AI Opportunity Finding run is allowed, but it creates AI-generated candidates in Opportunities rather than creating a Content Brief directly.
-- Historical source-less Topics remain available through legacy compatibility only and cannot be copied, converted, or reused to seed future Content Briefs.
+- The only new-work CTA from Content Plan opens Opportunities; only acceptance of a `needs_decision` AI Opportunity whose scope materially creates or refreshes content can create the Brief that returns to Content Plan.
+- A user-triggered AI Opportunity Finding run is allowed, but it creates only internal candidates. A candidate is never shown in Opportunities; ownership arbitration must first convert an eligible growth candidate into a `needs_decision` AI Opportunity, whose acceptance then creates a Growth Action or eligible Content Brief.
+- Pre-boundary or provenance-incomplete Topics remain available through legacy compatibility only and cannot be copied, converted, or reused to seed future Content Briefs, even when they already have an Opportunity, Content Action, or Topic link.
 - If the backend needs a Topic for an Opportunity-derived Content Brief, it creates that Topic internally after the Content Brief exists.
 
 ## 12. Lifecycle Labels
@@ -476,15 +472,15 @@ Known code risks to cover:
 
 ### 15.4 Legacy Topic Compatibility (No Migration)
 
-The source-boundary rollout preserves existing records without turning source-less history into current-source Content Briefs:
+The source-boundary rollout classifies records by complete provenance, not by the presence of a link alone. A current Content Brief requires an accepted AI-generated Opportunity plus source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists. Any pre-boundary record missing one of those required relationships is legacy compatibility, even if it already has an Opportunity, Content Action, or Topic link.
 
 | Topic class | User-facing surface | Allowed operations on the existing record | Forbidden operations |
 | --- | --- | --- | --- |
-| Opportunity-linked Topic | Linked Content Brief and normal lifecycle surfaces | View/edit; schedule, cancel, reschedule; draft/generate; archive/dismiss; Sent to Review handoff | Independent manual creation or clone; severing or replacing source provenance |
-| Source-less legacy Topic | Clearly labeled legacy compatibility surface | View/edit; cancel/reschedule; draft/generate; archive/dismiss | Create or clone a record; backfill, convert, or migrate it into a Content Brief; seed any new Topic, Opportunity, Content Action, or Content Brief |
+| Provenance-complete current Topic/Brief | Linked Content Brief and normal lifecycle surfaces | View/edit; schedule, cancel, reschedule; draft/generate; archive/dismiss; Sent to Review handoff | Independent manual creation or clone; severing or replacing source provenance |
+| Pre-boundary or provenance-incomplete Topic, including source-less and partially linked records | Clearly labeled legacy compatibility surface | View/edit; cancel/reschedule; draft/generate; archive/dismiss | Create or clone a record; backfill, convert, or migrate it into a current Content Brief; seed any new Topic, Opportunity, Content Action, or Content Brief |
 
 - Allowed legacy operations advance only the existing Topic and do not make it a current new-work source.
-- Source-less legacy Topics are excluded from current-source Content Brief counts and source-integrity metrics.
+- All pre-boundary or provenance-incomplete Topics are excluded from current-source Content Brief counts and source-integrity metrics, whether they are source-less or partially linked.
 
 The compatibility layer can continue to read the existing `topic.channel` values `blog`, `syndication`, and `both`; this does not authorize a new Topic entry point.
 
@@ -492,12 +488,13 @@ The compatibility layer can continue to read the existing `topic.channel` values
 
 When automation is on:
 
-1. An AI-generated candidate passes ownership arbitration.
-2. Immediately verifiable work enters Doctor and creates a Site Fix; it does not continue through this Content Plan flow.
-3. A content-producing Growth candidate enters Opportunities and is accepted.
-4. The accepted Opportunity creates a Content Brief in Content Plan with durable source provenance.
-5. AI assigns a recommended publish strategy.
-6. Automation drafts content using the saved recommendation unless the user overrides it before automation runs.
+1. A run creates an internal candidate that is not user-visible.
+2. Ownership arbitration runs before product-object creation.
+3. Doctor-owned work becomes a Doctor finding and enters the Doctor queue; it does not continue through this Content Plan flow.
+4. An eligible growth candidate becomes a `needs_decision` AI Opportunity in Opportunities.
+5. Acceptance creates a Growth Action or, when the scope materially creates or refreshes content, a provenance-complete Content Brief.
+6. AI assigns a recommended publish strategy to the Content Brief.
+7. Automation drafts content using the saved recommendation unless the user overrides it before automation runs.
 
 Race-condition decision:
 
@@ -589,9 +586,9 @@ The drawer should not explain backend concepts. It should help the user decide w
 - Scheduled content generation no longer hardcodes `blog` in the scheduler path.
 - Doctor findings and Site Fixes do not appear as Content Briefs.
 - Review handoff still works after drafting.
-- Opportunity-linked Topics retain their normal view/edit, scheduling, generation, and archive/dismiss lifecycle through the linked Content Brief.
-- Source-less legacy Topics retain view/edit, cancel/reschedule, draft/generate, and archive/dismiss on the existing record, but cannot be created, cloned, backfilled, migrated, or used to seed future work.
-- A user-triggered AI Opportunity Finding run creates AI-generated candidates in Opportunities and does not bypass acceptance.
+- Provenance-complete current Topics retain their normal view/edit, scheduling, generation, and archive/dismiss lifecycle through the Content Brief.
+- Pre-boundary or provenance-incomplete Topics—including source-less and partially linked records—retain view/edit, cancel/reschedule, draft/generate, and archive/dismiss on the existing record, but cannot be created, cloned, backfilled, migrated, or used to seed future work.
+- A user-triggered AI Opportunity Finding run creates only non-user-visible internal candidates; arbitration must create a `needs_decision` AI Opportunity before acceptance can create a Growth Action or eligible Content Brief.
 - Existing generated content remains accessible and is not deleted by this UI simplification.
 
 ## 20. Test Plan
@@ -600,6 +597,7 @@ The drawer should not explain backend concepts. It should help the user decide w
 
 - Accept an AI-generated content Opportunity and confirm it appears in Content Plan as a Content Brief with source provenance.
 - Confirm that the Brief resolves source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, acceptance timestamp/approval source, and internal Topic linkage when present.
+- Trigger an AI Opportunity Finding run and confirm its internal candidate is not user-visible; after arbitration, an eligible growth candidate appears as a `needs_decision` AI Opportunity, while Doctor-owned work appears only as a Doctor finding in Doctor.
 - Run Doctor against a pure mechanical metadata issue and confirm the Doctor finding creates a Site Fix without creating an Opportunity or Content Brief.
 - Confirm an immediately verifiable link patch creates a Doctor Site Fix, while a measured pure link strategy creates an Opportunities Growth Action; neither creates a Content Brief.
 - Accept an AI-generated editorial metadata/page refresh Opportunity and confirm it appears in Content Plan.
@@ -612,14 +610,14 @@ The drawer should not explain backend concepts. It should help the user decide w
 
 ### 20.2 Regression Tests
 
-- Existing accepted content actions still load.
+- Existing accepted content actions still load in either the current or legacy surface according to provenance completeness.
 - Existing Topic-backed drafts still appear in Review or editor surfaces.
-- Opportunity-linked Topics retain view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through normal lifecycle surfaces.
-- A source-less legacy Topic retains view/edit, cancel/reschedule, draft/generate, and archive/dismiss through the compatibility surface.
+- Provenance-complete current Topics retain view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through normal lifecycle surfaces.
+- A pre-boundary or provenance-incomplete Topic, including a partially linked record, retains view/edit, cancel/reschedule, draft/generate, and archive/dismiss through the compatibility surface.
 - Auto workflow can still draft content.
 - Content Plan has no manual Topic, Opportunity, or Content Brief creation entry point.
-- A user-triggered AI Opportunity Finding run produces an AI-generated Opportunity; only acceptance of a candidate whose scope materially creates or refreshes content creates the downstream Content Brief.
-- A historical source-less Topic cannot be created, cloned, backfilled, migrated, or used to seed another Topic, Opportunity, Content Action, or Content Brief.
+- A user-triggered AI Opportunity Finding run produces only an internal candidate; only arbitration may create a `needs_decision` AI Opportunity, and only acceptance creates a Growth Action or eligible Content Brief.
+- A pre-boundary or provenance-incomplete Topic cannot be created, cloned, backfilled, migrated, or used to seed another Topic, Opportunity, Content Action, or Content Brief.
 - Non-content actions cannot trigger content generation.
 
 ### 20.3 Contract Tests To Update
@@ -639,9 +637,9 @@ Recommended rollout:
 2. Add or map Content Brief publish strategy fields and defaults.
 3. Add the split metadata routing rule.
 4. Update contract tests to match the new routing and handoff rules.
-5. Backfill existing accepted content actions with a publish strategy recommendation.
-6. Render linked Topics through their Opportunity-derived Content Briefs without rewriting source provenance.
-7. Preserve the Section 15.4 operation matrix for linked and source-less historical Topics without creating or migrating records.
+5. Add a publish strategy recommendation only to already provenance-complete current actions; do not promote incomplete records into current work.
+6. Render provenance-complete current Topics through their Opportunity-derived Content Briefs without rewriting source provenance.
+7. Preserve the Section 15.4 operation matrix for all pre-boundary or provenance-incomplete Topics, including source-less and partially linked records, without creating or migrating records.
 8. Add Publish to selector to the Content Brief drawer.
 9. Update draft generation to use selected publish strategy.
 10. Fix both known `Channel: "blog"` hardcoded opportunity/scheduler paths.
@@ -660,7 +658,7 @@ Recommended rollout:
 - Auto mode may draft with the AI recommendation before a user override.
 - Content Plan must keep Sent to Review handoff cards.
 - Every newly created Content Brief must come from an accepted AI-generated Opportunity whose scope materially creates or refreshes content; Content Plan has no manual creation path.
-- Opportunity-linked Topics use the normal Content Brief lifecycle, while source-less Topics retain exactly the existing-record compatibility operations in Section 15.4.
+- Provenance-complete current Topics use the normal Content Brief lifecycle, while every pre-boundary or provenance-incomplete Topic—including source-less and partially linked records—retains exactly the existing-record compatibility operations in Section 15.4.
 
 ## 23. Open Questions
 
