@@ -227,9 +227,17 @@ test("Site Fix client refreshes stored readiness but polling stays list-only", a
   assert.doesNotMatch(pollSource, /setError\(/, "background poll failures must stay silent");
   assert.match(source, /window\.setInterval/);
   assert.match(source, /window\.clearInterval/);
-  assert.match(source, /err\?\.status === 409/);
-  assert.match(source, /await refresh\(\)/);
-  assert.match(source, /await pollSiteFixes\(\)/);
+  const reconcileStart = source.indexOf("const reconcileAfterMutationFailure = useCallback");
+  const reconcileEnd = source.indexOf("const pollSelectedFix", reconcileStart);
+  const reconcileSource = source.slice(reconcileStart, reconcileEnd);
+  assert.notEqual(reconcileStart, -1);
+  assert.match(reconcileSource, /await refresh\(\)/, "every failed PR mutation must reload fixes and stored readiness");
+  assert.doesNotMatch(reconcileSource, /err\?\.status|pollSiteFixes/, "failed PR mutations must not leave persisted readiness stale");
+  assert.equal(
+    (source.match(/await reconcileAfterMutationFailure\(\)/g) ?? []).length,
+    2,
+    "both approve and apply failure paths must run the full reconciliation",
+  );
 });
 
 test("Site Fix client exposes guarded PR progress without a manual-apply success path", async () => {

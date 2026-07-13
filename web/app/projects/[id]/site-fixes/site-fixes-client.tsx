@@ -274,13 +274,9 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
     }
   }, [api, projectId]);
 
-  const reconcileAfterMutationFailure = useCallback(async (err: any) => {
-    if (err?.status === 409) {
-      await refresh();
-      return;
-    }
-    await pollSiteFixes();
-  }, [pollSiteFixes, refresh]);
+  const reconcileAfterMutationFailure = useCallback(async () => {
+    await refresh();
+  }, [refresh]);
 
   const pollSelectedFix = shouldPollSiteFixLifecycle({ drawerOpen: Boolean(selected), fix: selected });
   useEffect(() => {
@@ -320,7 +316,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
         detail: result.application.github_pr_url ? "Review and merge the pull request, then wait for deployment." : "Pull request creation is in progress.",
       });
     } catch (err: any) {
-      await reconcileAfterMutationFailure(err);
+      await reconcileAfterMutationFailure();
       notify({ tone: "red", title: "Could not approve fix", detail: err?.apiMessage || err?.message });
     } finally {
       setBusy(null);
@@ -339,7 +335,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
         detail: result.application.github_pr_url ? "Review and merge the pull request, then wait for deployment." : "Repository preparation is in progress.",
       });
     } catch (err: any) {
-      await reconcileAfterMutationFailure(err);
+      await reconcileAfterMutationFailure();
       notify({ tone: "red", title: retrying ? "Could not retry PR creation" : "Could not create repair PR", detail: err?.apiMessage || err?.message });
     } finally {
       setBusy(null);
