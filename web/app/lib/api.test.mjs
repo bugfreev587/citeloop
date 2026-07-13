@@ -1071,6 +1071,7 @@ test("topic mutation APIs omit manual creation and keep project scoped update op
     const client = createApi();
 
     assert.equal(client.createTopic, undefined);
+    assert.equal(client.runStrategist, undefined);
     await client.updateTopic("project-1", "topic-1", { title: "Updated topic", priority: 3 });
     await client.scheduleTopic("project-1", "topic-1", "2026-06-10T09:00:00.000Z");
     await client.archiveTopic("project-1", "topic-1");
