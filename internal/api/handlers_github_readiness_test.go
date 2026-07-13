@@ -192,6 +192,118 @@ func TestGitHubPRReadinessPOSTUsesAppGrantsChecksExactTargetAndPersistsRedactedS
 	}
 }
 
+func TestGitHubPRReadinessPOSTNormalizesOmittedBranchBeforeProbeAndPersistence(t *testing.T) {
+	projectID := uuid.New()
+	checkedAt := time.Date(2026, 7, 13, 9, 15, 0, 0, time.UTC)
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessNotChecked,
+		`{"repo":" acme/site ","base_url":"https://staging.unipost.dev/blog","installation_id":" 12345 "}`,
+		nil,
+		nil,
+	)
+	normalized, err := publisher.ParseGitHubNextJSConfig(connection.Config)
+	if err != nil {
+		t.Fatalf("test fixture must be a valid GitHub publisher config: %v", err)
+	}
+	if normalized.Branch != "staging" {
+		t.Fatalf("test fixture branch = %q, want parser-derived staging", normalized.Branch)
+	}
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	store.set = func(params db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+		updated := connection
+		updated.PrReadinessStatus = params.PrReadinessStatus
+		updated.PrReadinessCheckedAt = params.PrReadinessCheckedAt
+		updated.PrReadinessDetail = params.PrReadinessDetail
+		store.getResults = append(store.getResults, fakeGitHubPRReadinessStoreResult{connection: updated})
+		return updated, nil
+	}
+	app := &fakeGitHubAppClient{
+		configured: true,
+		access: githubapp.InstallationAccess{
+			Token:       "installation-secret",
+			Permissions: map[string]string{"contents": "write", "pull_requests": "write"},
+		},
+	}
+	var requestPaths []string
+	client := &http.Client{Transport: apiGitHubReadinessRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestPaths = append(requestPaths, req.URL.EscapedPath())
+		switch req.URL.EscapedPath() {
+		case "/repos/acme/site":
+			return apiGitHubReadinessResponse(req, http.StatusOK, `{"full_name":"acme/site"}`), nil
+		case "/repos/acme/site/git/ref/heads/" + normalized.Branch:
+			return apiGitHubReadinessResponse(req, http.StatusOK, `{"ref":"refs/heads/staging","object":{"sha":"base-sha"}}`), nil
+		default:
+			t.Fatalf("unexpected probe path %q", req.URL.EscapedPath())
+			return nil, nil
+		}
+	})}
+	server := &Server{
+		githubReadinessStore:      store,
+		githubAppClient:           app,
+		githubReadinessHTTPClient: client,
+		githubReadinessAPIBase:    "https://github.example",
+		githubReadinessNow:        func() time.Time { return checkedAt },
+	}
+	capturingChecker := &capturingGitHubPRReadinessChecker{delegate: serverGitHubPRReadinessChecker{server: server}}
+	server.githubReadinessChecker = capturingChecker
+
+	postResponse := httptest.NewRecorder()
+	server.Router().ServeHTTP(postResponse, httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+projectID.String()+"/integrations/github/pr-readiness/check",
+		nil,
+	))
+
+	if postResponse.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, body = %s", postResponse.Code, postResponse.Body.String())
+	}
+	if got, want := requestPaths, []string{"/repos/acme/site", "/repos/acme/site/git/ref/heads/" + normalized.Branch}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("probe paths = %#v, want %#v", got, want)
+	}
+	if capturingChecker.target.ConnectionID != connection.ID || capturingChecker.target.ExpectedUpdatedAt != connection.UpdatedAt || capturingChecker.target.Repo != normalized.Repo || capturingChecker.target.Branch != normalized.Branch {
+		t.Fatalf("checked target = %#v, want %s@%s with original identity/version", capturingChecker.target, normalized.Repo, normalized.Branch)
+	}
+	if app.gotInstallationID != "12345" {
+		t.Fatalf("installation id = %q, want trimmed raw installation", app.gotInstallationID)
+	}
+	if store.setCalls != 1 {
+		t.Fatalf("readiness set calls = %d", store.setCalls)
+	}
+	params := store.setParams[0]
+	if params.ConnectionID != connection.ID || params.ProjectID != projectID || params.ExpectedUpdatedAt != connection.UpdatedAt || params.PrReadinessStatus != string(publisher.GitHubPRReadinessReady) {
+		t.Fatalf("CAS params = %#v", params)
+	}
+	var posted publisher.GitHubPRReadiness
+	if err := json.NewDecoder(postResponse.Body).Decode(&posted); err != nil {
+		t.Fatal(err)
+	}
+	if posted.Status != publisher.GitHubPRReadinessReady || posted.Repo != normalized.Repo || posted.Branch != normalized.Branch {
+		t.Fatalf("POST readiness = %#v", posted)
+	}
+
+	appCallCount := len(app.calls)
+	getResponse := httptest.NewRecorder()
+	server.Router().ServeHTTP(getResponse, httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+projectID.String()+"/integrations/github/pr-readiness",
+		nil,
+	))
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", getResponse.Code, getResponse.Body.String())
+	}
+	var persisted publisher.GitHubPRReadiness
+	if err := json.NewDecoder(getResponse.Body).Decode(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != publisher.GitHubPRReadinessReady || persisted.Repo != normalized.Repo || persisted.Branch != normalized.Branch {
+		t.Fatalf("persisted readiness = %#v", persisted)
+	}
+	if len(app.calls) != appCallCount {
+		t.Fatalf("stored GET invoked GitHub App: before=%d after=%d", appCallCount, len(app.calls))
+	}
+}
+
 func TestGitHubPRReadinessPOSTReloadsNewerStateWhenCASLoses(t *testing.T) {
 	projectID := uuid.New()
 	staleUpdatedAt := pgtype.Timestamptz{Time: time.Date(2026, 7, 12, 20, 0, 0, 0, time.UTC), Valid: true}
@@ -406,6 +518,18 @@ type fakeGitHubPRReadinessChecker struct {
 	target    githubPRReadinessTarget
 	err       error
 	calls     int
+}
+
+type capturingGitHubPRReadinessChecker struct {
+	delegate  githubPRReadinessChecker
+	readiness publisher.GitHubPRReadiness
+	target    githubPRReadinessTarget
+	err       error
+}
+
+func (c *capturingGitHubPRReadinessChecker) Check(ctx context.Context, projectID uuid.UUID) (publisher.GitHubPRReadiness, githubPRReadinessTarget, error) {
+	c.readiness, c.target, c.err = c.delegate.Check(ctx, projectID)
+	return c.readiness, c.target, c.err
 }
 
 func (f *fakeGitHubPRReadinessChecker) Check(context.Context, uuid.UUID) (publisher.GitHubPRReadiness, githubPRReadinessTarget, error) {

@@ -143,6 +143,11 @@ func (c serverGitHubPRReadinessChecker) Check(ctx context.Context, projectID uui
 		Repo:              strings.TrimSpace(rawConfig.Repo),
 		Branch:            strings.TrimSpace(rawConfig.Branch),
 	}
+	config, configErr := publisher.ParseGitHubNextJSConfig(connection.Config)
+	if configErr == nil {
+		target.Repo = config.Repo
+		target.Branch = config.Branch
+	}
 	if connection.Kind != publisher.ConnectionKindGitHubNextJS || !connection.IsDefault || connection.Status != "connected" || !connection.Enabled || connection.RevokedAt.Valid {
 		return controlledGitHubPRReadiness(publisher.GitHubPRReadiness{
 			Status: publisher.GitHubPRReadinessNotConnected,
@@ -150,15 +155,7 @@ func (c serverGitHubPRReadinessChecker) Check(ctx context.Context, projectID uui
 			Branch: target.Branch,
 		}), target, nil
 	}
-	if target.Repo == "" || target.Branch == "" || strings.TrimSpace(rawConfig.BaseURL) == "" {
-		return controlledGitHubPRReadiness(publisher.GitHubPRReadiness{
-			Status: publisher.GitHubPRReadinessRepositoryUnavailable,
-			Repo:   target.Repo,
-			Branch: target.Branch,
-		}), target, nil
-	}
-	config, err := publisher.ParseGitHubNextJSConfig(connection.Config)
-	if err != nil || config.Repo != target.Repo || config.Branch != target.Branch {
+	if configErr != nil {
 		return controlledGitHubPRReadiness(publisher.GitHubPRReadiness{
 			Status: publisher.GitHubPRReadinessRepositoryUnavailable,
 			Repo:   target.Repo,
@@ -240,11 +237,17 @@ func (s *Server) gitHubPRReadinessTime() time.Time {
 }
 
 func githubPRReadinessFromConnection(connection db.PublisherConnection) publisher.GitHubPRReadiness {
-	config := parseGithubConnConfig(connection.Config)
+	rawConfig := parseGithubConnConfig(connection.Config)
+	repo := strings.TrimSpace(rawConfig.Repo)
+	branch := strings.TrimSpace(rawConfig.Branch)
+	if config, err := publisher.ParseGitHubNextJSConfig(connection.Config); err == nil {
+		repo = config.Repo
+		branch = config.Branch
+	}
 	readiness := controlledGitHubPRReadiness(publisher.GitHubPRReadiness{
 		Status: publisher.GitHubPRReadinessStatus(connection.PrReadinessStatus),
-		Repo:   strings.TrimSpace(config.Repo),
-		Branch: strings.TrimSpace(config.Branch),
+		Repo:   repo,
+		Branch: branch,
 	})
 	if connection.PrReadinessCheckedAt.Valid {
 		checkedAt := connection.PrReadinessCheckedAt.Time.UTC()
