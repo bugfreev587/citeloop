@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
   AutopilotReadiness,
@@ -28,6 +28,10 @@ import {
 import { normalizeNumeric } from "../../../lib/normalize";
 import { readinessGateActionFor } from "../../../lib/automation-readiness";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
+import {
+  createGithubPRReadinessRefreshCoordinator,
+  GithubPRReadinessRefreshMode,
+} from "../../../lib/github-pr-readiness-refresh";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
@@ -568,7 +572,6 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [githubPRReadiness, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
   const [githubReadinessBusy, setGithubReadinessBusy] = useState<"checking" | null>(null);
   const [githubReadinessError, setGithubReadinessError] = useState<string | null>(null);
-  const githubReadinessInFlightRef = useRef<Promise<GithubPRReadiness | null> | null>(null);
   const githubReadinessMountedRef = useRef(false);
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
@@ -758,38 +761,38 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
   }, [refreshGithubIntegration, refreshPublisherConnections]);
 
-  const refreshGithubPRReadiness = useCallback((): Promise<GithubPRReadiness | null> => {
-    if (githubReadinessInFlightRef.current) return githubReadinessInFlightRef.current;
-
+  const runGithubPRReadinessCheck = useCallback(async (): Promise<GithubPRReadiness | null> => {
     if (githubReadinessMountedRef.current) {
       setGithubReadinessBusy("checking");
       setGithubReadinessError(null);
     }
-    const request = api
-      .checkGithubPRReadiness(projectId)
-      .then((nextReadiness) => {
-        if (githubReadinessMountedRef.current) {
-          setGithubPRReadiness(nextReadiness);
-        }
-        return nextReadiness;
-      })
-      .catch(() => {
-        if (githubReadinessMountedRef.current) {
-          setGithubReadinessError("We couldn't check GitHub readiness. Review the connection and try again.");
-        }
-        return null;
-      })
-      .finally(() => {
-        if (githubReadinessInFlightRef.current === request) {
-          githubReadinessInFlightRef.current = null;
-        }
-        if (githubReadinessMountedRef.current) {
-          setGithubReadinessBusy(null);
-        }
-      });
-    githubReadinessInFlightRef.current = request;
-    return request;
+    try {
+      const nextReadiness = await api.checkGithubPRReadiness(projectId);
+      if (githubReadinessMountedRef.current) {
+        setGithubPRReadiness(nextReadiness);
+      }
+      return nextReadiness;
+    } catch {
+      if (githubReadinessMountedRef.current) {
+        setGithubReadinessError("We couldn't check GitHub readiness. Review the connection and try again.");
+      }
+      return null;
+    } finally {
+      if (githubReadinessMountedRef.current) {
+        setGithubReadinessBusy(null);
+      }
+    }
   }, [api, projectId]);
+
+  const githubReadinessRefreshCoordinator = useMemo(
+    () => createGithubPRReadinessRefreshCoordinator(runGithubPRReadinessCheck),
+    [runGithubPRReadinessCheck],
+  );
+
+  const refreshGithubPRReadiness = useCallback(
+    (mode: GithubPRReadinessRefreshMode = "normal") => githubReadinessRefreshCoordinator.request(mode),
+    [githubReadinessRefreshCoordinator],
+  );
 
   useEffect(() => {
     if (activeSettingsTab !== "publisher") return;
@@ -1144,7 +1147,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
         return [saved, ...rest];
       });
-      await refreshGithubPRReadiness();
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher connection saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1172,7 +1175,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       });
       setPublisherCredentialDraft("");
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
-      await refreshGithubPRReadiness();
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1188,7 +1191,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const saved = await api.revokePublisherCredential(projectId, githubPublisher.id);
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
-      await refreshGithubPRReadiness();
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher credential revoked", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential revoke failed", detail: e.message, tone: "red" });
@@ -1393,7 +1396,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const tested = await api.testPublisherConnection(projectId, connectionID);
       setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
-      await refreshGithubPRReadiness();
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher connection verified", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher test failed", detail: e.message, tone: "red" });
@@ -1410,7 +1413,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
       setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
       if (enabled) {
-        if (connection.kind === "github_nextjs") await refreshGithubPRReadiness();
+        if (connection.kind === "github_nextjs") await refreshGithubPRReadiness("after-mutation");
       }
       setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });
     } catch (e: any) {

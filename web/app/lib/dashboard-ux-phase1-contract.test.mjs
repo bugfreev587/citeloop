@@ -755,6 +755,8 @@ test("publisher settings own live GitHub PR readiness checks and render every st
   assert.match(settings, /const \[githubPRReadiness, setGithubPRReadiness\]/);
   assert.match(settings, /const \[githubReadinessBusy, setGithubReadinessBusy\] = useState<"checking" \| null>\(null\)/);
   assert.match(settings, /const \[githubReadinessError, setGithubReadinessError\]/);
+  assert.match(settings, /createGithubPRReadinessRefreshCoordinator/);
+  assert.match(settings, /const githubReadinessRefreshCoordinator = useMemo/);
   assert.match(settings, /const refreshGithubPRReadiness = useCallback/);
   assert.match(settings, /api\s*\.checkGithubPRReadiness\(projectId\)/);
   assert.match(settings, /aria-live="polite"/);
@@ -781,12 +783,14 @@ test("GitHub PR readiness refreshes on Publisher entry and successful GitHub mut
   const savePublisher = settings.slice(settings.indexOf("async function savePublisherConnection"), settings.indexOf("async function savePublisherCredential"));
   const saveCredential = settings.slice(settings.indexOf("async function savePublisherCredential"), settings.indexOf("async function revokePublisherCredential"));
   const revokeCredential = settings.slice(settings.indexOf("async function revokePublisherCredential"), settings.indexOf("async function saveDevToConnection"));
+  const testPublisher = settings.slice(settings.indexOf("async function testPublisherConnection"), settings.indexOf("async function setPublisherConnectionEnabled"));
   const toggleConnection = settings.slice(settings.indexOf("async function setPublisherConnectionEnabled"), settings.indexOf("async function retryDelivery"));
 
-  assert.match(savePublisher, /await refreshGithubPRReadiness\(\)/);
-  assert.match(saveCredential, /await refreshGithubPRReadiness\(\)/);
-  assert.match(revokeCredential, /await refreshGithubPRReadiness\(\)/);
-  assert.match(toggleConnection, /if \(enabled\)[\s\S]*await refreshGithubPRReadiness\(\)/);
+  assert.match(savePublisher, /await refreshGithubPRReadiness\("after-mutation"\)/);
+  assert.match(saveCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
+  assert.match(revokeCredential, /await refreshGithubPRReadiness\("after-mutation"\)/);
+  assert.match(testPublisher, /await refreshGithubPRReadiness\("after-mutation"\)/);
+  assert.match(toggleConnection, /if \(enabled\)[\s\S]*await refreshGithubPRReadiness\("after-mutation"\)/);
 });
 
 test("context profile editors collapse after saving", () => {
