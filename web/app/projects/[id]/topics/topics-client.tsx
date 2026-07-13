@@ -83,18 +83,6 @@ function draftFromTopic(topic: Topic): TopicDraft {
   };
 }
 
-function defaultContentBriefDraft(): TopicDraft {
-  return {
-    channel: "blog",
-    title: "",
-    target_keyword: "",
-    target_prompt: "",
-    angle: "",
-    format: "article",
-    priority: "5",
-  };
-}
-
 function topicPriorityLabel(priority: number) {
   const normalized = normalizedTopicPriority(priority);
   if (normalized === 0) return "Needs priority";
@@ -240,9 +228,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [publishStrategyDrafts, setPublishStrategyDrafts] = useState<Record<string, ContentPlanPublishStrategy>>({});
-  const [newBriefOpen, setNewBriefOpen] = useState(false);
   const [recentDraftsDrawerOpen, setRecentDraftsDrawerOpen] = useState(false);
-  const [newBriefDraft, setNewBriefDraft] = useState<TopicDraft>(() => defaultContentBriefDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -553,35 +539,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       setMessage({ title: "Content brief saved", detail: updated.title, tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Save failed", detail: e.message, tone: "red" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function createManualBrief() {
-    const title = newBriefDraft.title.trim();
-    if (!title) return;
-    const priority = Number.parseInt(newBriefDraft.priority, 10);
-    setBusy("new-content-brief");
-    setMessage(null);
-    try {
-      const created = await api.createTopic(projectId, {
-        channel: newBriefDraft.channel,
-        title,
-        target_keyword: newBriefDraft.target_keyword,
-        target_prompt: newBriefDraft.target_prompt,
-        angle: newBriefDraft.angle,
-        format: newBriefDraft.format || "article",
-        priority: Number.isFinite(priority) ? priority : 5,
-        internal_links: [],
-      });
-      setTopics((current) => [created, ...current]);
-      setScheduleDrafts((current) => ({ ...current, [created.id]: toDateTimeLocal(created.scheduled_at) }));
-      setNewBriefDraft(defaultContentBriefDraft());
-      setNewBriefOpen(false);
-      setMessage({ title: "Content brief created", detail: created.title, tone: "green" });
-    } catch (e: any) {
-      setMessage({ title: "Create brief failed", detail: e.message, tone: "red" });
     } finally {
       setBusy(null);
     }
@@ -952,10 +909,6 @@ export function TopicsClient({ projectId }: { projectId: string }) {
           action={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Badge tone="green">{acceptedPlanActions.length + legacyBriefTopics.length}</Badge>
-              <Button size="sm" variant="outline" onClick={() => setNewBriefOpen((open) => !open)}>
-                <Pencil size={14} />
-                New Content Brief
-              </Button>
               <Button
                 data-content-plan-recent-drawer-trigger
                 size="sm"
@@ -975,97 +928,10 @@ export function TopicsClient({ projectId }: { projectId: string }) {
             </div>
           }
         />
-        {newBriefOpen && (
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid gap-3 lg:grid-cols-[minmax(120px,160px)_minmax(0,1fr)_minmax(96px,120px)]">
-              <Field label="Publish to">
-                <select
-                  value={newBriefDraft.channel}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, channel: event.target.value })}
-                  className="h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700"
-                >
-                  {PUBLISH_STRATEGIES.map((strategy) => (
-                    <option key={strategy} value={strategy}>
-                      {publishStrategyLabel(strategy)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Title">
-                <TextInput
-                  className="min-w-0"
-                  value={newBriefDraft.title}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, title: event.target.value })}
-                />
-              </Field>
-              <Field label="Priority">
-                <TextInput
-                  className="min-w-0"
-                  type="number"
-                  value={newBriefDraft.priority}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, priority: event.target.value })}
-                />
-              </Field>
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <Field label="Target keyword">
-                <TextInput
-                  className="min-w-0"
-                  value={newBriefDraft.target_keyword}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, target_keyword: event.target.value })}
-                />
-              </Field>
-              <Field label="Format">
-                <TextInput
-                  className="min-w-0"
-                  value={newBriefDraft.format}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, format: event.target.value })}
-                />
-              </Field>
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <Field label="Angle">
-                <TextArea
-                  className="min-w-0"
-                  rows={3}
-                  value={newBriefDraft.angle}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, angle: event.target.value })}
-                />
-              </Field>
-              <Field label="Target prompt">
-                <TextArea
-                  className="min-w-0"
-                  rows={3}
-                  value={newBriefDraft.target_prompt}
-                  onChange={(event) => setNewBriefDraft({ ...newBriefDraft, target_prompt: event.target.value })}
-                />
-              </Field>
-            </div>
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <Button
-                disabled={busy === "new-content-brief"}
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setNewBriefDraft(defaultContentBriefDraft());
-                  setNewBriefOpen(false);
-                }}
-              >
-                <X size={14} />
-                Cancel
-              </Button>
-              <Button disabled={busy === "new-content-brief" || !newBriefDraft.title.trim()} size="sm" variant="primary" onClick={createManualBrief}>
-                <ButtonProgress busy={busy === "new-content-brief"} busyLabel="Creating brief" idleIcon={<Check size={14} />}>
-                  Create
-                </ButtonProgress>
-              </Button>
-            </div>
-          </div>
-        )}
         {acceptedPlanActions.length === 0 ? (
           <EmptyState
             title="No content briefs yet"
-            detail="Accept content opportunities from the Opportunity Queue or create a new content brief."
+            detail="Accept AI-generated content opportunities from Opportunities to start planning."
           />
         ) : (
           <div data-content-plan-action-grid className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1124,7 +990,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
 
         {legacyBriefTopics.length > 0 && (
           <section className="space-y-3">
-            <SectionHeader title="Legacy content briefs" eyebrow="Scheduled or manually created briefs" action={<Badge tone="neutral">{legacyBriefTopics.length}</Badge>} />
+            <SectionHeader title="Legacy content briefs" eyebrow="Earlier briefs without an Opportunity link" action={<Badge tone="neutral">{legacyBriefTopics.length}</Badge>} />
             <div className={topicGridClass}>
               {legacyBriefTopics.map((topic) => {
                 const isGenerating = Boolean(generatingIds[topic.id]) || topic.status === "generating";

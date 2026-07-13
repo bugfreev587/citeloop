@@ -2086,7 +2086,7 @@ test("content plan presents content briefs without primary planned-topic chrome 
     "Content briefs",
     "Accepted content work",
     "Legacy content briefs",
-    "Scheduled or manually created briefs",
+    "Earlier briefs without an Opportunity link",
     "Recommended next",
     "Why this exists",
     "High priority",
