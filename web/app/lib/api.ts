@@ -290,10 +290,6 @@ export type TopicUpdateInput = {
   internal_links?: any[];
 };
 
-export type TopicCreateInput = TopicUpdateInput & {
-  scheduled_at?: string | null;
-};
-
 export type NotificationChannelKind = "slack_webhook" | "discord_webhook" | "email";
 
 export type NotificationChannel = {
@@ -2368,17 +2364,9 @@ export function createApi(auth?: AuthOptions) {
   },
   deleteInventory: (id: string, itemID: string) =>
     req<void>(`/projects/${id}/inventory/${itemID}`, { method: "DELETE" }, auth),
-  runStrategist: async (id: string) => {
-    const raw = await req<any[]>(`/projects/${id}/strategist`, { method: "POST" }, auth);
-    return arrayFrom(raw).map(normalizeTopic);
-  },
   listTopics: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/topics`, undefined, auth);
     return arrayFrom(raw).map(normalizeTopic);
-  },
-  createTopic: async (id: string, body: TopicCreateInput) => {
-    const raw = await req<any>(`/projects/${id}/topics`, { method: "POST", body: JSON.stringify(body) }, auth);
-    return normalizeTopic(raw);
   },
   updateTopic: async (id: string, topicID: string, body: TopicUpdateInput) => {
     const raw = await req<any>(`/projects/${id}/topics/${topicID}`, { method: "PUT", body: JSON.stringify(body) }, auth);

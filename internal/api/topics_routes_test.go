@@ -19,6 +19,7 @@ import (
 
 func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 	router := (&Server{}).Router()
+	projectID := uuid.NewString()
 
 	tests := []struct {
 		name   string
@@ -28,17 +29,22 @@ func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 		{
 			name:   "update topic",
 			method: http.MethodPut,
-			path:   "/api/projects/not-a-uuid/topics/not-a-topic",
+			path:   "/api/projects/" + projectID + "/topics/not-a-topic",
+		},
+		{
+			name:   "generate topic",
+			method: http.MethodPost,
+			path:   "/api/projects/" + projectID + "/topics/not-a-topic/generate",
 		},
 		{
 			name:   "schedule topic",
 			method: http.MethodPost,
-			path:   "/api/projects/not-a-uuid/topics/not-a-topic/schedule",
+			path:   "/api/projects/" + projectID + "/topics/not-a-topic/schedule",
 		},
 		{
 			name:   "archive topic",
 			method: http.MethodPost,
-			path:   "/api/projects/not-a-uuid/topics/not-a-topic/archive",
+			path:   "/api/projects/" + projectID + "/topics/not-a-topic/archive",
 		},
 	}
 
@@ -51,6 +57,32 @@ func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 				t.Fatalf("%s status = %d, want %d", tt.name, res.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestManualTopicCreationRouteIsNotRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/topics", nil)
+	res := httptest.NewRecorder()
+
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestStrategistRouteIsNotRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	projectID := uuid.NewString()
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/strategist", nil)
+	res := httptest.NewRecorder()
+
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNotFound)
 	}
 }
 

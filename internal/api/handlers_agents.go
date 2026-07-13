@@ -15,7 +15,6 @@ import (
 	"github.com/citeloop/citeloop/internal/platform"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/topicstate"
-	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -70,40 +69,6 @@ func (s *Server) runInsight(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// runStrategist produces the topic backlog (§5.2).
-func (s *Server) runStrategist(w http.ResponseWriter, r *http.Request) {
-	id, err := s.projectID(r)
-	if err != nil {
-		writeErr(w, 400, "bad project id")
-		return
-	}
-	cfg, err := s.projectConfig(r, id)
-	if err != nil {
-		writeErr(w, 404, "project not found")
-		return
-	}
-	ag := agents.NewStrategist(agents.Deps{Q: s.Q, LLM: s.LLM, Search: s.Search, AICalls: s.AICalls}, s.Log)
-	topics, err := ag.Run(r.Context(), id, cfg)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	// Auto-advance the new backlog into drafting instead of waiting for the cron.
-	// The dedupe key is anchored to the first created topic so re-running the
-	// strategist (which produces fresh topics) enqueues a fresh event, while an
-	// idempotent retry of the same run collapses onto the same key.
-	if len(topics) > 0 {
-		if err := s.enqueueWorkflowEvent(
-			r.Context(), id, workflow.EventContentPlanCreated, "topic", topics[0].ID,
-			workflowDedupeKey(workflow.EventContentPlanCreated, id, topics[0].ID),
-			map[string]any{"source": "strategist", "topic_count": len(topics)},
-		); err != nil {
-			s.Log.Warn("enqueue content_plan.created failed", "project", id, "err", err)
-		}
-	}
-	writeJSON(w, 200, emptySlice(topics))
-}
-
 func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 	id, err := s.projectID(r)
 	if err != nil {
@@ -132,95 +97,6 @@ func nullableTopicText(value string) *string {
 
 func validTopicChannel(value string) bool {
 	return value == "blog" || value == "syndication" || value == "both"
-}
-
-// createTopic keeps manual Content Brief creation available while Topic remains
-// the internal generation record.
-func (s *Server) createTopic(w http.ResponseWriter, r *http.Request) {
-	projectID, err := s.projectID(r)
-	if err != nil {
-		writeErr(w, 400, "bad project id")
-		return
-	}
-	var in struct {
-		Channel       string           `json:"channel"`
-		Title         string           `json:"title"`
-		TargetKeyword *string          `json:"target_keyword"`
-		TargetPrompt  *string          `json:"target_prompt"`
-		Angle         *string          `json:"angle"`
-		Format        *string          `json:"format"`
-		Priority      *int             `json:"priority"`
-		InternalLinks *json.RawMessage `json:"internal_links"`
-		ScheduledAt   *string          `json:"scheduled_at"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
-	channel := strings.TrimSpace(in.Channel)
-	if channel == "" {
-		channel = "blog"
-	}
-	if !validTopicChannel(channel) {
-		writeErr(w, 400, "invalid channel")
-		return
-	}
-	title := strings.TrimSpace(in.Title)
-	if title == "" {
-		writeErr(w, 400, "title required")
-		return
-	}
-	format := nullableTopicText("article")
-	if in.Format != nil {
-		format = nullableTopicText(*in.Format)
-	}
-	priority := int32(5)
-	if in.Priority != nil {
-		priority = int32(*in.Priority)
-	}
-	internalLinks := json.RawMessage(`[]`)
-	if in.InternalLinks != nil {
-		if len(*in.InternalLinks) == 0 || !json.Valid(*in.InternalLinks) {
-			writeErr(w, 400, "invalid internal_links")
-			return
-		}
-		internalLinks = *in.InternalLinks
-	}
-	scheduledAt, err := parseTopicSchedule(in.ScheduledAt)
-	if err != nil {
-		writeErr(w, 400, "scheduled_at must be RFC3339")
-		return
-	}
-	status := string(topicstate.StatusBacklog)
-	if scheduledAt.Valid {
-		status = string(topicstate.StatusScheduled)
-	}
-	topic, err := s.Q.CreateTopic(r.Context(), db.CreateTopicParams{
-		ProjectID:             projectID,
-		Channel:               channel,
-		Title:                 title,
-		TargetKeyword:         nullableTopicTextValue(in.TargetKeyword),
-		TargetPrompt:          nullableTopicTextValue(in.TargetPrompt),
-		Angle:                 nullableTopicTextValue(in.Angle),
-		Format:                format,
-		Priority:              priority,
-		InternalLinks:         internalLinks,
-		Status:                status,
-		ScheduledAt:           scheduledAt,
-		SourceContentActionID: pgtype.UUID{},
-	})
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, topic)
-}
-
-func nullableTopicTextValue(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	return nullableTopicText(*value)
 }
 
 // updateTopic allows the single operator to correct Strategist output before

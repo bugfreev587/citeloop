@@ -1073,7 +1073,7 @@ test("SEO APIs normalize null nested arrays from cold-start projects", async () 
   }
 });
 
-test("topic mutation APIs call project scoped endpoints", async () => {
+test("topic mutation APIs omit manual creation and keep project scoped update operations", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -1089,22 +1089,20 @@ test("topic mutation APIs call project scoped endpoints", async () => {
     const { createApi } = await loadApiModule();
     const client = createApi();
 
-    await client.createTopic("project-1", { title: "Manual brief", channel: "both", priority: 5 });
+    assert.equal(client.createTopic, undefined);
+    assert.equal(client.runStrategist, undefined);
     await client.updateTopic("project-1", "topic-1", { title: "Updated topic", priority: 3 });
     await client.scheduleTopic("project-1", "topic-1", "2026-06-10T09:00:00.000Z");
     await client.archiveTopic("project-1", "topic-1");
 
-    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/topics");
-    assert.equal(calls[0].init.method, "POST");
-    assert.deepEqual(JSON.parse(calls[0].init.body), { title: "Manual brief", channel: "both", priority: 5 });
-    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/topics/topic-1");
-    assert.equal(calls[1].init.method, "PUT");
-    assert.deepEqual(JSON.parse(calls[1].init.body), { title: "Updated topic", priority: 3 });
-    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/topics/topic-1/schedule");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/topics/topic-1");
+    assert.equal(calls[0].init.method, "PUT");
+    assert.deepEqual(JSON.parse(calls[0].init.body), { title: "Updated topic", priority: 3 });
+    assert.equal(calls[1].url, "https://api.example.test/api/projects/project-1/topics/topic-1/schedule");
+    assert.equal(calls[1].init.method, "POST");
+    assert.deepEqual(JSON.parse(calls[1].init.body), { scheduled_at: "2026-06-10T09:00:00.000Z" });
+    assert.equal(calls[2].url, "https://api.example.test/api/projects/project-1/topics/topic-1/archive");
     assert.equal(calls[2].init.method, "POST");
-    assert.deepEqual(JSON.parse(calls[2].init.body), { scheduled_at: "2026-06-10T09:00:00.000Z" });
-    assert.equal(calls[3].url, "https://api.example.test/api/projects/project-1/topics/topic-1/archive");
-    assert.equal(calls[3].init.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

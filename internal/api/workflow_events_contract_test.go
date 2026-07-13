@@ -24,20 +24,21 @@ func TestSEOReviewHandlersEnqueueWorkflowEvents(t *testing.T) {
 	}
 }
 
-func TestRunStrategistEnqueuesContentPlanCreated(t *testing.T) {
-	source, err := os.ReadFile("handlers_agents.go")
+func TestLegacyStrategistHandlerIsNotExposed(t *testing.T) {
+	routes, err := os.ReadFile("server.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(source)
-	for _, want := range []string{
-		"workflow.EventContentPlanCreated",
-		"s.enqueueWorkflowEvent",
-		"len(topics) > 0",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("runStrategist must enqueue content_plan.created so domain topics auto-draft; missing %q", want)
-		}
+	if strings.Contains(string(routes), `r.Post("/strategist", s.runStrategist)`) {
+		t.Fatal("legacy Strategist route must not be registered")
+	}
+
+	handlers, err := os.ReadFile("handlers_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(handlers), "func (s *Server) runStrategist") {
+		t.Fatal("legacy runStrategist handler must not be exposed")
 	}
 }
 

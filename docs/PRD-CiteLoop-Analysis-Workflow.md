@@ -1,8 +1,9 @@
 # PRD: CiteLoop Analysis Workflow and Dashboard Isolation
 
 > 日期: 2026-06-24
+> Last updated: 2026-07-12
 > 状态: Draft
-> 范围: Dashboard 信息架构、Analysis workflow、Search Console 接入入口、Analysis 与 Content Generation 的产品边界
+> 范围: Dashboard 信息架构、analysis workflow、Search Console 接入入口、analysis 与 Content Generation 的产品边界
 > 上游文档:
 > - `docs/PRD-CiteLoop-Dashboard-Control-Center-Redesign.md`
 > - `docs/PRD-CiteLoop-SEO-Operations-Loop.md`
@@ -12,15 +13,19 @@
 
 CiteLoop 当前的核心能力已经覆盖内容生成、审核、发布和部分可见性反馈。代码库也已经包含 SEO operations loop 的主要数据模型和一部分页面能力。随着 Google Search Console / GA4 驱动的真实 SEO 数据进入产品，Dashboard 需要把 "分析机会" 和 "生产内容" 明确隔离。
 
-本 PRD 的目标不是从零新增一套分析系统，而是把现有 Opportunities / Visibility / SEO data layer 产品化为独立的 Analysis workflow:
+本 PRD 的目标不是从零新增一套分析系统，而是把现有 Opportunities / Visibility / SEO data layer 产品化为 Opportunities 内部的 analysis workflow:
 
 ```text
-Context -> Analysis -> Content Plan -> Review -> Publish -> Measure
+Context -> Opportunities -> Content Plan -> Review -> Publish -> Measure
 ```
 
-Analysis 负责呈现公开数据、GSC/GA4 私有数据、SERP/GEO 信号，并把这些信号转化为可解释的 opportunity 和 action recommendation。Content Plan 只接收已经被用户或策略接受的工作，不再承担原始分析、数据连接和机会判断职责。
+Opportunities 中的 analysis capability 负责呈现公开数据、GSC/GA4 私有数据、SERP/GEO 信号，并把这些信号转化为可解释的 opportunity 和 action recommendation。Content Plan 只接收从已接受 AI-generated Opportunity 派生、且 materially creates or refreshes content 的工作，不再承担原始分析、数据连接、机会判断或新工作创建职责。
 
 这让 CiteLoop 从 "content generation dashboard" 升级为 "analysis to action to publishing loop"，同时避免用户把所有 SEO 数据、机会、选题和内容草稿混在一个页面里理解。
+
+### 0.1 Canonical Supersession Note
+
+As of 2026-07-12, `PRD-CiteLoop-Doctor-Opportunities-Two-Line-Optimization.md` controls the new-work boundary: Doctor and Opportunities are the only user-visible sources, Opportunities is canonical at `/projects/[id]/opportunities`, and Content Plan receives only accepted AI-generated Opportunities that materially create or refresh content. A user-triggered AI run remains allowed, while manual Topic/Opportunity/Brief intake does not. Current status depends only on accepted AI Opportunity source plus complete provenance, regardless of record age. Legacy compatibility applies only to records already present and provenance-incomplete at the 2026-07-12 cutover; pre-boundary age alone is not a criterion. Any post-cutover incomplete record is invalid and fails closed into quarantine without legacy operations.
 
 ## 1. 背景
 
@@ -46,10 +51,10 @@ Admin
 2. **Visibility 同时承担发现和复盘。**
    Visibility 既展示 SEO/GEO 信号，又承担机会审核、结果回看和诊断，页面心智过重。
 
-3. **Content Generation 被迫承接 Analysis 缺口。**
-   当系统不知道真实搜索表现时，Content Plan 只能像 topic backlog。接入 GSC 后，应该由 Analysis 判断 "为什么做这件事"，再把被接受的 action 交给 Content Plan 或其他执行页面。
+3. **Content Generation 被迫承接 analysis 缺口。**
+   当系统不知道真实搜索表现时，Content Plan 只能像 topic backlog。接入 GSC 后，应该由 Opportunities 的 analysis capability 判断 "为什么做这件事"，再把被接受的 action 交给 Content Plan 或其他执行页面。
 
-ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，Content 是执行层。CiteLoop 不应只复制 ChatSEO 的分析助手，而应把分析结果接入已有的 content / review / publish / measure loop。
+ChatSEO 的定价结构也印证了这个边界: analysis 是独立价值层，Content 是执行层。CiteLoop 不应只复制 ChatSEO 的分析助手，而应把分析结果接入已有的 content / review / publish / measure loop。
 
 ### 1.1 当前代码基线
 
@@ -57,20 +62,20 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 
 - `internal/migrations/0007_seo_operations_loop.sql` 已创建 `seo_properties`、`seo_integrations`、`seo_runs`、`search_performance_daily`、`page_performance_daily`、`search_appearance_daily`、`url_index_snapshots`、`technical_checks`、`seo_opportunities`、`content_actions`。
 - `page_performance_daily` 已包含 `ga4_sessions`、`ga4_engaged_sessions`、`ga4_conversions` 字段，GA4 不应被当作完全 greenfield storage。
-- `seo_opportunities` 已包含 `type`、`status`、`priority_score`、`confidence`、`evidence`、`recommended_action`、`expected_impact`、`effort`、`risk_level`、`opportunity_key` 等 Analysis 需要的核心字段。
+- `seo_opportunities` 已包含 `type`、`status`、`priority_score`、`confidence`、`evidence`、`recommended_action`、`expected_impact`、`effort`、`risk_level`、`opportunity_key` 等 analysis capability 需要的核心字段。
 - `content_actions` 已经承担 opportunity -> action -> article/result 的桥接，包含 `baseline_window`、`measurement_window`、`outcome_summary`。
 - `web/app/projects/[id]/opportunities/page.tsx` 和 `web/app/projects/[id]/visibility/page.tsx` 已经分别渲染 `OpportunitiesClient` 与 `VisibilityClient`，两者共享 `web/app/projects/[id]/seo/seo-client.tsx` 中的 `SEOClient`。
 - 当前 Google 数据连接由 `internal/googledata/auth.go` 的 service-account JWT 实现，scope 为 `webmasters.readonly` 和 `analytics.readonly`。当前代码没有 end-user Google OAuth consent、用户可访问 property 列表、GSC refresh token 捕获。本 PRD 将 self-serve GSC OAuth 明确列为需要新增的 connection layer。
 - 当前 Publisher layer 已经包含 `Publisher` interface、GitHub/Next.js blog publisher、semi-manual distribution lane、`publisher_connections` 和 `publisher_credentials`。当前代码没有 WordPress、Webflow、Shopify 或 Wix 真实 CMS connector。
 
-因此 Phase 1-3 应被视为 IA 重构和页面职责拆分: `Opportunities` 重命名/迁移到 `Analysis`，`Visibility` 收敛为 `Results`，并把共享 `SEOClient` 拆成更清楚的 Analysis / Results surfaces。
+因此 Phase 1-3 应被视为 IA 重构和页面职责拆分：`Opportunities` 保持用户可见名称与 canonical route，在页面内承载 analysis capability；`Visibility` 收敛为 `Results`；共享 `SEOClient` 拆成更清楚的 Opportunities / Results surfaces。
 
 ## 2. 产品目标
 
-1. 在 Dashboard 中将现有 Opportunities / Visibility 能力重组为独立的 Analysis workflow，并与 Content Generation 隔离。
+1. 在 Dashboard 中将现有 Opportunities / Visibility 能力重组为 Opportunities 内部的 analysis workflow，并与 Content Generation 隔离。
 2. 让用户通过 domain-first onboarding 开始项目，再通过 self-serve Google Search Console OAuth 解锁真实搜索分析。service account 保留为 internal/admin fallback，不作为默认客户路径。
 3. 把 GSC/GA4 信号转化为可解释、可接受、可路由的 SEO/GEO actions。
-4. 让 Content Plan 只展示已接受的生产工作，不展示未筛选的原始机会。
+4. 让 Content Plan 只展示从已接受 AI-generated Opportunity 派生且 provenance-complete 的生产工作，不展示未筛选的原始机会或 provenance-incomplete 新工作。
 5. 让 Measure 页面专注发布后的结果和闭环反馈，不再混入原始机会发现。
 6. 简化 sidebar，把 Settings 移到左下角 Docs 下方，Admin 保持左下角入口，移除主导航中的 SYSTEM 分组。
 7. 保持 Home 作为控制中心，只展示当前最重要的状态、下一步和数据连接 gate。
@@ -82,7 +87,7 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 - 不在本 PRD 的 Phase 1-3 中实现 end-user Google OAuth、GSC ingestion 或 GA4 ingestion 的完整后端方案。Self-serve GSC OAuth 从 Phase 4 开始进入本 PRD 范围。
 - 不把当前 service-account 连接模型伪装成用户 OAuth。两者必须在 UI、权限和文档中明确区分。
 - 不在本 PRD 中重写现有 Review、Publish、Publisher 或 Article detail 页面。
-- 不把 Analysis 做成全量 SEO dashboard 或 Semrush/Ahrefs 替代品。
+- 不把 Opportunities 的 analysis capability 做成全量 SEO dashboard 或 Semrush/Ahrefs 替代品。
 - 不在 WordPress MVP 中默认自动发布未经批准的内容或站点改动。
 - 不在同一阶段同时实现 WordPress、Webflow、Shopify、Wix 的完整 connector。WordPress 是第一优先级，其余平台进入后续 connector roadmap。
 - 不自动执行高风险 SEO 动作，例如 redirect、noindex、delete、merge。
@@ -91,9 +96,9 @@ ChatSEO 的定价结构也印证了这个边界: Analysis 是独立价值层，C
 
 ## 4. 核心原则
 
-### 4.1 Analysis owns why
+### 4.1 analysis owns why
 
-Analysis 回答:
+Opportunities 的 analysis capability 回答:
 
 - 为什么这个机会存在?
 - 证据来自哪里?
@@ -105,7 +110,7 @@ Analysis 回答:
 
 Content Plan 回答:
 
-- 哪些工作已经被接受?
+- 哪些 AI-generated Opportunities 已经被接受并进入生产?
 - 需要生成什么资产或修改什么页面?
 - 什么时候生成?
 - 生成约束、brief、target keyword、evidence block 是什么?
@@ -191,14 +196,15 @@ The default experience should feel like a prioritized work queue, not an operati
 
 ### 5.1 主导航
 
-新的项目 sidebar:
+2026-07-12 更新后的项目 sidebar:
 
 ```text
 Home
 Context
 
-Intelligence
-Analysis
+Work sources
+Doctor
+Opportunities
 
 Execution
 Content Plan
@@ -225,7 +231,7 @@ Account / Workspace switcher
 - 移除主导航中的 `SYSTEM` 分组。
 - `Settings` 移到左下角 `Docs` 下方。
 - `Admin` 保持左下角入口，不在主工作流中出现。
-- `Opportunities` 不再作为顶层主导航项。机会队列归入 `Analysis`。
+- `Doctor` 与 `Opportunities` 是顶层用户可见工作源；analysis 是 Opportunities 内部的 capability，不是第三条 queue。
 - `Visibility` 重命名或收敛为 `Results`，专注 Measure 阶段。
 
 ### 5.2 页面职责
@@ -234,7 +240,8 @@ Account / Workspace switcher
 |---|---|---|
 | Home | 当前状态、下一步、连接 gate、loop health | 全量 analytics、完整机会列表 |
 | Context | domain 理解、产品定位、证据、竞争对手、内容规则 | 搜索表现分析、内容生产排期 |
-| Analysis | GSC/GA4/SERP/GEO 信号、机会队列、action recommendation | 内容草稿编辑、发布状态复盘 |
+| Doctor | 可立即验证的 finding、Site Fix 与 verification | 延迟增长机会、Content Brief |
+| Opportunities | GSC/GA4/SERP/GEO 分析能力、AI-generated Opportunity queue、action recommendation | 内容草稿编辑、发布状态复盘 |
 | Content Plan | 已接受 action 的生产 backlog、brief、schedule、generation intent、CMS draft/update intent | 原始 SEO 数据探索 |
 | Review | 草稿是否可发布、证据是否充分、QA blocking | 机会优先级判断 |
 | Publish | CMS draft/update approval、canonical publish、variant unlock、publish failure、URL verification | 数据分析和机会发现 |
@@ -262,16 +269,16 @@ No page should default to a flat table of everything the system knows.
 |---|---|---|---|---|
 | Home | What needs my attention across the project? | One next step, connection gates, blockers, loop health | Continue / Review / Connect | Full analytics, full opportunity queue, logs |
 | Context | Is CiteLoop using the right understanding of my product? | Product summary, audience, competitors, rules needing confirmation | Confirm / Edit context | Raw crawl notes, scraped page lists, old context versions |
-| Analysis | What search-driven growth move needs my decision? | Search performance cockpit, growth findings, compact decision queue, and measurement snapshot | Create task / Dismiss / Watch / Connect GSC | Raw GSC rows, full evidence tables, diagnostics, completed/dismissed opportunities, large recommendation-card feeds |
-| Content Plan | What accepted work is planned next? | Accepted work that is ready, scheduled, blocked, or needs approval | Generate / Edit / Send to Review | Unaccepted opportunities, generated intermediates, completed history |
+| Opportunities | What search-driven growth move needs my decision? | Search performance cockpit, growth findings, compact decision queue, and measurement snapshot | Create task / Dismiss / Watch / Connect GSC | Raw GSC rows, full evidence tables, diagnostics, completed/dismissed opportunities, large recommendation-card feeds |
+| Content Plan | What accepted content work is planned next? | Accepted material-content work that is ready, scheduled, blocked, or needs approval | Generate / Edit / Send to Review | Unaccepted opportunities, non-content actions, generated intermediates, completed history |
 | Review | What needs my approval before it can move forward? | Drafts or CMS updates requiring human approval | Approve / Request changes / Block | Generation logs, full scoring details, previous revisions |
 | Publish | What is ready to publish, update, retry, or verify? | Approved items ready for CMS publish/update and publish failures | Publish / Retry / Verify URL | Provider API responses, post IDs, credential refs, old publish attempts |
-| Results | What changed after publishing? | Outcome summaries, measurement windows, positive/negative/inconclusive exceptions | Open details / Create follow-up action | Long per-query/per-URL tables, low-signal history, raw measurement rows |
+| Results | What changed after publishing? | Outcome summaries, measurement windows, positive/negative/inconclusive exceptions | Open details / Find next Opportunity | Long per-query/per-URL tables, low-signal history, raw measurement rows |
 | Settings | What connections or project settings do I need to manage? | Connection health and configuration groups | Connect / Reconnect / Disconnect | Advanced diagnostics, credentials, raw provider payloads |
 
-For GSC-specific Analysis:
+For GSC-specific analysis inside Opportunities:
 
-| State | Analysis default experience |
+| State | Opportunities default experience |
 |---|---|
 | No GSC | Public analysis mode, compact red Search Console status menu, public findings, clear connection path to Settings |
 | GSC missing property | GSC setup assistant with DNS / URL-prefix / admin handoff paths |
@@ -281,7 +288,7 @@ For GSC-specific Analysis:
 
 For every page, the first viewport should be enough for a non-SEO user to decide whether they need to act now.
 
-## 6. Analysis Workflow
+## 6. analysis Capabilities Within Opportunities
 
 ### 6.1 用户路径
 
@@ -290,17 +297,18 @@ For every page, the first viewport should be enough for a non-SEO user to decide
 ```text
 1. 用户输入 product domain
 2. CiteLoop 完成 public discovery
-3. Home 和 Analysis 显示 Search data gate
+3. Home 和 Opportunities 显示 Search data gate
 4. 项目 owner/admin 点击 Connect Google Search Console
 5. Google OAuth consent 返回该用户可访问的 GSC properties
 6. CiteLoop 自动推荐与 product domain 匹配的 property
 7. 用户确认 property，或手动选择正确 property
 8. CiteLoop 安全存储 OAuth refresh token 和 selected property
 9. 系统 backfill 最近 90 天搜索数据
-10. Analysis 生成 opportunity queue
-11. 用户接受、暂缓或 dismiss opportunity
-12. 被接受的 action 进入 Content Plan / Review / Publish / Content Plan technical_task
-13. 发布或执行后进入 Results measurement
+10. analysis pipeline 只生成 internal candidates，并在创建任何用户可见 product object 前执行 Doctor / Opportunities ownership arbitration
+11. Doctor-owned candidate 直接成为 Doctor finding 并进入 Doctor queue；eligible growth candidate 成为 user-visible Opportunities 中状态为 `needs_decision` 的 AI Opportunity，internal candidate 本身永不展示
+12. 用户接受、暂缓或 dismiss Opportunity
+13. 被接受且 materially creates or refreshes content 的 Opportunity 进入 Content Plan；pure link-only growth strategy 创建 Growth Action；Doctor work 进入 Site Fixes
+14. 发布或执行后分别进入 Results measurement 或 Doctor immediate verification
 ```
 
 Internal/admin fallback 路径继续支持 service account，但不作为默认客户 onboarding:
@@ -309,7 +317,7 @@ Internal/admin fallback 路径继续支持 service account，但不作为默认�
 1. Operator 在 Settings / Admin 中配置 `site_url`、`gsc_site_url`、`credential_ref`
 2. 系统用 service-account JWT 读取 GSC / GA4 数据
 3. UI 明确显示为 internal/admin-managed connection
-4. 用户仍然在 Analysis 中查看机会、接受 action 和进入 Results measurement
+4. 用户仍然在 Opportunities 中查看 AI-generated Opportunities、接受 action 和进入 Results measurement
 ```
 
 Self-serve OAuth 是本 PRD 的正式目标。Phase 1-3 先完成 IA 和页面职责隔离，Phase 4 开始交付 OAuth connection system，Phase 5 将 OAuth 数据接入 GSC analysis。
@@ -331,10 +339,10 @@ Self-serve OAuth 是本 PRD 的正式目标。Phase 1-3 先完成 IA 和页面�
 | `service_account_configured` | internal/admin 使用 service account 配置了 first-party search data | 普通用户看到 connected 状态；Settings/Admin 中显示 internal-managed diagnostics |
 | `ga4_connected` | GA4 engagement/conversion 可用 | 在 opportunity priority 中加入 business value |
 
-### 6.3 Analysis 页面结构
+### 6.3 Opportunities 页面结构
 
 ```text
-Analysis
+Opportunities
 ├─ Page header
 │  ├─ "What should I act on now?" framing
 │  ├─ Refresh / Sync actions
@@ -349,24 +357,24 @@ Analysis
 │  └─ no fake precision when GSC is absent or still backfilling
 ├─ Growth findings
 │  ├─ compact row/list layout, not large recommendation cards
-│  ├─ grouped by job-to-be-done: low CTR, striking distance, decay, indexing, query/page mismatch, cold-start, GEO gap
+│  ├─ contains only Opportunities-owned `needs_decision` AI Opportunities, grouped by low CTR, striking distance, decay, query/page mismatch, cold-start, and GEO gap
 │  ├─ each row shows source page/query, signal, priority, risk, and "Review" affordance
 │  └─ row expansion or drawer reveals evidence, query/page metrics, source, confidence, and reasoning
 ├─ Decision queue
 │  ├─ compact list of items needing user decision
-│  ├─ action-specific CTAs: Create content task, Create refresh task, Create technical task, Watch, Dismiss
-│  └─ accepted work routes to Content Plan or Results watchlist with evidence attached
+│  ├─ action-specific CTAs: Create content task, Create refresh task, Create Growth Action, Watch, Dismiss
+│  └─ acceptance routes material-content Opportunities to Content Plan and measured pure link strategies to Growth Actions
 ├─ Measurement snapshot
 │  ├─ actions already in plan/publish/results
 │  ├─ D+7 / D+14 / D+28 checkpoints when available
 │  └─ waiting, positive, negative, inconclusive summaries
-└─ Analysis brief and diagnostics
+└─ analysis brief and diagnostics
    ├─ collapsed by default
    ├─ weekly brief, blockers, GEO diagnostics, raw evidence, and provider details
    └─ opened only through deliberate disclosure
 ```
 
-Analysis default view should not be a wall of recommendation cards. The first viewport should use the available space to answer:
+Opportunities default view should not be a wall of recommendation cards. The first viewport should use the available space to answer:
 
 - is real search data connected?
 - what changed in search performance?
@@ -378,7 +386,7 @@ Recommendation details remain available, but only after the user opens a row, dr
 
 ### 6.3.1 Compact Search Console status control
 
-The Search Console connection state belongs in the Analysis header, not in a large top-of-page card.
+The Search Console connection state belongs in the Opportunities header, not in a large top-of-page card.
 
 Connected state:
 
@@ -397,7 +405,7 @@ Clicking the status opens a lightweight dropdown:
 - connection label: connected, backfilling, public-only, stale, revoked, mismatch, or property missing
 - selected property label when available, for example `sc-domain:unipost.dev`
 - current data mode, for example `First-party search data`, `Low click depth`, `Public crawl only`
-- whether Analysis is using live GSC data, last-known data, or public-only data
+- whether Opportunities analysis is using live GSC data, last-known data, or public-only data
 - one primary route to `Settings -> Search Console connection`
 - recovery action when the state is stale, revoked, mismatched, or missing
 
@@ -405,7 +413,7 @@ The dropdown is informational and navigational. It should not become a second Se
 
 ### 6.3.2 Growth findings and decision queue behavior
 
-Growth findings are the main body of Analysis. They should be dense enough for repeated weekly use and should not behave like a blog-feed of generated cards.
+Growth findings are the main body of Opportunities. They are user-facing projections of Opportunities-owned AI Opportunities in `needs_decision`, never internal candidates or Doctor-owned work. Ownership arbitration happens before product-object creation: a Doctor-owned candidate becomes a Doctor finding in the Doctor queue and is never shown in Opportunities. Growth findings should be dense enough for repeated weekly use and should not behave like a blog-feed of generated cards.
 
 Each finding row should show:
 
@@ -424,24 +432,26 @@ Decision queue is the user's "what do I approve now?" panel. It should show only
 | new asset or missing content | `Create content task` |
 | content decay or near page-one refresh | `Create refresh task` |
 | low CTR title/meta work | `Create refresh task` or `Create metadata task` |
-| indexing, sitemap, internal links, schema | `Create technical task` |
+| measured internal-link growth strategy | `Create Growth Action` |
 | insufficient data but worth monitoring | `Watch` |
 | not relevant | `Dismiss` |
 
-No default Analysis CTA should imply that every accepted item is a new content-generation job.
+No default Opportunities CTA should imply that every accepted item is a new content-generation job. Opportunities exposes no CTA for Doctor-owned candidates because those candidates have already become Doctor findings outside this surface.
 
-### 6.4 Opportunity taxonomy
+### 6.4 Finding And Opportunity Taxonomy
 
-| Opportunity type | Primary evidence | Recommended action | Destination |
+The 2026-07-12 owner contract applies before a work record is created: immediately verifiable technical candidates become Doctor findings, while eligible delayed-growth candidates become AI-generated Opportunities in `needs_decision`. Internal candidates are never user-visible. Doctor-owned families in the table are documentation-only routing mappings and never appear in Opportunities findings, its decision queue, or its CTAs.
+
+| Candidate family | Primary evidence | Recommended action | Destination |
 |---|---|---|---|
-| `low_ctr_page` | impressions high, CTR below expected range | Draft title/meta update | Content Plan (`metadata_rewrite`) or Review |
-| `near_page_one_query` | average position 8-20 with meaningful impressions | Create refresh brief or internal link task | Content Plan |
-| `content_decay` | clicks/impressions/position decline over comparison window | Refresh existing page | Content Plan |
-| `missing_content_asset` | query cluster has impressions but no dedicated asset | Create new asset brief | Content Plan |
-| `internal_link_gap` | source pages can support target page | Create internal link task | Content Plan (`technical_task`) |
-| `indexing_issue` | URL absent, excluded, or sitemap mismatch | Create technical SEO task | Content Plan (`technical_task`) |
-| `geo_citation_gap` | competitor cited in AI answer, project absent | Create citation-ready asset | Content Plan |
-| `backlink_or_mention_gap` | public market data or backlink provider signal | Create outreach or evidence asset | Content Plan or Manual task |
+| `low_ctr_page` | impressions high, CTR below expected range | Draft title/meta update | Accepted AI Opportunity -> Content Plan (`metadata_rewrite`) or Review |
+| `near_page_one_query` | average position 8-20 with meaningful impressions | Create a material content refresh brief or a measured internal-link Growth Action | Accepted AI Opportunity -> Content Plan only for material content refresh; pure link-only strategy -> Growth Action |
+| `content_decay` | clicks/impressions/position decline over comparison window | Refresh existing page | Accepted AI Opportunity -> Content Plan |
+| `missing_content_asset` | query cluster has impressions but no dedicated asset | Create new asset brief | Accepted AI Opportunity -> Content Plan |
+| `internal_link_gap` | source pages can support target page | Fix broken/zero links immediately, or propose a measured cluster strategy | Doctor -> Site Fix for immediately verifiable link patch; accepted AI Opportunity -> Growth Action for delayed-growth link strategy; pure link-only work never becomes a Content Brief |
+| `indexing_issue` | URL absent, excluded, or sitemap mismatch | Create immediately verifiable technical SEO fix | Doctor -> Site Fixes |
+| `geo_citation_gap` | competitor cited in AI answer, project absent | Create citation-ready asset | Accepted AI Opportunity -> Content Plan |
+| `backlink_or_mention_gap` | public market data or backlink provider signal | Create outreach or evidence asset | Accepted AI Opportunity -> external handoff, or Content Plan when it creates content |
 
 ### 6.4.1 Existing type mapping
 
@@ -449,10 +459,10 @@ No default Analysis CTA should imply that every accepted item is a new content-g
 
 | Product taxonomy | Existing or proposed `seo_opportunities.type` | Migration/API impact |
 |---|---|---|
-| `indexing_issue` | `indexing_anomaly` | Existing type; reuse. |
+| `indexing_issue` | `indexing_anomaly` | Legacy type; new immediately verifiable work is owned by Doctor and retained here only for compatibility/migration mapping. |
 | `geo_citation_gap` | `geo_competitor_cited_project_absent`, `geo_project_mentioned_without_citation` | Existing GEO analyzer types; group in UI. |
 | crawler access issue | `geo_crawler_access_blocked` | Existing type; group under technical / GEO blockers. |
-| public cold-start content | `cold_start_context_plan`, `cold_start_competitive_gap`, `cold_start_evidence_page` | Existing types; keep in public-only Analysis. |
+| public cold-start content | `cold_start_context_plan`, `cold_start_competitive_gap`, `cold_start_evidence_page` | Existing types; keep in public-only Opportunities analysis. |
 | `low_ctr_page` | `low_ctr_page` | New generator/type if not already emitted. Requires tests and copy mapping. |
 | `near_page_one_query` | `near_page_one_query` | New generator/type if not already emitted. Requires tests and copy mapping. |
 | `content_decay` | `content_decay` | New generator/type if not already emitted. Requires tests and copy mapping. |
@@ -461,18 +471,18 @@ No default Analysis CTA should imply that every accepted item is a new content-g
 
 ### 6.5 Action routing
 
-Analysis must not assume every opportunity creates a new article.
+The analysis pipeline must not assume every candidate creates an Opportunity or that every accepted Opportunity creates a new article.
 
 | Recommended action | Route |
 |---|---|
-| `create_new_asset` | Content Plan |
-| `refresh_existing_page` | Content Plan |
-| `draft_title_meta_update` | Content Plan or Review, depending on publisher capability |
-| `add_internal_links` | Content Plan (`technical_task`) |
-| `create_schema_update` | Content Plan (`technical_task`) or Review |
-| `fix_indexing_issue` | Content Plan (`technical_task`) |
+| `create_new_asset` | Accepted AI Opportunity -> Content Plan |
+| `refresh_existing_page` | Accepted AI Opportunity -> Content Plan |
+| `draft_title_meta_update` | Accepted AI Opportunity -> Content Plan or Review, depending on publisher capability |
+| `add_internal_links` | Doctor -> Site Fix when the patch is immediately verifiable; accepted AI Opportunity -> Growth Action when success requires a growth window; never Content Plan unless the accepted scope materially creates or refreshes content |
+| `create_schema_update` | Doctor -> Site Fixes |
+| `fix_indexing_issue` | Doctor -> Site Fixes |
 | `wait_and_measure` | Results watchlist |
-| `dismiss` | Analysis archive |
+| `dismiss` | Opportunities archive |
 
 Accepted opportunities must carry evidence into downstream work:
 
@@ -520,8 +530,8 @@ Home should show one compact analysis summary:
 
 ```text
 3 search opportunities need review
-2 low CTR pages, 1 page-one push, 1 content refresh candidate.
-[Review analysis]
+1 low CTR page, 1 page-one push, 1 content refresh opportunity.
+[Review Opportunities]
 ```
 
 Home should not show the full opportunity table.
@@ -533,24 +543,22 @@ Home next action priority should become:
 1. Critical publish/review blockers.
 2. Required context confirmation.
 3. Search data connection missing, if project has enough public discovery to benefit.
-4. New Analysis opportunities that need acceptance.
+4. New AI-generated Opportunities that need acceptance.
 5. Publisher/CMS connection missing, if accepted work needs CMS draft or publish.
 6. Content Plan / Review / Publish actions.
 7. Results waiting for measurement.
 
 ## 8. Content Plan Isolation
 
-Content Plan should only contain accepted work.
+Every newly created Content Plan item must come from an accepted AI-generated Opportunity whose scope materially creates or refreshes content.
 
 Allowed Content Plan items:
 
-- accepted new content asset
-- accepted refresh brief
-- accepted metadata rewrite
-- accepted internal link patch
-- accepted GEO evidence asset
-- scheduled generated draft
-- accepted manually seeded topic
+- accepted AI-generated Opportunity for a new content asset
+- accepted AI-generated Opportunity for a content refresh
+- accepted AI-generated Opportunity for an editorial metadata rewrite
+- accepted AI-generated Opportunity for a GEO evidence asset
+- scheduled or generated draft derived from one of those accepted Opportunities
 
 Not allowed in Content Plan:
 
@@ -562,17 +570,21 @@ Not allowed in Content Plan:
 - broad visibility score explanations
 - generated intermediate artifacts that do not require review
 - completed items unless the user opens Completed or History
+- a newly created item without the complete current-work provenance chain: accepted source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when one exists
+- a user-authored Topic, Opportunity, or Content Brief intake record
+- any pure link-only action, whether owned by Doctor or Opportunities
 
 Content Plan default view should prioritize:
 
 - work that needs approval
 - work scheduled next
 - blocked work
-- manually seeded topics
 
 Completed work, in-progress automation details, and generated supporting artifacts should be summarized, not laid out flat.
 
-When an Analysis opportunity is accepted, Content Plan should show the reason in user language:
+Classification is mutually exclusive. A Topic/Brief is current if and only if it has an accepted AI-generated source Opportunity and the complete provenance chain: source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when one exists. Age does not matter, so provenance-complete older AI work is current. Legacy compatibility applies if and only if the record existed at the 2026-07-12 cutover and was provenance-incomplete then, including source-less or partially linked records; those records retain view/edit, cancel/reschedule, draft/generate, and archive/dismiss under Content Plan Section 15.4. A post-cutover provenance-incomplete record is invalid, fails closed into quarantine, receives no legacy operations, and cannot seed new work.
+
+When a material-content AI-generated Opportunity is accepted into Content Plan, Content Plan should show the reason in user language:
 
 ```text
 Why this is planned:
@@ -595,7 +607,7 @@ Results should show:
 - measurement windows
 - inconclusive / positive / negative / waiting states
 
-Results should not be the place where users decide whether to accept raw opportunities. That belongs in Analysis.
+Results should not be the place where users decide whether to accept raw opportunities. That belongs in Opportunities.
 
 Results default view should show outcome summaries and exceptions. Long per-URL measurement details, historical rows, and inconclusive low-signal records should be collapsed behind measurement detail views.
 
@@ -607,14 +619,14 @@ ChatSEO's pricing page makes the Content value layer concrete: AI SEO writer plu
 
 The Content side of CiteLoop should support three jobs:
 
-- create a new asset from an accepted Analysis opportunity
+- create a new asset from an accepted AI-generated Opportunity
 - update or optimize an existing CMS page
 - publish or stage the approved change in the user's destination system
 
 Content Generation should not stop at "draft created". The complete loop is:
 
 ```text
-Analysis opportunity -> accepted action -> draft/update -> user approval -> CMS publish/update -> URL verification -> Results measurement
+Opportunities -> accepted action -> draft/update -> user approval -> CMS publish/update -> URL verification -> Results measurement
 ```
 
 ### 10.2 CMS priority
@@ -694,8 +706,8 @@ CMS integration should support more than new article creation:
 | `refresh_existing_page` | Update existing post/page draft or staged revision | Approval before live update |
 | `draft_title_meta_update` | Update title/excerpt/meta fields when available | Approval before live update |
 | `add_internal_links` | Stage content update with proposed links | Approval before live update |
-| `create_schema_update` | Out of scope for WordPress MVP unless supported safely | Manual task or later |
-| `fix_indexing_issue` | Out of scope for direct CMS write unless it is content/meta-related | Manual task |
+| `create_schema_update` | Out of scope for WordPress MVP unless supported safely | Doctor -> Site Fixes |
+| `fix_indexing_issue` | Out of scope for direct CMS write unless it is content/meta-related | Doctor -> Site Fixes |
 
 ### 10.7 Settings ownership
 
@@ -707,7 +719,7 @@ Settings owns CMS connection management:
 - inspect capability readiness
 - view diagnostics
 
-Content Plan owns accepted work. Publish owns approval, publish/update execution, retry, and URL verification. Results owns measurement after the CMS change is live.
+Content Plan owns accepted material-content production work. Growth Actions remain outside Content Plan. Publish owns approval, publish/update execution, retry, and URL verification. Results owns measurement after the CMS change is live.
 
 ## 11. Settings and Admin Placement
 
@@ -728,7 +740,7 @@ Settings owns:
 
 Settings should not be a primary workflow step.
 
-Search data connection management should be available to project owners/admins through a self-serve Google OAuth flow. Analysis may show the CTA to everyone, but members without integration-management permission should receive an explanation and an admin handoff path. Internal operators may still configure service-account access through Admin/diagnostics, but that path should be labeled as internal-managed and should not replace the default OAuth onboarding.
+Search data connection management should be available to project owners/admins through a self-serve Google OAuth flow. Opportunities may show the CTA to everyone, but members without integration-management permission should receive an explanation and an admin handoff path. Internal operators may still configure service-account access through Admin/diagnostics, but that path should be labeled as internal-managed and should not replace the default OAuth onboarding.
 
 ### 11.2 Admin
 
@@ -747,7 +759,7 @@ The `SYSTEM` section is removed from the primary nav. Utility links are visually
 
 ## 12. Empty States
 
-### 12.1 Analysis empty state before GSC
+### 12.1 Opportunities empty state before GSC
 
 Primary message:
 
@@ -768,7 +780,7 @@ Secondary action:
 Review public opportunities
 ```
 
-### 12.2 Analysis empty state after GSC but no opportunity
+### 12.2 Opportunities empty state after GSC but no opportunity
 
 Primary message:
 
@@ -789,13 +801,13 @@ Primary message:
 
 ```text
 No accepted work yet
-Review Analysis opportunities or add a manual topic to create the next production item.
+Review AI-generated Opportunities and accept one to create the next production item.
 ```
 
 Primary action:
 
 ```text
-Open Analysis
+Open Opportunities
 ```
 
 ## 13. Data and API Implications
@@ -811,7 +823,7 @@ This PRD does not require final schema design, but implementation should preserv
 - `publisher_credentials` remains publishing credential storage.
 - `seo_properties` / integration records should express data readiness.
 
-Implementation must not create replacement tables for these concepts during Phase 1-3. If Analysis needs a new UI shape, adapt API serializers or view models over the existing tables first.
+Implementation must not create replacement tables for these concepts during Phase 1-3. If Opportunities needs a new UI shape, adapt API serializers or view models over the existing tables first.
 
 ### 13.2 OAuth connection model
 
@@ -832,7 +844,7 @@ The default customer path must not require the user to manually create credentia
 
 ### 13.3 Required product states
 
-Analysis needs enough API surface to express:
+Opportunities needs enough API surface to express:
 
 - search data connection status
 - connected Google account display label
@@ -854,18 +866,20 @@ Publisher states should be derived from `publisher_connections`, `publisher_cred
 
 ### 13.4 Downstream contract
 
-When Analysis routes work downstream, it must create or update a durable action record with:
+When Opportunities routes accepted work downstream, it must create or update a durable Content Action with:
 
 - action type
-- source opportunity id
+- source Opportunity ID
+- AI provenance: discovery/generation run ID, provider/model, prompt ID/version, and evidence snapshot/reference
+- one acceptance timestamp and approval source (the accepting user or policy identity when available)
 - evidence summary
 - target page or new asset type
-- accepted at
-- accepted by
 - risk level
 - status
 - expected measurement dates
 - publisher destination and capability requirements when the action needs CMS create/update/publish
+
+For a new Content Brief, the complete logical provenance chain is the source Opportunity ID, resulting source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when one exists. These are logical relationships, not promises that every value is a physical column on one table; serializers may resolve them through the linked Opportunity, Content Action, AI call/run records, evidence snapshots, and internal Topic.
 
 ## 14. Rollout Plan
 
@@ -874,13 +888,13 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Update sidebar grouping.
 - Move Settings to bottom utility area.
 - Keep Admin bottom utility only.
-- Rename existing `Opportunities` surface to `Analysis`.
-- Add `/projects/[id]/analysis` as the canonical route.
-- Redirect `/projects/[id]/opportunities` to Analysis for bookmarks and old links.
-- Move opportunity review entry points out of `Visibility` and into `Analysis`.
+- Keep `Opportunities` as the canonical user-visible growth-work source.
+- Keep `/projects/[id]/opportunities` as the canonical route; any existing `/analysis` route is a compatibility alias to Opportunities.
+- Add Doctor as the other user-visible work source.
+- Move opportunity review entry points out of `Visibility` and into `Opportunities`.
 - Keep existing backend APIs.
 
-### Phase 2: Analysis page productization
+### Phase 2: Opportunities page productization
 
 - Add compact Search Console status control derived from existing `seo_properties` / `seo_integrations` / SEO run state.
 - Add GSC connection gate.
@@ -889,7 +903,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Add compact Decision queue.
 - Add Measurement snapshot.
 - Keep weekly analysis brief and evidence inspector collapsed by default.
-- Ensure accepted opportunities route to Content Plan.
+- Ensure accepted material-content opportunities route to Content Plan and measured pure link strategies create Growth Actions instead.
 
 ### Phase 3: Results cleanup
 
@@ -908,7 +922,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 - Add reconnect, revoke, expired-token, denied-consent, and no-matching-property states.
 - Keep service-account configuration as internal/admin fallback only.
 
-### Phase 5: OAuth-powered GSC Analysis
+### Phase 5: OAuth-powered GSC analysis in Opportunities
 
 - Use the selected OAuth-backed GSC property as the default source for first-party search data.
 - Backfill and sync GSC search performance.
@@ -946,25 +960,27 @@ When Analysis routes work downstream, it must create or update a durable action 
 1. Sidebar no longer has a primary `SYSTEM` section.
 2. Settings appears in the left bottom utility area under Docs.
 3. Admin remains in the left bottom utility area.
-4. Analysis appears as a distinct workflow area, separate from Content Plan.
-5. `/projects/[id]/opportunities` redirects to Analysis or remains as a compatibility alias.
+4. Doctor and Opportunities appear as distinct work-source areas, separate from Content Plan.
+5. `/projects/[id]/opportunities` remains canonical; `/analysis`, if present, is a compatibility alias.
 6. UI copy uses user-facing language and avoids provider or internal job terminology in default user surfaces.
 7. Primary workflow pages default to action-first summaries, not flat lists of every generated artifact or diagnostic.
 8. Each primary workflow page follows the Page UX contract: status, next action, approval/recovery items, summary context, then collapsed details.
 
-### Phase 2 Analysis surface
+### Phase 2 Opportunities analysis surface
 
 1. Content Plan does not show raw, unaccepted opportunities.
-2. Analysis owns opportunity acceptance and dismissal.
+2. Opportunities owns opportunity acceptance and dismissal.
 3. Accepted opportunities carry evidence and reason into downstream production work.
 4. Empty states route users to one next action, not a grid of future modules.
-5. Analysis can explain public-only, OAuth not connected, property missing, property selected, connected, stale, revoked, mismatch, and no-opportunity states.
-6. Analysis does not show a large connection status hero or a flat feed of large recommendation cards by default.
-7. Analysis shows compact Search Console status in the header, with green connected and red disconnected/unhealthy states.
+5. Opportunities can explain public-only, OAuth not connected, property missing, property selected, connected, stale, revoked, mismatch, and no-opportunity states through its analysis capabilities.
+6. Opportunities does not show a large connection status hero or a flat feed of large recommendation cards by default.
+7. Opportunities shows compact Search Console status in the header, with green connected and red disconnected/unhealthy states.
 8. The Search Console status dropdown shows connection detail and links to Settings -> Search Console connection.
-9. Analysis defaults to search performance snapshot, growth findings, compact decision queue, and measurement snapshot.
+9. Opportunities defaults to search performance snapshot, growth findings, compact decision queue, and measurement snapshot.
 10. Raw evidence and full signal tables are collapsed behind explicit disclosure controls.
 11. Completed, dismissed, or snoozed opportunities are not visible in the default queue unless they become relevant again.
+12. Every newly created Content Plan item resolves the complete logical provenance chain: source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when one exists.
+13. Content Plan exposes no manual Topic, Opportunity, or Content Brief intake; its empty state links only to Opportunities.
 
 ### Phase 3 Results surface
 
@@ -976,18 +992,18 @@ When Analysis routes work downstream, it must create or update a durable action 
 ### Phase 4 Self-serve GSC OAuth onboarding
 
 1. Home displays a clear Connect Search Console gate when first-party search data is missing.
-2. Project owners/admins can start Google OAuth from Home, Analysis, or Settings.
+2. Project owners/admins can start Google OAuth from Home, Opportunities, or Settings.
 3. Users who deny consent, lack a matching property, or lose token access receive a recoverable state.
 4. CiteLoop lists authorized GSC properties and recommends the best match for the project domain.
 5. Users must confirm the selected property before the first backfill begins.
-6. Non-admin users do not hit an admin-only dead end when clicking the Analysis search-data CTA.
+6. Non-admin users do not hit an admin-only dead end when clicking the Opportunities search-data CTA.
 7. Service-account connection remains available only as internal/admin fallback.
 
 ### Phase 5 GSC search data activation
 
 1. Backfilling, stale, connected, revoked, and mismatch states are derived from real OAuth/integration/run state.
 2. OAuth-backed GSC data writes into the existing SEO operations data model or an explicitly compatible extension.
-3. Analysis can generate low CTR, near page-one, content decay, and indexing opportunities from real query/page metrics.
+3. The analysis pipeline can generate low CTR, near page-one, and content decay Opportunities from real query/page metrics, while immediately verifiable indexing evidence creates Doctor findings.
 4. Accepted OAuth-backed opportunities carry property, query/page evidence, baseline window, and measurement window downstream.
 
 ### Phase 6 WordPress gated publish and update
@@ -1003,7 +1019,7 @@ When Analysis routes work downstream, it must create or update a durable action 
 ### Phase 7 GA4 business-value prioritization
 
 1. GA4 engagement/conversion fields in `page_performance_daily` are reused or extended compatibly.
-2. Analysis can mark recommendations as missing business-value signal when GA4 is absent.
+2. Opportunities can mark recommendations as missing business-value signal when GA4 is absent.
 3. GA4 signals influence priority only when the signal is available and fresh enough to trust.
 
 ### Phase 8 additional CMS connectors
@@ -1024,16 +1040,16 @@ Required happy path:
 4. CiteLoop completes public discovery and shows the project-level next action.
 5. User either connects GSC through OAuth or intentionally continues in public-only mode.
 6. If GSC is connected, user selects or confirms the matching property and sees backfill or connected state.
-7. Analysis presents decision-ready opportunities, not raw signal tables.
+7. Opportunities presents decision-ready opportunities, not raw signal tables.
 8. User accepts at least one opportunity and dismisses or snoozes at least one other opportunity.
-9. Accepted work appears in Content Plan with reason, evidence summary, target, and measurement window.
+9. Accepted material-content work appears in Content Plan with reason, evidence summary, target, and measurement window; pure link-only work does not.
 10. User generates or prepares the work, reviews it, and approves or requests changes.
 11. If a CMS connector is in scope for the release, user connects WordPress or the relevant publisher, creates/stages the draft or update, approves the gated publish/update, and verifies the live URL.
 12. Results receives the published action and shows the correct waiting, inconclusive, positive, or negative measurement state.
 
 Required recovery and edge paths:
 
-1. Domain-only project without GSC still has a usable public-only Analysis path and clear Search Console setup CTA.
+1. Domain-only project without GSC still has a usable public-only Opportunities path and clear Search Console setup CTA.
 2. Missing GSC property opens the setup assistant instead of a dead end.
 3. Non-admin user gets an admin handoff path for GSC and CMS connections.
 4. OAuth denied, revoked, stale, or mismatched property states are visible and recoverable.
@@ -1092,18 +1108,18 @@ When verification requires Google Search Console, Google Analytics, WordPress, o
 For GSC, the expected test path is:
 
 ```text
-Create/select project -> input domain -> Connect Search Console -> user completes Google OAuth -> select matching property -> first backfill starts -> Analysis shows connected/backfilling state
+Create/select project -> input domain -> Connect Search Console -> user completes Google OAuth -> select matching property -> first backfill starts -> Opportunities shows connected/backfilling state
 ```
 
 ### 16.3 Phase verification matrix
 
 | Phase | Feature area | Chrome verification | Supporting checks |
 |---|---|---|---|
-| Phase 1 | IA / sidebar | Verify sidebar has Home, Context, Analysis, Content Plan, Review, Publish, Results; Settings is bottom utility; no primary SYSTEM group; each primary page's first viewport exposes the page's next action. | Route redirects for old `/opportunities`; navigation tests. |
-| Phase 2 | Analysis surface | Verify Analysis shows compact top-right GSC status, search performance snapshot, growth findings, decision queue, measurement snapshot, action-specific CTAs, and collapsed evidence. | API returns connection state, opportunities, evidence summaries; raw tables and large recommendation-card feeds are hidden by default. |
+| Phase 1 | IA / sidebar | Verify sidebar has Home, Context, Doctor, Opportunities, Content Plan, Review, Publish, Results; Settings is bottom utility; no primary SYSTEM group; each primary page's first viewport exposes the page's next action. | Canonical `/opportunities` and optional `/analysis` compatibility redirect; navigation tests. |
+| Phase 2 | Opportunities analysis surface | Verify Opportunities shows compact top-right GSC status, search performance snapshot, growth findings, decision queue, measurement snapshot, action-specific CTAs, and collapsed evidence. | API returns connection state, opportunities, evidence summaries; raw tables and large recommendation-card feeds are hidden by default. |
 | Phase 3 | Results surface | Verify Results shows published action outcomes and measurement states, not raw opportunity acceptance. | Measurement API returns waiting/inconclusive/positive/negative states. |
-| Phase 4 | GSC OAuth onboarding | Verify Connect Search Console from Home/Analysis/Settings, user OAuth, property list, property selection, denied/revoked/missing-property states. | OAuth state/CSRF tests, encrypted token storage, integration records, no token leakage in logs. |
-| Phase 5 | GSC-backed Analysis | Verify connected project backfills data, shows real query/page opportunity cards, carries evidence downstream after acceptance. | GSC sync tests, opportunity generator tests, `seo_opportunities` / `content_actions` records. |
+| Phase 4 | GSC OAuth onboarding | Verify Connect Search Console from Home/Opportunities/Settings, user OAuth, property list, property selection, denied/revoked/missing-property states. | OAuth state/CSRF tests, encrypted token storage, integration records, no token leakage in logs. |
+| Phase 5 | GSC-backed Opportunities analysis | Verify connected project backfills data, shows real query/page opportunity cards, carries evidence downstream after acceptance. | GSC sync tests, opportunity generator tests, `seo_opportunities` / `content_actions` records. |
 | Phase 6 | WordPress gated publish/update | Verify WordPress connect, capability readiness, create draft, stage update, approval gate, publish/update, URL verification, Results measurement. | Publisher contract tests, credential health tests, WordPress API client tests, publish failure recovery tests. |
 | Phase 7 | GA4 prioritization | Verify GA4-connected project shows engagement/conversion influence; non-GA4 project shows missing business-value signal without failing. | GA4 ingestion/storage tests using `page_performance_daily` fields. |
 | Phase 8 | Additional CMS connectors | Verify unimplemented connectors are not selectable as available destinations; implemented connectors expose capability readiness. | Connector capability tests and provider-specific integration tests. |
@@ -1112,11 +1128,11 @@ Create/select project -> input domain -> Connect Search Console -> user complete
 
 Search data connection:
 
-- Connect CTA appears in onboarding, Home, Analysis, and Settings when missing.
+- Connect CTA appears in onboarding, Home, Opportunities, and Settings when missing.
 - Non-admin users see an admin handoff instead of a dead-end Settings page.
 - OAuth success, cancel, denied consent, revoked token, stale sync, and property mismatch states are visible and recoverable.
 
-Analysis recommendations:
+Opportunity analysis recommendations:
 
 - Default view shows a compact findings and decision queue, not a recommendation-card feed.
 - Each decision has reason, expected impact, confidence/risk, and an action-specific create/watch/dismiss path.
@@ -1126,8 +1142,8 @@ Page UX:
 
 - Home answers the project-wide next-step question in the first viewport.
 - Context asks for confirmation or correction, not passive reading.
-- Analysis asks for accept/dismiss/snooze/investigate.
-- Content Plan shows accepted work that is ready, scheduled, blocked, or needs approval.
+- Opportunities asks for accept/dismiss/snooze/investigate; analysis is the capability behind those decisions, not a separate work source.
+- Content Plan shows accepted material-content work that is ready, scheduled, blocked, or needs approval.
 - Review shows approval decisions only.
 - Publish shows publish/update/retry/verify work only.
 - Results shows outcome summaries and exceptions only.
@@ -1181,7 +1197,7 @@ The verifier should start from a clean customer perspective:
 The E2E script must cover the happy path and the recovery paths listed in Section 15. It should verify the full chain:
 
 ```text
-Signup / project -> domain -> public discovery -> GSC gate or public-only mode -> GSC OAuth/property selection/backfill -> Analysis decision -> Content Plan -> Review -> Publish/CMS -> URL verification -> Results measurement
+Signup / project -> domain -> public discovery -> GSC gate or public-only mode -> GSC OAuth/property selection/backfill -> Opportunities decision -> Content Plan -> Review -> Publish/CMS -> URL verification -> Results measurement
 ```
 
 Stop-and-fix rule:
@@ -1206,13 +1222,13 @@ The final verification packet should include:
 - project/domain used for the test
 - whether GSC was connected, public-only, or missing-property
 - whether CMS publishing was connected, draft-only, or out of scope
-- evidence for Analysis, Content Plan, Review, Publish, and Results handoffs
+- evidence for Opportunities, Content Plan, Review, Publish, and Results handoffs
 - recovery states tested
 - final pass/fail status and any explicitly deferred non-critical gaps
 
 ## 17. Risks
 
-1. **Analysis becomes another overloaded dashboard.**
+1. **Opportunities analysis becomes another overloaded dashboard.**
    Mitigation: keep default view to compact GSC status, search performance snapshot, growth findings, decision queue, and measurement snapshot; keep brief, raw evidence, completed work, and diagnostics collapsed.
 
 2. **Pages become flat walls of generated content.**
@@ -1258,39 +1274,39 @@ The final verification packet should include:
 
 These measure whether the IA change works without promising SEO rankings:
 
-1. Opportunity acceptance rate: percentage of open Analysis opportunities accepted or dismissed within 7 days.
+1. Opportunity acceptance rate: percentage of open Opportunities records accepted or dismissed within 7 days.
 2. Time from signal to action: median time from opportunity creation to accepted `content_actions` record.
 3. Self-serve connection completion: percentage of eligible projects that complete OAuth, select a property, and start first backfill.
 4. Search data connection readiness: percentage of active projects in `gsc_connected`, `gsc_backfilling`, or an explicitly understood public-only state.
 5. Publisher readiness: percentage of active projects with a connected CMS or an explicitly understood draft-only/manual publishing state.
 6. Time from accepted action to staged CMS draft/update.
-7. Content Plan cleanliness: percentage of Content Plan items with a source opportunity or manual seed reason.
+7. Content Plan source integrity: percentage of all non-legacy Content Plan records that qualify as current through an accepted AI-generated source Opportunity and the complete logical provenance chain—source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when one exists; target is 100%. Only records already present and provenance-incomplete at the 2026-07-12 cutover are excluded as legacy. Provenance-complete older AI work counts as current, while post-cutover incomplete records remain in the denominator as quarantined integrity failures.
 8. Results coverage: percentage of published actions with a measurement window and at least one recorded outcome state.
 9. End-to-end workflow completion: percentage of release-candidate E2E runs that complete from domain setup to Results measurement without verifier intervention beyond expected OAuth/CMS consent.
 10. Time to first measured action: median time from project creation to the first action entering Results measurement.
 
 ## 19. Product Decisions
 
-1. Sidebar label is `Analysis`.
-   The page title may use `Search Intelligence` to describe the specific job, but the workflow label remains `Analysis`.
+1. The user-visible growth-work source and sidebar label are `Opportunities`.
+   Search Intelligence or analysis may describe capabilities inside that page, but neither creates a third work source.
 
-2. `Opportunities` is removed from the primary sidebar.
-   Growth findings and the compact decision queue become the primary working area inside Analysis.
+2. `Opportunities` remains in the primary sidebar beside Doctor.
+   Growth findings and the compact decision queue are the primary working area inside Opportunities.
 
 3. `Visibility` becomes `Results` in the visible product IA.
    The implementation may keep the old `/visibility` route as a compatibility alias during rollout.
 
-4. Analysis owns the connect/reconnect CTA for Search Console.
+4. Opportunities owns the connect/reconnect CTA for Search Console.
    Settings owns detailed connection management, revocation, diagnostics, and advanced configuration.
 
-5. Technical SEO tasks stay inside Content Plan as `technical_task`.
-   A separate Tasks page is out of scope until task volume proves Content Plan cannot carry these actions cleanly.
+5. Immediately verifiable technical SEO work belongs to Doctor as Site Fixes, not Content Plan.
+   Measured pure link strategy becomes an Opportunities Growth Action, while Content Plan receives only accepted AI-generated Opportunity work that materially creates or refreshes content. A separate Tasks page remains out of scope.
 
 6. Default Search data connection model is self-serve end-user Google OAuth.
    Service account remains supported only as internal/admin fallback or migration bridge.
 
 7. The first customer path is OAuth-first.
-   A user should be able to create a project with a domain, connect their own GSC property, and reach Analysis without operator setup.
+   A user should be able to create a project with a domain, connect their own GSC property, and reach Opportunities without operator setup.
 
 8. Default surfaces are collapsed by design.
    User-facing pages should show what needs attention now. Evidence, diagnostics, completed work, raw records, and generated intermediate content should be available but hidden by default.
@@ -1303,3 +1319,6 @@ These measure whether the IA change works without promising SEO rankings:
 
 11. Publisher capability readiness is user-facing.
    The product should show what a connected CMS can safely do instead of treating all publisher connections as equivalent.
+
+12. Content Plan is not a new-work source.
+   Doctor and Opportunities are the only user-visible new-work sources. Content Plan has no manual Opportunity/Topic/Brief intake. Provenance-complete accepted-AI work is current regardless of age; only cutover-existing, provenance-incomplete Topics retain the Section 15.4 compatibility operations, and post-cutover incomplete records fail closed into quarantine without legacy operations.
