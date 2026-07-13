@@ -340,16 +340,21 @@ func repositoryCandidateScore(contextText string, targetTokens []string, candida
 			score += 30
 		}
 	}
+	// Narrow families carry a weight high enough to survive the candidate cap
+	// in repositories where hundreds of paths match generic target-URL tokens
+	// (30 each) or the broad metadata hints; a sitemap fix is useless without
+	// the sitemap source in the bounded candidate list.
 	families := []struct {
 		triggers []string
 		hints    []string
+		weight   int
 	}{
-		{[]string{"sitemap"}, []string{"sitemap"}},
-		{[]string{"canonical"}, []string{"canonical", "layout", "head", "seo"}},
-		{[]string{"schema", "structured data", "json-ld", "jsonld"}, []string{"schema", "structured", "jsonld", "json-ld"}},
-		{[]string{"internal-link", "internal link"}, []string{"navigation", "nav", "menu", "sidebar", "link"}},
-		{[]string{"robots"}, []string{"robots"}},
-		{[]string{"metadata", "title", "description"}, []string{"page", "metadata", "head", "seo"}},
+		{[]string{"sitemap"}, []string{"sitemap"}, 500},
+		{[]string{"robots"}, []string{"robots"}, 500},
+		{[]string{"schema", "structured data", "json-ld", "jsonld"}, []string{"schema", "structured", "jsonld", "json-ld"}, 300},
+		{[]string{"canonical"}, []string{"canonical", "layout", "head", "seo"}, 70},
+		{[]string{"internal-link", "internal link"}, []string{"navigation", "nav", "menu", "sidebar", "link"}, 70},
+		{[]string{"metadata", "title", "description"}, []string{"page", "metadata", "head", "seo"}, 70},
 	}
 	for _, family := range families {
 		if !containsAny(contextText, family.triggers) {
@@ -357,7 +362,7 @@ func repositoryCandidateScore(contextText string, targetTokens []string, candida
 		}
 		for _, hint := range family.hints {
 			if strings.Contains(lower, hint) {
-				score += 70
+				score += family.weight
 			}
 		}
 	}
