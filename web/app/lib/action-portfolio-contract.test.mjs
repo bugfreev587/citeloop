@@ -102,13 +102,24 @@ test("Action cards expose why, contribution, output type, and execution result",
 
 test("Canonical site fix helpers describe the closed-loop lifecycle", () => {
   const lib = read("lib/site-fix.ts");
-  for (const snippet of ["canonicalSiteFixStatusLabel", "canonicalSiteFixNextAction", "Awaiting deploy", "Retry verification", "Retry apply", "Verified"]) {
-    assert.match(lib, new RegExp(snippet));
+  const progress = read("lib/site-fix-pr-progress.ts");
+  for (const snippet of [
+    "canonicalSiteFixStatusLabel",
+    "canonicalSiteFixNextAction",
+    "Awaiting deploy",
+    "Create the approved repair pull request",
+    "Retry pull request creation",
+    "Retry verification",
+    "Verified",
+  ]) {
+    assert.match(`${lib}\n${progress}`, new RegExp(snippet));
   }
 });
 
 test("Canonical Site Fixes visibly expose provenance, application, and verification", () => {
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const progress = read("lib/site-fix-pr-progress.ts");
+  const contract = `${siteFixes}\n${progress}`;
   for (const snippet of [
     "Finding",
     "Approved",
@@ -122,28 +133,34 @@ test("Canonical Site Fixes visibly expose provenance, application, and verificat
     "retry_count",
     "application",
   ]) {
-    assert.match(siteFixes, new RegExp(snippet));
+    assert.match(contract, new RegExp(snippet));
   }
-  assert.match(siteFixes, /I applied this manually/);
-  assert.match(siteFixes, /drawerApplication\?\.status === "manual_apply_required"/);
+  assert.doesNotMatch(siteFixes, /I applied this manually/);
+  assert.doesNotMatch(siteFixes, /manual_apply_required/);
   assert.match(siteFixes, /href=\{`\/projects\/\$\{projectId\}\/doctor\?finding=\$\{selected\.doctor_finding_id\}`\}/);
   assert.match(siteFixes, /legacy_opportunity_id/);
   assert.match(siteFixes, /legacy_content_action_id/);
   assert.match(siteFixes, /fix\.legacy_aliases\?\.some\(\(alias\) => alias\.object_id === requestedID\)/);
   assert.match(siteFixes, /Legacy provenance/);
   assert.match(siteFixes, /verifications: updated\.verifications \?\? existing\.verifications/);
-  assert.match(siteFixes, /\["approved", "preparing", "ready_to_apply"\]\.includes\(selected\.status\)/);
-  assert.match(siteFixes, /selected\.status === "preparing" \? "Retry apply" : "Apply fix"/);
-  assert.match(siteFixes, /busyLabel=\{retryingApply \? "Retrying" : "Applying"\}/);
+  assert.match(progress, /case "approved":[\s\S]*case "ready_to_apply":[\s\S]*label: "Create PR"/);
+  assert.match(progress, /case "preparing":[\s\S]*failure_reason[\s\S]*label: "Retry PR creation"/);
+  assert.match(progress, /busyLabel: "Approving & creating PR\.\.\."/);
+  assert.match(progress, /busyLabel: "Creating PR\.\.\."/);
+  assert.match(siteFixes, /siteFixPullRequestMutationAction\(selected\)/);
 });
 
 test("Site Fix lifecycle never presents deploy or verification-in-progress as verified", () => {
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
-  const lifecycle = siteFixes.slice(siteFixes.indexOf("function LifecycleStrip"), siteFixes.indexOf("function DetailBlock"));
-  assert.match(lifecycle, /fix\.status === "verified"/);
-  assert.match(lifecycle, /isComplete/);
-  assert.match(lifecycle, /isCurrent/);
-  assert.doesNotMatch(lifecycle, /index <= current/);
+  const progress = read("lib/site-fix-pr-progress.ts");
+  const lifecycle = progress.slice(progress.indexOf("export function canonicalSiteFixMilestones"), progress.indexOf("export function shouldPollSiteFixLifecycle"));
+  assert.match(lifecycle, /deploymentProvingStatus/);
+  assert.match(lifecycle, /status === "verified"/);
+  assert.match(lifecycle, /firstIncomplete/);
+  assert.doesNotMatch(lifecycle, /applied_at|github_pr_url|github_pr_state|merged_at/);
+  assert.match(siteFixes, /const milestones = canonicalSiteFixMilestones\(fix\)/);
+  assert.match(siteFixes, /milestone\.complete/);
+  assert.match(siteFixes, /milestone\.current/);
 });
 
 test("Site fix PR awaiting-merge nag is a subscribable notification event", () => {

@@ -55,13 +55,13 @@ export function canonicalSiteFixNextAction(fix: SiteFix) {
       return "Review the evidence and approve this fix.";
     case "approved":
     case "ready_to_apply":
-      return "Apply the approved change.";
+      return "Create the approved repair pull request.";
     case "preparing":
-      return "Application preparation is incomplete. Retry apply to start a new audited generation attempt.";
+      return "Pull request preparation is incomplete. Retry pull request creation to start a new audited generation attempt.";
     case "applying":
-      return "Application is in progress; refresh for the deploy handoff.";
+      return "Pull request creation is in progress; refresh for the latest repository handoff.";
     case "awaiting_deploy":
-      return "Deploy the applied change, then start verification.";
+      return "The repair PR is merged. Wait for deployment, then start verification.";
     case "verifying":
       return "Verification is checking the acceptance criteria.";
     case "failed_retryable":

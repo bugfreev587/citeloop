@@ -30,6 +30,8 @@ func TestPublisherConnectionRoutesAreRegistered(t *testing.T) {
 		{http.MethodPost, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/test"},
 		{http.MethodPut, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
 		{http.MethodDelete, "/api/projects/not-a-uuid/publisher-connections/not-a-connection/credential"},
+		{http.MethodGet, "/api/projects/not-a-uuid/integrations/github/pr-readiness"},
+		{http.MethodPost, "/api/projects/not-a-uuid/integrations/github/pr-readiness/check"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
 		res := httptest.NewRecorder()
@@ -283,18 +285,35 @@ func TestPublisherConnectionResponseRedactsCredentialRefAndKeepsCapabilities(t *
 type fakeGitHubAppClient struct {
 	configured        bool
 	token             string
+	access            githubapp.InstallationAccess
+	err               error
 	gotInstallationID string
+	calls             []string
 }
 
-func (f *fakeGitHubAppClient) Configured() bool { return f.configured }
+func (f *fakeGitHubAppClient) Configured() bool {
+	f.calls = append(f.calls, "Configured")
+	return f.configured
+}
 
-func (f *fakeGitHubAppClient) InstallURL(string) string { return "" }
+func (f *fakeGitHubAppClient) InstallURL(string) string {
+	f.calls = append(f.calls, "InstallURL")
+	return ""
+}
 
 func (f *fakeGitHubAppClient) InstallationToken(_ context.Context, installationID string) (string, error) {
+	f.calls = append(f.calls, "InstallationToken")
 	f.gotInstallationID = installationID
-	return f.token, nil
+	return f.token, f.err
+}
+
+func (f *fakeGitHubAppClient) InstallationAccess(_ context.Context, installationID string) (githubapp.InstallationAccess, error) {
+	f.calls = append(f.calls, "InstallationAccess")
+	f.gotInstallationID = installationID
+	return f.access, f.err
 }
 
 func (f *fakeGitHubAppClient) ListRepos(context.Context, string) ([]githubapp.Repo, error) {
-	return nil, nil
+	f.calls = append(f.calls, "ListRepos")
+	return nil, f.err
 }

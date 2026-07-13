@@ -161,6 +161,8 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
   // The Site Fixes review surface moved to its own page and now uses the shared
   // RightDrawer instead of a bespoke analysis drawer.
   const source = await readFile(new URL("../projects/[id]/site-fixes/site-fixes-client.tsx", import.meta.url), "utf8");
+  const progress = await readFile(new URL("site-fix-pr-progress.ts", import.meta.url), "utf8");
+  const contract = `${source}\n${progress}`;
 
   for (const expected of [
     "selectedID",
@@ -171,13 +173,14 @@ test("Analysis Site Fixes open a reusable right drawer for review", async () => 
     "Review site fix details",
     "returnFocusRef",
     "Approve fix",
-    "Apply fix",
+    "Create PR",
+    "Retry PR creation",
     "Verify fix",
     "api.approveDoctorSiteFix",
     "api.applyDoctorSiteFix",
     "api.verifyDoctorSiteFix",
   ]) {
-    assert.equal(source.includes(expected), true, `site-fixes-client.tsx missing ${expected}`);
+    assert.equal(contract.includes(expected), true, `Site Fix PR contract missing ${expected}`);
   }
   assert.doesNotMatch(source, /Needs revision/, "Site Fix review drawer should not expose a non-functional revision action");
   assert.doesNotMatch(source, /verifyAction\(action, "failed"\)/, "Site Fix review drawer should not mark review feedback as verification failure");
@@ -226,7 +229,11 @@ test("Canonical Site Fixes load and mutate only through Doctor lifecycle APIs", 
   const refreshSource = source.slice(refreshStart, refreshEnd);
 
   assert.notEqual(refreshStart, -1, "site-fixes-client.tsx missing refresh callback");
+  assert.match(refreshSource, /const \[fixesResult, readinessResult\] = await Promise\.allSettled\(\[\s*api\.listDoctorSiteFixes\(projectId\),\s*api\.getGithubPRReadiness\(projectId\),\s*\]\)/);
+  assert.equal((refreshSource.match(/api\.listDoctorSiteFixes\(projectId\)/g) ?? []).length, 1, "full refresh must request the Site Fix list exactly once");
+  assert.equal((refreshSource.match(/api\.getGithubPRReadiness\(projectId\)/g) ?? []).length, 1, "full refresh must request stored GitHub readiness exactly once");
   assert.match(refreshSource, /api\.listDoctorSiteFixes\(projectId\)/);
+  assert.match(refreshSource, /api\.getGithubPRReadiness\(projectId\)/);
   assert.match(source, /api\.approveDoctorSiteFix\(projectId, fix\.id\)/);
   assert.match(source, /api\.applyDoctorSiteFix\(projectId, fix\.id\)/);
   assert.match(source, /api\.verifyDoctorSiteFix\(projectId, fix\.id\)/);

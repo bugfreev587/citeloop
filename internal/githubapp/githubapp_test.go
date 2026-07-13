@@ -1,12 +1,15 @@
 package githubapp
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -84,4 +87,80 @@ func TestAppJWTSignsValidRS256(t *testing.T) {
 	if _, ok := c["exp"]; !ok {
 		t.Fatal("missing exp")
 	}
+}
+
+func TestGitHubAppReadinessInstallationAccessDecodesTokenAndGrantedPermissions(t *testing.T) {
+	s := New(Config{AppID: "424242", Slug: "citeloop", PrivateKeyPEM: testKeyPEM(t)})
+	s.client = &http.Client{Transport: githubAppRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", req.Method)
+		}
+		if req.URL.Path != "/app/installations/12345/access_tokens" {
+			t.Fatalf("path = %q", req.URL.Path)
+		}
+		if !strings.HasPrefix(req.Header.Get("Authorization"), "Bearer ") {
+			t.Fatal("installation access request must use an App JWT")
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Status:     "201 Created",
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"token":"installation-secret",
+				"permissions":{"contents":"write","pull_requests":"write","metadata":"read"}
+			}`)),
+			Request: req,
+		}, nil
+	})}
+
+	access, err := s.InstallationAccess(context.Background(), "12345")
+	if err != nil {
+		t.Fatalf("InstallationAccess returned error: %v", err)
+	}
+	if access.Token != "installation-secret" {
+		t.Fatalf("token = %q", access.Token)
+	}
+	if access.Permissions["contents"] != "write" || access.Permissions["pull_requests"] != "write" || access.Permissions["metadata"] != "read" {
+		t.Fatalf("permissions = %#v", access.Permissions)
+	}
+	body, err := json.Marshal(access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "installation-secret") || !strings.Contains(string(body), `"permissions"`) {
+		t.Fatalf("serialized installation access must expose permissions but not token: %s", body)
+	}
+}
+
+func TestGitHubAppReadinessInstallationAccessErrorKeepsOnlyStatusMetadata(t *testing.T) {
+	s := New(Config{AppID: "424242", Slug: "citeloop", PrivateKeyPEM: testKeyPEM(t)})
+	s.client = &http.Client{Transport: githubAppRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"message":"ghp_secret Authorization: Bearer raw upstream body"}`)),
+			Request:    req,
+		}, nil
+	})}
+
+	_, err := s.InstallationAccess(context.Background(), "12345")
+	if err == nil {
+		t.Fatal("expected installation access error")
+	}
+	statusError, ok := err.(interface{ StatusCode() int })
+	if !ok || statusError.StatusCode() != http.StatusForbidden {
+		t.Fatalf("error = %#v, want status-bearing 403", err)
+	}
+	for _, unsafe := range []string{"ghp_secret", "Authorization", "Bearer", "raw upstream body"} {
+		if strings.Contains(err.Error(), unsafe) {
+			t.Fatalf("error leaked %q: %v", unsafe, err)
+		}
+	}
+}
+
+type githubAppRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f githubAppRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

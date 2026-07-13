@@ -27,6 +27,20 @@ func TestCanonicalDoctorSiteFixSchedulerContract(t *testing.T) {
 	if !strings.Contains(merged, "next_poll_at") || !strings.Contains(merged, "interval '3 minutes'") {
 		t.Fatal("PR merge must atomically schedule the deploy-grace poll")
 	}
+	for _, forbidden := range []string{"applied_at =", "deployed_at ="} {
+		if strings.Contains(merged, forbidden) {
+			t.Fatalf("PR merge is not production evidence; found %q", forbidden)
+		}
+	}
+	verifying := namedQueryBody(t, queries, "markcanonicalsitefixverifying")
+	for _, required := range []string{
+		"applied_at = coalesce(applied_at, sqlc.arg(deployed_at))",
+		"deployed_at = coalesce(deployed_at, sqlc.arg(deployed_at))",
+	} {
+		if !strings.Contains(verifying, required) {
+			t.Fatalf("production evidence transition missing %q", required)
+		}
+	}
 	for _, name := range []string{
 		"listcanonicalsitefixprsforreconciliation",
 		"listcanonicalsitefixesforverification",

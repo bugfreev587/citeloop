@@ -25,15 +25,15 @@ type LLMPatchGroundingVerifier struct {
 func (v LLMPatchGroundingVerifier) Describe(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) GenerationCall {
 	return GenerationCall{
 		Provider: "tokengate", Model: firstNonEmpty(v.Model, llm.DefaultTokenGateModel),
-		PromptVersion: "doctor-patch-grounding-verification-v1", RequestFingerprint: aicalls.Fingerprint(v.completionRequest(fix, generationContext, plan)),
+		PromptVersion: "doctor-patch-grounding-verification-v2", RequestFingerprint: aicalls.Fingerprint(v.completionRequest(fix, generationContext, plan)),
 	}
 }
 
 func (v LLMPatchGroundingVerifier) completionRequest(fix db.SiteFix, generationContext GenerationContext, plan ApplicationPlan) llm.CompletionReq {
 	prompt, _ := json.Marshal(patchVerificationInput(fix, generationContext, plan))
 	return llm.CompletionReq{
-		System:  "You are CiteLoop's independent final patch grounding verifier. Inspect the actual patch_snapshot, diff_snapshot, replacement text, and resolution criteria. Compare them only with the approved Product Context, observed evidence, approved primary intent, and preserved propositions. Do not trust or infer safety from any prior generator self-report. Reject every added, removed, or unsupported proposition, commercial promise, offer, capability, or intent change. Return strict JSON only.",
-		Prompt:  "Return exactly: {approved:boolean, primary_intent_preserved:boolean, preserved_propositions:string[], added_propositions:string[], removed_propositions:string[], unsupported_claims:string[], intent_drift:boolean, reason:string}. Fail closed: approved may be true only when the actual generated artifacts preserve the full approved proposition set and intent with no unsupported claim.\n" + string(prompt),
+		System:  "You are CiteLoop's independent final patch grounding verifier. Inspect only the actual repository diff computed from exact replacements, the selected source identities in patch_snapshot, and the resolution criteria. Compare every touched file and replacement only with the approved Product Context, observed evidence, approved fix, primary intent, and preserved propositions. Reject any unrelated file edit, unrelated replacement, unnecessary or unauthorized selected source identity, or source-association change not expressly supported by the approved evidence. Do not trust or infer safety from any prior generator self-report. Reject every added, removed, or unsupported proposition, commercial promise, offer, capability, or intent change. Return strict JSON only.",
+		Prompt:  "Return exactly: {approved:boolean, primary_intent_preserved:boolean, preserved_propositions:string[], added_propositions:string[], removed_propositions:string[], unsupported_claims:string[], intent_drift:boolean, reason:string}. Fail closed: approved may be true only when the actual repository diff contains no unrelated file or unrelated replacement, every selected source identity is authorized by and necessary for the approved fix, every source-association change is approved, and the full approved proposition set and intent are preserved with no unsupported claim.\n" + string(prompt),
 		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(v.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 900, DisableProviderFallback: true,
 	}
 }
@@ -91,8 +91,9 @@ func patchVerificationInput(fix db.SiteFix, generationContext GenerationContext,
 	return map[string]any{
 		"product_context": generationContext.ProductProfile, "context_profile_version": generationContext.ProfileVersion,
 		"observed_evidence": generationContext.ObservedEvidence, "approved_primary_intent": intent,
-		"approved_preserved_propositions": propositions, "patch_snapshot": plan.PatchSnapshot,
-		"diff_snapshot": plan.DiffSnapshot, "resolution_criteria": independentResolutionCriteria(plan.ResolutionCriteria),
+		"approved_preserved_propositions": propositions, "approved_fix": fix.ProposedFix, "acceptance_tests": fix.AcceptanceTests,
+		"patch_snapshot": plan.PatchSnapshot,
+		"diff_snapshot":  plan.DiffSnapshot, "resolution_criteria": independentResolutionCriteria(plan.ResolutionCriteria),
 	}
 }
 

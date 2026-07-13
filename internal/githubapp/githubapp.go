@@ -105,11 +105,31 @@ func (s *Service) appJWT() (string, error) {
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// InstallationToken exchanges the App JWT for a ~1h installation access token.
-func (s *Service) InstallationToken(ctx context.Context, installationID string) (string, error) {
+// InstallationAccess is the short-lived credential and the permissions GitHub
+// granted to it. Token is deliberately excluded from JSON so callers cannot
+// accidentally expose it with the permission metadata.
+type InstallationAccess struct {
+	Token       string            `json:"-"`
+	Permissions map[string]string `json:"permissions"`
+}
+
+type responseStatusError struct {
+	operation string
+	status    int
+}
+
+func (e responseStatusError) Error() string {
+	return fmt.Sprintf("%s: GitHub returned status %d", e.operation, e.status)
+}
+
+func (e responseStatusError) StatusCode() int { return e.status }
+
+// InstallationAccess exchanges the App JWT for a ~1h installation access token
+// and the permission grants attached to that exact token.
+func (s *Service) InstallationAccess(ctx context.Context, installationID string) (InstallationAccess, error) {
 	jwt, err := s.appJWT()
 	if err != nil {
-		return "", err
+		return InstallationAccess{}, err
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%s/access_tokens", apiBase, url.PathEscape(strings.TrimSpace(installationID)))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte("{}")))
@@ -117,22 +137,33 @@ func (s *Service) InstallationToken(ctx context.Context, installationID string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", err
+		return InstallationAccess{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("github installation token: %s", resp.Status)
+		return InstallationAccess{}, responseStatusError{operation: "github installation token", status: resp.StatusCode}
 	}
-	var out struct {
-		Token string `json:"token"`
+	var payload struct {
+		Token       string            `json:"token"`
+		Permissions map[string]string `json:"permissions"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return InstallationAccess{}, err
+	}
+	if payload.Token == "" {
+		return InstallationAccess{}, errors.New("github returned an empty installation token")
+	}
+	return InstallationAccess{Token: payload.Token, Permissions: payload.Permissions}, nil
+}
+
+// InstallationToken preserves the original token-only API for publisher and
+// scheduler callers that do not need permission metadata.
+func (s *Service) InstallationToken(ctx context.Context, installationID string) (string, error) {
+	access, err := s.InstallationAccess(ctx, installationID)
+	if err != nil {
 		return "", err
 	}
-	if out.Token == "" {
-		return "", errors.New("github returned an empty installation token")
-	}
-	return out.Token, nil
+	return access.Token, nil
 }
 
 // ListRepos returns the repositories an installation can access.

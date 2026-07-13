@@ -47,6 +47,7 @@ const ADMIN_DESTRUCTIVE_DELETE_TIMEOUT_MS = 120_000;
 // Doctor create/apply can include bounded arbitration, generation, and PR I/O.
 // Use the existing two-minute mutation ceiling instead of an unbounded wait.
 const DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS = 120_000;
+const GITHUB_PR_READINESS_CHECK_TIMEOUT_MS = 60_000;
 // Live LLM probes: the backend allows up to 30s for the completions, so the
 // browser must wait longer than the default API timeout.
 const LLM_CONNECTION_TEST_TIMEOUT_MS = 45_000;
@@ -399,6 +400,22 @@ export type GithubIntegrationStatus = {
   base_url?: string;
   install_url?: string;
   reusable_installation_id?: string;
+};
+
+export type GithubPRReadinessStatus =
+  | "not_connected"
+  | "not_checked"
+  | "ready"
+  | "permission_missing"
+  | "repository_unavailable"
+  | "error";
+
+export type GithubPRReadiness = {
+  status: GithubPRReadinessStatus;
+  checked_at?: string | null;
+  detail?: string;
+  repo?: string;
+  branch?: string;
 };
 
 export type SEOIntegration = {
@@ -1647,12 +1664,17 @@ function normalizeSiteChangeApplication(raw: any): SiteChangeApplication {
     source_file_paths: normalizeStringArray(data.source_file_paths),
     source_mapping_confidence: String(data.source_mapping_confidence ?? ""),
     source_mapping_reason: String(data.source_mapping_reason ?? ""),
+    repo_full_name: trimmedString(data.repo_full_name) ?? null,
+    base_branch: trimmedString(data.base_branch) ?? null,
+    working_branch: trimmedString(data.working_branch) ?? null,
+    base_commit_sha: trimmedString(data.base_commit_sha) ?? null,
+    head_commit_sha: trimmedString(data.head_commit_sha) ?? null,
     patch_snapshot: data.patch_snapshot ?? {},
     diff_snapshot: data.diff_snapshot ?? {},
     resolution_criteria: data.resolution_criteria ?? {},
     github_pr_number: data.github_pr_number == null ? null : Number(data.github_pr_number),
-    github_pr_url: data.github_pr_url ?? null,
-    github_pr_state: data.github_pr_state ?? null,
+    github_pr_url: trimmedString(data.github_pr_url) ?? null,
+    github_pr_state: trimmedString(data.github_pr_state) ?? null,
     deployment_snapshot: data.deployment_snapshot ?? {},
     verification_snapshot: data.verification_snapshot ?? {},
     failure_reason: data.failure_reason ?? null,
@@ -2202,6 +2224,39 @@ function normalizeGithubIntegration(raw: any): GithubIntegrationStatus {
   };
 }
 
+const githubPRReadinessStatuses: GithubPRReadinessStatus[] = [
+  "not_connected",
+  "not_checked",
+  "ready",
+  "permission_missing",
+  "repository_unavailable",
+  "error",
+];
+
+function isGithubPRReadinessStatus(value: unknown): value is GithubPRReadinessStatus {
+  return typeof value === "string" && githubPRReadinessStatuses.includes(value as GithubPRReadinessStatus);
+}
+
+function trimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+}
+
+function normalizeGithubPRReadiness(raw: any): GithubPRReadiness {
+  const data = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const detail = trimmedString(data.detail);
+  const repo = trimmedString(data.repo);
+  const branch = trimmedString(data.branch);
+  const checkedAt = trimmedString(data.checked_at) ?? null;
+  return {
+    status: isGithubPRReadinessStatus(data.status) ? data.status : "error",
+    checked_at: checkedAt,
+    ...(detail ? { detail } : {}),
+    ...(repo ? { repo } : {}),
+    ...(branch ? { branch } : {}),
+  };
+}
+
 async function bearerHeader(auth?: AuthOptions): Promise<Record<string, string>> {
   const token = auth?.token ?? (auth?.getToken ? await auth.getToken() : null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -2480,6 +2535,18 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/integrations/github`, undefined, auth);
     return normalizeGithubIntegration(raw);
   },
+  getGithubPRReadiness: async (projectID: string): Promise<GithubPRReadiness> => {
+    const raw = await req<any>(`/projects/${projectID}/integrations/github/pr-readiness`, undefined, auth);
+    return normalizeGithubPRReadiness(raw);
+  },
+  checkGithubPRReadiness: async (projectID: string): Promise<GithubPRReadiness> => {
+    const raw = await req<any>(
+      `/projects/${projectID}/integrations/github/pr-readiness/check`,
+      { method: "POST" },
+      withMinimumTimeout(auth, GITHUB_PR_READINESS_CHECK_TIMEOUT_MS),
+    );
+    return normalizeGithubPRReadiness(raw);
+  },
   storeGithubInstallation: async (id: string, installationID: string): Promise<{ repositories: GithubRepo[] }> => {
     const raw = await req<any>(
       `/projects/${id}/integrations/github/installation`,
@@ -2576,9 +2643,13 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/dismiss-link`, { method: "POST" }, auth);
     return normalizeSiteFix(raw);
   },
-  approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFix> => {
-    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/approve`, { method: "POST" }, auth);
-    return normalizeSiteFix(raw);
+  approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
+    const raw = await req<any>(
+      `/projects/${id}/doctor/site-fixes/${fixID}/approve`,
+      { method: "POST" },
+      withMinimumTimeout(auth, DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS),
+    );
+    return normalizeSiteFixLifecycleResult(raw);
   },
   applyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
     const raw = await req<any>(

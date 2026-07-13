@@ -53,6 +53,11 @@ export type SiteChangeApplication = {
   source_file_paths: string[];
   source_mapping_confidence: string;
   source_mapping_reason: string;
+  repo_full_name?: string | null;
+  base_branch?: string | null;
+  working_branch?: string | null;
+  base_commit_sha?: string | null;
+  head_commit_sha?: string | null;
   patch_snapshot: unknown;
   diff_snapshot: unknown;
   resolution_criteria: unknown;

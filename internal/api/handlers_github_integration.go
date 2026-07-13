@@ -16,6 +16,7 @@ import (
 type githubAppAPI interface {
 	Configured() bool
 	InstallURL(string) string
+	InstallationAccess(context.Context, string) (githubapp.InstallationAccess, error)
 	InstallationToken(context.Context, string) (string, error)
 	ListRepos(context.Context, string) ([]githubapp.Repo, error)
 }

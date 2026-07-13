@@ -269,6 +269,88 @@ func TestOpenAIChatCompleteRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatCompleteBoundsSuccessfulResponseBody(t *testing.T) {
+	body := `{"model":"gpt-5.1","choices":[{"message":{"content":"ok"}}]}` + strings.Repeat(" ", maxOpenAIChatResponseBytes)
+	counting := newCountingReadCloser(body)
+	p := NewOpenAIChat("key", "https://tokengate.example/v1", "gpt-5.1")
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: counting}, nil
+	})}
+	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "repair", Model: "gpt-5.1", DisableProviderFallback: true}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized successful response error=%v", err)
+	}
+	if counting.bytesRead > maxOpenAIChatResponseBytes+1 {
+		t.Fatalf("successful response read %d bytes beyond cap %d", counting.bytesRead, maxOpenAIChatResponseBytes)
+	}
+}
+
+func TestOpenAIChatCompleteBoundsErrorResponseBody(t *testing.T) {
+	counting := newCountingReadCloser(strings.Repeat("provider-error-body", maxOpenAIChatErrorResponseBytes))
+	p := NewOpenAIChat("key", "https://tokengate.example/v1", "gpt-5.1")
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: counting}, nil
+	})}
+	if _, err := p.Complete(context.Background(), CompletionReq{Prompt: "repair", Model: "gpt-5.1", DisableProviderFallback: true}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized error response error=%v", err)
+	}
+	if counting.bytesRead > maxOpenAIChatErrorResponseBytes+1 {
+		t.Fatalf("error response read %d bytes beyond cap %d", counting.bytesRead, maxOpenAIChatErrorResponseBytes)
+	}
+}
+
+func TestOpenAIChatCompleteDoesNotEchoProviderErrorBody(t *testing.T) {
+	p := NewOpenAIChat("key", "https://tokengate.example/v1", "gpt-5.1")
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream included secret-token-value in its diagnostic"}}`)),
+		}, nil
+	})}
+	_, err := p.Complete(context.Background(), CompletionReq{Prompt: "repair", Model: "gpt-5.1", DisableProviderFallback: true})
+	if err == nil || !strings.Contains(err.Error(), "provider request failed") {
+		t.Fatalf("safe provider error summary missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-token-value") || strings.Contains(err.Error(), "upstream included") {
+		t.Fatalf("provider error body was echoed: %v", err)
+	}
+}
+
+func TestOpenAIChatCompleteDoesNotEchoEmbeddedErrorOnSuccessStatus(t *testing.T) {
+	p := NewOpenAIChat("key", "https://tokengate.example/v1", "gpt-5.1")
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream included secret-token-value in its diagnostic"}}`)),
+		}, nil
+	})}
+	_, err := p.Complete(context.Background(), CompletionReq{Prompt: "repair", Model: "gpt-5.1", DisableProviderFallback: true})
+	if err == nil || !strings.Contains(err.Error(), "provider returned an error") {
+		t.Fatalf("safe embedded provider error summary missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-token-value") || strings.Contains(err.Error(), "upstream included") {
+		t.Fatalf("embedded provider error body was echoed: %v", err)
+	}
+}
+
+type countingReadCloser struct {
+	reader    *strings.Reader
+	bytesRead int
+}
+
+func newCountingReadCloser(value string) *countingReadCloser {
+	return &countingReadCloser{reader: strings.NewReader(value)}
+}
+
+func (r *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += n
+	return n, err
+}
+
+func (*countingReadCloser) Close() error { return nil }
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

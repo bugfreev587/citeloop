@@ -183,6 +183,7 @@ type Querier interface {
 	GetGEOPromptForProject(ctx context.Context, arg GetGEOPromptForProjectParams) (GeoPrompt, error)
 	GetGEOPromptSetForProject(ctx context.Context, arg GetGEOPromptSetForProjectParams) (GeoPromptSet, error)
 	GetGenerationRun(ctx context.Context, arg GetGenerationRunParams) (GenerationRun, error)
+	GetGitHubPRReadinessForProject(ctx context.Context, projectID uuid.UUID) (PublisherConnection, error)
 	GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error)
 	GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
@@ -370,7 +371,7 @@ type Querier interface {
 	MarkCanonicalSiteFixApplied(ctx context.Context, arg MarkCanonicalSiteFixAppliedParams) (MarkCanonicalSiteFixAppliedRow, error)
 	MarkCanonicalSiteFixApplyFailure(ctx context.Context, arg MarkCanonicalSiteFixApplyFailureParams) (SiteChangeApplication, error)
 	MarkCanonicalSiteFixAwaitingDeploy(ctx context.Context, arg MarkCanonicalSiteFixAwaitingDeployParams) (MarkCanonicalSiteFixAwaitingDeployRow, error)
-	MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCanonicalSiteFixGitHubPRParams) (SiteChangeApplication, error)
+	MarkCanonicalSiteFixGitHubPR(ctx context.Context, arg MarkCanonicalSiteFixGitHubPRParams) (MarkCanonicalSiteFixGitHubPRRow, error)
 	MarkCanonicalSiteFixManualApplied(ctx context.Context, arg MarkCanonicalSiteFixManualAppliedParams) (MarkCanonicalSiteFixManualAppliedRow, error)
 	MarkCanonicalSiteFixManualHandoff(ctx context.Context, arg MarkCanonicalSiteFixManualHandoffParams) (SiteChangeApplication, error)
 	MarkCanonicalSiteFixMigrationRolledBack(ctx context.Context, arg MarkCanonicalSiteFixMigrationRolledBackParams) (MarkCanonicalSiteFixMigrationRolledBackRow, error)
@@ -431,6 +432,7 @@ type Querier interface {
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ReclassifyAICallRecordOutputFailure(ctx context.Context, arg ReclassifyAICallRecordOutputFailureParams) (AiCallRecord, error)
+	RecordCanonicalSiteFixPreparationFailure(ctx context.Context, arg RecordCanonicalSiteFixPreparationFailureParams) (SiteFix, error)
 	RecordGrowthTerminalOutcome(ctx context.Context, arg RecordGrowthTerminalOutcomeParams) error
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
@@ -445,6 +447,7 @@ type Querier interface {
 	RepointApplicationToCanonicalSiteFix(ctx context.Context, arg RepointApplicationToCanonicalSiteFixParams) (SiteChangeApplication, error)
 	RepointDuplicateGrowthContentActions(ctx context.Context, arg RepointDuplicateGrowthContentActionsParams) (RepointDuplicateGrowthContentActionsRow, error)
 	RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Context, arg RepointLegacyApplicationsToCanonicalSiteFixParams) ([]SiteChangeApplication, error)
+	ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (ResetCanonicalSiteFixSourceConflictForReprepareRow, error)
 	ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	ResolveLegacyObjectAlias(ctx context.Context, arg ResolveLegacyObjectAliasParams) (LegacyObjectAlias, error)
 	ResolveMigrationReviewItem(ctx context.Context, arg ResolveMigrationReviewItemParams) (MigrationReviewItem, error)
@@ -468,6 +471,7 @@ type Querier interface {
 	SEOOpportunityCounts(ctx context.Context, projectID uuid.UUID) ([]SEOOpportunityCountsRow, error)
 	SEOOverviewStats(ctx context.Context, projectID uuid.UUID) (SEOOverviewStatsRow, error)
 	SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) (SEOTechnicalSummaryRow, error)
+	SaveCanonicalSiteFixPreparedPatch(ctx context.Context, arg SaveCanonicalSiteFixPreparedPatchParams) (SiteChangeApplication, error)
 	// Publisher: canonical articles due for auto-publish (§5.6).
 	SelectDueCanonical(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	// Scheduler: topics whose operator-set scheduled_at slot has arrived. Unlike
@@ -483,6 +487,7 @@ type Querier interface {
 	SelectUnlockableVariants(ctx context.Context) ([]Article, error)
 	SetArticleQA(ctx context.Context, arg SetArticleQAParams) (Article, error)
 	SetCanonicalSiteFixNextPollAt(ctx context.Context, arg SetCanonicalSiteFixNextPollAtParams) error
+	SetGitHubPRReadinessIfUnchanged(ctx context.Context, arg SetGitHubPRReadinessIfUnchangedParams) (PublisherConnection, error)
 	SetGrowthCutoverSessionReviewRequired(ctx context.Context, arg SetGrowthCutoverSessionReviewRequiredParams) (GrowthCutoverSession, error)
 	SetPublisherConnectionCredentialRef(ctx context.Context, arg SetPublisherConnectionCredentialRefParams) (PublisherConnection, error)
 	SetPublisherConnectionEnabled(ctx context.Context, arg SetPublisherConnectionEnabledParams) (PublisherConnection, error)

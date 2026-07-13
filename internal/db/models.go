@@ -1030,6 +1030,9 @@ type PublisherConnection struct {
 	LastError               *string            `json:"last_error"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	PrReadinessStatus       string             `json:"pr_readiness_status"`
+	PrReadinessCheckedAt    pgtype.Timestamptz `json:"pr_readiness_checked_at"`
+	PrReadinessDetail       *string            `json:"pr_readiness_detail"`
 }
 
 type PublisherCredential struct {

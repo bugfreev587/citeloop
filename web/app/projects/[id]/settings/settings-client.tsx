@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
   AutopilotReadiness,
@@ -9,6 +9,7 @@ import {
   GSCConnection,
   GitHubNextJSPublisherInput,
   GithubIntegrationStatus,
+  GithubPRReadiness,
   NotificationChannel,
   NotificationChannelKind,
   NotificationDelivery,
@@ -27,6 +28,13 @@ import {
 import { normalizeNumeric } from "../../../lib/normalize";
 import { readinessGateActionFor } from "../../../lib/automation-readiness";
 import { rememberGithubConnectProject } from "../../../lib/github-connect";
+import {
+  createGithubPRReadinessPublisherEntryTracker,
+  createGithubPRReadinessRequestOrder,
+  createGithubPRReadinessRefreshCoordinator,
+  GithubPRReadinessRequestScope,
+  GithubPRReadinessRefreshMode,
+} from "../../../lib/github-pr-readiness-refresh";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 import { Badge, Button, ButtonProgress, Field, Notice, SectionHeader, TextInput, TextArea, cx, formatDate } from "../../../components/ui";
@@ -127,6 +135,50 @@ function ga4StatusLabel(status?: string, propertyID?: string) {
   if (propertyID?.trim()) return "property saved";
   return "not connected";
 }
+
+function githubPRReadinessPresentation(status?: GithubPRReadiness["status"]) {
+  switch (status) {
+    case "ready":
+      return {
+        title: "Ready to create repair PRs",
+        detail: "CiteLoop can reach the selected target and create the branch and pull request needed for a repair.",
+        tone: "green" as const,
+      };
+    case "not_connected":
+      return {
+        title: "Connect GitHub to create repair PRs",
+        detail: "Connect the GitHub App, then choose the repository and branch CiteLoop should repair.",
+        tone: "amber" as const,
+      };
+    case "permission_missing":
+      return {
+        title: "GitHub needs contents and pull-request write access",
+        detail: "Update the GitHub App repository access, then check again.",
+        tone: "red" as const,
+      };
+    case "repository_unavailable":
+      return {
+        title: "The selected repository or branch is unavailable",
+        detail: "Confirm the repository and base branch still exist and are available to the connected GitHub App.",
+        tone: "red" as const,
+      };
+    case "error":
+      return {
+        title: "GitHub readiness could not be checked",
+        detail: "Review the GitHub connection and target, then try the check again.",
+        tone: "red" as const,
+      };
+    case "not_checked":
+    default:
+      return {
+        title: "GitHub readiness needs a check",
+        detail: "Run the check to confirm repository, branch, and pull-request access before creating a repair PR.",
+        tone: "amber" as const,
+      };
+  }
+}
+
+const githubPRReadinessCheckError = "We couldn't check GitHub readiness. Review the connection and try again.";
 
 const ga4ConnectionSteps = [
   "Open Analytics Home, then select the existing GA4 property for this domain. If you land in the setup wizard, leave the create flow first.",
@@ -522,6 +574,23 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [devToUsername, setDevToUsername] = useState("");
   const [devToCredentialDraft, setDevToCredentialDraft] = useState("");
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
+  const [githubPRReadinessState, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
+  const [githubReadinessBusyState, setGithubReadinessBusy] = useState<"checking" | null>(null);
+  const [githubReadinessErrorState, setGithubReadinessError] = useState<string | null>(null);
+  const [githubReadinessStateProjectId, setGithubReadinessStateProjectId] = useState(projectId);
+  const githubReadinessMountedRef = useRef(false);
+  const githubReadinessPublisherEntryTrackerRef = useRef<ReturnType<typeof createGithubPRReadinessPublisherEntryTracker> | null>(null);
+  if (!githubReadinessPublisherEntryTrackerRef.current) {
+    githubReadinessPublisherEntryTrackerRef.current = createGithubPRReadinessPublisherEntryTracker();
+  }
+  const githubReadinessRequestOrderRef = useRef<ReturnType<typeof createGithubPRReadinessRequestOrder> | null>(null);
+  if (!githubReadinessRequestOrderRef.current) {
+    githubReadinessRequestOrderRef.current = createGithubPRReadinessRequestOrder(projectId);
+  }
+  const githubReadinessRequestScope = githubReadinessRequestOrderRef.current.forProject(projectId);
+  const githubPRReadiness = githubReadinessStateProjectId === projectId ? githubPRReadinessState : null;
+  const githubReadinessBusy = githubReadinessStateProjectId === projectId ? githubReadinessBusyState : null;
+  const githubReadinessError = githubReadinessStateProjectId === projectId ? githubReadinessErrorState : null;
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
@@ -555,6 +624,30 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>("project");
+
+  useEffect(() => {
+    githubReadinessMountedRef.current = true;
+    return () => {
+      githubReadinessMountedRef.current = false;
+    };
+  }, []);
+
+  const isCurrentGithubReadinessRequest = useCallback((scope: GithubPRReadinessRequestScope) => {
+    return githubReadinessMountedRef.current && Boolean(githubReadinessRequestOrderRef.current?.isCurrent(scope));
+  }, []);
+
+  const invalidateGithubReadinessRequests = useCallback((scope: GithubPRReadinessRequestScope) => {
+    const nextScope = githubReadinessRequestOrderRef.current!.invalidate(scope);
+    if (nextScope) setGithubReadinessBusy(null);
+    return nextScope;
+  }, []);
+
+  useEffect(() => {
+    setGithubReadinessStateProjectId(projectId);
+    setGithubPRReadiness(null);
+    setGithubReadinessBusy(null);
+    setGithubReadinessError(null);
+  }, [projectId]);
 
   useEffect(() => {
     function syncTabFromHash() {
@@ -702,6 +795,76 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     url.searchParams.delete("github");
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
   }, [refreshGithubIntegration, refreshPublisherConnections]);
+
+  const runGithubPRReadinessCheck = useCallback(async (): Promise<GithubPRReadiness | null> => {
+    const requestScope = githubReadinessRequestScope;
+    if (!isCurrentGithubReadinessRequest(requestScope)) return null;
+    setGithubReadinessError(null);
+    try {
+      const nextReadiness = await api.checkGithubPRReadiness(requestScope.projectId);
+      if (isCurrentGithubReadinessRequest(requestScope)) {
+        setGithubPRReadiness(nextReadiness);
+      }
+      return nextReadiness;
+    } catch {
+      if (isCurrentGithubReadinessRequest(requestScope)) {
+        setGithubPRReadiness((current) => ({
+          status: "error",
+          checked_at: null,
+          detail: githubPRReadinessCheckError,
+          ...(current?.repo ? { repo: current.repo } : {}),
+          ...(current?.branch ? { branch: current.branch } : {}),
+        }));
+        setGithubReadinessError(githubPRReadinessCheckError);
+      }
+      return null;
+    }
+  }, [api, githubReadinessRequestScope, isCurrentGithubReadinessRequest]);
+
+  const refreshStoredGithubPRReadiness = useCallback(async (
+    requestScope: GithubPRReadinessRequestScope = githubReadinessRequestScope,
+  ): Promise<GithubPRReadiness | null> => {
+    if (isCurrentGithubReadinessRequest(requestScope)) setGithubReadinessError(null);
+    try {
+      const nextReadiness = await api.getGithubPRReadiness(requestScope.projectId);
+      if (isCurrentGithubReadinessRequest(requestScope)) setGithubPRReadiness(nextReadiness);
+      return nextReadiness;
+    } catch {
+      if (isCurrentGithubReadinessRequest(requestScope)) {
+        setGithubPRReadiness((current) => ({
+          status: "error",
+          checked_at: null,
+          detail: githubPRReadinessCheckError,
+          ...(current?.repo ? { repo: current.repo } : {}),
+          ...(current?.branch ? { branch: current.branch } : {}),
+        }));
+        setGithubReadinessError(githubPRReadinessCheckError);
+      }
+      return null;
+    }
+  }, [api, githubReadinessRequestScope, isCurrentGithubReadinessRequest]);
+
+  const githubReadinessRefreshCoordinator = useMemo(
+    () => createGithubPRReadinessRefreshCoordinator(runGithubPRReadinessCheck, (draining) => {
+      if (isCurrentGithubReadinessRequest(githubReadinessRequestScope)) {
+        setGithubReadinessBusy(draining ? "checking" : null);
+      }
+    }),
+    [githubReadinessRequestScope, isCurrentGithubReadinessRequest, runGithubPRReadinessCheck],
+  );
+
+  const refreshGithubPRReadiness = useCallback(
+    (mode: GithubPRReadinessRefreshMode = "normal") => githubReadinessRefreshCoordinator.request(mode),
+    [githubReadinessRefreshCoordinator],
+  );
+
+  useEffect(() => {
+    const enteredPublisher = githubReadinessPublisherEntryTrackerRef.current!.shouldRefresh(projectId, activeSettingsTab);
+    if (!enteredPublisher) return;
+    // The GitHub callback saves the selected repository and branch before it
+    // returns to #publisher, so this tab-owned effect performs the live check.
+    void refreshGithubPRReadiness();
+  }, [activeSettingsTab, projectId, refreshGithubPRReadiness]);
 
   const refreshGSCConnection = useCallback(async () => {
     try {
@@ -1049,6 +1212,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
         return [saved, ...rest];
       });
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher connection saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1076,6 +1240,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       });
       setPublisherCredentialDraft("");
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1091,6 +1256,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const saved = await api.revokePublisherCredential(projectId, githubPublisher.id);
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher credential revoked", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential revoke failed", detail: e.message, tone: "red" });
@@ -1295,6 +1461,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const tested = await api.testPublisherConnection(projectId, connectionID);
       setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
+      await refreshGithubPRReadiness("after-mutation");
       setMessage({ title: "Publisher connection verified", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher test failed", detail: e.message, tone: "red" });
@@ -1309,7 +1476,17 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     setMessage(null);
     try {
       const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
+      const disabledReadinessScope = connection.kind === "github_nextjs" && !enabled
+        ? invalidateGithubReadinessRequests(githubReadinessRequestScope)
+        : null;
       setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+      if (connection.kind === "github_nextjs") {
+        if (enabled) {
+          await refreshGithubPRReadiness("after-mutation");
+        } else if (disabledReadinessScope) {
+          await refreshStoredGithubPRReadiness(disabledReadinessScope);
+        }
+      }
       setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });
     } catch (e: any) {
       setMessage({ title: enabled ? "Enable failed" : "Disable failed", detail: friendlyError(e.message), tone: "red" });
@@ -1442,6 +1619,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     : githubAppReusable
       ? "This owner already has the CiteLoop GitHub App installed. Reuse that installation or connect a different account."
       : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
+  const githubReadinessPresentation = githubPRReadinessPresentation(githubPRReadiness?.status);
+  const githubReadinessTarget = githubPRReadiness?.repo
+    ? `${githubPRReadiness.repo}${githubPRReadiness.branch ? ` on ${githubPRReadiness.branch}` : ""}`
+    : githubPRReadiness?.branch
+      ? `Branch ${githubPRReadiness.branch}`
+      : "";
+  const githubReadinessSurface =
+    githubReadinessPresentation.tone === "green"
+      ? "border-green-200 bg-green-50/70 text-green-950"
+      : githubReadinessPresentation.tone === "red"
+        ? "border-red-200 bg-red-50/70 text-red-950"
+        : "border-amber-200 bg-amber-50/70 text-amber-950";
 
   const openSafeModeEvents = safeModeEvents.filter((event) => !event.exited_at);
   const openSafeModeCount = openSafeModeEvents.length;
@@ -2215,6 +2404,58 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
+
+          <div
+            aria-live="polite"
+            aria-busy={githubReadinessBusy === "checking"}
+            className={cx("border-y px-3 py-3", githubReadinessSurface)}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 text-sm font-bold">
+                  {githubPRReadiness?.status === "ready" ? (
+                    <CheckCircle2 aria-hidden="true" size={16} />
+                  ) : (
+                    <AlertTriangle aria-hidden="true" size={16} />
+                  )}
+                  {githubReadinessPresentation.title}
+                </div>
+                <p className="mt-1 max-w-2xl text-sm leading-5 opacity-80">
+                  {githubPRReadiness?.detail || githubReadinessPresentation.detail}
+                </p>
+                {(githubReadinessTarget || githubPRReadiness?.checked_at) && (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium opacity-75">
+                    {githubReadinessTarget && <span>Target: {githubReadinessTarget}</span>}
+                    {githubPRReadiness?.checked_at && <span>Last checked: {formatDate(githubPRReadiness.checked_at)}</span>}
+                  </div>
+                )}
+                {githubReadinessBusy === "checking" && (
+                  <div className="mt-2 text-xs font-semibold">Checking repository and pull-request access...</div>
+                )}
+                {githubReadinessError && (
+                  <div role="alert" className="mt-2 text-sm font-semibold text-red-800">
+                    {githubReadinessError}
+                  </div>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Check GitHub PR readiness again"
+                onClick={() => void refreshGithubPRReadiness()}
+                disabled={githubReadinessBusy === "checking"}
+                className="shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+              >
+                <ButtonProgress
+                  busy={githubReadinessBusy === "checking"}
+                  busyLabel="Checking..."
+                  idleIcon={<RefreshCw aria-hidden="true" size={14} />}
+                >
+                  Check again
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
 
           <ConnectionInstructions
             steps={[

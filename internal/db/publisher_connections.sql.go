@@ -18,9 +18,12 @@ update publisher_connections
 set credential_ref = null,
     status = 'missing',
     last_error = null,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type ClearPublisherConnectionCredentialRefParams struct {
@@ -50,6 +53,9 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
@@ -57,7 +63,7 @@ func (q *Queries) ClearPublisherConnectionCredentialRef(ctx context.Context, arg
 const deletePublisherConnectionForProject = `-- name: DeletePublisherConnectionForProject :one
 delete from publisher_connections
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type DeletePublisherConnectionForProjectParams struct {
@@ -87,6 +93,9 @@ func (q *Queries) DeletePublisherConnectionForProject(ctx context.Context, arg D
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
@@ -179,7 +188,7 @@ func (q *Queries) GetActivePublisherCredentialForConnection(ctx context.Context,
 }
 
 const getDefaultPublisherConnectionForProject = `-- name: GetDefaultPublisherConnectionForProject :one
-select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail from publisher_connections
 where project_id = $1 and kind = $2 and is_default
 limit 1
 `
@@ -211,12 +220,15 @@ func (q *Queries) GetDefaultPublisherConnectionForProject(ctx context.Context, a
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
 
 const getEnabledPublisherConnectionForProject = `-- name: GetEnabledPublisherConnectionForProject :one
-select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail from publisher_connections
 where project_id = $1
   and kind = $2
   and is_default
@@ -252,12 +264,52 @@ func (q *Queries) GetEnabledPublisherConnectionForProject(ctx context.Context, a
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
+	)
+	return i, err
+}
+
+const getGitHubPRReadinessForProject = `-- name: GetGitHubPRReadinessForProject :one
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail from publisher_connections
+where project_id = $1
+  and kind = 'github_nextjs'
+  and is_default
+limit 1
+`
+
+func (q *Queries) GetGitHubPRReadinessForProject(ctx context.Context, projectID uuid.UUID) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, getGitHubPRReadinessForProject, projectID)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Enabled,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
 
 const getPublisherConnectionForProject = `-- name: GetPublisherConnectionForProject :one
-select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail from publisher_connections
 where id = $1 and project_id = $2
 `
 
@@ -288,12 +340,15 @@ func (q *Queries) GetPublisherConnectionForProject(ctx context.Context, arg GetP
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
 
 const listPublisherConnections = `-- name: ListPublisherConnections :many
-select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at from publisher_connections
+select id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail from publisher_connections
 where project_id = $1
 order by is_default desc, created_at desc
 `
@@ -326,6 +381,9 @@ func (q *Queries) ListPublisherConnections(ctx context.Context, projectID uuid.U
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PrReadinessStatus,
+			&i.PrReadinessCheckedAt,
+			&i.PrReadinessDetail,
 		); err != nil {
 			return nil, err
 		}
@@ -341,9 +399,12 @@ const markPublisherConnectionError = `-- name: MarkPublisherConnectionError :one
 update publisher_connections
 set status = 'error',
     last_error = $3,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type MarkPublisherConnectionErrorParams struct {
@@ -374,6 +435,9 @@ func (q *Queries) MarkPublisherConnectionError(ctx context.Context, arg MarkPubl
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
@@ -383,9 +447,15 @@ update publisher_connections
 set status = 'connected',
     last_verified_at = now(),
     last_error = null,
+    pr_readiness_status = case
+      when kind = 'github_nextjs' and enabled then 'not_checked'
+      else 'not_connected'
+    end,
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type MarkPublisherConnectionVerifiedParams struct {
@@ -415,29 +485,56 @@ func (q *Queries) MarkPublisherConnectionVerified(ctx context.Context, arg MarkP
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
 
 const revokePublisherCredentialForConnection = `-- name: RevokePublisherCredentialForConnection :one
-update publisher_credentials
+with invalidated_connection as (
+  update publisher_connections connection
+  set pr_readiness_status = case
+        when connection.kind = 'github_nextjs'
+          and connection.status = 'connected'
+          and connection.enabled then 'not_checked'
+        else 'not_connected'
+      end,
+      pr_readiness_checked_at = null,
+      pr_readiness_detail = null,
+      updated_at = now()
+  where connection.id = $2
+    and connection.project_id = $3
+    and exists (
+      select 1
+      from publisher_credentials credential
+      where credential.project_id = connection.project_id
+        and credential.connection_id = connection.id
+        and credential.kind = $1
+        and credential.revoked_at is null
+    )
+  returning connection.id, connection.project_id
+)
+update publisher_credentials credential
 set revoked_at = now(),
     updated_at = now()
-where project_id = $1
-  and connection_id = $2
-  and kind = $3
-  and revoked_at is null
-returning id, project_id, connection_id, kind, encrypted_value, redacted_value, created_at, updated_at, revoked_at
+from invalidated_connection connection
+where credential.project_id = connection.project_id
+  and credential.connection_id = connection.id
+  and credential.kind = $1
+  and credential.revoked_at is null
+returning credential.id, credential.project_id, credential.connection_id, credential.kind, credential.encrypted_value, credential.redacted_value, credential.created_at, credential.updated_at, credential.revoked_at
 `
 
 type RevokePublisherCredentialForConnectionParams struct {
-	ProjectID    uuid.UUID `json:"project_id"`
-	ConnectionID uuid.UUID `json:"connection_id"`
 	Kind         string    `json:"kind"`
+	ConnectionID uuid.UUID `json:"connection_id"`
+	ProjectID    uuid.UUID `json:"project_id"`
 }
 
 func (q *Queries) RevokePublisherCredentialForConnection(ctx context.Context, arg RevokePublisherCredentialForConnectionParams) (PublisherCredential, error) {
-	row := q.db.QueryRow(ctx, revokePublisherCredentialForConnection, arg.ProjectID, arg.ConnectionID, arg.Kind)
+	row := q.db.QueryRow(ctx, revokePublisherCredentialForConnection, arg.Kind, arg.ConnectionID, arg.ProjectID)
 	var i PublisherCredential
 	err := row.Scan(
 		&i.ID,
@@ -453,14 +550,80 @@ func (q *Queries) RevokePublisherCredentialForConnection(ctx context.Context, ar
 	return i, err
 }
 
+const setGitHubPRReadinessIfUnchanged = `-- name: SetGitHubPRReadinessIfUnchanged :one
+update publisher_connections
+set pr_readiness_status = $1,
+    pr_readiness_checked_at = $2,
+    pr_readiness_detail = $3
+where id = $4
+  and project_id = $5
+  and kind = 'github_nextjs'
+  and is_default
+  and updated_at = $6
+  and $2::timestamptz is not null
+  and (
+    publisher_connections.pr_readiness_checked_at is null
+    or publisher_connections.pr_readiness_checked_at < $2::timestamptz
+  )
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
+`
+
+type SetGitHubPRReadinessIfUnchangedParams struct {
+	PrReadinessStatus    string             `json:"pr_readiness_status"`
+	PrReadinessCheckedAt pgtype.Timestamptz `json:"pr_readiness_checked_at"`
+	PrReadinessDetail    *string            `json:"pr_readiness_detail"`
+	ConnectionID         uuid.UUID          `json:"connection_id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	ExpectedUpdatedAt    pgtype.Timestamptz `json:"expected_updated_at"`
+}
+
+func (q *Queries) SetGitHubPRReadinessIfUnchanged(ctx context.Context, arg SetGitHubPRReadinessIfUnchangedParams) (PublisherConnection, error) {
+	row := q.db.QueryRow(ctx, setGitHubPRReadinessIfUnchanged,
+		arg.PrReadinessStatus,
+		arg.PrReadinessCheckedAt,
+		arg.PrReadinessDetail,
+		arg.ConnectionID,
+		arg.ProjectID,
+		arg.ExpectedUpdatedAt,
+	)
+	var i PublisherConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Label,
+		&i.Status,
+		&i.IsDefault,
+		&i.Enabled,
+		&i.Capabilities,
+		&i.CapabilitySchemaVersion,
+		&i.CredentialRef,
+		&i.Config,
+		&i.OauthAccessExpiresAt,
+		&i.OauthRefreshStatus,
+		&i.RevokedAt,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
+	)
+	return i, err
+}
+
 const setPublisherConnectionCredentialRef = `-- name: SetPublisherConnectionCredentialRef :one
 update publisher_connections
 set credential_ref = $3,
     status = 'missing',
     last_error = null,
+    pr_readiness_status = 'not_connected',
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type SetPublisherConnectionCredentialRefParams struct {
@@ -491,6 +654,9 @@ func (q *Queries) SetPublisherConnectionCredentialRef(ctx context.Context, arg S
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
@@ -498,9 +664,15 @@ func (q *Queries) SetPublisherConnectionCredentialRef(ctx context.Context, arg S
 const setPublisherConnectionEnabled = `-- name: SetPublisherConnectionEnabled :one
 update publisher_connections
 set enabled = $3,
+    pr_readiness_status = case
+      when kind = 'github_nextjs' and status = 'connected' and $3 then 'not_checked'
+      else 'not_connected'
+    end,
+    pr_readiness_checked_at = null,
+    pr_readiness_detail = null,
     updated_at = now()
 where id = $1 and project_id = $2
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type SetPublisherConnectionEnabledParams struct {
@@ -531,6 +703,9 @@ func (q *Queries) SetPublisherConnectionEnabled(ctx context.Context, arg SetPubl
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
@@ -550,8 +725,16 @@ do update set
   config = excluded.config,
   last_verified_at = excluded.last_verified_at,
   last_error = excluded.last_error,
+  pr_readiness_status = case
+    when publisher_connections.kind = 'github_nextjs'
+      and excluded.status = 'connected'
+      and publisher_connections.enabled then 'not_checked'
+    else 'not_connected'
+  end,
+  pr_readiness_checked_at = null,
+  pr_readiness_detail = null,
   updated_at = now()
-returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at
+returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 
 type UpsertDefaultPublisherConnectionParams struct {
@@ -600,15 +783,37 @@ func (q *Queries) UpsertDefaultPublisherConnection(ctx context.Context, arg Upse
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrReadinessStatus,
+		&i.PrReadinessCheckedAt,
+		&i.PrReadinessDetail,
 	)
 	return i, err
 }
 
 const upsertPublisherCredential = `-- name: UpsertPublisherCredential :one
+with invalidated_connection as (
+  update publisher_connections
+  set pr_readiness_status = case
+        when kind = 'github_nextjs' and status = 'connected' and enabled then 'not_checked'
+        else 'not_connected'
+      end,
+      pr_readiness_checked_at = null,
+      pr_readiness_detail = null,
+      updated_at = now()
+  where id = $2
+    and project_id = $1
+  returning id, project_id
+)
 insert into publisher_credentials
   (project_id, connection_id, kind, encrypted_value, redacted_value)
-values
-  ($1, $2, $3, $4, $5)
+select
+  $1,
+  $2,
+  $3,
+  $4,
+  $5
+from invalidated_connection
+where true
 on conflict (project_id, connection_id, kind)
 do update set
   encrypted_value = excluded.encrypted_value,
