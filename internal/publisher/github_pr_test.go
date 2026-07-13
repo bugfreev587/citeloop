@@ -1,15 +1,18 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGitHubPRClientCreatesBranchWritesExistingFileAndOpensPR(t *testing.T) {
@@ -107,6 +110,23 @@ func TestGitHubPRClientReadsFileContentAndSHA(t *testing.T) {
 	}
 	if !strings.Contains(content, `title: "Old"`) || !strings.Contains(content, "Body") {
 		t.Fatalf("content not decoded: %q", content)
+	}
+}
+
+func TestGitHubPRClientReadFileEncodesRefQuery(t *testing.T) {
+	const ref = "citeloop/修复#50%/part"
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("ref") != ref {
+			t.Fatalf("decoded ref query = %q, raw=%q", req.URL.Query().Get("ref"), req.URL.RawQuery)
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte("content"))
+		return jsonResponse(http.StatusOK, `{"sha":"blob-sha","encoding":"base64","content":"`+encoded+`"}`), nil
+	})}
+
+	content, sha, err := client.ReadFile(context.Background(), "pages/page.tsx", ref)
+	if err != nil || content != "content" || sha != "blob-sha" {
+		t.Fatalf("content=%q sha=%q err=%v", content, sha, err)
 	}
 }
 
@@ -278,6 +298,26 @@ func TestGitHubPRClientFindsExistingPullRequestByDeterministicHead(t *testing.T)
 	}
 }
 
+func TestGitHubPRClientFindPullRequestUsesDeterministicStateAndNumberPriority(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[
+			{"number":90,"html_url":"https://github.com/owner/unipost/pull/90","state":"closed","merged_at":null,"head":{"sha":"closed-head"}},
+			{"number":91,"html_url":"https://github.com/owner/unipost/pull/91","state":"closed","merged_at":"2026-07-12T12:00:00Z","head":{"sha":"merged-head"}},
+			{"number":80,"html_url":"https://github.com/owner/unipost/pull/80","state":"open","merged_at":null,"head":{"sha":"older-open-head"}},
+			{"number":82,"html_url":"https://github.com/owner/unipost/pull/82","state":"open","merged_at":null,"head":{"sha":"newer-open-head"}}
+		]`), nil
+	})}
+
+	result, found, err := client.FindPullRequestByHead(context.Background(), "citeloop/doctor-site-fix-abc")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if result.Number != 82 || result.State != "open" || result.HeadCommitSHA != "newer-open-head" {
+		t.Fatalf("unexpected preferred PR: %+v", result)
+	}
+}
+
 func TestGitHubPRClientListsRecursiveTreeAndReadsPinnedBlob(t *testing.T) {
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -336,6 +376,23 @@ func TestGitHubPRClientRejectsTruncatedTree(t *testing.T) {
 	_, err := client.ListTree(context.Background(), "main")
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "truncated") {
 		t.Fatalf("expected a truncated-tree error, got %v", err)
+	}
+}
+
+func TestGitHubPRClientEscapesConfiguredBaseRefPath(t *testing.T) {
+	const branch = "citeloop/修复#50%/part"
+	const escapedPath = "/repos/owner/unipost/git/ref/heads/citeloop%2F%E4%BF%AE%E5%A4%8D%2350%25%2Fpart"
+	client := NewGitHubPRClient("gh-token", "owner/unipost", branch, slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.EscapedPath() != escapedPath {
+			t.Fatalf("escaped ref path = %q, want %q", req.URL.EscapedPath(), escapedPath)
+		}
+		return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit"}}`), nil
+	})}
+
+	sha, err := client.baseCommitSHA(context.Background())
+	if err != nil || sha != "base-commit" {
+		t.Fatalf("sha=%q err=%v", sha, err)
 	}
 }
 
@@ -428,6 +485,8 @@ func TestGitHubPRClientAtomicTreePayloadPreservesPercentEncodedFilename(t *testi
 }
 
 func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
+	const workingBranch = "citeloop/修复#50%/part"
+	const escapedWorkingRef = "/repos/owner/unipost/git/ref/heads/citeloop%2F%E4%BF%AE%E5%A4%8D%2350%25%2Fpart"
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
 	counts := map[string]int{}
 	var treeBody struct {
@@ -444,10 +503,17 @@ func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
 		Tree    string   `json:"tree"`
 		Parents []string `json:"parents"`
 	}
+	var prBody struct {
+		Head string `json:"head"`
+		Base string `json:"base"`
+	}
 	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/pulls":
 			counts["find-pr"]++
+			if req.URL.Query().Get("head") != "owner:"+workingBranch || req.URL.Query().Get("base") != "main" || req.URL.Query().Get("state") != "all" {
+				t.Fatalf("unexpected PR query: %s", req.URL.RawQuery)
+			}
 			return jsonResponse(http.StatusOK, `[]`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
 			return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit"}}`), nil
@@ -488,7 +554,10 @@ func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
 			counts["tree"]++
 			decodeRequestJSON(t, req, &treeBody)
 			return jsonResponse(http.StatusCreated, `{"sha":"desired-tree"}`), nil
-		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/citeloop/doctor-site-fix-abc":
+		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/repos/owner/unipost/git/ref/heads/"):
+			if req.URL.EscapedPath() != escapedWorkingRef {
+				t.Fatalf("escaped working ref path = %q, want %q", req.URL.EscapedPath(), escapedWorkingRef)
+			}
 			return jsonResponse(http.StatusNotFound, `{"message":"Not Found"}`), nil
 		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/commits":
 			counts["commit"]++
@@ -498,12 +567,13 @@ func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
 			counts["ref"]++
 			var body map[string]string
 			decodeRequestJSON(t, req, &body)
-			if body["ref"] != "refs/heads/citeloop/doctor-site-fix-abc" || body["sha"] != "desired-commit" {
+			if body["ref"] != "refs/heads/"+workingBranch || body["sha"] != "desired-commit" {
 				t.Fatalf("unexpected ref body: %+v", body)
 			}
 			return jsonResponse(http.StatusCreated, `{"ref":"refs/heads/citeloop/doctor-site-fix-abc","object":{"sha":"desired-commit"}}`), nil
 		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/pulls":
 			counts["pr"]++
+			decodeRequestJSON(t, req, &prBody)
 			return jsonResponse(http.StatusCreated, `{"number":51,"html_url":"https://github.com/owner/unipost/pull/51","state":"open","head":{"sha":"desired-commit"}}`), nil
 		default:
 			t.Fatalf("unexpected request %s %s?%s", req.Method, req.URL.Path, req.URL.RawQuery)
@@ -511,7 +581,9 @@ func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
 		}
 	})}
 
-	result, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
+	input := atomicFileUpdatesInput()
+	input.WorkingBranch = workingBranch
+	result, err := client.CreateFileUpdatesPR(context.Background(), input)
 	if err != nil {
 		t.Fatalf("CreateFileUpdatesPR returned error: %v", err)
 	}
@@ -532,7 +604,10 @@ func TestGitHubPRClientCreatesAtomicFileUpdatesPR(t *testing.T) {
 	if commitBody.Tree != "desired-tree" || len(commitBody.Parents) != 1 || commitBody.Parents[0] != "base-commit" {
 		t.Fatalf("commit is not based on current base: %+v", commitBody)
 	}
-	if result.Number != 51 || result.State != "open" || result.HeadCommitSHA != "desired-commit" || result.BaseBranch != "main" {
+	if prBody.Head != workingBranch || prBody.Base != "main" {
+		t.Fatalf("PR head/base = %+v", prBody)
+	}
+	if result.Number != 51 || result.State != "open" || result.HeadCommitSHA != "desired-commit" || result.BaseBranch != "main" || result.WorkingBranch != workingBranch {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -668,6 +743,84 @@ func TestGitHubPRClientAtomicExistingPRMustMatchDesiredTarget(t *testing.T) {
 	}
 }
 
+func TestGitHubPRClientAtomicSelectsExactCandidateAcrossAllPullRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		pullsJSON string
+		headTrees map[string]string
+		want      int
+		wantState string
+	}{
+		{
+			name: "later exact open beats first divergent closed",
+			pullsJSON: `[
+				{"number":40,"html_url":"https://github.com/owner/unipost/pull/40","state":"closed","merged_at":null,"head":{"sha":"closed-divergent"}},
+				{"number":41,"html_url":"https://github.com/owner/unipost/pull/41","state":"open","merged_at":null,"head":{"sha":"open-exact"}}
+			]`,
+			headTrees: map[string]string{"closed-divergent": "other-tree", "open-exact": "desired-tree"},
+			want:      41, wantState: "open",
+		},
+		{
+			name: "exact merged beats exact closed when open diverges",
+			pullsJSON: `[
+				{"number":42,"html_url":"https://github.com/owner/unipost/pull/42","state":"open","merged_at":null,"head":{"sha":"open-divergent"}},
+				{"number":43,"html_url":"https://github.com/owner/unipost/pull/43","state":"closed","merged_at":"2026-07-12T12:00:00Z","head":{"sha":"merged-exact"}},
+				{"number":44,"html_url":"https://github.com/owner/unipost/pull/44","state":"closed","merged_at":null,"head":{"sha":"closed-exact"}}
+			]`,
+			headTrees: map[string]string{"open-divergent": "other-tree", "merged-exact": "desired-tree", "closed-exact": "desired-tree"},
+			want:      43, wantState: "merged",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+			calls := map[string]int{}
+			client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch {
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/pulls":
+					return jsonResponse(http.StatusOK, tc.pullsJSON), nil
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/commits/base-commit":
+					return jsonResponse(http.StatusOK, `{"sha":"base-commit","tree":{"sha":"base-tree"}}`), nil
+				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/trees/base-tree":
+					return jsonResponse(http.StatusOK, `{"sha":"base-tree","truncated":false,"tree":[{"path":"app/page.tsx","mode":"100644","type":"blob","sha":"old-a"},{"path":"scripts/build.sh","mode":"100755","type":"blob","sha":"old-b"}]}`), nil
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/blobs":
+					calls["blob"]++
+					return jsonResponse(http.StatusCreated, fmt.Sprintf(`{"sha":"new-%d"}`, calls["blob"])), nil
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/trees":
+					return jsonResponse(http.StatusCreated, `{"sha":"desired-tree"}`), nil
+				case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/repos/owner/unipost/git/commits/"):
+					head := strings.TrimPrefix(req.URL.Path, "/repos/owner/unipost/git/commits/")
+					tree, ok := tc.headTrees[head]
+					if !ok {
+						t.Fatalf("unexpected candidate head %q", head)
+					}
+					calls["head-check"]++
+					return jsonResponse(http.StatusOK, `{"sha":"`+head+`","tree":{"sha":"`+tree+`"},"parents":[{"sha":"base-commit"}]}`), nil
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/refs":
+					calls["ref"]++
+					return jsonResponse(http.StatusCreated, `{}`), nil
+				case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/pulls":
+					calls["pr"]++
+					return jsonResponse(http.StatusCreated, `{}`), nil
+				default:
+					t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			})}
+
+			result, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
+			if err != nil {
+				t.Fatalf("CreateFileUpdatesPR returned error: %v", err)
+			}
+			if result.Number != tc.want || result.State != tc.wantState {
+				t.Fatalf("unexpected exact candidate: %+v", result)
+			}
+			if calls["head-check"] != len(tc.headTrees) || calls["ref"] != 0 || calls["pr"] != 0 {
+				t.Fatalf("candidate reconciliation calls=%+v", calls)
+			}
+		})
+	}
+}
+
 func TestGitHubPRClientAtomicInputHasStableFileOrderWithoutMutatingCaller(t *testing.T) {
 	input := atomicFileUpdatesInput()
 	input.Files[0], input.Files[1] = input.Files[1], input.Files[0]
@@ -684,6 +837,102 @@ func TestGitHubPRClientAtomicInputHasStableFileOrderWithoutMutatingCaller(t *tes
 	}
 }
 
+func TestGitHubPRClientAtomicCommitIdentityIsStableAfterLostResponse(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	var commitPayloads [][]byte
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/pulls":
+			return jsonResponse(http.StatusOK, `[]`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
+			return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit"}}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/commits/base-commit":
+			return jsonResponse(http.StatusOK, `{"sha":"base-commit","tree":{"sha":"base-tree"}}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/trees/base-tree":
+			return jsonResponse(http.StatusOK, `{"sha":"base-tree","truncated":false,"tree":[{"path":"app/page.tsx","mode":"100644","type":"blob","sha":"old-a"},{"path":"scripts/build.sh","mode":"100755","type":"blob","sha":"old-b"}]}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/blobs":
+			var body struct {
+				Content string `json:"content"`
+			}
+			decodeRequestJSON(t, req, &body)
+			decoded, err := base64.StdEncoding.DecodeString(body.Content)
+			if err != nil {
+				t.Fatalf("decode blob: %v", err)
+			}
+			if string(decoded) == "new page" {
+				return jsonResponse(http.StatusCreated, `{"sha":"new-a"}`), nil
+			}
+			return jsonResponse(http.StatusCreated, `{"sha":"new-b"}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/trees":
+			return jsonResponse(http.StatusCreated, `{"sha":"desired-tree"}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/citeloop/doctor-site-fix-abc":
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/commits":
+			raw, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("read commit payload: %v", err)
+			}
+			commitPayloads = append(commitPayloads, append([]byte(nil), raw...))
+			if len(commitPayloads) == 1 {
+				return nil, errors.New("response lost after remote commit")
+			}
+			return jsonResponse(http.StatusCreated, `{"sha":"stable-commit"}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/git/refs":
+			return jsonResponse(http.StatusCreated, `{}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/repos/owner/unipost/pulls":
+			return jsonResponse(http.StatusCreated, `{"number":54,"html_url":"https://github.com/owner/unipost/pull/54","state":"open"}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})}
+	input := atomicFileUpdatesInput()
+
+	if _, err := client.CreateFileUpdatesPR(context.Background(), input); err == nil || !strings.Contains(err.Error(), "response lost") {
+		t.Fatalf("expected lost commit response, got %v", err)
+	}
+	result, err := client.CreateFileUpdatesPR(context.Background(), input)
+	if err != nil {
+		t.Fatalf("retry returned error: %v", err)
+	}
+	if result.HeadCommitSHA != "stable-commit" || len(commitPayloads) != 2 || !bytes.Equal(commitPayloads[0], commitPayloads[1]) {
+		t.Fatalf("result=%+v commit payloads=%q", result, commitPayloads)
+	}
+	var payload struct {
+		Author struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+			Date  string `json:"date"`
+		} `json:"author"`
+		Committer struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+			Date  string `json:"date"`
+		} `json:"committer"`
+	}
+	if err := json.Unmarshal(commitPayloads[0], &payload); err != nil {
+		t.Fatalf("decode commit payload: %v", err)
+	}
+	if payload.Author.Name == "" || payload.Author.Email == "" || payload.Author != payload.Committer || payload.Author.Date != "2026-07-12T19:34:56Z" {
+		t.Fatalf("commit identity is not stable: %+v", payload)
+	}
+}
+
+func TestGitHubPRClientAtomicRequiresDeterministicCommitDate(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("zero commit date must fail before network request: %s %s", req.Method, req.URL.Path)
+		return nil, nil
+	})}
+	input := atomicFileUpdatesInput()
+	input.CommitDate = time.Time{}
+
+	_, err := client.CreateFileUpdatesPR(context.Background(), input)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "commit date") {
+		t.Fatalf("expected deterministic commit date error, got %v", err)
+	}
+}
+
 type atomicClientTestState struct {
 	counts map[string]int
 }
@@ -696,6 +945,7 @@ func atomicFileUpdatesInput() GitHubFileUpdatesPRInput {
 	return GitHubFileUpdatesPRInput{
 		WorkingBranch: "citeloop/doctor-site-fix-abc",
 		BaseCommitSHA: "base-commit",
+		CommitDate:    time.Date(2026, 7, 12, 12, 34, 56, 0, time.FixedZone("input-zone", -7*60*60)),
 		Files: []GitHubFileUpdate{
 			{Path: "app/page.tsx", BaseBlobSHA: "old-a", Content: []byte("new page")},
 			{Path: "scripts/build.sh", BaseBlobSHA: "old-b", Content: []byte("#!/bin/sh\necho fixed\n")},

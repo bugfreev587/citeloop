@@ -57,14 +57,22 @@ type GitHubFileUpdate struct {
 
 // GitHubFileUpdatesPRInput creates one commit and pull request for all Files.
 // BaseCommitSHA pins the selected base ref as well as each file's blob SHA.
+// CommitDate must come from persisted lifecycle data so a retry replays the
+// identical Git commit object.
 type GitHubFileUpdatesPRInput struct {
 	WorkingBranch string
 	BaseCommitSHA string
 	Files         []GitHubFileUpdate
 	CommitMessage string
+	CommitDate    time.Time
 	Title         string
 	Body          string
 }
+
+const (
+	gitHubCommitIdentityName  = "CiteLoop"
+	gitHubCommitIdentityEmail = "noreply@citeloop.dev"
+)
 
 type GitHubPRResult struct {
 	Number        int    `json:"number"`
@@ -199,10 +207,11 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 		return GitHubPRResult{}, fmt.Errorf("github token and repo are required for source-backed PR apply")
 	}
 
-	existingPR, existingPRFound, err := c.FindPullRequestByHead(ctx, prepared.WorkingBranch)
+	existingPRCandidates, err := c.findPullRequestsByHead(ctx, prepared.WorkingBranch)
 	if err != nil {
 		return GitHubPRResult{}, err
 	}
+	existingPRFound := len(existingPRCandidates) > 0
 
 	baseCommitSHA := prepared.BaseCommitSHA
 	if !existingPRFound {
@@ -252,11 +261,11 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 		return GitHubPRResult{}, err
 	}
 	if existingPRFound {
-		matches, err := c.gitCommitMatches(ctx, existingPR.HeadCommitSHA, desiredTreeSHA, baseCommitSHA)
+		existingPR, found, err := c.exactPullRequestForTarget(ctx, existingPRCandidates, desiredTreeSHA, baseCommitSHA)
 		if err != nil {
 			return GitHubPRResult{}, err
 		}
-		if !matches {
+		if !found {
 			return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
 		}
 		existingPR.BaseCommitSHA = baseCommitSHA
@@ -276,7 +285,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 			return GitHubPRResult{}, fmt.Errorf("deterministic working branch %s is divergent; refusing to force update it", prepared.WorkingBranch)
 		}
 	} else {
-		headCommitSHA, err = c.createGitCommit(ctx, prepared.CommitMessage, desiredTreeSHA, baseCommitSHA)
+		headCommitSHA, err = c.createGitCommit(ctx, prepared.CommitMessage, desiredTreeSHA, baseCommitSHA, prepared.CommitDate)
 		if err != nil {
 			return GitHubPRResult{}, err
 		}
@@ -305,12 +314,12 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 
 	number, prURL, state, err := c.openPullRequest(ctx, prepared.WorkingBranch, prepared.Title, prepared.Body)
 	if err != nil {
-		if existing, found, reconcileErr := c.FindPullRequestByHead(ctx, prepared.WorkingBranch); reconcileErr == nil && found {
-			matches, matchErr := c.gitCommitMatches(ctx, existing.HeadCommitSHA, desiredTreeSHA, baseCommitSHA)
+		if candidates, reconcileErr := c.findPullRequestsByHead(ctx, prepared.WorkingBranch); reconcileErr == nil && len(candidates) > 0 {
+			existing, found, matchErr := c.exactPullRequestForTarget(ctx, candidates, desiredTreeSHA, baseCommitSHA)
 			if matchErr != nil {
 				return GitHubPRResult{}, matchErr
 			}
-			if !matches {
+			if !found {
 				return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
 			}
 			existing.BaseCommitSHA = baseCommitSHA
@@ -338,6 +347,12 @@ type gitHubCreateTreeEntry struct {
 	SHA  string `json:"sha"`
 }
 
+type gitHubCommitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Date  string `json:"date"`
+}
+
 func prepareGitHubFileUpdatesInput(in GitHubFileUpdatesPRInput) (GitHubFileUpdatesPRInput, error) {
 	in.WorkingBranch = strings.TrimSpace(in.WorkingBranch)
 	in.BaseCommitSHA = strings.TrimSpace(in.BaseCommitSHA)
@@ -354,6 +369,13 @@ func prepareGitHubFileUpdatesInput(in GitHubFileUpdatesPRInput) (GitHubFileUpdat
 	}
 	if in.CommitMessage == "" {
 		return GitHubFileUpdatesPRInput{}, fmt.Errorf("commit message is required")
+	}
+	if in.CommitDate.IsZero() {
+		return GitHubFileUpdatesPRInput{}, fmt.Errorf("deterministic commit date is required")
+	}
+	in.CommitDate = in.CommitDate.Round(0).UTC().Truncate(time.Second)
+	if year := in.CommitDate.Year(); year < 1 || year > 9999 {
+		return GitHubFileUpdatesPRInput{}, fmt.Errorf("commit date cannot be represented as RFC3339")
 	}
 	if in.Title == "" {
 		return GitHubFileUpdatesPRInput{}, fmt.Errorf("pull request title is required")
@@ -470,15 +492,21 @@ func (c *GitHubPRClient) createGitTree(ctx context.Context, baseTreeSHA string, 
 	return strings.TrimSpace(out.SHA), nil
 }
 
-func (c *GitHubPRClient) createGitCommit(ctx context.Context, message, treeSHA, parentSHA string) (string, error) {
+func (c *GitHubPRClient) createGitCommit(ctx context.Context, message, treeSHA, parentSHA string, commitDate time.Time) (string, error) {
 	if err := c.beforeMutation(ctx); err != nil {
 		return "", err
 	}
+	identity := gitHubCommitIdentity{
+		Name: gitHubCommitIdentityName, Email: gitHubCommitIdentityEmail,
+		Date: commitDate.UTC().Format(time.RFC3339),
+	}
 	payload := struct {
-		Message string   `json:"message"`
-		Tree    string   `json:"tree"`
-		Parents []string `json:"parents"`
-	}{Message: message, Tree: treeSHA, Parents: []string{parentSHA}}
+		Message   string               `json:"message"`
+		Tree      string               `json:"tree"`
+		Parents   []string             `json:"parents"`
+		Author    gitHubCommitIdentity `json:"author"`
+		Committer gitHubCommitIdentity `json:"committer"`
+	}{Message: message, Tree: treeSHA, Parents: []string{parentSHA}, Author: identity, Committer: identity}
 	var out struct {
 		SHA string `json:"sha"`
 	}
@@ -493,7 +521,7 @@ func (c *GitHubPRClient) createGitCommit(ctx context.Context, message, treeSHA, 
 }
 
 func (c *GitHubPRClient) refCommitSHAIfExists(ctx context.Context, branch string) (string, bool, error) {
-	endpoint := "https://api.github.com/repos/" + c.Repo + "/git/ref/heads/" + strings.TrimSpace(branch)
+	endpoint := c.gitRefEndpoint(branch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", false, err
@@ -531,6 +559,26 @@ func (c *GitHubPRClient) gitCommitMatches(ctx context.Context, commitSHA, treeSH
 		return false, err
 	}
 	return commit.TreeSHA == treeSHA && len(commit.Parents) == 1 && commit.Parents[0] == parentSHA, nil
+}
+
+func (c *GitHubPRClient) exactPullRequestForTarget(ctx context.Context, candidates []GitHubPRResult, treeSHA, parentSHA string) (GitHubPRResult, bool, error) {
+	exact := make([]GitHubPRResult, 0, len(candidates))
+	matchByHead := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		matches, checked := matchByHead[candidate.HeadCommitSHA]
+		if !checked {
+			var err error
+			matches, err = c.gitCommitMatches(ctx, candidate.HeadCommitSHA, treeSHA, parentSHA)
+			if err != nil {
+				return GitHubPRResult{}, false, err
+			}
+			matchByHead[candidate.HeadCommitSHA] = matches
+		}
+		if matches {
+			exact = append(exact, candidate)
+		}
+	}
+	return preferredPullRequest(exact)
 }
 
 func (c *GitHubPRClient) beforeMutation(ctx context.Context) error {
@@ -606,7 +654,7 @@ func (c *GitHubPRClient) ReadFile(ctx context.Context, sourcePath, ref string) (
 	if strings.TrimSpace(ref) == "" {
 		ref = c.BaseBranch
 	}
-	api := "https://api.github.com/repos/" + c.Repo + "/contents/" + sourcePath + "?ref=" + ref
+	api := c.contentEndpoint(sourcePath, ref)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return "", "", err
@@ -644,7 +692,7 @@ func (c *GitHubPRClient) ReadFile(ctx context.Context, sourcePath, ref string) (
 }
 
 func (c *GitHubPRClient) fileSHA(ctx context.Context, sourcePath, ref string) (string, error) {
-	api := "https://api.github.com/repos/" + c.Repo + "/contents/" + sourcePath + "?ref=" + ref
+	api := c.contentEndpoint(sourcePath, ref)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return "", err
@@ -676,7 +724,7 @@ func (c *GitHubPRClient) baseCommitSHA(ctx context.Context) (string, error) {
 }
 
 func (c *GitHubPRClient) refCommitSHA(ctx context.Context, branch string) (string, error) {
-	api := "https://api.github.com/repos/" + c.Repo + "/git/ref/heads/" + strings.TrimSpace(branch)
+	api := c.gitRefEndpoint(branch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api, nil)
 	if err != nil {
 		return "", err
@@ -703,6 +751,16 @@ func (c *GitHubPRClient) refCommitSHA(ctx context.Context, branch string) (strin
 		return "", fmt.Errorf("github base ref returned empty sha")
 	}
 	return out.Object.SHA, nil
+}
+
+func (c *GitHubPRClient) gitRefEndpoint(branch string) string {
+	return "https://api.github.com/repos/" + c.Repo + "/git/ref/heads/" + url.PathEscape(strings.TrimSpace(branch))
+}
+
+func (c *GitHubPRClient) contentEndpoint(sourcePath, ref string) string {
+	query := url.Values{}
+	query.Set("ref", ref)
+	return "https://api.github.com/repos/" + c.Repo + "/contents/" + sourcePath + "?" + query.Encode()
 }
 
 func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) (bool, error) {
@@ -818,25 +876,37 @@ func (c *GitHubPRClient) GetPullRequest(ctx context.Context, number int) (GitHub
 // new GitHub mutation. This closes the lost-response window where the PR was
 // created remotely but its identifiers were not persisted locally.
 func (c *GitHubPRClient) FindPullRequestByHead(ctx context.Context, workingBranch string) (GitHubPRResult, bool, error) {
+	candidates, err := c.findPullRequestsByHead(ctx, workingBranch)
+	if err != nil {
+		return GitHubPRResult{}, false, err
+	}
+	return preferredPullRequest(candidates)
+}
+
+func (c *GitHubPRClient) findPullRequestsByHead(ctx context.Context, workingBranch string) ([]GitHubPRResult, error) {
 	workingBranch = strings.TrimSpace(workingBranch)
 	parts := strings.SplitN(c.Repo, "/", 2)
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || workingBranch == "" {
-		return GitHubPRResult{}, false, fmt.Errorf("repo owner and working branch are required to reconcile a pull request")
+		return nil, fmt.Errorf("repo owner and working branch are required to reconcile a pull request")
 	}
-	endpoint := "https://api.github.com/repos/" + c.Repo + "/pulls?state=all&base=" + url.QueryEscape(c.BaseBranch) + "&head=" + url.QueryEscape(parts[0]+":"+workingBranch)
+	query := url.Values{}
+	query.Set("state", "all")
+	query.Set("base", c.BaseBranch)
+	query.Set("head", parts[0]+":"+workingBranch)
+	endpoint := "https://api.github.com/repos/" + c.Repo + "/pulls?" + query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return GitHubPRResult{}, false, err
+		return nil, err
 	}
 	c.auth(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return GitHubPRResult{}, false, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return GitHubPRResult{}, false, fmt.Errorf("github PR reconcile %d: %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("github PR reconcile %d: %s", resp.StatusCode, string(raw))
 	}
 	var rows []struct {
 		Number   int        `json:"number"`
@@ -849,20 +919,51 @@ func (c *GitHubPRClient) FindPullRequestByHead(ctx context.Context, workingBranc
 		} `json:"head"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
-		return GitHubPRResult{}, false, err
+		return nil, err
 	}
-	if len(rows) == 0 {
+	candidates := make([]GitHubPRResult, 0, len(rows))
+	for _, row := range rows {
+		state := normalizePullRequestState(row.State, row.MergedAt)
+		if row.Merged {
+			state = "merged"
+		}
+		candidates = append(candidates, GitHubPRResult{
+			Number: row.Number, URL: row.HTMLURL, State: state, WorkingBranch: workingBranch,
+			BaseBranch: c.BaseBranch, HeadCommitSHA: row.Head.SHA,
+		})
+	}
+	return candidates, nil
+}
+
+// preferredPullRequest chooses exact candidates deterministically: an open PR
+// wins over a merged PR, which wins over a closed PR. Within the same state,
+// the greatest PR number wins; an exact tie retains API order.
+func preferredPullRequest(candidates []GitHubPRResult) (GitHubPRResult, bool, error) {
+	if len(candidates) == 0 {
 		return GitHubPRResult{}, false, nil
 	}
-	row := rows[0]
-	state := normalizePullRequestState(row.State, row.MergedAt)
-	if row.Merged {
-		state = "merged"
+	best := candidates[0]
+	for _, candidate := range candidates[1:] {
+		candidatePriority := pullRequestStatePriority(candidate.State)
+		bestPriority := pullRequestStatePriority(best.State)
+		if candidatePriority < bestPriority || (candidatePriority == bestPriority && candidate.Number > best.Number) {
+			best = candidate
+		}
 	}
-	return GitHubPRResult{
-		Number: row.Number, URL: row.HTMLURL, State: state, WorkingBranch: workingBranch,
-		BaseBranch: c.BaseBranch, HeadCommitSHA: row.Head.SHA,
-	}, true, nil
+	return best, true, nil
+}
+
+func pullRequestStatePriority(state string) int {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "open":
+		return 0
+	case "merged":
+		return 1
+	case "closed":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func normalizePullRequestState(state string, mergedAt *time.Time) string {
