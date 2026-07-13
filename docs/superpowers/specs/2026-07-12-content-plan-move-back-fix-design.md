@@ -58,4 +58,3 @@ Content Plan confirmation
 - A handler test must prove `pgx.ErrNoRows` maps to 404 and other query errors map to 500.
 - After the fix, targeted tests, full Go tests, vet, build, and web tests/typecheck/build must pass.
 - Production verification must move the reported action back, confirm it disappears from Content Plan, and confirm the source Opportunity is visible in Opportunities.
-

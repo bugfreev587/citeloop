@@ -188,4 +188,3 @@ In the authenticated Chrome session:
 3. Verify the success message, the Content Plan card count decreases, and the drawer closes.
 4. Open Opportunities and verify the reopened source opportunity appears in the decision queue.
 5. Verify no browser console errors were introduced.
-

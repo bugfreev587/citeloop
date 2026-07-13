@@ -103,6 +103,31 @@ func TestOpportunityReconsiderationSchemaAddsReturnedAndReviewStates(t *testing.
 	}
 }
 
+func TestReturnContentActionWithdrawsDraftUsingArticleSchema(t *testing.T) {
+	query := strings.ToLower(markContentActionReturnedToOpportunity)
+	start := strings.Index(query, "withdrawn_article as")
+	if start < 0 {
+		t.Fatal("return query must retain linked draft withdrawal")
+	}
+	withdrawal := query[start:]
+	if end := strings.Index(withdrawal, "\nselect "); end >= 0 {
+		withdrawal = withdrawal[:end]
+	}
+	for _, want := range []string{
+		"update articles",
+		"status = 'rejected'",
+		"a.id = candidate.draft_article_id",
+		"a.project_id = candidate.project_id",
+	} {
+		if !strings.Contains(withdrawal, want) {
+			t.Fatalf("draft withdrawal missing %q: %s", want, withdrawal)
+		}
+	}
+	if strings.Contains(withdrawal, "updated_at") {
+		t.Fatalf("articles has no updated_at column: %s", withdrawal)
+	}
+}
+
 func TestLatestTechnicalChecksQuerySupportsAnalyzerExpansion(t *testing.T) {
 	query := strings.ToLower(listLatestTechnicalChecks)
 	for _, want := range []string{
