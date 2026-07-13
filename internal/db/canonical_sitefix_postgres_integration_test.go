@@ -4,6 +4,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -98,13 +99,48 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	if leaders != 1 || winner.app.Status != "creating_pr" {
 		t.Fatalf("PR claim leaders=%d winner=%+v", leaders, winner)
 	}
+	connectionID := uuid.New()
+	if _, err := pool.Exec(ctx, `insert into publisher_connections
+		(id,project_id,kind,label,status,is_default,enabled,capabilities,capability_schema_version,config)
+		values($1,$2,'github_nextjs','Prepared patch integration','connected',true,true,'{}',1,'{"repo":"owner/repo","branch":"main","base_url":"https://example.com"}')`, connectionID, projectID); err != nil {
+		t.Fatal(err)
+	}
 
 	loser := tokens[0]
 	if loser == winner.token {
 		loser = tokens[1]
 	}
+	repo, branch, source, baseCommit, baseFile := "owner/repo", "main", "app/page.tsx", "base-commit", "blob-1"
+	baseHash, proposedHash := "source-aggregate", "result-aggregate"
+	paths := json.RawMessage(`["app/page.tsx","app/layout.tsx"]`)
+	patch := json.RawMessage(`{"repo":"owner/repo","base_branch":"main","base_commit_sha":"base-commit","files":[{"path":"app/page.tsx","base_sha":"blob-1"},{"path":"app/layout.tsx","base_sha":"blob-2"}],"source_aggregate_sha256":"source-aggregate","result_aggregate_sha256":"result-aggregate"}`)
+	diff := json.RawMessage(`{"files":[{"path":"app/page.tsx","changes":[{"before":"old","after":"new"}]}]}`)
+	criteria := json.RawMessage(`{"asset_type":"metadata_rewrite"}`)
+	saveArgs := SaveCanonicalSiteFixPreparedPatchParams{
+		PublisherConnectionID: pgtype.UUID{Bytes: connectionID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
+		BaseCommitSha: &baseCommit, SourceFilePath: &source, SourceFilePaths: paths, BaseFileSha: &baseFile,
+		BaseContentHash: &baseHash, ProposedContentHash: &proposedHash, SourceMappingConfidence: "high",
+		SourceMappingReason: "immutable blob selection", PatchSnapshot: patch, DiffSnapshot: diff, ResolutionCriteria: criteria,
+		ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+		PrClaimToken: pgtype.UUID{Bytes: loser, Valid: true}, WriterAuthorityFingerprint: winner.app.PrClaimAuthorityFingerprint,
+	}
+	if _, err := New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, saveArgs); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("losing claim saved prepared patch: %v", err)
+	}
+	wrongFingerprint := "canonical:false:wrong"
+	saveArgs.PrClaimToken = pgtype.UUID{Bytes: winner.token, Valid: true}
+	saveArgs.WriterAuthorityFingerprint = &wrongFingerprint
+	if _, err := New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, saveArgs); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong authority fingerprint saved prepared patch: %v", err)
+	}
+	saveArgs.WriterAuthorityFingerprint = winner.app.PrClaimAuthorityFingerprint
+	prepared, err := New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, saveArgs)
+	if err != nil || prepared.Status != "creating_pr" || prepared.BaseCommitSha == nil || *prepared.BaseCommitSha != baseCommit ||
+		prepared.BaseContentHash == nil || *prepared.BaseContentHash != baseHash || string(prepared.SourceFilePaths) != string(paths) {
+		t.Fatalf("prepared patch app=%+v err=%v", prepared, err)
+	}
 	prNumber := int32(41)
-	prURL, prState, repo, branch, source := "https://github.example/pr/41", "open", "owner/repo", "main", "page.md"
+	prURL, prState := "https://github.example/pr/41", "open"
 	if _, err := New(pool).MarkCanonicalSiteFixGitHubPR(ctx, MarkCanonicalSiteFixGitHubPRParams{
 		ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
 		PrClaimToken: pgtype.UUID{Bytes: loser, Valid: true}, GithubPrNumber: &prNumber, GithubPrUrl: &prURL,
@@ -137,6 +173,45 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	if signatureStatus != "failed_terminal" || signatureActive {
 		t.Fatalf("signature status=%s active=%v", signatureStatus, signatureActive)
 	}
+
+	t.Run("preparation failure remains safely retryable", func(t *testing.T) {
+		pid, fid, _ := insertCanonicalSiteFixFixture(t, ctx, pool, "preparing", "preparing", "")
+		rawFailure := "credential lookup failed: secret token"
+		if _, err := New(pool).RecordCanonicalSiteFixPreparationFailure(ctx, RecordCanonicalSiteFixPreparationFailureParams{
+			FailureCode: &rawFailure,
+			ProjectID:   pid,
+			SiteFixID:   fid,
+		}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("uncontrolled preparation failure was persisted: %v", err)
+		}
+		failureCode := "provider_unavailable"
+		fix, err := New(pool).RecordCanonicalSiteFixPreparationFailure(ctx, RecordCanonicalSiteFixPreparationFailureParams{
+			FailureCode: &failureCode,
+			ProjectID:   pid,
+			SiteFixID:   fid,
+		})
+		if err != nil || fix.Status != "preparing" || fix.FailureReason == nil || *fix.FailureReason != failureCode {
+			t.Fatalf("preparation failure fix=%+v err=%v", fix, err)
+		}
+		var signatureState string
+		var signatureStillActive bool
+		if err := pool.QueryRow(ctx, `select status,active from work_signature_registry where project_id=$1 and reserved_work_id=$2`, pid, fid).Scan(&signatureState, &signatureStillActive); err != nil {
+			t.Fatal(err)
+		}
+		if signatureState != "preparing" || !signatureStillActive {
+			t.Fatalf("signature status=%s active=%v", signatureState, signatureStillActive)
+		}
+		ready, err := New(pool).MarkCanonicalSiteFixReadyToApply(ctx, MarkCanonicalSiteFixReadyToApplyParams{SiteFixID: fid, ProjectID: pid})
+		if err != nil || ready.Status != "ready_to_apply" || ready.FailureReason != nil {
+			t.Fatalf("successful preparation retry fix=%+v err=%v", ready, err)
+		}
+		if err := pool.QueryRow(ctx, `select status,active from work_signature_registry where project_id=$1 and reserved_work_id=$2`, pid, fid).Scan(&signatureState, &signatureStillActive); err != nil {
+			t.Fatal(err)
+		}
+		if signatureState != "executing" || !signatureStillActive {
+			t.Fatalf("successful retry signature status=%s active=%v", signatureState, signatureStillActive)
+		}
+	})
 
 	t.Run("apply failure reopens without verification retry", func(t *testing.T) {
 		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "github_pr_open")

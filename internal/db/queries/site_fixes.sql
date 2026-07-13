@@ -3260,7 +3260,7 @@ with eligible as materialized (
   returning b.id
 ), transitioned as (
   update site_fixes sf
-  set status = 'ready_to_apply', updated_at = now()
+  set status = 'ready_to_apply', failure_reason = null, updated_at = now()
   from locked_work e
   where sf.id = e.id
     and sf.status = 'preparing'
@@ -3276,6 +3276,30 @@ with eligible as materialized (
 )
 select transitioned.* from transitioned
 cross join signature_transition;
+
+-- name: RecordCanonicalSiteFixPreparationFailure :one
+update site_fixes sf
+set failure_reason = sqlc.arg(failure_code),
+    updated_at = now()
+from work_signature_registry w
+where sf.project_id = sqlc.arg(project_id)
+  and sf.id = sqlc.arg(site_fix_id)
+  and sf.status = 'preparing'
+  and w.id = sf.work_signature_id
+  and w.project_id = sf.project_id
+  and w.status = 'preparing'
+  and w.mode = 'enforced'
+  and w.active = true
+  and sqlc.arg(failure_code)::text in (
+    'repository_source_unavailable',
+    'source_selection_failed',
+    'provider_unavailable',
+    'invalid_repository_patch',
+    'grounding_rejected',
+    'preparation_interrupted',
+    'preparation_failed'
+  )
+returning sf.*;
 
 -- name: ClaimCanonicalSiteFixApplying :one
 with eligible as materialized (
@@ -3730,6 +3754,45 @@ where app.project_id = sqlc.arg(project_id)
   and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
   and exists (select 1 from authority)
 returning *;
+
+-- name: SaveCanonicalSiteFixPreparedPatch :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set publisher_connection_id = sqlc.arg(publisher_connection_id),
+    repo_full_name = sqlc.arg(repo_full_name),
+    base_branch = sqlc.arg(base_branch),
+    base_commit_sha = sqlc.arg(base_commit_sha),
+    source_file_path = sqlc.narg(source_file_path),
+    source_file_paths = sqlc.arg(source_file_paths)::jsonb,
+    base_file_sha = sqlc.narg(base_file_sha),
+    base_content_hash = sqlc.arg(base_content_hash),
+    proposed_content_hash = sqlc.arg(proposed_content_hash),
+    source_mapping_confidence = sqlc.arg(source_mapping_confidence),
+    source_mapping_reason = sqlc.arg(source_mapping_reason),
+    patch_snapshot = sqlc.arg(patch_snapshot)::jsonb,
+    diff_snapshot = sqlc.arg(diff_snapshot)::jsonb,
+    resolution_criteria = sqlc.arg(resolution_criteria)::jsonb,
+    failure_reason = null,
+    updated_at = now()
+where app.project_id = sqlc.arg(project_id)
+  and app.id = sqlc.arg(application_id)
+  and app.site_fix_id = sqlc.arg(site_fix_id)
+  and app.site_fix_id is not null
+  and app.content_action_id is null
+  and app.status = 'creating_pr'
+  and app.pr_claim_token = sqlc.arg(pr_claim_token)
+  and app.pr_claim_expires_at > clock_timestamp()
+  and app.pr_claim_authority_fingerprint = sqlc.arg(writer_authority_fingerprint)
+  and sqlc.arg(writer_authority_fingerprint) = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.*;
 
 -- name: ClaimCanonicalSiteFixGitHubPR :one
 with authority as materialized (

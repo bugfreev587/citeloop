@@ -6695,7 +6695,7 @@ with eligible as materialized (
   returning b.id
 ), transitioned as (
   update site_fixes sf
-  set status = 'ready_to_apply', updated_at = now()
+  set status = 'ready_to_apply', failure_reason = null, updated_at = now()
   from locked_work e
   where sf.id = e.id
     and sf.status = 'preparing'
@@ -7948,6 +7948,72 @@ func (q *Queries) MergeCanonicalDoctorSiteFixEvidence(ctx context.Context, arg M
 		arg.EvidenceFingerprint,
 	)
 	var i MergeCanonicalDoctorSiteFixEvidenceRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.DoctorFindingID,
+		&i.CandidateID,
+		&i.WorkSignatureID,
+		&i.SupersedesSiteFixID,
+		&i.Status,
+		&i.FindingKind,
+		&i.TargetUrls,
+		&i.EvidenceSnapshot,
+		&i.ProposedFix,
+		&i.AcceptanceTests,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.RetryCount,
+		&i.MaxRetries,
+		&i.LegacyOpportunityID,
+		&i.LegacyContentActionID,
+		&i.MigrationBatchID,
+		&i.ApprovedAt,
+		&i.AppliedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DoctorLinkDismissedAt,
+		&i.DoctorLinkDismissedBy,
+	)
+	return i, err
+}
+
+const recordCanonicalSiteFixPreparationFailure = `-- name: RecordCanonicalSiteFixPreparationFailure :one
+update site_fixes sf
+set failure_reason = $1,
+    updated_at = now()
+from work_signature_registry w
+where sf.project_id = $2
+  and sf.id = $3
+  and sf.status = 'preparing'
+  and w.id = sf.work_signature_id
+  and w.project_id = sf.project_id
+  and w.status = 'preparing'
+  and w.mode = 'enforced'
+  and w.active = true
+  and $1::text in (
+    'repository_source_unavailable',
+    'source_selection_failed',
+    'provider_unavailable',
+    'invalid_repository_patch',
+    'grounding_rejected',
+    'preparation_interrupted',
+    'preparation_failed'
+  )
+returning sf.id, sf.project_id, sf.doctor_finding_id, sf.candidate_id, sf.work_signature_id, sf.supersedes_site_fix_id, sf.status, sf.finding_kind, sf.target_urls, sf.evidence_snapshot, sf.proposed_fix, sf.acceptance_tests, sf.verification_snapshot, sf.failure_reason, sf.retry_count, sf.max_retries, sf.legacy_opportunity_id, sf.legacy_content_action_id, sf.migration_batch_id, sf.approved_at, sf.applied_at, sf.deployed_at, sf.verified_at, sf.created_at, sf.updated_at, sf.doctor_link_dismissed_at, sf.doctor_link_dismissed_by
+`
+
+type RecordCanonicalSiteFixPreparationFailureParams struct {
+	FailureCode *string   `json:"failure_code"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	SiteFixID   uuid.UUID `json:"site_fix_id"`
+}
+
+func (q *Queries) RecordCanonicalSiteFixPreparationFailure(ctx context.Context, arg RecordCanonicalSiteFixPreparationFailureParams) (SiteFix, error) {
+	row := q.db.QueryRow(ctx, recordCanonicalSiteFixPreparationFailure, arg.FailureCode, arg.ProjectID, arg.SiteFixID)
+	var i SiteFix
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -9504,6 +9570,140 @@ func (q *Queries) RollbackLegacySiteFixMigration(ctx context.Context, arg Rollba
 		&i.TombstonedFixes,
 		&i.RestoredApplications,
 		&i.WriterAuthority,
+	)
+	return i, err
+}
+
+const saveCanonicalSiteFixPreparedPatch = `-- name: SaveCanonicalSiteFixPreparedPatch :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $15 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+)
+update site_change_applications app
+set publisher_connection_id = $1,
+    repo_full_name = $2,
+    base_branch = $3,
+    base_commit_sha = $4,
+    source_file_path = $5,
+    source_file_paths = $6::jsonb,
+    base_file_sha = $7,
+    base_content_hash = $8,
+    proposed_content_hash = $9,
+    source_mapping_confidence = $10,
+    source_mapping_reason = $11,
+    patch_snapshot = $12::jsonb,
+    diff_snapshot = $13::jsonb,
+    resolution_criteria = $14::jsonb,
+    failure_reason = null,
+    updated_at = now()
+where app.project_id = $15
+  and app.id = $16
+  and app.site_fix_id = $17
+  and app.site_fix_id is not null
+  and app.content_action_id is null
+  and app.status = 'creating_pr'
+  and app.pr_claim_token = $18
+  and app.pr_claim_expires_at > clock_timestamp()
+  and app.pr_claim_authority_fingerprint = $19
+  and $19 = (select fingerprint from authority)
+  and exists (select 1 from authority)
+returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+`
+
+type SaveCanonicalSiteFixPreparedPatchParams struct {
+	PublisherConnectionID      pgtype.UUID     `json:"publisher_connection_id"`
+	RepoFullName               *string         `json:"repo_full_name"`
+	BaseBranch                 *string         `json:"base_branch"`
+	BaseCommitSha              *string         `json:"base_commit_sha"`
+	SourceFilePath             *string         `json:"source_file_path"`
+	SourceFilePaths            json.RawMessage `json:"source_file_paths"`
+	BaseFileSha                *string         `json:"base_file_sha"`
+	BaseContentHash            *string         `json:"base_content_hash"`
+	ProposedContentHash        *string         `json:"proposed_content_hash"`
+	SourceMappingConfidence    string          `json:"source_mapping_confidence"`
+	SourceMappingReason        string          `json:"source_mapping_reason"`
+	PatchSnapshot              json.RawMessage `json:"patch_snapshot"`
+	DiffSnapshot               json.RawMessage `json:"diff_snapshot"`
+	ResolutionCriteria         json.RawMessage `json:"resolution_criteria"`
+	ProjectID                  uuid.UUID       `json:"project_id"`
+	ApplicationID              uuid.UUID       `json:"application_id"`
+	SiteFixID                  pgtype.UUID     `json:"site_fix_id"`
+	PrClaimToken               pgtype.UUID     `json:"pr_claim_token"`
+	WriterAuthorityFingerprint *string         `json:"writer_authority_fingerprint"`
+}
+
+func (q *Queries) SaveCanonicalSiteFixPreparedPatch(ctx context.Context, arg SaveCanonicalSiteFixPreparedPatchParams) (SiteChangeApplication, error) {
+	row := q.db.QueryRow(ctx, saveCanonicalSiteFixPreparedPatch,
+		arg.PublisherConnectionID,
+		arg.RepoFullName,
+		arg.BaseBranch,
+		arg.BaseCommitSha,
+		arg.SourceFilePath,
+		arg.SourceFilePaths,
+		arg.BaseFileSha,
+		arg.BaseContentHash,
+		arg.ProposedContentHash,
+		arg.SourceMappingConfidence,
+		arg.SourceMappingReason,
+		arg.PatchSnapshot,
+		arg.DiffSnapshot,
+		arg.ResolutionCriteria,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+		arg.PrClaimToken,
+		arg.WriterAuthorityFingerprint,
+	)
+	var i SiteChangeApplication
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
 	)
 	return i, err
 }

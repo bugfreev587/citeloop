@@ -432,6 +432,7 @@ type Querier interface {
 	RecentRunFailures(ctx context.Context, arg RecentRunFailuresParams) (int64, error)
 	ReclaimStuckWorkflowEvents(ctx context.Context, limit int32) ([]WorkflowEvent, error)
 	ReclassifyAICallRecordOutputFailure(ctx context.Context, arg ReclassifyAICallRecordOutputFailureParams) (AiCallRecord, error)
+	RecordCanonicalSiteFixPreparationFailure(ctx context.Context, arg RecordCanonicalSiteFixPreparationFailureParams) (SiteFix, error)
 	RecordGrowthTerminalOutcome(ctx context.Context, arg RecordGrowthTerminalOutcomeParams) error
 	RecordPublishAttemptResult(ctx context.Context, arg RecordPublishAttemptResultParams) (Article, error)
 	RejectArticle(ctx context.Context, arg RejectArticleParams) (Article, error)
@@ -469,6 +470,7 @@ type Querier interface {
 	SEOOpportunityCounts(ctx context.Context, projectID uuid.UUID) ([]SEOOpportunityCountsRow, error)
 	SEOOverviewStats(ctx context.Context, projectID uuid.UUID) (SEOOverviewStatsRow, error)
 	SEOTechnicalSummary(ctx context.Context, projectID uuid.UUID) (SEOTechnicalSummaryRow, error)
+	SaveCanonicalSiteFixPreparedPatch(ctx context.Context, arg SaveCanonicalSiteFixPreparedPatchParams) (SiteChangeApplication, error)
 	// Publisher: canonical articles due for auto-publish (§5.6).
 	SelectDueCanonical(ctx context.Context, projectID uuid.UUID) ([]Article, error)
 	// Scheduler: topics whose operator-set scheduled_at slot has arrived. Unlike

@@ -76,8 +76,8 @@ type ApplyResult struct {
 }
 
 type FixGenerator interface {
-	Describe(db.SiteFix, GenerationContext) GenerationCall
-	Generate(context.Context, db.SiteFix, GenerationContext, siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error)
+	Describe(db.SiteFix, GenerationContext, RepositorySnapshot) GenerationCall
+	Generate(context.Context, db.SiteFix, GenerationContext, RepositorySnapshot, siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error)
 }
 
 // PatchVerification is an independent judgment over the actual generated
@@ -104,21 +104,26 @@ type ApplyStore interface {
 	LoadGenerationContext(context.Context, db.SiteFix) (GenerationContext, error)
 	FindApplication(context.Context, db.SiteFix) (db.SiteChangeApplication, bool, error)
 	MarkPreparing(context.Context, db.SiteFix) (db.SiteFix, error)
-	StartGeneration(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, siteFixAICallAttempt, error)
+	StartSourceSelection(context.Context, db.SiteFix, GenerationCall) (uuid.UUID, siteFixAICallAttempt, error)
+	FinishSourceSelection(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
+	StartGeneration(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error)
 	FinishGeneration(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
 	StartGroundingVerification(context.Context, db.SiteFix, GenerationCall, uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error)
 	FinishGroundingVerification(context.Context, db.SiteFix, uuid.UUID, GenerationResult) error
+	RecordPreparationFailure(context.Context, db.SiteFix, string) error
 	Finalize(context.Context, db.SiteFix, ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error)
 }
 
 type ApplyService struct {
-	Store     ApplyStore
-	Generator FixGenerator
-	Verifier  PatchGroundingVerifier
+	Store          ApplyStore
+	SourceLoader   RepositorySourceLoader
+	SourceSelector RepositorySourceSelector
+	Generator      FixGenerator
+	Verifier       PatchGroundingVerifier
 }
 
-func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (ApplyResult, error) {
-	if s.Store == nil || s.Generator == nil || s.Verifier == nil {
+func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (result ApplyResult, resultErr error) {
+	if s.Store == nil || s.SourceLoader == nil || s.SourceSelector == nil || s.Generator == nil || s.Verifier == nil {
 		return ApplyResult{}, errors.New("canonical Site Fix apply dependencies unavailable")
 	}
 	fix, err := s.Store.Load(ctx, projectID, fixID)
@@ -136,10 +141,6 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 		}
 		return ApplyResult{SiteFix: fix, Application: app}, nil
 	}
-	generationContext, err := s.Store.LoadGenerationContext(ctx, fix)
-	if err != nil {
-		return ApplyResult{}, err
-	}
 	switch fix.Status {
 	case "approved":
 		fix, err = s.Store.MarkPreparing(ctx, fix)
@@ -152,17 +153,78 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 	default:
 		return ApplyResult{}, fmt.Errorf("%w: cannot apply from %s", ErrLifecycleConflict, fix.Status)
 	}
+	preparationActive := true
+	defer func() {
+		if !preparationActive || resultErr == nil {
+			return
+		}
+		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if persistErr := s.Store.RecordPreparationFailure(failureCtx, fix, safePreparationFailureCode(resultErr)); persistErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("record canonical Site Fix preparation failure: %w", persistErr))
+		}
+	}()
+	generationContext, err := s.Store.LoadGenerationContext(ctx, fix)
+	if err != nil {
+		return ApplyResult{}, err
+	}
 
-	descriptor := s.Generator.Describe(fix, generationContext)
+	target, candidates, err := s.SourceLoader.Candidates(ctx, fix)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	selectionDescriptor := s.SourceSelector.Describe(fix, candidates)
+	if strings.TrimSpace(selectionDescriptor.Provider) == "" || strings.TrimSpace(selectionDescriptor.Model) == "" ||
+		strings.TrimSpace(selectionDescriptor.PromptVersion) == "" || strings.TrimSpace(selectionDescriptor.RequestFingerprint) == "" {
+		return ApplyResult{}, errors.New("repository source selection descriptor is incomplete")
+	}
+	selectionCallID, selectionAttempt, err := s.Store.StartSourceSelection(ctx, fix, selectionDescriptor)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	selectedPaths, selection, selectErr := s.SourceSelector.Select(ctx, fix, candidates, selectionAttempt)
+	if !selectionAttempt.Started() && selection.Status != "skipped" {
+		selection.Status, selection.ErrorCode = "skipped", "provider_not_called"
+		selectErr = errors.Join(selectErr, errors.New("repository source selector returned without reporting a physical attempt"))
+	}
+	if selectErr != nil && selection.Status == "" {
+		selection.Status = "failed"
+	}
+	selectionFinishCtx, cancelSelectionFinish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelSelectionFinish()
+	if finishErr := s.Store.FinishSourceSelection(selectionFinishCtx, fix, selectionCallID, selection); finishErr != nil {
+		if selectErr != nil {
+			return ApplyResult{}, errors.Join(selectErr, finishErr)
+		}
+		return ApplyResult{}, finishErr
+	}
+	if selectErr != nil {
+		return ApplyResult{}, selectErr
+	}
+	if selection.Status != "ok" {
+		return ApplyResult{}, fmt.Errorf("repository source selection ended in %q", selection.Status)
+	}
+	repositorySnapshot, err := s.SourceLoader.LoadSelected(ctx, target, selectedPaths)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := ValidateRepositorySnapshot(repositorySnapshot); err != nil {
+		return ApplyResult{}, err
+	}
+	if repositorySnapshot.Repo != target.Repo || repositorySnapshot.Branch != target.Branch || repositorySnapshot.BaseCommitSHA != target.BaseCommitSHA {
+		return ApplyResult{}, errors.New("repository source loader returned a different target snapshot")
+	}
+
+	descriptor := s.Generator.Describe(fix, generationContext, repositorySnapshot)
 	if strings.TrimSpace(descriptor.Provider) == "" || strings.TrimSpace(descriptor.Model) == "" ||
 		strings.TrimSpace(descriptor.PromptVersion) == "" || strings.TrimSpace(descriptor.RequestFingerprint) == "" {
 		return ApplyResult{}, errors.New("fix generation descriptor is incomplete")
 	}
-	callID, generationAttempt, err := s.Store.StartGeneration(ctx, fix, descriptor)
+	callID, generationAttempt, err := s.Store.StartGeneration(ctx, fix, descriptor, selectionCallID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext, generationAttempt)
+	plan, generation, generateErr := s.Generator.Generate(ctx, fix, generationContext, repositorySnapshot, generationAttempt)
 	if !generationAttempt.Started() && generation.Status != "skipped" {
 		generation.Status, generation.ErrorCode = "skipped", "provider_not_called"
 		generateErr = errors.Join(generateErr, errors.New("Site Fix generation provider returned without reporting a physical attempt"))
@@ -239,10 +301,33 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (Ap
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	preparationActive = false
 	if !app.SiteFixID.Valid || app.ContentActionID.Valid || uuid.UUID(app.SiteFixID.Bytes) != fix.ID {
 		return ApplyResult{}, errors.New("canonical application returned an invalid source")
 	}
 	return ApplyResult{SiteFix: fix, Application: app}, nil
+}
+
+func safePreparationFailureCode(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "preparation_interrupted"
+	}
+	if errors.Is(err, ErrPatchGroundingRejected) {
+		return "grounding_rejected"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "repository patch"), strings.Contains(message, "exact replacement"):
+		return "invalid_repository_patch"
+	case strings.Contains(message, "source selection"), strings.Contains(message, "source selector"):
+		return "source_selection_failed"
+	case strings.Contains(message, "provider"):
+		return "provider_unavailable"
+	case strings.Contains(message, "repository"), strings.Contains(message, "source loader"), strings.Contains(message, "blob"), strings.Contains(message, "tree"), strings.Contains(message, "branch"):
+		return "repository_source_unavailable"
+	default:
+		return "preparation_failed"
+	}
 }
 
 func validatePatchVerification(fix db.SiteFix, verification PatchVerification) error {
@@ -501,7 +586,19 @@ func (s PostgresApplyStore) FindApplication(ctx context.Context, fix db.SiteFix)
 	return app, err == nil, err
 }
 
-func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix, call GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
+func (s PostgresApplyStore) StartSourceSelection(ctx context.Context, fix db.SiteFix, call GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
+	return s.startFixGenerationCall(ctx, fix, call, uuid.Nil)
+}
+
+func (s PostgresApplyStore) FinishSourceSelection(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
+	return s.finishAICall(ctx, fix, callID, result)
+}
+
+func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix, call GenerationCall, causedByCallID uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
+	return s.startFixGenerationCall(ctx, fix, call, causedByCallID)
+}
+
+func (s PostgresApplyStore) startFixGenerationCall(ctx context.Context, fix db.SiteFix, call GenerationCall, causedByCallID uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
 	parentCallID := pgtype.UUID{}
 	latest, latestErr := s.Q.GetLatestAICallForRequest(ctx, db.GetLatestAICallForRequestParams{
 		ProjectID: fix.ProjectID, Stage: "fix_generation", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
@@ -516,6 +613,7 @@ func (s PostgresApplyStore) StartGeneration(ctx context.Context, fix db.SiteFix,
 		ProjectID: fix.ProjectID, Stage: "fix_generation", LinkedObjectType: "site_fix", LinkedObjectID: fix.ID,
 		Provider: call.Provider, Model: call.Model, PromptVersion: call.PromptVersion,
 		RequestFingerprint: call.RequestFingerprint, Status: "queued", ParentCallID: parentCallID,
+		CausedByCallID: validPGUUIDOrEmpty(causedByCallID),
 	})
 	if err != nil {
 		return uuid.Nil, nil, err
@@ -541,6 +639,15 @@ func (s PostgresApplyStore) StartGroundingVerification(ctx context.Context, fix 
 
 func (s PostgresApplyStore) FinishGroundingVerification(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
 	return s.finishAICall(ctx, fix, callID, result)
+}
+
+func (s PostgresApplyStore) RecordPreparationFailure(ctx context.Context, fix db.SiteFix, code string) error {
+	_, err := s.Q.RecordCanonicalSiteFixPreparationFailure(ctx, db.RecordCanonicalSiteFixPreparationFailureParams{
+		FailureCode: &code,
+		ProjectID:   fix.ProjectID,
+		SiteFixID:   fix.ID,
+	})
+	return lifecycleError(err)
 }
 
 func (s PostgresApplyStore) finishAICall(ctx context.Context, fix db.SiteFix, callID uuid.UUID, result GenerationResult) error {
@@ -614,6 +721,13 @@ func lifecycleError(err error) error {
 
 func validPGUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 
+func validPGUUIDOrEmpty(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return validPGUUID(id)
+}
+
 // LLMApplicationGenerator grounds a narrow manual/PR-ready handoff in the
 // canonical Site Fix snapshots. It performs no database work.
 type LLMApplicationGenerator struct {
@@ -627,13 +741,13 @@ type LLMApplicationGenerator struct {
 // generation attempt as skipped rather than calling an AI provider.
 type DeterministicApplicationGenerator struct{}
 
-func (DeterministicApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext) GenerationCall {
+func (DeterministicApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot) GenerationCall {
 	payload := append(append(append([]byte{}, fix.ProposedFix...), fix.AcceptanceTests...), generationContext.ProductProfile...)
 	sum := sha256.Sum256(payload)
 	return GenerationCall{Provider: "none", Model: "none", PromptVersion: "doctor-fix-deterministic-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
 }
 
-func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext, _ siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, _ siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	target, err := firstTargetURL(fix.TargetUrls)
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_target"}, err
@@ -687,25 +801,25 @@ func approvedGroundingSnapshot(fix db.SiteFix, generationContext GenerationConte
 	})
 }
 
-func (g LLMApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext) GenerationCall {
-	req := g.completionRequest(fix, generationContext)
-	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-fix-generation-v2", RequestFingerprint: aicalls.Fingerprint(req)}
+func (g LLMApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext, repository RepositorySnapshot) GenerationCall {
+	req := g.completionRequest(fix, generationContext, repository)
+	return GenerationCall{Provider: "tokengate", Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), PromptVersion: "doctor-repository-patch-generation-v1", RequestFingerprint: aicalls.Fingerprint(req)}
 }
 
-func (g LLMApplicationGenerator) completionRequest(fix db.SiteFix, generationContext GenerationContext) llm.CompletionReq {
+func (g LLMApplicationGenerator) completionRequest(fix db.SiteFix, generationContext GenerationContext, repository RepositorySnapshot) llm.CompletionReq {
 	target, _ := firstTargetURL(fix.TargetUrls)
 	prompt, _ := json.Marshal(map[string]any{
 		"target_url": target, "context": generationContext, "evidence": fix.EvidenceSnapshot,
-		"proposed_fix": fix.ProposedFix, "acceptance_tests": fix.AcceptanceTests,
+		"proposed_fix": fix.ProposedFix, "acceptance_tests": fix.AcceptanceTests, "repository": repository,
 	})
 	return llm.CompletionReq{
-		System:  "You prepare a narrow Doctor Site Fix for an existing surface. Use only the supplied Product Context and observed page evidence. Do not create new content, claims, routes, offers, or growth hypotheses. Return JSON only.",
-		Prompt:  "Return exactly one JSON object with patch_snapshot (object), diff_snapshot (object), resolution_criteria (object), source_file_paths (string array), source_mapping_confidence (string), and source_mapping_reason (string). Do not return a grounding self-report; CiteLoop derives grounding from the approved evidence. Preserve the target URL, primary intent, and proposition set.\n" + string(prompt),
-		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 1400, DisableProviderFallback: true,
+		System:  "You generate a minimal exact-replacement patch for existing repository files. Use only the supplied SHA-pinned source contents, Product Context, approved evidence, proposed fix, and acceptance tests. Do not invent paths, create files, add unrelated edits, change product intent, or introduce unsupported claims. Return strict JSON only.",
+		Prompt:  "Return exactly one RepositoryPatch JSON object: {\"files\":[{\"path\":string,\"base_sha\":string,\"replacements\":[{\"old_text\":string,\"new_text\":string}]}]}. Every path and base_sha must exactly match a supplied source; each old_text must occur exactly once. Return no diff, grounding self-report, prose, or markdown.\n" + string(prompt),
+		Purpose: llm.PurposeSiteFix, Model: firstNonEmpty(g.Model, llm.DefaultTokenGateModel), JSON: true, MaxTokens: 4000, DisableProviderFallback: true,
 	}
 }
 
-func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, repository RepositorySnapshot, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if g.Provider == nil {
 		return ApplicationPlan{}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "provider_unavailable"}, errors.New("Doctor fix generation provider is unavailable")
 	}
@@ -720,7 +834,10 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, g
 	if err != nil {
 		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
 	}
-	req := g.completionRequest(fix, generationContext)
+	if err := ValidateRepositorySnapshot(repository); err != nil {
+		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_repository_snapshot"}, err
+	}
+	req := g.completionRequest(fix, generationContext, repository)
 	req.AttemptObserver = attempt
 	resp, err := llm.CompleteObserved(ctx, g.Provider, req)
 	result := GenerationResult{Provider: firstNonEmpty(resp.Provider, "tokengate"), Model: firstNonEmpty(resp.Model, g.Model), Status: "ok", PromptTokens: int32(max(resp.PromptTokens, 0)), CompletionTokens: int32(max(resp.CompletionTokens, 0)), TotalTokens: int32(max(resp.Tokens, 0)), CostUSD: resp.CostUSD}
@@ -728,30 +845,103 @@ func (g LLMApplicationGenerator) Generate(ctx context.Context, fix db.SiteFix, g
 		result.Status, result.ErrorCode = "failed", "provider_error"
 		return ApplicationPlan{}, result, err
 	}
-	var generated struct {
-		PatchSnapshot           json.RawMessage `json:"patch_snapshot"`
-		DiffSnapshot            json.RawMessage `json:"diff_snapshot"`
-		ResolutionCriteria      json.RawMessage `json:"resolution_criteria"`
-		SourceFilePaths         json.RawMessage `json:"source_file_paths"`
-		SourceMappingConfidence string          `json:"source_mapping_confidence"`
-		SourceMappingReason     string          `json:"source_mapping_reason"`
-	}
-	if err := decodeJSONObject(resp.Text, &generated); err != nil {
+	var patch RepositoryPatch
+	if err := decodeJSONObject(resp.Text, &patch); err != nil {
 		result.Status, result.ErrorCode = "failed", "invalid_response"
+		return ApplicationPlan{}, result, err
+	}
+	updates, actualDiff, err := ApplyRepositoryPatch(repository, patch)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_repository_patch"
+		return ApplicationPlan{}, result, err
+	}
+	preparedPatch, err := BuildRepositoryPreparedPatch(repository, patch, updates)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_repository_patch"
+		return ApplicationPlan{}, result, err
+	}
+	metadata := repositoryApplicationMetadata(fix)
+	preparedPatch, err = mergeRepositoryArtifactMetadata(preparedPatch, metadata)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_snapshot"
+		return ApplicationPlan{}, result, err
+	}
+	actualDiff, err = mergeRepositoryArtifactMetadata(actualDiff, metadata)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_snapshot"
+		return ApplicationPlan{}, result, err
+	}
+	criteria, err := repositoryResolutionCriteria(fix, metadata)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_snapshot"
+		return ApplicationPlan{}, result, err
+	}
+	paths := make([]string, 0, len(updates))
+	for _, update := range updates {
+		paths = append(paths, update.Path)
+	}
+	sourcePaths, err := json.Marshal(paths)
+	if err != nil {
+		result.Status, result.ErrorCode = "failed", "invalid_snapshot"
 		return ApplicationPlan{}, result, err
 	}
 	plan := ApplicationPlan{
 		TargetURL: target, NormalizedTargetURL: target, OpportunityKey: "doctor:" + fix.ID.String(),
-		SourceFilePaths: generated.SourceFilePaths, SourceMappingConfidence: firstNonEmpty(generated.SourceMappingConfidence, "low"),
-		SourceMappingReason: generated.SourceMappingReason, PatchSnapshot: generated.PatchSnapshot,
-		DiffSnapshot: generated.DiffSnapshot, ResolutionCriteria: generated.ResolutionCriteria, GroundingSnapshot: grounding,
-		Status: "manual_apply_required",
-	}
-	var paths []string
-	if json.Unmarshal(generated.SourceFilePaths, &paths) == nil && len(paths) == 1 && strings.TrimSpace(paths[0]) != "" {
-		plan.Status = "ready_for_pr"
+		SourceFilePaths: sourcePaths, SourceMappingConfidence: "high",
+		SourceMappingReason: "Selected from the configured repository tree and loaded by immutable blob SHA.",
+		PatchSnapshot:       preparedPatch, DiffSnapshot: actualDiff, ResolutionCriteria: criteria, GroundingSnapshot: grounding,
+		Status: "ready_for_pr",
 	}
 	return plan, result, nil
+}
+
+func repositoryApplicationMetadata(fix db.SiteFix) map[string]any {
+	metadata := map[string]any{}
+	var proposed map[string]any
+	if json.Unmarshal(fix.ProposedFix, &proposed) == nil {
+		for _, key := range []string{"asset_type", "proposed_change", "proposed_metadata", "proposed_value", "proposed_title", "proposed_meta_description", "field"} {
+			if value, ok := proposed[key]; ok {
+				metadata[key] = value
+			}
+		}
+	}
+	if _, ok := metadata["asset_type"]; !ok {
+		corpus := strings.ToLower(fix.FindingKind + " " + string(fix.ProposedFix))
+		switch {
+		case containsAny(corpus, []string{"title", "meta_description", "meta description", "canonical"}):
+			metadata["asset_type"] = "metadata_rewrite"
+		case strings.Contains(corpus, "sitemap"):
+			metadata["asset_type"] = "sitemap_patch"
+		case containsAny(corpus, []string{"schema", "jsonld", "json-ld", "structured data"}):
+			metadata["asset_type"] = "schema_patch"
+		case strings.Contains(corpus, "robots"):
+			metadata["asset_type"] = "robots_patch"
+		case containsAny(corpus, []string{"internal-link", "internal link"}):
+			metadata["asset_type"] = "internal_link_patch"
+		default:
+			metadata["asset_type"] = firstNonEmpty(fix.FindingKind, "site_fix")
+		}
+	}
+	return metadata
+}
+
+func mergeRepositoryArtifactMetadata(raw json.RawMessage, metadata map[string]any) (json.RawMessage, error) {
+	var object map[string]any
+	if json.Unmarshal(raw, &object) != nil || object == nil {
+		return nil, errors.New("repository artifact is not a JSON object")
+	}
+	for key, value := range metadata {
+		object[key] = value
+	}
+	return json.Marshal(object)
+}
+
+func repositoryResolutionCriteria(fix db.SiteFix, metadata map[string]any) (json.RawMessage, error) {
+	criteria := map[string]any{"acceptance_tests": json.RawMessage(fix.AcceptanceTests)}
+	for key, value := range metadata {
+		criteria[key] = value
+	}
+	return json.Marshal(criteria)
 }
 
 func firstTargetURL(raw json.RawMessage) (string, error) {

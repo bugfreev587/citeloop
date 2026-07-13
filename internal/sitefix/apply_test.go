@@ -27,7 +27,7 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 	verifier := &patchVerifierStub{store: store, verification: PatchVerification{
 		Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
 	}}
-	service := ApplyService{Store: store, Generator: generator, Verifier: verifier}
+	service := applyServiceForTest(store, generator, verifier)
 
 	result, err := service.Apply(context.Background(), projectID, fixID)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 	if !result.Application.SiteFixID.Valid || result.Application.ContentActionID.Valid {
 		t.Fatalf("application source = site_fix:%v content_action:%v", result.Application.SiteFixID.Valid, result.Application.ContentActionID.Valid)
 	}
-	want := []string{"load", "find_application", "preparing", "start_ai", "provider", "finish_ai:ok", "start_verifier", "verifier", "finish_verifier:ok", "finalize"}
+	want := []string{"load", "find_application", "preparing", "start_selector", "selector", "finish_selector:ok", "start_ai", "provider", "finish_ai:ok", "start_verifier", "verifier", "finish_verifier:ok", "finalize"}
 	if !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events = %#v, want %#v", store.events, want)
 	}
@@ -65,7 +65,7 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 		existing: db.SiteChangeApplication{ID: appID, ProjectID: projectID, SiteFixID: validPGUUID(fixID), Status: "ready_for_pr"},
 	}
 	generator := &fixGeneratorStub{store: store}
-	result, err := (ApplyService{Store: store, Generator: generator, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), projectID, fixID)
+	result, err := applyServiceForTest(store, generator, &patchVerifierStub{store: store}).Apply(context.Background(), projectID, fixID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,12 +82,15 @@ func TestCanonicalApplyPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
 	store := &applyStoreStub{fix: groundedOptimizationFix()}
 	store.fix.ID, store.fix.ProjectID, store.fix.Status = fixID, projectID, "approved"
 	generator := &fixGeneratorStub{store: store, err: errors.New("credential lookup failed"), skipAttempt: true}
-	_, err := (ApplyService{Store: store, Generator: generator, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), projectID, fixID)
+	_, err := applyServiceForTest(store, generator, &patchVerifierStub{store: store}).Apply(context.Background(), projectID, fixID)
 	if err == nil {
 		t.Fatal("expected preflight error")
 	}
 	if got := store.events[len(store.events)-1]; got != "finish_ai:skipped" {
 		t.Fatalf("events=%v", store.events)
+	}
+	if store.preparationFailure == "" || strings.Contains(store.preparationFailure, "credential lookup failed") {
+		t.Fatalf("preparation failure was not stored as a controlled code: %q", store.preparationFailure)
 	}
 }
 
@@ -100,7 +103,7 @@ func TestCanonicalApplyRejectsSilentObservableGeneration(t *testing.T) {
 		"resolution_criteria":{"acceptance":"supported fact remains sourced"},"source_file_paths":[],
 		"source_mapping_confidence":"low","source_mapping_reason":"manual mapping",
 		"grounding":{"context_profile_version":1,"primary_intent_before":"describe product","primary_intent_after":"describe product","preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"source_association_changes":[]}}`}
-	_, err := (ApplyService{Store: store, Generator: LLMApplicationGenerator{Provider: provider, Model: "test"}, Verifier: &patchVerifierStub{store: store}}).Apply(context.Background(), fix.ProjectID, fix.ID)
+	_, err := applyServiceForTest(store, LLMApplicationGenerator{Provider: provider, Model: "test"}, &patchVerifierStub{store: store}).Apply(context.Background(), fix.ProjectID, fix.ID)
 	if err == nil || store.events[len(store.events)-1] != "finish_ai:skipped" || slicesContain(store.events, "finalize") {
 		t.Fatalf("err=%v events=%v", err, store.events)
 	}
@@ -115,7 +118,7 @@ func TestCanonicalApplyRejectsSilentObservableGrounding(t *testing.T) {
 		SourceFilePaths: json.RawMessage(`[]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`), DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
 	}}
 	provider := silentSuccessSiteFixProvider{response: `{"approved":true,"primary_intent_preserved":true,"preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"intent_drift":false,"reason":"grounded"}`}
-	_, err := (ApplyService{Store: store, Generator: generator, Verifier: LLMPatchGroundingVerifier{Provider: provider, Model: "test"}}).Apply(context.Background(), fix.ProjectID, fix.ID)
+	_, err := applyServiceForTest(store, generator, LLMPatchGroundingVerifier{Provider: provider, Model: "test"}).Apply(context.Background(), fix.ProjectID, fix.ID)
 	if err == nil || store.events[len(store.events)-1] != "finish_verifier:skipped" || slicesContain(store.events, "finalize") {
 		t.Fatalf("err=%v events=%v", err, store.events)
 	}
@@ -165,7 +168,7 @@ func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelf
 	}`}
 	verifier := LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}
 
-	_, err := (ApplyService{Store: store, Generator: generator, Verifier: verifier}).Apply(context.Background(), projectID, fixID)
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
 	if err == nil || !errors.Is(err, ErrPatchGroundingRejected) {
 		t.Fatalf("Apply error = %v, want independent grounding rejection", err)
 	}
@@ -187,6 +190,31 @@ func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelf
 	}
 }
 
+func TestGroundingVerifierRequestRejectsUnrelatedRepositoryEdits(t *testing.T) {
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	plan := ApplicationPlan{
+		PatchSnapshot:      json.RawMessage(`{"repo":"acme/site","base_branch":"main","base_commit_sha":"commit-1","files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old","new_text":"New"}]}]}`),
+		DiffSnapshot:       json.RawMessage(`{"files":[{"path":"app/page.tsx","base_sha":"blob-1","changes":[{"before":"Old","after":"New"}]}]}`),
+		ResolutionCriteria: json.RawMessage(`{"acceptance_tests":[]}`),
+	}
+	verifier := LLMPatchGroundingVerifier{Model: "verifier-model"}
+	descriptor := verifier.Describe(fix, contextSnapshot, plan)
+	request := verifier.completionRequest(fix, contextSnapshot, plan)
+	if descriptor.PromptVersion != "doctor-patch-grounding-verification-v2" {
+		t.Fatalf("prompt version=%q", descriptor.PromptVersion)
+	}
+	contract := strings.ToLower(request.System + "\n" + request.Prompt)
+	for _, required := range []string{"actual repository diff", "selected source identities", "unrelated file", "unrelated replacement", "source-association change"} {
+		if !strings.Contains(contract, required) {
+			t.Fatalf("grounding request omitted %q: %s", required, contract)
+		}
+	}
+	if !strings.Contains(request.Prompt, `"path":"app/page.tsx"`) || !strings.Contains(request.Prompt, `"base_sha":"blob-1"`) {
+		t.Fatalf("grounding request omitted exact source identity or actual diff: %s", request.Prompt)
+	}
+}
+
 func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *testing.T) {
 	projectID, fixID := uuid.New(), uuid.New()
 	fix := groundedOptimizationFix()
@@ -202,7 +230,7 @@ func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *te
 		DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
 	}}
 
-	_, err := (ApplyService{Store: store, Generator: generator, Verifier: LLMPatchGroundingVerifier{}}).Apply(context.Background(), projectID, fixID)
+	_, err := applyServiceForTest(store, generator, LLMPatchGroundingVerifier{}).Apply(context.Background(), projectID, fixID)
 	if err == nil {
 		t.Fatal("provider-unavailable independent verifier must fail closed")
 	}
@@ -217,7 +245,7 @@ func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *te
 func TestDeterministicApplyDoesNotCallProviderWithoutAuthority(t *testing.T) {
 	fix := db.SiteFix{ID: uuid.New(), ProjectID: uuid.New(), TargetUrls: json.RawMessage(`["https://example.com/"]`), EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`), ProposedFix: json.RawMessage(`{"mutations":[{"field":"canonical","operation":"replace"}]}`), AcceptanceTests: json.RawMessage(`[{"type":"canonical_present"}]`)}
 	generationContext := GenerationContext{ProductProfile: json.RawMessage(`{}`), ObservedEvidence: fix.EvidenceSnapshot}
-	plan, result, err := (DeterministicApplicationGenerator{}).Generate(context.Background(), fix, generationContext, nil)
+	plan, result, err := (DeterministicApplicationGenerator{}).Generate(context.Background(), fix, generationContext, RepositorySnapshot{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,18 +255,10 @@ func TestDeterministicApplyDoesNotCallProviderWithoutAuthority(t *testing.T) {
 }
 
 func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T) {
-	provider := &groundingProviderStub{response: `{
-		"patch_snapshot":{"change":"make supported fact extractable"},
-		"diff_snapshot":{"added_propositions":[]},
-		"resolution_criteria":{"acceptance":"supported fact remains sourced"},
-		"source_file_paths":["app/page.tsx"],
-		"source_mapping_confidence":"high",
-		"source_mapping_reason":"mapped from observed target",
-		"grounding":{"context_profile_version":7,"primary_intent_before":"describe product","primary_intent_after":"describe product","preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"source_association_changes":[]}
-	}`}
+	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,17 +271,10 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 }
 
 func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
-	provider := &groundingProviderStub{response: `{
-		"patch_snapshot":{"change":"make supported fact extractable"},
-		"diff_snapshot":{"added_propositions":[]},
-		"resolution_criteria":{"acceptance":"supported fact remains sourced"},
-		"source_file_paths":["app/page.tsx"],
-		"source_mapping_confidence":"high",
-		"source_mapping_reason":"mapped from observed target"
-	}`}
+	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +357,9 @@ type applyStoreStub struct {
 	verifierSawLifecycleTransaction bool
 	existing                        db.SiteChangeApplication
 	generationContext               GenerationContext
+	selectionCallID                 uuid.UUID
+	generationCausedBy              uuid.UUID
+	preparationFailure              string
 }
 
 func (s *applyStoreStub) Load(_ context.Context, projectID, fixID uuid.UUID) (db.SiteFix, error) {
@@ -369,9 +385,19 @@ func (s *applyStoreStub) FindApplication(_ context.Context, _ db.SiteFix) (db.Si
 	s.events = append(s.events, "find_application")
 	return s.existing, s.existing.ID != uuid.Nil, nil
 }
-func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
+func (s *applyStoreStub) StartSourceSelection(_ context.Context, _ db.SiteFix, _ GenerationCall) (uuid.UUID, siteFixAICallAttempt, error) {
+	s.events = append(s.events, "start_selector")
+	s.selectionCallID = uuid.New()
+	return s.selectionCallID, &siteFixAttemptSpy{}, nil
+}
+func (s *applyStoreStub) FinishSourceSelection(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
+	s.events = append(s.events, "finish_selector:"+result.Status)
+	return nil
+}
+func (s *applyStoreStub) StartGeneration(_ context.Context, _ db.SiteFix, _ GenerationCall, causedBy uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
 	s.events = append(s.events, "start_ai")
 	s.startedCalls++
+	s.generationCausedBy = causedBy
 	return uuid.New(), &siteFixAttemptSpy{}, nil
 }
 func (s *applyStoreStub) FinishGeneration(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
@@ -385,6 +411,10 @@ func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.Site
 }
 func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
 	s.events = append(s.events, "finish_verifier:"+result.Status)
+	return nil
+}
+func (s *applyStoreStub) RecordPreparationFailure(_ context.Context, _ db.SiteFix, code string) error {
+	s.preparationFailure = code
 	return nil
 }
 func (s *applyStoreStub) Finalize(_ context.Context, fix db.SiteFix, plan ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error) {
@@ -403,10 +433,10 @@ type fixGeneratorStub struct {
 	skipAttempt bool
 }
 
-func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext) GenerationCall {
+func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "model", PromptVersion: "doctor-fix-v1", RequestFingerprint: "fingerprint"}
 }
-func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if !g.skipAttempt {
 		_, _ = attempt.StartAttempt(ctx, "generator-test")
 	}
@@ -457,3 +487,24 @@ func (*siteFixAttemptSpy) FinishAttempt(context.Context, string, llm.CompletionR
 	return nil
 }
 func (s *siteFixAttemptSpy) Started() bool { return s.started }
+
+func applyServiceForTest(store *applyStoreStub, generator FixGenerator, verifier PatchGroundingVerifier) ApplyService {
+	repository := testRepositorySnapshot()
+	loader := &repositoryLoaderStub{
+		target:     RepositoryTarget{Repo: repository.Repo, Branch: repository.Branch, BaseCommitSHA: repository.BaseCommitSHA},
+		candidates: []RepositorySourceCandidate{{Path: repository.Sources[0].Path, SHA: repository.Sources[0].SHA, Size: int64(len(repository.Sources[0].Content))}},
+		snapshot:   repository,
+	}
+	return ApplyService{
+		Store: store, SourceLoader: loader,
+		SourceSelector: &repositorySelectorStub{store: store, paths: []string{repository.Sources[0].Path}},
+		Generator:      generator, Verifier: verifier,
+	}
+}
+
+func testRepositorySnapshot() RepositorySnapshot {
+	return RepositorySnapshot{
+		Repo: "acme/site", Branch: "main", BaseCommitSHA: "commit-1",
+		Sources: []RepositorySource{{Path: "app/page.tsx", SHA: "blob-1", Content: "export const title = 'Old title'\n"}},
+	}
+}

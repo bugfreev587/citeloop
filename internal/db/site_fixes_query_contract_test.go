@@ -400,6 +400,51 @@ func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) 
 	}
 }
 
+func TestSaveCanonicalSiteFixPreparedPatchIsClaimAndAuthorityFenced(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	save := namedSQL(t, siteFixes, "SaveCanonicalSiteFixPreparedPatch")
+	requireQuerySQL(t, save,
+		"app.project_id = sqlc.arg(project_id)",
+		"app.id = sqlc.arg(application_id)",
+		"app.site_fix_id = sqlc.arg(site_fix_id)",
+		"app.status = 'creating_pr'",
+		"app.pr_claim_token = sqlc.arg(pr_claim_token)",
+		"app.pr_claim_expires_at > clock_timestamp()",
+		"app.pr_claim_authority_fingerprint = sqlc.arg(writer_authority_fingerprint)",
+		"sqlc.arg(writer_authority_fingerprint) = (select fingerprint from authority)",
+		"source_file_paths = sqlc.arg(source_file_paths)::jsonb",
+		"source_file_path = sqlc.narg(source_file_path)",
+		"base_file_sha = sqlc.narg(base_file_sha)",
+		"repo_full_name = sqlc.arg(repo_full_name)",
+		"base_branch = sqlc.arg(base_branch)",
+		"base_commit_sha = sqlc.arg(base_commit_sha)",
+		"patch_snapshot = sqlc.arg(patch_snapshot)::jsonb",
+		"diff_snapshot = sqlc.arg(diff_snapshot)::jsonb",
+		"base_content_hash = sqlc.arg(base_content_hash)",
+		"proposed_content_hash = sqlc.arg(proposed_content_hash)",
+	)
+}
+
+func TestCanonicalSiteFixPreparationFailurePreservesRetryablePreparingState(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	record := namedSQL(t, siteFixes, "RecordCanonicalSiteFixPreparationFailure")
+	requireQuerySQL(t, record,
+		"sf.project_id = sqlc.arg(project_id)",
+		"sf.id = sqlc.arg(site_fix_id)",
+		"sf.status = 'preparing'",
+		"w.status = 'preparing'",
+		"w.active = true",
+		"failure_reason = sqlc.arg(failure_code)",
+	)
+	for _, forbidden := range []string{"status = 'failed", "retry_count =", "failure_detail"} {
+		if strings.Contains(record, forbidden) {
+			t.Fatalf("preparation failure must remain retryable/preparing; found %q", forbidden)
+		}
+	}
+	ready := namedSQL(t, siteFixes, "MarkCanonicalSiteFixReadyToApply")
+	requireQuerySQL(t, ready, "set status = 'ready_to_apply', failure_reason = null")
+}
+
 func TestCanonicalApplyFailureNeverEntersVerificationRetryLifecycle(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	applyFailure := namedSQL(t, siteFixes, "MarkCanonicalSiteFixApplyFailure")
