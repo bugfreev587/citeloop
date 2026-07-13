@@ -21,6 +21,10 @@ import (
 // no longer matches the repository snapshot used to prepare a patch.
 var ErrSourceConflict = errors.New("repository source changed since preparation")
 
+// ErrDivergentPullRequest marks a deterministic PR or branch head whose
+// commit tree or base parent does not exactly match the prepared patch.
+var ErrDivergentPullRequest = errors.New("existing pull request is divergent from the prepared change")
+
 type GitHubPRClient struct {
 	Token          string
 	Repo           string
@@ -79,7 +83,25 @@ const (
 	gitHubCommitIdentityEmail  = "noreply@citeloop.dev"
 	maxGitHubTreeResponseBytes = 8 << 20
 	maxGitHubTreeEntries       = 25_000
+	maxGitHubAPIResponseBytes  = 8 << 20
+	maxGitHubPRCandidates      = 1_000
 )
+
+// GitHubAPIError exposes only the upstream status needed for controlled
+// readiness invalidation. It deliberately omits the response body, request
+// headers, credential, and endpoint from Error so callers and logs cannot
+// leak GitHub-controlled or secret material.
+type GitHubAPIError struct {
+	status int
+}
+
+func (e *GitHubAPIError) Error() string {
+	return fmt.Sprintf("GitHub request failed with status %d", e.status)
+}
+
+func (e *GitHubAPIError) StatusCode() int { return e.status }
+
+func NewGitHubAPIError(status int) *GitHubAPIError { return &GitHubAPIError{status: status} }
 
 type GitHubPRResult struct {
 	Number        int    `json:"number"`
@@ -128,12 +150,9 @@ func (c *GitHubPRClient) ListTree(ctx context.Context, ref string) ([]GitHubTree
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := readBoundedGitHubBody(resp.Body, maxGitHubTreeResponseBytes)
+	raw, err := readGitHubResponse(resp, maxGitHubTreeResponseBytes, http.StatusOK)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github tree lookup %d: %s", resp.StatusCode, string(raw))
 	}
 	var out struct {
 		Truncated bool `json:"truncated"`
@@ -188,6 +207,38 @@ func readBoundedGitHubBody(body io.Reader, maxBytes int) ([]byte, error) {
 		return nil, fmt.Errorf("github response exceeds %d bytes", maxBytes)
 	}
 	return raw, nil
+}
+
+func readGitHubResponse(resp *http.Response, maxBytes int, allowed ...int) ([]byte, error) {
+	raw, err := readBoundedGitHubBody(resp.Body, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range allowed {
+		if resp.StatusCode == status {
+			return raw, nil
+		}
+	}
+	return nil, &GitHubAPIError{status: resp.StatusCode}
+}
+
+func decodeGitHubJSONResponse(resp *http.Response, out any, maxBytes int, allowed ...int) error {
+	raw, err := readGitHubResponse(resp, maxBytes, allowed...)
+	if err != nil {
+		return err
+	}
+	if out == nil || len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(out); err != nil {
+		return errors.New("GitHub response contained invalid JSON")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("GitHub response contained trailing JSON data")
+	}
+	return nil
 }
 
 // ReadBlob reads content by immutable Git blob SHA rather than by a moving
@@ -295,7 +346,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 			return GitHubPRResult{}, err
 		}
 		if !found {
-			return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
+			return GitHubPRResult{}, fmt.Errorf("%w: head %s", ErrDivergentPullRequest, prepared.WorkingBranch)
 		}
 		existingPR.BaseCommitSHA = baseCommitSHA
 		return existingPR, nil
@@ -311,7 +362,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 			return GitHubPRResult{}, err
 		}
 		if !matches {
-			return GitHubPRResult{}, fmt.Errorf("deterministic working branch %s is divergent; refusing to force update it", prepared.WorkingBranch)
+			return GitHubPRResult{}, fmt.Errorf("%w: deterministic working branch %s; refusing to force update it", ErrDivergentPullRequest, prepared.WorkingBranch)
 		}
 	} else {
 		headCommitSHA, err = c.createGitCommit(ctx, prepared.CommitMessage, desiredTreeSHA, baseCommitSHA, prepared.CommitDate)
@@ -335,7 +386,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 				return GitHubPRResult{}, err
 			}
 			if !matches {
-				return GitHubPRResult{}, fmt.Errorf("deterministic working branch %s is divergent; refusing to force update it", prepared.WorkingBranch)
+				return GitHubPRResult{}, fmt.Errorf("%w: deterministic working branch %s; refusing to force update it", ErrDivergentPullRequest, prepared.WorkingBranch)
 			}
 			headCommitSHA = existingHead
 		}
@@ -349,7 +400,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 				return GitHubPRResult{}, matchErr
 			}
 			if !found {
-				return GitHubPRResult{}, fmt.Errorf("existing pull request head for %s is divergent from the prepared change", prepared.WorkingBranch)
+				return GitHubPRResult{}, fmt.Errorf("%w: head %s", ErrDivergentPullRequest, prepared.WorkingBranch)
 			}
 			existing.BaseCommitSHA = baseCommitSHA
 			return existing, nil
@@ -562,18 +613,17 @@ func (c *GitHubPRClient) refCommitSHAIfExists(ctx context.Context, branch string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
+		if _, err := readBoundedGitHubBody(resp.Body, maxGitHubAPIResponseBytes); err != nil {
+			return "", false, err
+		}
 		return "", false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return "", false, fmt.Errorf("github working ref lookup %d: %s", resp.StatusCode, string(raw))
 	}
 	var out struct {
 		Object struct {
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeGitHubJSONResponse(resp, &out, maxGitHubAPIResponseBytes, http.StatusOK); err != nil {
 		return "", false, err
 	}
 	if strings.TrimSpace(out.Object.SHA) == "" {
@@ -694,16 +744,12 @@ func (c *GitHubPRClient) ReadFile(ctx context.Context, sourcePath, ref string) (
 		return "", "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("github content lookup %d: %s", resp.StatusCode, string(raw))
-	}
 	var out struct {
 		SHA      string `json:"sha"`
 		Content  string `json:"content"`
 		Encoding string `json:"encoding"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeGitHubJSONResponse(resp, &out, maxGitHubAPIResponseBytes, http.StatusOK); err != nil {
 		return "", "", err
 	}
 	if strings.TrimSpace(out.SHA) == "" {
@@ -732,14 +778,10 @@ func (c *GitHubPRClient) fileSHA(ctx context.Context, sourcePath, ref string) (s
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("github content lookup %d: %s", resp.StatusCode, string(raw))
-	}
 	var out struct {
 		SHA string `json:"sha"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeGitHubJSONResponse(resp, &out, maxGitHubAPIResponseBytes, http.StatusOK); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(out.SHA) == "" {
@@ -764,16 +806,12 @@ func (c *GitHubPRClient) refCommitSHA(ctx context.Context, branch string) (strin
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("github base ref lookup %d: %s", resp.StatusCode, string(raw))
-	}
 	var out struct {
 		Object struct {
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := decodeGitHubJSONResponse(resp, &out, maxGitHubAPIResponseBytes, http.StatusOK); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(out.Object.SHA) == "" {
@@ -811,14 +849,17 @@ func (c *GitHubPRClient) createBranch(ctx context.Context, branch, sha string) (
 		return false, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, readErr := readBoundedGitHubBody(resp.Body, maxGitHubAPIResponseBytes)
+	if readErr != nil {
+		return false, readErr
+	}
 	if resp.StatusCode == http.StatusCreated {
 		return true, nil
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(string(raw)), "reference already exists") {
 		return false, nil
 	}
-	return false, fmt.Errorf("github %s %s %d: %s", http.MethodPost, endpoint, resp.StatusCode, string(raw))
+	return false, &GitHubAPIError{status: resp.StatusCode}
 }
 
 func (c *GitHubPRClient) commitFile(ctx context.Context, sourcePath string, content []byte, fileSHA, branch, message string) (string, error) {
@@ -933,10 +974,6 @@ func (c *GitHubPRClient) findPullRequestsByHead(ctx context.Context, workingBran
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("github PR reconcile %d: %s", resp.StatusCode, string(raw))
-	}
 	var rows []struct {
 		Number   int        `json:"number"`
 		HTMLURL  string     `json:"html_url"`
@@ -947,8 +984,11 @@ func (c *GitHubPRClient) findPullRequestsByHead(ctx context.Context, workingBran
 			SHA string `json:"sha"`
 		} `json:"head"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+	if err := decodeGitHubJSONResponse(resp, &rows, maxGitHubAPIResponseBytes, http.StatusOK); err != nil {
 		return nil, err
+	}
+	if len(rows) > maxGitHubPRCandidates {
+		return nil, fmt.Errorf("GitHub PR reconciliation exceeds %d candidates", maxGitHubPRCandidates)
 	}
 	candidates := make([]GitHubPRResult, 0, len(rows))
 	for _, row := range rows {
@@ -1028,23 +1068,7 @@ func (c *GitHubPRClient) doJSON(ctx context.Context, method, endpoint string, pa
 		return err
 	}
 	defer resp.Body.Close()
-	ok := false
-	for _, status := range allowed {
-		if resp.StatusCode == status {
-			ok = true
-			break
-		}
-	}
-	raw, _ := io.ReadAll(resp.Body)
-	if !ok {
-		return fmt.Errorf("github %s %s %d: %s", method, endpoint, resp.StatusCode, string(raw))
-	}
-	if out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return err
-		}
-	}
-	return nil
+	return decodeGitHubJSONResponse(resp, out, maxGitHubAPIResponseBytes, allowed...)
 }
 
 func (c *GitHubPRClient) auth(req *http.Request) {

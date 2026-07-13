@@ -47,13 +47,47 @@ func TestGitHubPRReadinessPostgresPersistence(t *testing.T) {
 			t.Fatalf("set readiness with current updated_at: %v", err)
 		}
 		assertGitHubPRReadiness(t, ready, "ready", &checkedAt, &detail)
-		if !ready.UpdatedAt.Valid || ready.UpdatedAt.Time.Equal(initial.UpdatedAt.Time) {
-			t.Fatalf("successful CAS did not advance updated_at: before=%v after=%v", initial.UpdatedAt, ready.UpdatedAt)
+		if !ready.UpdatedAt.Valid || !ready.UpdatedAt.Time.Equal(initial.UpdatedAt.Time) {
+			t.Fatalf("readiness-only CAS changed connection version: before=%v after=%v", initial.UpdatedAt, ready.UpdatedAt)
 		}
 
 		persisted := harness.getConnection(t, projectID, initial.ID)
 		assertGitHubPRReadiness(t, persisted, "ready", &checkedAt, &detail)
 		assertGitHubPRReadinessTimestamp(t, persisted.UpdatedAt, ready.UpdatedAt, "persisted updated_at")
+
+		refreshedAt := githubPRReadinessFixedTime(3)
+		refreshed, err := harness.queries.SetGitHubPRReadinessIfUnchanged(harness.ctx, SetGitHubPRReadinessIfUnchangedParams{
+			PrReadinessStatus: "ready", PrReadinessCheckedAt: githubPRReadinessTimestamptz(refreshedAt),
+			PrReadinessDetail: &detail, ConnectionID: initial.ID, ProjectID: projectID, ExpectedUpdatedAt: initial.UpdatedAt,
+		})
+		if err != nil {
+			t.Fatalf("refresh readiness on the same connection version: %v", err)
+		}
+		assertGitHubPRReadinessTimestamp(t, refreshed.UpdatedAt, initial.UpdatedAt, "refreshed connection updated_at")
+	})
+
+	t.Run("older readiness cannot overwrite a newer downgrade", func(t *testing.T) {
+		projectID := harness.insertProject(t)
+		initial := harness.insertConnectedGitHubConnection(t, projectID, "ready", nil, nil, githubPRReadinessFixedTime(20))
+		newerAt, olderAt := githubPRReadinessFixedTime(22), githubPRReadinessFixedTime(21)
+		detail := "repository permission was revoked"
+		newer, err := harness.queries.SetGitHubPRReadinessIfUnchanged(harness.ctx, SetGitHubPRReadinessIfUnchangedParams{
+			PrReadinessStatus: "permission_missing", PrReadinessCheckedAt: githubPRReadinessTimestamptz(newerAt),
+			PrReadinessDetail: &detail, ConnectionID: initial.ID, ProjectID: projectID, ExpectedUpdatedAt: initial.UpdatedAt,
+		})
+		if err != nil {
+			t.Fatalf("persist newer downgrade: %v", err)
+		}
+		_, err = harness.queries.SetGitHubPRReadinessIfUnchanged(harness.ctx, SetGitHubPRReadinessIfUnchangedParams{
+			PrReadinessStatus: "ready", PrReadinessCheckedAt: githubPRReadinessTimestamptz(olderAt),
+			ConnectionID: initial.ID, ProjectID: projectID, ExpectedUpdatedAt: initial.UpdatedAt,
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("older readiness overwrite err=%v, want pgx.ErrNoRows", err)
+		}
+		persisted := harness.getConnection(t, projectID, initial.ID)
+		assertGitHubPRReadiness(t, persisted, "permission_missing", &newerAt, &detail)
+		assertGitHubPRReadinessTimestamp(t, persisted.UpdatedAt, newer.UpdatedAt, "downgrade connection updated_at")
 	})
 
 	t.Run("stale version cannot overwrite connection invalidation", func(t *testing.T) {

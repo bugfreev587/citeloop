@@ -65,11 +65,16 @@ func TestGitHubPRReadinessSchemaAndQueries(t *testing.T) {
 		"where id = sqlc.arg(connection_id)",
 		"project_id = sqlc.arg(project_id)",
 		"updated_at = sqlc.arg(expected_updated_at)",
+		"sqlc.narg(pr_readiness_checked_at)::timestamptz is not null",
+		"publisher_connections.pr_readiness_checked_at < sqlc.narg(pr_readiness_checked_at)::timestamptz",
 		"returning *",
 	} {
 		if !strings.Contains(setReadiness, required) {
 			t.Fatalf("SetGitHubPRReadinessIfUnchanged missing %q", required)
 		}
+	}
+	if strings.Contains(setReadiness, "updated_at = now()") {
+		t.Fatal("readiness-only persistence must not mutate the connection/config version")
 	}
 
 	for _, queryName := range []string{

@@ -513,11 +513,342 @@ func TestGitHubPRReadinessTargetKeepsCredentialPrivate(t *testing.T) {
 	}
 }
 
+func TestGitHubPRMutationAuthorizationRejectsStoredNonReadyWithoutLiveCheck(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessNotChecked,
+		`{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`,
+		nil,
+		nil,
+	)
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	checker := &fakeGitHubPRReadinessChecker{}
+	server := &Server{githubReadinessStore: store, githubReadinessChecker: checker}
+
+	_, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+
+	if !errors.Is(err, errGitHubPRNotReady) {
+		t.Fatalf("error = %v, want persisted-readiness conflict", err)
+	}
+	if checker.calls != 0 || store.setCalls != 0 {
+		t.Fatalf("non-ready stored gate called live checker/persist: checker=%d set=%d", checker.calls, store.setCalls)
+	}
+}
+
+func TestGitHubPRMutationAuthorizationPersistsLiveDowngradeBeforeRejecting(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessReady,
+		`{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`,
+		nil,
+		nil,
+	)
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	store.set = func(params db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+		updated := connection
+		updated.PrReadinessStatus = params.PrReadinessStatus
+		updated.PrReadinessCheckedAt = params.PrReadinessCheckedAt
+		updated.PrReadinessDetail = params.PrReadinessDetail
+		return updated, nil
+	}
+	checker := &fakeGitHubPRReadinessChecker{
+		readiness: publisher.GitHubPRReadiness{Status: publisher.GitHubPRReadinessPermissionMissing},
+		target: githubPRReadinessTarget{
+			ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+			Repo: "acme/site", Branch: "main", token: "secret",
+		},
+	}
+	server := &Server{
+		githubReadinessStore: store, githubReadinessChecker: checker,
+		githubReadinessNow: func() time.Time { return time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC) },
+	}
+
+	_, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+
+	if !errors.Is(err, errGitHubPRNotReady) {
+		t.Fatalf("error = %v, want live-readiness conflict", err)
+	}
+	if checker.calls != 1 || store.setCalls != 1 {
+		t.Fatalf("calls: checker=%d set=%d", checker.calls, store.setCalls)
+	}
+	if got := store.setParams[0].PrReadinessStatus; got != string(publisher.GitHubPRReadinessPermissionMissing) {
+		t.Fatalf("persisted status = %q", got)
+	}
+}
+
+func TestGitHubPRMutationAuthorizationRetainsExactConnectionVersion(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessReady,
+		`{"repo":"acme/site","branch":"release","base_url":"https://example.com/blog"}`,
+		nil,
+		nil,
+	)
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	store.set = func(params db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+		updated := connection
+		updated.PrReadinessStatus = params.PrReadinessStatus
+		updated.PrReadinessCheckedAt = params.PrReadinessCheckedAt
+		updated.PrReadinessDetail = params.PrReadinessDetail
+		return updated, nil
+	}
+	wantTarget := githubPRReadinessTarget{
+		ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+		Repo: "acme/site", Branch: "release",
+		credentialKind: publisher.GitHubPRCredentialAdvancedToken,
+		token:          "ghp_exact_checked_token",
+	}
+	checker := &fakeGitHubPRReadinessChecker{
+		readiness: publisher.GitHubPRReadiness{Status: publisher.GitHubPRReadinessReady},
+		target:    wantTarget,
+	}
+	server := &Server{githubReadinessStore: store, githubReadinessChecker: checker}
+
+	target, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+
+	if err != nil {
+		t.Fatalf("authorize mutation: %v", err)
+	}
+	if target.ConnectionID != wantTarget.ConnectionID || target.Repo != wantTarget.Repo || target.Branch != wantTarget.Branch || target.token != wantTarget.token {
+		t.Fatalf("target = %#v, want exact checked target %#v", target, wantTarget)
+	}
+	if target.ExpectedUpdatedAt != connection.UpdatedAt {
+		t.Fatalf("target version = %#v, want unchanged connection version %#v", target.ExpectedUpdatedAt, connection.UpdatedAt)
+	}
+}
+
+func TestGitHubPRReadyRefreshesDoNotInvalidateAnAuthorizedTarget(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(projectID, publisher.GitHubPRReadinessReady, `{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`, nil, nil)
+	store := &statefulGitHubPRReadinessStore{connection: connection}
+	checker := &fakeGitHubPRReadinessChecker{
+		readiness: publisher.GitHubPRReadiness{Status: publisher.GitHubPRReadinessReady},
+		target: githubPRReadinessTarget{
+			ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+			Repo: "acme/site", Branch: "main", credentialKind: publisher.GitHubPRCredentialAdvancedToken, token: "checked-token",
+		},
+	}
+	times := []time.Time{
+		time.Date(2026, 7, 13, 18, 0, 0, 1, time.UTC),
+		time.Date(2026, 7, 13, 18, 0, 0, 2, time.UTC),
+		time.Date(2026, 7, 13, 18, 0, 0, 3, time.UTC),
+	}
+	nowCall := 0
+	server := &Server{githubReadinessStore: store, githubReadinessChecker: checker, githubReadinessNow: func() time.Time {
+		value := times[nowCall]
+		nowCall++
+		return value
+	}}
+
+	first, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("first authorization: %v", err)
+	}
+	second, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("second authorization: %v", err)
+	}
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/integrations/github/pr-readiness/check", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("settings readiness status=%d body=%s", response.Code, response.Body.String())
+	}
+	if first.ExpectedUpdatedAt != connection.UpdatedAt || second.ExpectedUpdatedAt != connection.UpdatedAt {
+		t.Fatalf("connection versions first=%#v second=%#v", first.ExpectedUpdatedAt, second.ExpectedUpdatedAt)
+	}
+	if err := server.ensureGitHubPRTargetCurrent(context.Background(), projectID, first); err != nil {
+		t.Fatalf("later ready refresh invalidated first target: %v", err)
+	}
+}
+
+func TestOlderLiveReadyCheckCannotOverwriteNewerMutationDowngrade(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(projectID, publisher.GitHubPRReadinessReady, `{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`, nil, nil)
+	store := &statefulGitHubPRReadinessStore{connection: connection}
+	oldStartedAt := time.Date(2026, 7, 13, 18, 30, 0, 1, time.UTC)
+	newerFailureAt := oldStartedAt.Add(time.Nanosecond)
+	times := []time.Time{oldStartedAt, newerFailureAt}
+	nowCall := 0
+	server := &Server{githubReadinessStore: store, githubReadinessNow: func() time.Time {
+		value := times[nowCall]
+		nowCall++
+		return value
+	}}
+	target := githubPRReadinessTarget{
+		ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+		Repo: "acme/site", Branch: "main", credentialKind: publisher.GitHubPRCredentialAdvancedToken, token: "checked-token",
+	}
+	server.githubReadinessChecker = &fakeGitHubPRReadinessChecker{
+		readiness: publisher.GitHubPRReadiness{Status: publisher.GitHubPRReadinessReady}, target: target,
+		onCheck: func() {
+			if err := server.downgradeGitHubPRReadinessAfterMutationFailure(context.Background(), projectID, target, readinessHTTPStatusError{status: http.StatusForbidden}); err != nil {
+				t.Fatalf("persist newer downgrade: %v", err)
+			}
+		},
+	}
+
+	_, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+	if !errors.Is(err, errGitHubPRReadinessChanged) {
+		t.Fatalf("older ready authorization err=%v", err)
+	}
+	if store.connection.PrReadinessStatus != string(publisher.GitHubPRReadinessPermissionMissing) || !store.connection.PrReadinessCheckedAt.Valid || !store.connection.PrReadinessCheckedAt.Time.Equal(newerFailureAt) {
+		t.Fatalf("newer downgrade was overwritten: %#v", store.connection)
+	}
+}
+
+func TestGitHubPRMutationAuthorizationRejectsCASLoss(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessReady,
+		`{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`,
+		nil,
+		nil,
+	)
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	store.set = func(db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
+	checker := &fakeGitHubPRReadinessChecker{
+		readiness: publisher.GitHubPRReadiness{Status: publisher.GitHubPRReadinessReady},
+		target: githubPRReadinessTarget{
+			ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+			Repo: "acme/site", Branch: "main", token: "stale-token",
+		},
+	}
+	server := &Server{githubReadinessStore: store, githubReadinessChecker: checker}
+
+	_, err := server.authorizeGitHubPRMutation(context.Background(), projectID)
+
+	if !errors.Is(err, errGitHubPRReadinessChanged) {
+		t.Fatalf("error = %v, want strict CAS-loss conflict", err)
+	}
+	if store.getCalls != 1 {
+		t.Fatalf("mutation CAS loss reloaded a replacement target: get calls = %d", store.getCalls)
+	}
+}
+
+func TestGitHubPRMutationFailureDowngradesExactReadinessTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		want       publisher.GitHubPRReadinessStatus
+	}{
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, want: publisher.GitHubPRReadinessPermissionMissing},
+		{name: "forbidden", statusCode: http.StatusForbidden, want: publisher.GitHubPRReadinessPermissionMissing},
+		{name: "repository missing", statusCode: http.StatusNotFound, want: publisher.GitHubPRReadinessRepositoryUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projectID := uuid.New()
+			connection := githubPRReadinessConnection(projectID, publisher.GitHubPRReadinessReady, `{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`, nil, nil)
+			store := &fakeGitHubPRReadinessStore{}
+			store.set = func(params db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+				updated := connection
+				updated.PrReadinessStatus = params.PrReadinessStatus
+				return updated, nil
+			}
+			server := &Server{githubReadinessStore: store, githubReadinessNow: func() time.Time {
+				return time.Date(2026, 7, 13, 15, 0, 0, 0, time.UTC)
+			}}
+			target := githubPRReadinessTarget{
+				ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+				Repo: "acme/site", Branch: "main", token: "private-token",
+			}
+
+			if err := server.downgradeGitHubPRReadinessAfterMutationFailure(context.Background(), projectID, target, readinessHTTPStatusError{status: tc.statusCode}); err != nil {
+				t.Fatalf("downgrade readiness: %v", err)
+			}
+			if store.setCalls != 1 {
+				t.Fatalf("set calls = %d", store.setCalls)
+			}
+			params := store.setParams[0]
+			if params.PrReadinessStatus != string(tc.want) || params.ConnectionID != connection.ID || params.ExpectedUpdatedAt != connection.UpdatedAt {
+				t.Fatalf("params = %#v", params)
+			}
+			if params.PrReadinessDetail == nil || strings.Contains(*params.PrReadinessDetail, "ghp_secret") || strings.Contains(*params.PrReadinessDetail, "raw upstream") {
+				t.Fatalf("unsafe/missing detail = %#v", params.PrReadinessDetail)
+			}
+		})
+	}
+}
+
+func TestGitHubPRMutationFailureIgnoresCASLossAndUnclassifiedStatus(t *testing.T) {
+	projectID := uuid.New()
+	target := githubPRReadinessTarget{ConnectionID: uuid.New(), ExpectedUpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
+	store := &fakeGitHubPRReadinessStore{set: func(db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}}
+	server := &Server{githubReadinessStore: store}
+	if err := server.downgradeGitHubPRReadinessAfterMutationFailure(context.Background(), projectID, target, readinessHTTPStatusError{status: http.StatusForbidden}); err != nil {
+		t.Fatalf("CAS loss must preserve newer connection state: %v", err)
+	}
+	if err := server.downgradeGitHubPRReadinessAfterMutationFailure(context.Background(), projectID, target, readinessHTTPStatusError{status: http.StatusInternalServerError}); err != nil {
+		t.Fatalf("unclassified error: %v", err)
+	}
+	if store.setCalls != 1 {
+		t.Fatalf("unclassified status persisted downgrade; calls=%d", store.setCalls)
+	}
+}
+
+func TestEnsureGitHubPRTargetCurrentAcceptsOnlyExactReadyConnectionVersion(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(projectID, publisher.GitHubPRReadinessReady, `{"repo":"acme/site","branch":"release","base_url":"https://example.com/blog"}`, nil, nil)
+	target := githubPRReadinessTarget{
+		ConnectionID: connection.ID, ExpectedUpdatedAt: connection.UpdatedAt,
+		Repo: "acme/site", Branch: "release", token: "private-token",
+	}
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*db.PublisherConnection)
+		wantErr bool
+	}{
+		{name: "exact"},
+		{name: "version changed", mutate: func(connection *db.PublisherConnection) {
+			connection.UpdatedAt.Time = connection.UpdatedAt.Time.Add(time.Second)
+		}, wantErr: true},
+		{name: "repository changed", mutate: func(connection *db.PublisherConnection) {
+			connection.Config = json.RawMessage(`{"repo":"other/site","branch":"release","base_url":"https://example.com/blog"}`)
+		}, wantErr: true},
+		{name: "branch changed", mutate: func(connection *db.PublisherConnection) {
+			connection.Config = json.RawMessage(`{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`)
+		}, wantErr: true},
+		{name: "readiness invalidated", mutate: func(connection *db.PublisherConnection) {
+			connection.PrReadinessStatus = string(publisher.GitHubPRReadinessNotChecked)
+		}, wantErr: true},
+		{name: "connection disabled", mutate: func(connection *db.PublisherConnection) {
+			connection.Enabled = false
+		}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := connection
+			if tc.mutate != nil {
+				tc.mutate(&current)
+			}
+			store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: current}}}
+			checker := &fakeGitHubPRReadinessChecker{}
+			server := &Server{githubReadinessStore: store, githubReadinessChecker: checker}
+
+			err := server.ensureGitHubPRTargetCurrent(context.Background(), projectID, target)
+
+			if tc.wantErr != errors.Is(err, errGitHubPRReadinessChanged) {
+				t.Fatalf("error = %v, want conflict=%v", err, tc.wantErr)
+			}
+			if checker.calls != 0 {
+				t.Fatalf("connection fence performed live check %d times", checker.calls)
+			}
+		})
+	}
+}
+
 type fakeGitHubPRReadinessChecker struct {
 	readiness publisher.GitHubPRReadiness
 	target    githubPRReadinessTarget
 	err       error
 	calls     int
+	onCheck   func()
 }
 
 type capturingGitHubPRReadinessChecker struct {
@@ -534,6 +865,9 @@ func (c *capturingGitHubPRReadinessChecker) Check(ctx context.Context, projectID
 
 func (f *fakeGitHubPRReadinessChecker) Check(context.Context, uuid.UUID) (publisher.GitHubPRReadiness, githubPRReadinessTarget, error) {
 	f.calls++
+	if f.onCheck != nil {
+		f.onCheck()
+	}
 	return f.readiness, f.target, f.err
 }
 
@@ -566,6 +900,33 @@ func (f *fakeGitHubPRReadinessStore) SetGitHubPRReadinessIfUnchanged(_ context.C
 		return db.PublisherConnection{}, errors.New("unexpected readiness persistence")
 	}
 	return f.set(params)
+}
+
+// statefulGitHubPRReadinessStore mirrors the database readiness CAS closely
+// enough for ordering and version-fence tests. Readiness observations advance
+// only their checked_at value; they do not mutate the connection/config
+// version represented by updated_at.
+type statefulGitHubPRReadinessStore struct {
+	connection db.PublisherConnection
+}
+
+func (s *statefulGitHubPRReadinessStore) GetGitHubPRReadinessForProject(_ context.Context, projectID uuid.UUID) (db.PublisherConnection, error) {
+	if s.connection.ProjectID != projectID {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
+	return s.connection, nil
+}
+
+func (s *statefulGitHubPRReadinessStore) SetGitHubPRReadinessIfUnchanged(_ context.Context, params db.SetGitHubPRReadinessIfUnchangedParams) (db.PublisherConnection, error) {
+	if s.connection.ID != params.ConnectionID || s.connection.ProjectID != params.ProjectID ||
+		s.connection.UpdatedAt != params.ExpectedUpdatedAt || !params.PrReadinessCheckedAt.Valid ||
+		(s.connection.PrReadinessCheckedAt.Valid && !s.connection.PrReadinessCheckedAt.Time.Before(params.PrReadinessCheckedAt.Time)) {
+		return db.PublisherConnection{}, pgx.ErrNoRows
+	}
+	s.connection.PrReadinessStatus = params.PrReadinessStatus
+	s.connection.PrReadinessCheckedAt = params.PrReadinessCheckedAt
+	s.connection.PrReadinessDetail = params.PrReadinessDetail
+	return s.connection, nil
 }
 
 func githubPRReadinessConnection(

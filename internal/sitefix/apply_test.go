@@ -18,7 +18,7 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
 	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
 		TargetURL: "https://example.com/", NormalizedTargetURL: "https://example.com/",
-		OpportunityKey: "doctor:" + fixID.String(), Status: "manual_apply_required",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
 		SourceFilePaths:    json.RawMessage(`[]`),
 		PatchSnapshot:      json.RawMessage(`{"change":"canonical"}`),
 		DiffSnapshot:       json.RawMessage(`{}`),
@@ -74,6 +74,27 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 	}
 	if want := []string{"load", "find_application"}; !reflect.DeepEqual(store.events, want) {
 		t.Fatalf("events=%v want=%v", store.events, want)
+	}
+}
+
+func TestCanonicalApplyRejectsEveryNonPRApplicationStatus(t *testing.T) {
+	fix := groundedOptimizationFix()
+	generationContext := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	grounding, err := approvedGroundingSnapshot(fix, generationContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"manual_apply_required", "source_mapping_required", "draft_ready"} {
+		plan := ApplicationPlan{
+			TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product",
+			OpportunityKey: "doctor:" + fix.ID.String(), Status: status,
+			SourceFilePaths: json.RawMessage(`["app/page.tsx"]`), PatchSnapshot: json.RawMessage(`{"files":[]}`),
+			DiffSnapshot: json.RawMessage(`{"files":[]}`), ResolutionCriteria: json.RawMessage(`{"acceptance_tests":[]}`),
+			GroundingSnapshot: grounding,
+		}
+		if err := validateApplicationPlan(fix, generationContext, plan); err == nil {
+			t.Fatalf("non-PR status %q was accepted", status)
+		}
 	}
 }
 
@@ -135,7 +156,7 @@ func TestCanonicalApplyRejectsSilentObservableGrounding(t *testing.T) {
 	fix.Status = "approved"
 	store := &applyStoreStub{fix: fix}
 	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
-		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product", OpportunityKey: "doctor:" + fix.ID.String(), Status: "manual_apply_required",
+		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product", OpportunityKey: "doctor:" + fix.ID.String(), Status: "ready_for_pr",
 		SourceFilePaths: json.RawMessage(`[]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`), DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
 	}}
 	provider := silentSuccessSiteFixProvider{response: `{"approved":true,"primary_intent_preserved":true,"preserved_propositions":["Existing supported fact."],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"intent_drift":false,"reason":"grounded"}`}
@@ -246,7 +267,7 @@ func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *te
 	}}
 	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
 		TargetURL: "https://example.com/product", NormalizedTargetURL: "https://example.com/product",
-		OpportunityKey: "doctor:" + fixID.String(), Status: "manual_apply_required",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
 		SourceFilePaths: json.RawMessage(`[]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`),
 		DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance":"safe"}`),
 	}}
@@ -260,18 +281,6 @@ func TestCanonicalApplyFailsClosedAndLedgersUnavailableIndependentVerifier(t *te
 	}
 	if got := store.events[len(store.events)-1]; got != "finish_verifier:skipped" {
 		t.Fatalf("last event = %q, want skipped verifier ledger completion because no provider call occurred; events=%v", got, store.events)
-	}
-}
-
-func TestDeterministicApplyDoesNotCallProviderWithoutAuthority(t *testing.T) {
-	fix := db.SiteFix{ID: uuid.New(), ProjectID: uuid.New(), TargetUrls: json.RawMessage(`["https://example.com/"]`), EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`), ProposedFix: json.RawMessage(`{"mutations":[{"field":"canonical","operation":"replace"}]}`), AcceptanceTests: json.RawMessage(`[{"type":"canonical_present"}]`)}
-	generationContext := GenerationContext{ProductProfile: json.RawMessage(`{}`), ObservedEvidence: fix.EvidenceSnapshot}
-	plan, result, err := (DeterministicApplicationGenerator{}).Generate(context.Background(), fix, generationContext, RepositorySnapshot{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "skipped" || result.ErrorCode != "doctor_ai_not_authorized" || plan.Status != "manual_apply_required" {
-		t.Fatalf("plan=%+v result=%+v", plan, result)
 	}
 }
 

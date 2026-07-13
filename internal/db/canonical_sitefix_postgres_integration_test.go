@@ -65,6 +65,7 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	defer pool.Close()
 
 	projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+	target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, projectID, "owner/repo", "main", "https://example.com")
 
 	tokens := []uuid.UUID{uuid.New(), uuid.New()}
 	type claimResult struct {
@@ -80,6 +81,8 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 			app, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
 				PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, LeaseTtlSeconds: 60,
 				ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+				PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+				ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 			})
 			results <- claimResult{token: token, app: app, err: err}
 		}(token)
@@ -99,13 +102,6 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	if leaders != 1 || winner.app.Status != "creating_pr" {
 		t.Fatalf("PR claim leaders=%d winner=%+v", leaders, winner)
 	}
-	connectionID := uuid.New()
-	if _, err := pool.Exec(ctx, `insert into publisher_connections
-		(id,project_id,kind,label,status,is_default,enabled,capabilities,capability_schema_version,config)
-		values($1,$2,'github_nextjs','Prepared patch integration','connected',true,true,'{}',1,'{"repo":"owner/repo","branch":"main","base_url":"https://example.com"}')`, connectionID, projectID); err != nil {
-		t.Fatal(err)
-	}
-
 	loser := tokens[0]
 	if loser == winner.token {
 		loser = tokens[1]
@@ -117,12 +113,13 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	diff := json.RawMessage(`{"files":[{"path":"app/page.tsx","changes":[{"before":"old","after":"new"}]}]}`)
 	criteria := json.RawMessage(`{"asset_type":"metadata_rewrite"}`)
 	saveArgs := SaveCanonicalSiteFixPreparedPatchParams{
-		PublisherConnectionID: pgtype.UUID{Bytes: connectionID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
+		PublisherConnectionID: pgtype.UUID{Bytes: target.connectionID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
 		BaseCommitSha: &baseCommit, SourceFilePath: &source, SourceFilePaths: paths, BaseFileSha: &baseFile,
 		BaseContentHash: &baseHash, ProposedContentHash: &proposedHash, SourceMappingConfidence: "high",
 		SourceMappingReason: "immutable blob selection", PatchSnapshot: patch, DiffSnapshot: diff, ResolutionCriteria: criteria,
 		ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
 		PrClaimToken: pgtype.UUID{Bytes: loser, Valid: true}, WriterAuthorityFingerprint: winner.app.PrClaimAuthorityFingerprint,
+		ExpectedConnectionUpdatedAt: target.updatedAt, ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 	}
 	if _, err := New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, saveArgs); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("losing claim saved prepared patch: %v", err)
@@ -142,16 +139,20 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 	prNumber := int32(41)
 	prURL, prState := "https://github.example/pr/41", "open"
 	if _, err := New(pool).MarkCanonicalSiteFixGitHubPR(ctx, MarkCanonicalSiteFixGitHubPRParams{
-		ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+		PublisherConnectionID: target.connectionID,
+		ProjectID:             projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
 		PrClaimToken: pgtype.UUID{Bytes: loser, Valid: true}, GithubPrNumber: &prNumber, GithubPrUrl: &prURL,
-		GithubPrState: &prState, RepoFullName: &repo, BaseBranch: &branch, WorkingBranch: &branch, SourceFilePath: &source,
+		GithubPrState: prState, RepoFullName: &repo, BaseBranch: &branch, WorkingBranch: &branch, SourceFilePath: &source,
+		ExpectedConnectionUpdatedAt: target.updatedAt, ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("losing claim marked external effect: %v", err)
 	}
 	app, err := New(pool).MarkCanonicalSiteFixGitHubPR(ctx, MarkCanonicalSiteFixGitHubPRParams{
-		ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+		PublisherConnectionID: target.connectionID,
+		ProjectID:             projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
 		PrClaimToken: pgtype.UUID{Bytes: winner.token, Valid: true}, GithubPrNumber: &prNumber, GithubPrUrl: &prURL,
-		GithubPrState: &prState, RepoFullName: &repo, BaseBranch: &branch, WorkingBranch: &branch, SourceFilePath: &source,
+		GithubPrState: prState, RepoFullName: &repo, BaseBranch: &branch, WorkingBranch: &branch, SourceFilePath: &source,
+		ExpectedConnectionUpdatedAt: target.updatedAt, ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 	})
 	if err != nil || app.Status != "github_pr_open" || app.PrClaimToken.Valid {
 		t.Fatalf("winning claim mark app=%+v err=%v", app, err)
@@ -215,23 +216,26 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 
 	t.Run("source conflict reset is claim fenced and re-enters preparation", func(t *testing.T) {
 		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+		target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, pid, "owner/repo", "main", "https://example.com")
 		claimToken := uuid.New()
 		claimed, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
 			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 60,
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+			PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+			ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 		})
 		if err != nil || claimed.Status != "creating_pr" {
 			t.Fatalf("claim app=%+v err=%v", claimed, err)
 		}
 		if _, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
-			PrClaimToken: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}, ReprepareReason: "repository_source_conflict",
 		}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("lost claim reset source conflict: %v", err)
 		}
 		failed, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
-			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, ReprepareReason: "repository_source_conflict",
 		})
 		if err != nil || failed.Status != "failed" || failed.FailureReason == nil || *failed.FailureReason != "repository_source_conflict" || failed.PrClaimToken.Valid {
 			t.Fatalf("reset application=%+v err=%v", failed, err)
@@ -244,14 +248,53 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		if fixState != "preparing" || signatureState != "preparing" || !signatureActive {
 			t.Fatalf("reset fix=%s signature=%s active=%v", fixState, signatureState, signatureActive)
 		}
+
+		t.Run("repository target change shares the reprepare budget", func(t *testing.T) {
+			secondAppID := uuid.New()
+			if _, err := pool.Exec(ctx, `update site_fixes set status='applying',failure_reason=null,updated_at=now() where project_id=$1 and id=$2`, pid, fid); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `update work_signature_registry set status='executing',active=true,updated_at=now() where project_id=$1 and reserved_work_id=$2`, pid, fid); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `insert into site_change_applications(id,project_id,site_fix_id,application_kind,target_url,normalized_target_url,opportunity_key,status) values($1,$2,$3,'site_fix','https://example.com/','https://example.com/',$4,'ready_for_pr')`, secondAppID, pid, fid, "doctor:"+fid.String()+":repository-target-changed"); err != nil {
+				t.Fatal(err)
+			}
+			secondToken := uuid.New()
+			claimed, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+				PrClaimToken: pgtype.UUID{Bytes: secondToken, Valid: true}, LeaseTtlSeconds: 60,
+				ProjectID: pid, ApplicationID: secondAppID, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+				PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+				ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+			})
+			if err != nil || claimed.Status != "creating_pr" {
+				t.Fatalf("second claim app=%+v err=%v", claimed, err)
+			}
+			if _, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
+				ProjectID: pid, ApplicationID: secondAppID, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+				PrClaimToken: pgtype.UUID{Bytes: secondToken, Valid: true}, ReprepareReason: "repository_target_changed",
+			}); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("repository target change received a second reprepare reset: %v", err)
+			}
+			var appState string
+			if err := pool.QueryRow(ctx, `select app.status,sf.status,w.status from site_change_applications app join site_fixes sf on sf.id=app.site_fix_id and sf.project_id=app.project_id join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where app.project_id=$1 and app.id=$2`, pid, secondAppID).Scan(&appState, &fixState, &signatureState); err != nil {
+				t.Fatal(err)
+			}
+			if appState != "creating_pr" || fixState != "applying" || signatureState != "executing" {
+				t.Fatalf("second reset mutated app=%s fix=%s signature=%s", appState, fixState, signatureState)
+			}
+		})
 	})
 
 	t.Run("source conflict reset rejects lost authority", func(t *testing.T) {
 		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+		target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, pid, "owner/repo", "main", "https://example.com")
 		claimToken := uuid.New()
 		if _, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
 			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 60,
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+			PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+			ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +303,7 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}
 		if _, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
 			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
-			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, ReprepareReason: "repository_source_conflict",
 		}); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("lost authority reset source conflict: %v", err)
 		}
@@ -305,14 +348,50 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}
 	})
 
-	t.Run("manual and merged applications enter awaiting deploy", func(t *testing.T) {
+	t.Run("manual application enters awaiting deploy", func(t *testing.T) {
 		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "manual_apply_required")
 		if _, err := New(pool).MarkCanonicalSiteFixManualApplied(ctx, MarkCanonicalSiteFixManualAppliedParams{ProjectID: pid, SiteFixID: fid, ApplicationID: aid, DeploymentSnapshot: []byte(`{"source":"manual"}`), ManualAppliedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
-		pid2, fid2, aid2 := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "github_pr_open")
-		if _, err := New(pool).MarkCanonicalSiteFixPRMerged(ctx, MarkCanonicalSiteFixPRMergedParams{ProjectID: pid2, SiteFixID: fid2, ApplicationID: aid2, ObservedMergedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}); err != nil {
+	})
+
+	t.Run("merged application waits for production evidence before applied timestamps", func(t *testing.T) {
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "github_pr_open")
+		observedMergedAt := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		merged, err := New(pool).MarkCanonicalSiteFixPRMerged(ctx, MarkCanonicalSiteFixPRMergedParams{
+			ProjectID: pid, SiteFixID: fid, ApplicationID: aid, ObservedMergedAt: observedMergedAt,
+		})
+		if err != nil || merged.Status != "awaiting_deploy" {
+			t.Fatalf("merged fix=%+v err=%v", merged, err)
+		}
+		if merged.AppliedAt.Valid || merged.DeployedAt.Valid {
+			t.Fatalf("merge prematurely recorded applied=%v deployed=%v", merged.AppliedAt, merged.DeployedAt)
+		}
+		var applicationStatus, signatureStatus string
+		var applicationMergedAt pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, `select app.status,app.merged_at,w.status from site_change_applications app join site_fixes sf on sf.id=app.site_fix_id and sf.project_id=app.project_id join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where app.project_id=$1 and app.id=$2`, pid, aid).Scan(&applicationStatus, &applicationMergedAt, &signatureStatus); err != nil {
 			t.Fatal(err)
+		}
+		if applicationStatus != "deployment_pending" || !applicationMergedAt.Valid || signatureStatus != "awaiting_deploy" {
+			t.Fatalf("merged application=%s mergedAt=%v signature=%s", applicationStatus, applicationMergedAt, signatureStatus)
+		}
+
+		deployedAt := pgtype.Timestamptz{Time: time.Now().Add(time.Second), Valid: true}
+		verifying, err := New(pool).MarkCanonicalSiteFixVerifying(ctx, MarkCanonicalSiteFixVerifyingParams{
+			SiteFixID: fid, ProjectID: pid, ApplicationID: aid,
+			DeploymentSnapshot: json.RawMessage(`{"source":"production_probe","result":"observed"}`), DeployedAt: deployedAt,
+		})
+		if err != nil || verifying.Status != "verifying" {
+			t.Fatalf("verifying fix=%+v err=%v", verifying, err)
+		}
+		if !verifying.AppliedAt.Valid || !verifying.DeployedAt.Valid {
+			t.Fatalf("production evidence did not record applied=%v deployed=%v", verifying.AppliedAt, verifying.DeployedAt)
+		}
+		if err := pool.QueryRow(ctx, `select app.status,w.status from site_change_applications app join site_fixes sf on sf.id=app.site_fix_id and sf.project_id=app.project_id join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where app.project_id=$1 and app.id=$2`, pid, aid).Scan(&applicationStatus, &signatureStatus); err != nil {
+			t.Fatal(err)
+		}
+		if applicationStatus != "verification_pending" || signatureStatus != "verifying" {
+			t.Fatalf("production application=%s signature=%s", applicationStatus, signatureStatus)
 		}
 	})
 
@@ -598,6 +677,243 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestCanonicalSiteFixPostgresGitHubReadinessFences(t *testing.T) {
+	dsn := os.Getenv("CITELOOP_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("CITELOOP_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	for _, testCase := range []struct {
+		prState          string
+		applicationState string
+		fixState         string
+		signatureState   string
+		failureReason    string
+	}{
+		{prState: "open", applicationState: "github_pr_open", fixState: "applying", signatureState: "executing"},
+		{prState: "closed", applicationState: "needs_follow_up", fixState: "applying", signatureState: "executing", failureReason: "pull_request_closed_without_merge"},
+		{prState: "merged", applicationState: "deployment_pending", fixState: "awaiting_deploy", signatureState: "awaiting_deploy"},
+	} {
+		t.Run("initial_pr_"+testCase.prState+"_transitions_atomically", func(t *testing.T) {
+			projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+			target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, projectID, "owner/repo", "main", "https://example.com")
+			token := uuid.New()
+			claimed, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+				PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, LeaseTtlSeconds: 60,
+				ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+				PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+				ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+			})
+			if err != nil || claimed.Status != "creating_pr" {
+				t.Fatalf("claim app=%+v err=%v", claimed, err)
+			}
+
+			repo, baseBranch, workingBranch := target.repoFullName, target.baseBranch, "citeloop/site-fix"
+			prNumber := int32(43)
+			prURL := "https://github.example/pr/43"
+			application, err := New(pool).MarkCanonicalSiteFixGitHubPR(ctx, MarkCanonicalSiteFixGitHubPRParams{
+				ProjectID: projectID, PublisherConnectionID: target.connectionID,
+				ExpectedConnectionUpdatedAt: target.updatedAt, ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+				GithubPrState: testCase.prState, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+				PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, RepoFullName: &repo, BaseBranch: &baseBranch,
+				WorkingBranch: &workingBranch, GithubPrNumber: &prNumber, GithubPrUrl: &prURL,
+			})
+			if err != nil || application.ID != appID || application.Status != testCase.applicationState {
+				t.Fatalf("initial %s application=%+v err=%v", testCase.prState, application, err)
+			}
+			if application.GithubPrState == nil || *application.GithubPrState != testCase.prState || application.GithubPrUrl == nil || *application.GithubPrUrl != prURL {
+				t.Fatalf("initial %s PR identity was not preserved: %+v", testCase.prState, application)
+			}
+			if testCase.failureReason == "" {
+				if application.FailureReason != nil {
+					t.Fatalf("initial %s failure=%q", testCase.prState, *application.FailureReason)
+				}
+			} else if application.FailureReason == nil || *application.FailureReason != testCase.failureReason {
+				t.Fatalf("initial %s failure=%v want %q", testCase.prState, application.FailureReason, testCase.failureReason)
+			}
+
+			var fixState, signatureState string
+			var appliedAt, deployedAt pgtype.Timestamptz
+			if err := pool.QueryRow(ctx, `select sf.status,sf.applied_at,sf.deployed_at,w.status from site_fixes sf join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where sf.project_id=$1 and sf.id=$2`, projectID, fixID).Scan(&fixState, &appliedAt, &deployedAt, &signatureState); err != nil {
+				t.Fatal(err)
+			}
+			if fixState != testCase.fixState || signatureState != testCase.signatureState {
+				t.Fatalf("initial %s fix=%s signature=%s", testCase.prState, fixState, signatureState)
+			}
+			if appliedAt.Valid || deployedAt.Valid {
+				t.Fatalf("initial %s prematurely recorded applied=%v deployed=%v", testCase.prState, appliedAt, deployedAt)
+			}
+		})
+	}
+
+	for _, operation := range []string{"claim", "renew", "save", "mark"} {
+		for _, mutation := range []string{"updated_at", "config", "status", "readiness_status"} {
+			t.Run(operation+"_rejects_"+mutation+"_mutation", func(t *testing.T) {
+				projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+				target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, projectID, "owner/repo", "main", "https://example.com")
+				token := uuid.New()
+				var claimed SiteChangeApplication
+				if operation != "claim" {
+					claimed, err = New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+						PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, LeaseTtlSeconds: 60,
+						ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+						PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+						ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+					})
+					if err != nil || claimed.Status != "creating_pr" {
+						t.Fatalf("prepare claim app=%+v err=%v", claimed, err)
+					}
+				}
+
+				switch mutation {
+				case "updated_at":
+					_, err = pool.Exec(ctx, `update publisher_connections set updated_at=updated_at+interval '1 second' where project_id=$1 and id=$2`, projectID, target.connectionID)
+				case "config":
+					_, err = pool.Exec(ctx, `update publisher_connections set config=jsonb_set(config,'{repo}','"owner/changed"') where project_id=$1 and id=$2`, projectID, target.connectionID)
+				case "status":
+					_, err = pool.Exec(ctx, `update publisher_connections set status='error' where project_id=$1 and id=$2`, projectID, target.connectionID)
+				case "readiness_status":
+					_, err = pool.Exec(ctx, `update publisher_connections set pr_readiness_status='permission_missing' where project_id=$1 and id=$2`, projectID, target.connectionID)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				switch operation {
+				case "claim":
+					_, err = New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+						PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, LeaseTtlSeconds: 60,
+						ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+						PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+						ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+					})
+				case "renew":
+					_, err = New(pool).RenewCanonicalSiteFixGitHubPRClaim(ctx, RenewCanonicalSiteFixGitHubPRClaimParams{
+						LeaseTtlSeconds: 60, ProjectID: projectID, ApplicationID: appID,
+						SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true}, PrClaimToken: pgtype.UUID{Bytes: token, Valid: true},
+						PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+						ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+					})
+				case "save":
+					repo, branch, source := target.repoFullName, target.baseBranch, "app/page.tsx"
+					baseCommit, baseFile := "base-commit", "blob-1"
+					baseHash, proposedHash := "source-aggregate", "result-aggregate"
+					_, err = New(pool).SaveCanonicalSiteFixPreparedPatch(ctx, SaveCanonicalSiteFixPreparedPatchParams{
+						PublisherConnectionID: pgtype.UUID{Bytes: target.connectionID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
+						BaseCommitSha: &baseCommit, SourceFilePath: &source, SourceFilePaths: json.RawMessage(`["app/page.tsx"]`),
+						BaseFileSha: &baseFile, BaseContentHash: &baseHash, ProposedContentHash: &proposedHash,
+						SourceMappingConfidence: "high", SourceMappingReason: "immutable blob selection",
+						PatchSnapshot: json.RawMessage(`{"files":[]}`), DiffSnapshot: json.RawMessage(`{"files":[]}`), ResolutionCriteria: json.RawMessage(`{}`),
+						ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+						PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, WriterAuthorityFingerprint: claimed.PrClaimAuthorityFingerprint,
+						ExpectedConnectionUpdatedAt: target.updatedAt, ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+					})
+				case "mark":
+					prNumber := int32(42)
+					prURL, prState := "https://github.example/pr/42", "open"
+					repo, branch := target.repoFullName, target.baseBranch
+					_, err = New(pool).MarkCanonicalSiteFixGitHubPR(ctx, MarkCanonicalSiteFixGitHubPRParams{
+						PublisherConnectionID: target.connectionID, RepoFullName: &repo, BaseBranch: &branch,
+						WorkingBranch: &branch, GithubPrNumber: &prNumber, GithubPrUrl: &prURL, GithubPrState: prState,
+						ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+						PrClaimToken: pgtype.UUID{Bytes: token, Valid: true}, ExpectedConnectionUpdatedAt: target.updatedAt,
+						ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: target.baseBranch,
+					})
+				}
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("%s accepted %s-mutated readiness target: %v", operation, mutation, err)
+				}
+
+				expectedStatus := "creating_pr"
+				if operation == "claim" {
+					expectedStatus = "ready_for_pr"
+				}
+				var applicationStatus string
+				if err := pool.QueryRow(ctx, `select status from site_change_applications where project_id=$1 and id=$2`, projectID, appID).Scan(&applicationStatus); err != nil {
+					t.Fatal(err)
+				}
+				if applicationStatus != expectedStatus {
+					t.Fatalf("application status=%s want %s", applicationStatus, expectedStatus)
+				}
+			})
+		}
+	}
+
+	for _, testCase := range []struct {
+		name       string
+		baseURL    string
+		baseBranch string
+	}{
+		{name: "development", baseURL: "https://dev.unipost.dev", baseBranch: "dev"},
+		{name: "staging", baseURL: "https://staging.unipost.dev", baseBranch: "staging"},
+		{name: "production", baseURL: "https://unipost.dev", baseBranch: "main"},
+		{name: "customer", baseURL: "https://customer.example.com", baseBranch: "citeloop-content"},
+	} {
+		t.Run("missing_branch_uses_"+testCase.name+"_fallback", func(t *testing.T) {
+			projectID, fixID, appID := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+			target := insertReadyCanonicalSiteFixGitHubConnection(t, ctx, pool, projectID, "owner/repo", "", testCase.baseURL)
+			wrongBranch := "main"
+			if testCase.baseBranch == wrongBranch {
+				wrongBranch = "citeloop-content"
+			}
+			claim := ClaimCanonicalSiteFixGitHubPRParams{
+				PrClaimToken: pgtype.UUID{Bytes: uuid.New(), Valid: true}, LeaseTtlSeconds: 60,
+				ProjectID: projectID, ApplicationID: appID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+				PublisherConnectionID: target.connectionID, ExpectedConnectionUpdatedAt: target.updatedAt,
+				ExpectedRepoFullName: target.repoFullName, ExpectedBaseBranch: wrongBranch,
+			}
+			if _, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, claim); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("missing branch accepted non-derived fallback %q: %v", wrongBranch, err)
+			}
+			claim.ExpectedBaseBranch = testCase.baseBranch
+			claimed, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, claim)
+			if err != nil || claimed.Status != "creating_pr" {
+				t.Fatalf("derived fallback %q claim=%+v err=%v", testCase.baseBranch, claimed, err)
+			}
+		})
+	}
+}
+
+type canonicalSiteFixGitHubReadinessTarget struct {
+	connectionID uuid.UUID
+	updatedAt    pgtype.Timestamptz
+	repoFullName string
+	baseBranch   string
+}
+
+func insertReadyCanonicalSiteFixGitHubConnection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, projectID uuid.UUID, repoFullName, baseBranch, baseURL string) canonicalSiteFixGitHubReadinessTarget {
+	t.Helper()
+	config := map[string]string{
+		"repo":     repoFullName,
+		"base_url": baseURL,
+	}
+	if baseBranch != "" {
+		config["branch"] = baseBranch
+	}
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := canonicalSiteFixGitHubReadinessTarget{
+		connectionID: uuid.New(),
+		repoFullName: repoFullName,
+		baseBranch:   baseBranch,
+	}
+	if err := pool.QueryRow(ctx, `insert into publisher_connections
+		(id,project_id,kind,label,status,is_default,enabled,capabilities,capability_schema_version,config,pr_readiness_status,pr_readiness_checked_at)
+		values($1,$2,'github_nextjs','Site Fix PR integration','connected',true,true,'{}',1,$3,'ready',now())
+		returning updated_at`, target.connectionID, projectID, configJSON).Scan(&target.updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	return target
 }
 
 func insertCanonicalSiteFixFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fixStatus, signatureStatus, appStatus string) (uuid.UUID, uuid.UUID, uuid.UUID) {

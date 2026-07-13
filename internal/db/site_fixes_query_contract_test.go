@@ -400,6 +400,104 @@ func TestCanonicalSiteFixPRExternalEffectUsesAuthorityFencedLease(t *testing.T) 
 	}
 }
 
+func TestCanonicalSiteFixInitialPRObservationIsAtomicAcrossLifecycle(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	mark := namedSQL(t, siteFixes, "MarkCanonicalSiteFixGitHubPR")
+	requireQuerySQL(t, mark,
+		"expected_keys as materialized",
+		"locked_buckets as materialized",
+		"order by b.bucket_key",
+		"for update of b",
+		"locked_application as materialized",
+		"for update of app",
+		"locked_work as materialized",
+		"for update of sf, w",
+		"update work_conflict_buckets",
+		"bucket_version = bucket_version + 1",
+		"where lower(trim(sqlc.arg(github_pr_state)::text)) in ('open','closed','merged')",
+		"when 'open' then 'github_pr_open'",
+		"when 'closed' then 'needs_follow_up'",
+		"when 'merged' then 'deployment_pending'",
+		"merged_at = case when e.github_pr_state = 'merged'",
+		"set status = case when e.github_pr_state = 'merged' then 'awaiting_deploy' else 'applying' end",
+		"set status = case when transitioned.github_pr_state = 'merged' then 'awaiting_deploy' else 'executing' end",
+	)
+	for _, forbidden := range []string{"applied_at =", "deployed_at ="} {
+		if strings.Contains(mark, forbidden) {
+			t.Fatalf("initial PR observation must not claim production application/deployment; found %q", forbidden)
+		}
+	}
+}
+
+func TestCanonicalSiteFixProductionTimestampsFollowDeploymentEvidence(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	merged := namedSQL(t, siteFixes, "MarkCanonicalSiteFixPRMerged")
+	requireQuerySQL(t, merged,
+		"github_pr_state = 'merged'",
+		"merged_at = coalesce(site_change_applications.merged_at, sqlc.arg(observed_merged_at)::timestamptz)",
+		"set status = 'awaiting_deploy'",
+	)
+	for _, forbidden := range []string{"applied_at =", "deployed_at ="} {
+		if strings.Contains(merged, forbidden) {
+			t.Fatalf("PR merge is not production evidence; found %q", forbidden)
+		}
+	}
+	verifying := namedSQL(t, siteFixes, "MarkCanonicalSiteFixVerifying")
+	requireQuerySQL(t, verifying,
+		"applied_at = coalesce(applied_at, sqlc.arg(deployed_at))",
+		"deployed_at = coalesce(deployed_at, sqlc.arg(deployed_at))",
+	)
+}
+
+func TestCanonicalSiteFixPRMutationsFenceTheExactReadyConnectionVersion(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	for _, queryName := range []string{
+		"ClaimCanonicalSiteFixGitHubPR",
+		"RenewCanonicalSiteFixGitHubPRClaim",
+		"SaveCanonicalSiteFixPreparedPatch",
+		"MarkCanonicalSiteFixGitHubPR",
+	} {
+		query := namedSQL(t, siteFixes, queryName)
+		requireQuerySQL(t, query,
+			"from publisher_connections connection",
+			"connection.id = sqlc.arg(publisher_connection_id)",
+			"connection.project_id = sqlc.arg(project_id)",
+			"connection.kind = 'github_nextjs'",
+			"connection.status = 'connected'",
+			"connection.is_default = true",
+			"connection.enabled = true",
+			"connection.revoked_at is null",
+			"connection.pr_readiness_status = 'ready'",
+			"connection.updated_at = sqlc.arg(expected_connection_updated_at)",
+			"trim(connection.config->>'repo') = sqlc.arg(expected_repo_full_name)::text",
+			"coalesce(nullif(trim(connection.config->>'branch'), ''), case",
+			"when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?dev\\.unipost\\.dev(?::[0-9]+)?(/|$)' then 'dev'",
+			"when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?staging\\.unipost\\.dev(?::[0-9]+)?(/|$)' then 'staging'",
+			"when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?unipost\\.dev(?::[0-9]+)?(/|$)' then 'main'",
+			"else 'citeloop-content'",
+			"end) = sqlc.arg(expected_base_branch)::text",
+			"exists (select 1 from ready_connection)",
+		)
+	}
+	fail := namedSQL(t, siteFixes, "FailCanonicalSiteFixGitHubPRClaim")
+	for _, forbidden := range []string{"ready_connection", "expected_connection_updated_at", "publisher_connection_id"} {
+		if strings.Contains(fail, forbidden) {
+			t.Fatalf("failure cleanup must survive a connection mutation; found %q", forbidden)
+		}
+	}
+}
+
+func TestCanonicalSiteFixPRRetryNeverReopensPRBackedFollowUp(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	reopen := namedSQL(t, siteFixes, "ReopenCanonicalSiteFixApply")
+	requireQuerySQL(t, reopen,
+		"app.github_pr_url is null",
+		"app.github_pr_number is null",
+		"app.github_pr_state is null",
+		"app.failure_reason in ('pr_interrupted','publisher_branch_conflict','prepared_patch_invalid','publisher_unavailable','github_pr_failed')",
+	)
+}
+
 func TestSaveCanonicalSiteFixPreparedPatchIsClaimAndAuthorityFenced(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	save := namedSQL(t, siteFixes, "SaveCanonicalSiteFixPreparedPatch")
@@ -464,8 +562,11 @@ func TestResetCanonicalSiteFixSourceConflictForReprepareIsClaimAndAuthorityFence
 		"order by b.bucket_key",
 		"for update of b",
 		"bucket_version = bucket_version + 1",
-		"set status = 'failed', failure_reason = 'repository_source_conflict'",
-		"set status = 'preparing', failure_reason = 'repository_source_conflict'",
+		"sqlc.arg(reprepare_reason)::text in ('repository_source_conflict','repository_target_changed')",
+		"previous.failure_reason in ('repository_source_conflict','repository_target_changed')",
+		"previous.id <> app.id",
+		"set status = 'failed', failure_reason = sqlc.arg(reprepare_reason)",
+		"set status = 'preparing', failure_reason = sqlc.arg(reprepare_reason)",
 		"set status = 'preparing', active = true",
 	)
 }

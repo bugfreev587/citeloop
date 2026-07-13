@@ -38,6 +38,32 @@ type siteFixRepositoryClient interface {
 type siteFixRepositoryResolver func(context.Context, db.SiteFix) (resolvedSiteFixRepository, error)
 type siteFixRepositoryClientFactory func(token, repo, branch string) siteFixRepositoryClient
 
+type readinessFencedSiteFixRepositoryClient struct {
+	delegate      siteFixRepositoryClient
+	ensureCurrent func(context.Context) error
+}
+
+func (c *readinessFencedSiteFixRepositoryClient) ResolveRefCommitSHA(ctx context.Context, branch string) (string, error) {
+	if err := c.ensureCurrent(ctx); err != nil {
+		return "", err
+	}
+	return c.delegate.ResolveRefCommitSHA(ctx, branch)
+}
+
+func (c *readinessFencedSiteFixRepositoryClient) ListTree(ctx context.Context, ref string) ([]publisher.GitHubTreeEntry, error) {
+	if err := c.ensureCurrent(ctx); err != nil {
+		return nil, err
+	}
+	return c.delegate.ListTree(ctx, ref)
+}
+
+func (c *readinessFencedSiteFixRepositoryClient) ReadBlobBounded(ctx context.Context, sha string, maxBytes int) ([]byte, error) {
+	if err := c.ensureCurrent(ctx); err != nil {
+		return nil, err
+	}
+	return c.delegate.ReadBlobBounded(ctx, sha, maxBytes)
+}
+
 type siteFixRepositorySession struct {
 	client     siteFixRepositoryClient
 	candidates map[string]sitefix.RepositorySourceCandidate
@@ -48,6 +74,18 @@ type siteFixRepositorySourceLoader struct {
 	newClient siteFixRepositoryClientFactory
 	mu        sync.Mutex
 	sessions  map[string]siteFixRepositorySession
+}
+
+type safeRepositorySourceError struct {
+	message string
+	cause   error
+}
+
+func (e safeRepositorySourceError) Error() string { return e.message }
+func (e safeRepositorySourceError) Unwrap() error { return e.cause }
+
+func safeRepositorySourceFailure(message string, cause error) error {
+	return safeRepositorySourceError{message: message, cause: cause}
 }
 
 func newSiteFixRepositorySourceLoader(resolve siteFixRepositoryResolver, newClient siteFixRepositoryClientFactory) *siteFixRepositorySourceLoader {
@@ -68,7 +106,7 @@ func (l *siteFixRepositorySourceLoader) Candidates(ctx context.Context, fix db.S
 	}
 	baseCommitSHA, err := client.ResolveRefCommitSHA(ctx, resolved.Branch)
 	if err != nil {
-		return sitefix.RepositoryTarget{}, nil, errors.New("configured repository base branch could not be resolved")
+		return sitefix.RepositoryTarget{}, nil, safeRepositorySourceFailure("configured repository base branch could not be resolved", err)
 	}
 	baseCommitSHA = strings.TrimSpace(baseCommitSHA)
 	if baseCommitSHA == "" {
@@ -76,7 +114,7 @@ func (l *siteFixRepositorySourceLoader) Candidates(ctx context.Context, fix db.S
 	}
 	entries, err := client.ListTree(ctx, baseCommitSHA)
 	if err != nil {
-		return sitefix.RepositoryTarget{}, nil, errors.New("configured repository tree could not be loaded")
+		return sitefix.RepositoryTarget{}, nil, safeRepositorySourceFailure("configured repository tree could not be loaded", err)
 	}
 	raw := make([]sitefix.RepositorySourceCandidate, 0, len(entries))
 	for _, entry := range entries {
@@ -124,7 +162,7 @@ func (l *siteFixRepositorySourceLoader) LoadSelected(ctx context.Context, target
 		seen[selected] = struct{}{}
 		content, err := session.client.ReadBlobBounded(ctx, candidate.SHA, sitefix.MaxRepositorySourceFileBytes)
 		if err != nil {
-			return sitefix.RepositorySnapshot{}, fmt.Errorf("selected repository blob for %q could not be read", selected)
+			return sitefix.RepositorySnapshot{}, safeRepositorySourceFailure(fmt.Sprintf("selected repository blob for %q could not be read", selected), err)
 		}
 		if int64(len(content)) != candidate.Size {
 			return sitefix.RepositorySnapshot{}, fmt.Errorf("selected repository blob size changed for %q", selected)
@@ -214,12 +252,20 @@ func (s *Server) siteFixRepositorySourceLoaderForReadiness(projectID uuid.UUID, 
 		ConnectionID: target.ConnectionID, Repo: strings.TrimSpace(target.Repo), Branch: strings.TrimSpace(target.Branch),
 		Token: strings.TrimSpace(target.token), AuthorityFingerprint: hex.EncodeToString(sum[:]),
 	}
+	baseFactory := s.siteFixRepositoryClientFactory()
 	return newSiteFixRepositorySourceLoader(func(_ context.Context, fix db.SiteFix) (resolvedSiteFixRepository, error) {
 		if fix.ProjectID != projectID {
 			return resolvedSiteFixRepository{}, errors.New("checked GitHub readiness target belongs to another project")
 		}
 		return resolved, nil
-	}, s.siteFixRepositoryClientFactory()), nil
+	}, func(token, repo, branch string) siteFixRepositoryClient {
+		return &readinessFencedSiteFixRepositoryClient{
+			delegate: baseFactory(token, repo, branch),
+			ensureCurrent: func(ctx context.Context) error {
+				return s.ensureGitHubPRTargetCurrent(ctx, projectID, target)
+			},
+		}
+	}), nil
 }
 
 func (s *Server) siteFixRepositoryClientFactory() siteFixRepositoryClientFactory {
@@ -259,7 +305,14 @@ func (c *publisherSiteFixRepositoryClient) ResolveRefCommitSHA(ctx context.Conte
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32*1024))
-		return "", fmt.Errorf("GitHub base ref lookup returned status %d", resp.StatusCode)
+		return "", publisher.NewGitHubAPIError(resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024+1))
+	if err != nil {
+		return "", errors.New("GitHub base ref response could not be read")
+	}
+	if len(raw) > 32*1024 {
+		return "", errors.New("GitHub base ref response exceeded the bounded limit")
 	}
 	var payload struct {
 		Ref    string `json:"ref"`
@@ -267,8 +320,7 @@ func (c *publisherSiteFixRepositoryClient) ResolveRefCommitSHA(ctx context.Conte
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 32*1024))
-	if err := decoder.Decode(&payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		return "", errors.New("GitHub base ref response was invalid")
 	}
 	branch = strings.TrimSpace(branch)
@@ -298,7 +350,7 @@ func (c *publisherSiteFixRepositoryClient) ReadBlobBounded(ctx context.Context, 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32*1024))
-		return nil, fmt.Errorf("GitHub blob lookup returned status %d", resp.StatusCode)
+		return nil, publisher.NewGitHubAPIError(resp.StatusCode)
 	}
 	maxResponseBytes := base64.StdEncoding.EncodedLen(maxBytes) + 4096
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxResponseBytes+1)))

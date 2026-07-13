@@ -113,6 +113,150 @@ func TestGitHubPRClientReadsFileContentAndSHA(t *testing.T) {
 	}
 }
 
+func TestGitHubPRClientAllEndpointsReturnTypedSafeStatusErrors(t *testing.T) {
+	const rawSecret = `{"message":"Authorization Bearer ghp_live_secret raw upstream body"}`
+	newClient := func() *GitHubPRClient {
+		client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+		client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusForbidden, rawSecret), nil
+		})}
+		return client
+	}
+	invocations := map[string]func(context.Context, *GitHubPRClient) error{
+		"recursive tree": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.ListTree(ctx, "base-tree")
+			return err
+		},
+		"blob read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.ReadBlob(ctx, "blob-sha")
+			return err
+		},
+		"commit read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.gitCommit(ctx, "commit-sha")
+			return err
+		},
+		"blob create": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.createGitBlob(ctx, []byte("new"))
+			return err
+		},
+		"tree create": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.createGitTree(ctx, "base-tree", []gitHubCreateTreeEntry{{Path: "app/page.tsx", Mode: "100644", Type: "blob", SHA: "new-blob"}})
+			return err
+		},
+		"commit create": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.createGitCommit(ctx, "message", "tree", "parent", time.Now())
+			return err
+		},
+		"optional ref read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, _, err := client.refCommitSHAIfExists(ctx, "working")
+			return err
+		},
+		"required ref read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.refCommitSHA(ctx, "main")
+			return err
+		},
+		"ref create": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.createBranch(ctx, "working", "commit")
+			return err
+		},
+		"PR create": func(ctx context.Context, client *GitHubPRClient) error {
+			_, _, _, err := client.openPullRequest(ctx, "working", "title", "body")
+			return err
+		},
+		"PR read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.GetPullRequest(ctx, 42)
+			return err
+		},
+		"PR reconcile": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.findPullRequestsByHead(ctx, "working")
+			return err
+		},
+		"contents read": func(ctx context.Context, client *GitHubPRClient) error {
+			_, _, err := client.ReadFile(ctx, "app/page.tsx", "main")
+			return err
+		},
+		"contents identity": func(ctx context.Context, client *GitHubPRClient) error {
+			_, err := client.fileSHA(ctx, "app/page.tsx", "main")
+			return err
+		},
+	}
+	for name, invoke := range invocations {
+		t.Run(name, func(t *testing.T) {
+			err := invoke(context.Background(), newClient())
+			if err == nil {
+				t.Fatal("expected GitHub status error")
+			}
+			var statusError interface{ StatusCode() int }
+			if !errors.As(err, &statusError) || statusError.StatusCode() != http.StatusForbidden {
+				t.Fatalf("error = %T %v, want typed 403", err, err)
+			}
+			for _, unsafe := range []string{"ghp_live_secret", "Authorization", "Bearer", "raw upstream body"} {
+				if strings.Contains(err.Error(), unsafe) {
+					t.Fatalf("error leaked %q: %v", unsafe, err)
+				}
+			}
+		})
+	}
+}
+
+func TestGitHubPRClientRejectsOversizedAndTrailingJSONAcrossSharedCalls(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "oversized", body: strings.Repeat(" ", maxGitHubTreeResponseBytes+1) + `{}`},
+		{name: "trailing JSON", body: `{} {"secret":"ghp_trailing_secret"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+			client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, tc.body), nil
+			})}
+			var out map[string]any
+			err := client.doJSON(context.Background(), http.MethodGet, "https://api.github.com/test", nil, &out, http.StatusOK)
+			if err == nil {
+				t.Fatal("unsafe response was accepted")
+			}
+			if strings.Contains(err.Error(), "ghp_trailing_secret") {
+				t.Fatalf("parse error leaked trailing body: %v", err)
+			}
+		})
+	}
+}
+
+func TestGitHubPRReconciliationRejectsTooManyCandidates(t *testing.T) {
+	var body strings.Builder
+	body.WriteByte('[')
+	for index := 0; index < 1001; index++ {
+		if index > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"number":%d,"html_url":"https://github.com/owner/unipost/pull/%d","state":"closed","head":{"sha":"head-%d"}}`, index+1, index+1, index+1)
+	}
+	body.WriteByte(']')
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, body.String()), nil
+	})}
+
+	if _, err := client.findPullRequestsByHead(context.Background(), "working"); err == nil {
+		t.Fatal("unbounded PR candidate list was accepted")
+	}
+}
+
+func TestGitHubOptionalRefRejectsOversizedNotFoundResponse(t *testing.T) {
+	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+	client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusNotFound, strings.Repeat("x", maxGitHubAPIResponseBytes+1)), nil
+	})}
+
+	_, _, err := client.refCommitSHAIfExists(context.Background(), "working")
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized 404 error = %v", err)
+	}
+}
+
 func TestGitHubPRClientReadFileEncodesRefQuery(t *testing.T) {
 	const ref = "citeloop/修复#50%/part"
 	client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
@@ -697,8 +841,12 @@ func TestGitHubPRClientAtomicPreparationFailureDoesNotMutateRef(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			client := newAtomicPreparationClient(t, phase, nil)
 			_, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
-			if err == nil || !strings.Contains(err.Error(), "injected "+phase+" failure") {
-				t.Fatalf("expected injected %s error, got %v", phase, err)
+			var statusError interface{ StatusCode() int }
+			if !errors.As(err, &statusError) || statusError.StatusCode() != http.StatusInternalServerError {
+				t.Fatalf("expected safe typed %s error, got %v", phase, err)
+			}
+			if strings.Contains(err.Error(), "injected") {
+				t.Fatalf("%s error leaked GitHub response body: %v", phase, err)
 			}
 			if got := clientTestCounts(client)["ref"]; got != 0 {
 				t.Fatalf("%s failure mutated ref %d times", phase, got)
@@ -725,7 +873,7 @@ func TestGitHubPRClientReusesAtomicOrphanBranchAfterLostResponse(t *testing.T) {
 func TestGitHubPRClientRejectsDivergentAtomicBranchWithoutRefUpdate(t *testing.T) {
 	client := newAtomicPreparationClient(t, "divergent", nil)
 	_, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "divergent") {
+	if err == nil || !errors.Is(err, ErrDivergentPullRequest) || !strings.Contains(strings.ToLower(err.Error()), "divergent") {
 		t.Fatalf("expected divergent-branch error, got %v", err)
 	}
 	counts := clientTestCounts(client)
@@ -785,7 +933,7 @@ func TestGitHubPRClientAtomicExistingPRMustMatchDesiredTarget(t *testing.T) {
 
 			result, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
 			if tc.wantError {
-				if err == nil || !strings.Contains(strings.ToLower(err.Error()), "divergent") {
+				if err == nil || !errors.Is(err, ErrDivergentPullRequest) || !strings.Contains(strings.ToLower(err.Error()), "divergent") {
 					t.Fatalf("expected divergent existing PR error, got result=%+v err=%v", result, err)
 				}
 			} else {

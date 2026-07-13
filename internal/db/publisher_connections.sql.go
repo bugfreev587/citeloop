@@ -554,13 +554,17 @@ const setGitHubPRReadinessIfUnchanged = `-- name: SetGitHubPRReadinessIfUnchange
 update publisher_connections
 set pr_readiness_status = $1,
     pr_readiness_checked_at = $2,
-    pr_readiness_detail = $3,
-    updated_at = now()
+    pr_readiness_detail = $3
 where id = $4
   and project_id = $5
   and kind = 'github_nextjs'
   and is_default
   and updated_at = $6
+  and $2::timestamptz is not null
+  and (
+    publisher_connections.pr_readiness_checked_at is null
+    or publisher_connections.pr_readiness_checked_at < $2::timestamptz
+  )
 returning id, project_id, kind, label, status, is_default, enabled, capabilities, capability_schema_version, credential_ref, config, oauth_access_expires_at, oauth_refresh_status, revoked_at, last_verified_at, last_error, created_at, updated_at, pr_readiness_status, pr_readiness_checked_at, pr_readiness_detail
 `
 

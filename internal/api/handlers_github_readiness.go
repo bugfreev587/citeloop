@@ -41,6 +41,132 @@ type serverGitHubPRReadinessChecker struct {
 	server *Server
 }
 
+var (
+	errGitHubPRNotReady         = errors.New("GitHub is not ready to create repair pull requests")
+	errGitHubPRReadinessChanged = errors.New("GitHub connection changed during the final readiness check")
+)
+
+// authorizeGitHubPRMutation is the write-path readiness boundary. It first
+// honors the lightweight persisted gate, then performs one final live check
+// and strictly compare-and-sets that result. The returned target is the exact
+// credential/repository/branch snapshot proved by the check, retaining the
+// connection/config version so later mutations can fence concurrent changes.
+func (s *Server) authorizeGitHubPRMutation(ctx context.Context, projectID uuid.UUID) (githubPRReadinessTarget, error) {
+	store := s.gitHubPRReadinessStore()
+	if store == nil {
+		return githubPRReadinessTarget{}, errors.New("database unavailable")
+	}
+	stored, err := store.GetGitHubPRReadinessForProject(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return githubPRReadinessTarget{}, errGitHubPRNotReady
+	}
+	if err != nil {
+		return githubPRReadinessTarget{}, err
+	}
+	if publisher.GitHubPRReadinessStatus(stored.PrReadinessStatus) != publisher.GitHubPRReadinessReady {
+		return githubPRReadinessTarget{}, errGitHubPRNotReady
+	}
+
+	checkedAt := s.gitHubPRReadinessTime().UTC()
+	readiness, target, err := s.gitHubPRReadinessChecker().Check(ctx, projectID)
+	if err != nil {
+		return githubPRReadinessTarget{}, err
+	}
+	readiness = controlledGitHubPRReadiness(readiness)
+	if target.ConnectionID == uuid.Nil || target.ConnectionID != stored.ID || target.ExpectedUpdatedAt != stored.UpdatedAt {
+		return githubPRReadinessTarget{}, errGitHubPRReadinessChanged
+	}
+	var detail *string
+	if readiness.Detail != "" {
+		detailValue := readiness.Detail
+		detail = &detailValue
+	}
+	updated, err := store.SetGitHubPRReadinessIfUnchanged(ctx, db.SetGitHubPRReadinessIfUnchangedParams{
+		PrReadinessStatus:    string(readiness.Status),
+		PrReadinessCheckedAt: pgtype.Timestamptz{Time: checkedAt, Valid: true},
+		PrReadinessDetail:    detail,
+		ConnectionID:         target.ConnectionID,
+		ProjectID:            projectID,
+		ExpectedUpdatedAt:    target.ExpectedUpdatedAt,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return githubPRReadinessTarget{}, errGitHubPRReadinessChanged
+	}
+	if err != nil {
+		return githubPRReadinessTarget{}, err
+	}
+	if updated.ID != target.ConnectionID || updated.ProjectID != projectID || !updated.UpdatedAt.Valid {
+		return githubPRReadinessTarget{}, errGitHubPRReadinessChanged
+	}
+	target.ExpectedUpdatedAt = updated.UpdatedAt
+	if readiness.Status != publisher.GitHubPRReadinessReady || updated.PrReadinessStatus != string(publisher.GitHubPRReadinessReady) {
+		return githubPRReadinessTarget{}, errGitHubPRNotReady
+	}
+	if strings.TrimSpace(target.Repo) == "" || strings.TrimSpace(target.Branch) == "" || strings.TrimSpace(target.token) == "" {
+		return githubPRReadinessTarget{}, errGitHubPRReadinessChanged
+	}
+	return target, nil
+}
+
+func (s *Server) downgradeGitHubPRReadinessAfterMutationFailure(ctx context.Context, projectID uuid.UUID, target githubPRReadinessTarget, cause error) error {
+	var statusError interface{ StatusCode() int }
+	if !errors.As(cause, &statusError) {
+		return nil
+	}
+	var status publisher.GitHubPRReadinessStatus
+	switch statusError.StatusCode() {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		status = publisher.GitHubPRReadinessPermissionMissing
+	case http.StatusNotFound:
+		status = publisher.GitHubPRReadinessRepositoryUnavailable
+	default:
+		return nil
+	}
+	store := s.gitHubPRReadinessStore()
+	if store == nil {
+		return errors.New("database unavailable")
+	}
+	detailValue := controlledGitHubPRReadinessDetail(status, "")
+	_, err := store.SetGitHubPRReadinessIfUnchanged(ctx, db.SetGitHubPRReadinessIfUnchangedParams{
+		PrReadinessStatus:    string(status),
+		PrReadinessCheckedAt: pgtype.Timestamptz{Time: s.gitHubPRReadinessTime().UTC(), Valid: true},
+		PrReadinessDetail:    &detailValue,
+		ConnectionID:         target.ConnectionID,
+		ProjectID:            projectID,
+		ExpectedUpdatedAt:    target.ExpectedUpdatedAt,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A newer readiness observation or connection/config mutation already
+		// invalidated this result.
+		return nil
+	}
+	return err
+}
+
+func (s *Server) ensureGitHubPRTargetCurrent(ctx context.Context, projectID uuid.UUID, target githubPRReadinessTarget) error {
+	store := s.gitHubPRReadinessStore()
+	if store == nil {
+		return errors.New("database unavailable")
+	}
+	current, err := store.GetGitHubPRReadinessForProject(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errGitHubPRReadinessChanged
+	}
+	if err != nil {
+		return err
+	}
+	if current.ID != target.ConnectionID || current.ProjectID != projectID || current.UpdatedAt != target.ExpectedUpdatedAt ||
+		current.Kind != publisher.ConnectionKindGitHubNextJS || current.Status != "connected" || !current.IsDefault || !current.Enabled ||
+		current.RevokedAt.Valid || current.PrReadinessStatus != string(publisher.GitHubPRReadinessReady) {
+		return errGitHubPRReadinessChanged
+	}
+	config, err := publisher.ParseGitHubNextJSConfig(current.Config)
+	if err != nil || config.Repo != strings.TrimSpace(target.Repo) || config.Branch != strings.TrimSpace(target.Branch) {
+		return errGitHubPRReadinessChanged
+	}
+	return nil
+}
+
 func (s *Server) getGitHubPRReadiness(w http.ResponseWriter, r *http.Request) {
 	projectID, err := s.projectID(r)
 	if err != nil {
@@ -71,6 +197,7 @@ func (s *Server) checkGitHubPRReadiness(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	checker := s.gitHubPRReadinessChecker()
+	checkedAt := s.gitHubPRReadinessTime().UTC()
 	readiness, target, err := checker.Check(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "GitHub readiness could not be checked")
@@ -82,7 +209,6 @@ func (s *Server) checkGitHubPRReadiness(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, readiness)
 		return
 	}
-	checkedAt := s.gitHubPRReadinessTime().UTC()
 	readiness.CheckedAt = &checkedAt
 	readiness.Repo = strings.TrimSpace(target.Repo)
 	readiness.Branch = strings.TrimSpace(target.Branch)

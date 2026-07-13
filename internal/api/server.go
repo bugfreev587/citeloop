@@ -17,10 +17,12 @@ import (
 	"github.com/citeloop/citeloop/internal/scheduler"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/seo"
+	"github.com/citeloop/citeloop/internal/sitefix"
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,6 +47,7 @@ type Server struct {
 	githubReadinessHTTPClient *http.Client
 	githubReadinessAPIBase    string
 	githubReadinessNow        func() time.Time
+	canonicalSiteFixPRRunner  func(context.Context, uuid.UUID, uuid.UUID, githubPRReadinessTarget) (sitefix.ApplyResult, error)
 
 	OnboardingRunner         projectOnboardingRunner
 	InsightInventoryRunner   insightInventoryRunner

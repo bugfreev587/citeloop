@@ -597,9 +597,7 @@ insert into site_change_applications (
   sqlc.arg(resolution_criteria)::jsonb, sqlc.arg(status)
 from locked_work work
 where work.id = sqlc.arg(site_fix_id)
-  and sqlc.arg(status)::text in (
-    'draft_ready','source_mapping_required','ready_for_pr','manual_apply_required'
-  )
+  and sqlc.arg(status)::text = 'ready_for_pr'
   and (select count(*) from bumped) =
       (select count(*) from expected_keys)
 returning *;
@@ -3079,6 +3077,7 @@ with eligible as materialized (
 ), transitioned as (
   update site_fixes sf
   set status = 'verifying',
+      applied_at = coalesce(applied_at, sqlc.arg(deployed_at)),
       deployed_at = coalesce(deployed_at, sqlc.arg(deployed_at)),
       failure_reason = null,
       updated_at = now()
@@ -3722,38 +3721,161 @@ with authority as materialized (
   where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
     and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
   for update
+), ready_connection as materialized (
+  select connection.id
+  from publisher_connections connection
+  where connection.id = sqlc.arg(publisher_connection_id)
+    and connection.project_id = sqlc.arg(project_id)
+    and connection.kind = 'github_nextjs'
+    and connection.status = 'connected'
+    and connection.is_default = true
+    and connection.enabled = true
+    and connection.revoked_at is null
+    and connection.pr_readiness_status = 'ready'
+    and connection.updated_at = sqlc.arg(expected_connection_updated_at)
+    and trim(connection.config->>'repo') = sqlc.arg(expected_repo_full_name)::text
+    and coalesce(nullif(trim(connection.config->>'branch'), ''), case
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?dev\.unipost\.dev(?::[0-9]+)?(/|$)' then 'dev'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?staging\.unipost\.dev(?::[0-9]+)?(/|$)' then 'staging'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?unipost\.dev(?::[0-9]+)?(/|$)' then 'main'
+      else 'citeloop-content'
+    end) = sqlc.arg(expected_base_branch)::text
+  for update
+), observed as materialized (
+  select lower(trim(sqlc.arg(github_pr_state)::text)) as github_pr_state
+  where lower(trim(sqlc.arg(github_pr_state)::text)) in ('open','closed','merged')
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         sf.status as expected_fix_status,
+         w.status as expected_signature_status,
+         w.active as expected_signature_active,
+         app.id as application_id,
+         app.status as expected_application_status,
+         observed.github_pr_state
+  from site_change_applications app
+  join site_fixes sf
+    on sf.id = app.site_fix_id and sf.project_id = app.project_id
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  cross join observed
+  where app.project_id = sqlc.arg(project_id)
+    and app.id = sqlc.arg(application_id)
+    and app.site_fix_id = sqlc.arg(site_fix_id)
+    and app.site_fix_id is not null and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and exists (select 1 from authority)
+    and exists (select 1 from ready_connection)
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select app.id
+  from site_change_applications app
+  join eligible e on e.application_id = app.id and e.project_id = app.project_id
+  where app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = e.expected_application_status
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of app
+), locked_work as materialized (
+  select e.*
+  from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w
+    on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = e.expected_fix_status
+    and w.status = e.expected_signature_status
+    and w.active = e.expected_signature_active
+    and w.mode = 'enforced'
+    and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application app where app.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), recorded_application as (
+  update site_change_applications app
+  set publisher_connection_id = sqlc.arg(publisher_connection_id),
+      repo_full_name = sqlc.arg(repo_full_name),
+      base_branch = sqlc.arg(base_branch),
+      working_branch = sqlc.arg(working_branch),
+      base_commit_sha = sqlc.narg(base_commit_sha),
+      head_commit_sha = sqlc.arg(head_commit_sha),
+      source_file_path = sqlc.arg(source_file_path),
+      base_file_sha = sqlc.arg(base_file_sha),
+      proposed_content_hash = sqlc.narg(proposed_content_hash),
+      github_pr_number = sqlc.arg(github_pr_number),
+      github_pr_url = sqlc.arg(github_pr_url),
+      github_pr_state = e.github_pr_state,
+      status = case e.github_pr_state
+        when 'open' then 'github_pr_open'
+        when 'closed' then 'needs_follow_up'
+        when 'merged' then 'deployment_pending'
+      end,
+      pr_created_at = coalesce(app.pr_created_at, now()),
+      merged_at = case when e.github_pr_state = 'merged' then coalesce(app.merged_at, now()) else app.merged_at end,
+      next_poll_at = case when e.github_pr_state = 'merged' then now() + interval '3 minutes' else app.next_poll_at end,
+      failure_reason = case when e.github_pr_state = 'closed' then 'pull_request_closed_without_merge' else null end,
+      pr_claim_token = null,
+      pr_claim_expires_at = null,
+      pr_claim_authority_fingerprint = null,
+      updated_at = now()
+  from locked_work e
+  where app.id = e.application_id and app.project_id = e.project_id
+    and app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning app.*
+), transitioned as (
+  update site_fixes sf
+  set status = case when e.github_pr_state = 'merged' then 'awaiting_deploy' else 'applying' end,
+      failure_reason = null,
+      updated_at = now()
+  from locked_work e
+  where sf.id = e.id and sf.project_id = e.project_id
+    and sf.status = 'applying'
+    and exists (select 1 from recorded_application app where app.site_fix_id = sf.id)
+  returning sf.id, sf.project_id, sf.work_signature_id, e.github_pr_state
+), signature_transition as (
+  update work_signature_registry w
+  set status = case when transitioned.github_pr_state = 'merged' then 'awaiting_deploy' else 'executing' end,
+      active = true,
+      updated_at = now()
+  from transitioned
+  where w.id = transitioned.work_signature_id
+    and w.project_id = transitioned.project_id
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+  returning w.id
 )
-update site_change_applications app
-set publisher_connection_id = sqlc.arg(publisher_connection_id),
-    repo_full_name = sqlc.arg(repo_full_name),
-    base_branch = sqlc.arg(base_branch),
-    working_branch = sqlc.arg(working_branch),
-    base_commit_sha = sqlc.narg(base_commit_sha),
-    head_commit_sha = sqlc.arg(head_commit_sha),
-    source_file_path = sqlc.arg(source_file_path),
-    base_file_sha = sqlc.arg(base_file_sha),
-    proposed_content_hash = sqlc.narg(proposed_content_hash),
-    github_pr_number = sqlc.arg(github_pr_number),
-    github_pr_url = sqlc.arg(github_pr_url),
-    github_pr_state = sqlc.arg(github_pr_state),
-    status = 'github_pr_open',
-    pr_created_at = coalesce(pr_created_at, now()),
-    failure_reason = null,
-    pr_claim_token = null,
-    pr_claim_expires_at = null,
-    pr_claim_authority_fingerprint = null,
-    updated_at = now()
-where app.project_id = sqlc.arg(project_id)
-  and app.id = sqlc.arg(application_id)
-  and app.site_fix_id = sqlc.arg(site_fix_id)
-  and app.site_fix_id is not null
-  and app.content_action_id is null
-  and app.status = 'creating_pr'
-  and app.pr_claim_token = sqlc.arg(pr_claim_token)
-  and app.pr_claim_expires_at > clock_timestamp()
-  and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
-  and exists (select 1 from authority)
-returning *;
+select app.* from site_change_applications app
+join recorded_application recorded on recorded.id = app.id and recorded.project_id = app.project_id
+cross join transitioned
+cross join signature_transition;
 
 -- name: SaveCanonicalSiteFixPreparedPatch :one
 with authority as materialized (
@@ -3762,6 +3884,26 @@ with authority as materialized (
   from product_writer_authority pwa
   where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
     and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), ready_connection as materialized (
+  select connection.id
+  from publisher_connections connection
+  where connection.id = sqlc.arg(publisher_connection_id)
+    and connection.project_id = sqlc.arg(project_id)
+    and connection.kind = 'github_nextjs'
+    and connection.status = 'connected'
+    and connection.is_default = true
+    and connection.enabled = true
+    and connection.revoked_at is null
+    and connection.pr_readiness_status = 'ready'
+    and connection.updated_at = sqlc.arg(expected_connection_updated_at)
+    and trim(connection.config->>'repo') = sqlc.arg(expected_repo_full_name)::text
+    and coalesce(nullif(trim(connection.config->>'branch'), ''), case
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?dev\.unipost\.dev(?::[0-9]+)?(/|$)' then 'dev'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?staging\.unipost\.dev(?::[0-9]+)?(/|$)' then 'staging'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?unipost\.dev(?::[0-9]+)?(/|$)' then 'main'
+      else 'citeloop-content'
+    end) = sqlc.arg(expected_base_branch)::text
   for update
 )
 update site_change_applications app
@@ -3792,6 +3934,7 @@ where app.project_id = sqlc.arg(project_id)
   and app.pr_claim_authority_fingerprint = sqlc.arg(writer_authority_fingerprint)
   and sqlc.arg(writer_authority_fingerprint) = (select fingerprint from authority)
   and exists (select 1 from authority)
+  and exists (select 1 from ready_connection)
 returning app.*;
 
 -- name: ClaimCanonicalSiteFixGitHubPR :one
@@ -3801,6 +3944,26 @@ with authority as materialized (
   from product_writer_authority pwa
   where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
     and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), ready_connection as materialized (
+  select connection.id
+  from publisher_connections connection
+  where connection.id = sqlc.arg(publisher_connection_id)
+    and connection.project_id = sqlc.arg(project_id)
+    and connection.kind = 'github_nextjs'
+    and connection.status = 'connected'
+    and connection.is_default = true
+    and connection.enabled = true
+    and connection.revoked_at is null
+    and connection.pr_readiness_status = 'ready'
+    and connection.updated_at = sqlc.arg(expected_connection_updated_at)
+    and trim(connection.config->>'repo') = sqlc.arg(expected_repo_full_name)::text
+    and coalesce(nullif(trim(connection.config->>'branch'), ''), case
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?dev\.unipost\.dev(?::[0-9]+)?(/|$)' then 'dev'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?staging\.unipost\.dev(?::[0-9]+)?(/|$)' then 'staging'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?unipost\.dev(?::[0-9]+)?(/|$)' then 'main'
+      else 'citeloop-content'
+    end) = sqlc.arg(expected_base_branch)::text
   for update
 )
 update site_change_applications app
@@ -3822,6 +3985,7 @@ where app.project_id = sqlc.arg(project_id)
       and sf.status = 'applying' and w.status = 'executing' and w.active = true and w.mode = 'enforced'
   )
   and exists (select 1 from authority)
+  and exists (select 1 from ready_connection)
 returning app.*;
 
 -- name: ResetCanonicalSiteFixSourceConflictForReprepare :one
@@ -3850,6 +4014,17 @@ with authority as materialized (
     and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
     and sf.status = 'applying'
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and sqlc.arg(reprepare_reason)::text in ('repository_source_conflict','repository_target_changed')
+    and not exists (
+      select 1
+      from site_change_applications previous
+      where previous.project_id = app.project_id
+        and previous.site_fix_id = app.site_fix_id
+        and previous.content_action_id is null
+        and previous.id <> app.id
+        and previous.status = 'failed'
+        and previous.failure_reason in ('repository_source_conflict','repository_target_changed')
+    )
     and exists (select 1 from authority)
 ), expected_keys as materialized (
   select distinct keys.bucket_key
@@ -3896,7 +4071,7 @@ with authority as materialized (
   returning b.id
 ), failed_application as (
   update site_change_applications app
-  set status = 'failed', failure_reason = 'repository_source_conflict',
+  set status = 'failed', failure_reason = sqlc.arg(reprepare_reason),
       pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
       updated_at = now()
   from locked_work e
@@ -3909,7 +4084,7 @@ with authority as materialized (
   returning app.*
 ), transitioned as (
   update site_fixes sf
-  set status = 'preparing', failure_reason = 'repository_source_conflict', updated_at = now()
+  set status = 'preparing', failure_reason = sqlc.arg(reprepare_reason), updated_at = now()
   from locked_work e
   where sf.id = e.id and sf.project_id = e.project_id and sf.status = 'applying'
     and exists (select 1 from failed_application app where app.site_fix_id = sf.id)
@@ -3922,7 +4097,8 @@ with authority as materialized (
     and w.status = 'executing' and w.mode = 'enforced' and w.active = true
   returning w.id
 )
-select failed_application.* from failed_application
+select app.* from site_change_applications app
+join failed_application failed on failed.id = app.id and failed.project_id = app.project_id
 cross join transitioned
 cross join signature_transition;
 
@@ -3954,6 +4130,26 @@ with authority as materialized (
   where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
     and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
   for update
+), ready_connection as materialized (
+  select connection.id
+  from publisher_connections connection
+  where connection.id = sqlc.arg(publisher_connection_id)
+    and connection.project_id = sqlc.arg(project_id)
+    and connection.kind = 'github_nextjs'
+    and connection.status = 'connected'
+    and connection.is_default = true
+    and connection.enabled = true
+    and connection.revoked_at is null
+    and connection.pr_readiness_status = 'ready'
+    and connection.updated_at = sqlc.arg(expected_connection_updated_at)
+    and trim(connection.config->>'repo') = sqlc.arg(expected_repo_full_name)::text
+    and coalesce(nullif(trim(connection.config->>'branch'), ''), case
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?dev\.unipost\.dev(?::[0-9]+)?(/|$)' then 'dev'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?staging\.unipost\.dev(?::[0-9]+)?(/|$)' then 'staging'
+      when lower(trim(connection.config->>'base_url')) ~ '^(https?://)?unipost\.dev(?::[0-9]+)?(/|$)' then 'main'
+      else 'citeloop-content'
+    end) = sqlc.arg(expected_base_branch)::text
+  for update
 )
 update site_change_applications app
 set pr_claim_expires_at = clock_timestamp() + make_interval(secs => sqlc.arg(lease_ttl_seconds)::int),
@@ -3963,6 +4159,7 @@ where app.project_id = sqlc.arg(project_id) and app.id = sqlc.arg(application_id
   and app.status = 'creating_pr' and app.pr_claim_token = sqlc.arg(pr_claim_token)
   and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
   and exists (select 1 from authority)
+  and exists (select 1 from ready_connection)
 returning app.*;
 
 -- name: ReopenCanonicalSiteFixApply :one
@@ -3979,6 +4176,10 @@ set status = 'ready_for_pr', failure_reason = null,
 where app.project_id = sqlc.arg(project_id) and app.id = sqlc.arg(application_id)
   and app.site_fix_id = sqlc.arg(site_fix_id) and app.site_fix_id is not null and app.content_action_id is null
   and app.status = 'needs_follow_up'
+  and app.github_pr_url is null
+  and app.github_pr_number is null
+  and app.github_pr_state is null
+  and app.failure_reason in ('pr_interrupted','publisher_branch_conflict','prepared_patch_invalid','publisher_unavailable','github_pr_failed')
   and exists (
     select 1 from site_fixes sf
     join work_signature_registry w on w.id = sf.work_signature_id and w.project_id = sf.project_id
@@ -4071,7 +4272,7 @@ with authority as materialized (
 ), merged_application as (
   update site_change_applications
   set status = 'deployment_pending', github_pr_state = 'merged',
-      merged_at = coalesce(site_change_applications.merged_at, now()),
+      merged_at = coalesce(site_change_applications.merged_at, sqlc.arg(observed_merged_at)::timestamptz),
       next_poll_at = now() + interval '3 minutes',
       failure_reason = null, updated_at = now()
   from locked_work e
@@ -4082,8 +4283,7 @@ with authority as materialized (
   returning site_change_applications.site_fix_id
 ), transitioned as (
   update site_fixes
-  set status = 'awaiting_deploy', applied_at = coalesce(site_fixes.applied_at, sqlc.arg(observed_merged_at)::timestamptz),
-      failure_reason = null, updated_at = now()
+  set status = 'awaiting_deploy', failure_reason = null, updated_at = now()
   from merged_application a
   where site_fixes.id = a.site_fix_id and site_fixes.project_id = sqlc.arg(project_id)
     and site_fixes.status = 'applying'

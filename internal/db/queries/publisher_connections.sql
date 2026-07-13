@@ -23,13 +23,17 @@ limit 1;
 update publisher_connections
 set pr_readiness_status = sqlc.arg(pr_readiness_status),
     pr_readiness_checked_at = sqlc.narg(pr_readiness_checked_at),
-    pr_readiness_detail = sqlc.narg(pr_readiness_detail),
-    updated_at = now()
+    pr_readiness_detail = sqlc.narg(pr_readiness_detail)
 where id = sqlc.arg(connection_id)
   and project_id = sqlc.arg(project_id)
   and kind = 'github_nextjs'
   and is_default
   and updated_at = sqlc.arg(expected_updated_at)
+  and sqlc.narg(pr_readiness_checked_at)::timestamptz is not null
+  and (
+    publisher_connections.pr_readiness_checked_at is null
+    or publisher_connections.pr_readiness_checked_at < sqlc.narg(pr_readiness_checked_at)::timestamptz
+  )
 returning *;
 
 -- name: GetEnabledPublisherConnectionForProject :one

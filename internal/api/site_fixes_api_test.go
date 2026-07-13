@@ -1184,22 +1184,6 @@ func TestDoctorSiteFixManualEvidenceRequiresAuthenticatedStructuredAttestation(t
 	}
 }
 
-func TestCanonicalGitHubApplyOnlySupportsTypedMetadataMutationFamily(t *testing.T) {
-	metadata := db.SiteFix{ProposedFix: json.RawMessage(`{"mutations":[{"field":"title","operation":"replace"},{"field":"meta_description","operation":"update"}]}`)}
-	if got := canonicalSiteFixPRMutationFamily(metadata); got != "metadata_rewrite" {
-		t.Fatalf("metadata family=%q", got)
-	}
-	for _, raw := range []string{
-		`{"mutations":[{"field":"canonical","operation":"replace"}]}`,
-		`{"mutations":[{"field":"body","operation":"add"}]}`,
-		`{}`,
-	} {
-		if got := canonicalSiteFixPRMutationFamily(db.SiteFix{ProposedFix: json.RawMessage(raw)}); got != "" {
-			t.Fatalf("unsupported %s classified %q", raw, got)
-		}
-	}
-}
-
 func TestDoctorAIProviderAuthorityMustBeExplicit(t *testing.T) {
 	defaultCfg, _ := config.Parse(json.RawMessage(`{}`))
 	disabledCfg, _ := config.Parse(json.RawMessage(`{"doctor_ai_enabled":false,"doctor_ai_run_policy":"manual_only"}`))
@@ -1215,6 +1199,15 @@ func TestDoctorAIProviderAuthorityMustBeExplicit(t *testing.T) {
 func serveSiteFixRequest(t *testing.T, service DoctorSiteFixService, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	server := &Server{SiteFixes: service}
+	if strings.HasSuffix(path, "/approve") {
+		projectID := siteFixProjectIDFromTestPath(t, path)
+		connection := readyMutationConnection(projectID)
+		server.githubReadinessStore = mutationReadinessStore(connection)
+		server.githubReadinessChecker = readyMutationChecker(connection)
+		server.canonicalSiteFixPRRunner = func(context.Context, uuid.UUID, uuid.UUID, githubPRReadinessTarget) (sitefix.ApplyResult, error) {
+			return sitefix.ApplyResult{}, nil
+		}
+	}
 	request := httptest.NewRequest(method, path, nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -1224,10 +1217,35 @@ func serveSiteFixRequest(t *testing.T, service DoctorSiteFixService, method, pat
 func serveSiteFixLifecycleRequest(t *testing.T, service DoctorSiteFixService, lifecycle DoctorSiteFixLifecycleService, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	server := &Server{SiteFixes: service, SiteFixLifecycle: lifecycle}
+	if strings.HasSuffix(path, "/apply") {
+		projectID := siteFixProjectIDFromTestPath(t, path)
+		connection := readyMutationConnection(projectID)
+		server.githubReadinessStore = mutationReadinessStore(connection)
+		server.githubReadinessChecker = readyMutationChecker(connection)
+		server.canonicalSiteFixPRRunner = func(ctx context.Context, projectID, fixID uuid.UUID, _ githubPRReadinessTarget) (sitefix.ApplyResult, error) {
+			return lifecycle.Apply(ctx, projectID, fixID)
+		}
+	}
 	request := httptest.NewRequest(method, path, nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	return response
+}
+
+func siteFixProjectIDFromTestPath(t *testing.T, path string) uuid.UUID {
+	t.Helper()
+	parts := strings.Split(path, "/")
+	for index, part := range parts {
+		if part == "projects" && index+1 < len(parts) {
+			projectID, err := uuid.Parse(parts[index+1])
+			if err != nil {
+				t.Fatalf("parse project id from %q: %v", path, err)
+			}
+			return projectID
+		}
+	}
+	t.Fatalf("project id missing from %q", path)
+	return uuid.Nil
 }
 
 type doctorSiteFixServiceStub struct {
@@ -1250,8 +1268,10 @@ type doctorSiteFixServiceStub struct {
 	getFixID       uuid.UUID
 	approveFix     DoctorSiteFixResponse
 	approveErr     error
+	approveCalls   int
 	approveProject uuid.UUID
 	approveFixID   uuid.UUID
+	onApprove      func()
 	dismissFix     db.SiteFix
 	dismissErr     error
 	dismissCalls   int
@@ -1570,7 +1590,11 @@ func (s *doctorSiteFixServiceStub) Get(_ context.Context, projectID, fixID uuid.
 }
 
 func (s *doctorSiteFixServiceStub) Approve(_ context.Context, projectID, fixID uuid.UUID, _ time.Time) (DoctorSiteFixResponse, error) {
+	s.approveCalls++
 	s.approveProject, s.approveFixID = projectID, fixID
+	if s.onApprove != nil {
+		s.onApprove()
+	}
 	return s.approveFix, s.approveErr
 }
 

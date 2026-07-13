@@ -2,8 +2,6 @@ package sitefix
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -347,9 +345,7 @@ func validateApplicationPlan(fix db.SiteFix, generationContext GenerationContext
 	if strings.TrimSpace(plan.TargetURL) == "" || strings.TrimSpace(plan.NormalizedTargetURL) == "" || strings.TrimSpace(plan.OpportunityKey) == "" {
 		return errors.New("generated canonical application is missing target identity")
 	}
-	switch plan.Status {
-	case "ready_for_pr", "manual_apply_required", "source_mapping_required", "draft_ready":
-	default:
+	if plan.Status != "ready_for_pr" {
 		return fmt.Errorf("unsupported canonical application status %q", plan.Status)
 	}
 	for _, raw := range []json.RawMessage{plan.SourceFilePaths, plan.PatchSnapshot, plan.DiffSnapshot, plan.ResolutionCriteria} {
@@ -733,40 +729,6 @@ func validPGUUIDOrEmpty(id uuid.UUID) pgtype.UUID {
 type LLMApplicationGenerator struct {
 	Provider llm.Provider
 	Model    string
-}
-
-// DeterministicApplicationGenerator is the default for projects that have not
-// explicitly granted Doctor provider-call authority. It creates a reviewable
-// manual handoff from already-approved canonical snapshots and records the
-// generation attempt as skipped rather than calling an AI provider.
-type DeterministicApplicationGenerator struct{}
-
-func (DeterministicApplicationGenerator) Describe(fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot) GenerationCall {
-	payload := append(append(append([]byte{}, fix.ProposedFix...), fix.AcceptanceTests...), generationContext.ProductProfile...)
-	sum := sha256.Sum256(payload)
-	return GenerationCall{Provider: "none", Model: "none", PromptVersion: "doctor-fix-deterministic-v1", RequestFingerprint: hex.EncodeToString(sum[:])}
-}
-
-func (DeterministicApplicationGenerator) Generate(_ context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, _ siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
-	target, err := firstTargetURL(fix.TargetUrls)
-	if err != nil {
-		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_target"}, err
-	}
-	criteria, err := json.Marshal(map[string]any{"verification_mode": "manual_evidence", "acceptance_tests": json.RawMessage(fix.AcceptanceTests)})
-	if err != nil {
-		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
-	}
-	grounding, err := approvedGroundingSnapshot(fix, generationContext)
-	if err != nil {
-		return ApplicationPlan{}, GenerationResult{Status: "skipped", ErrorCode: "invalid_snapshot"}, err
-	}
-	return ApplicationPlan{
-		TargetURL: target, NormalizedTargetURL: target, OpportunityKey: "doctor:" + fix.ID.String(),
-		SourceFilePaths: json.RawMessage(`[]`), SourceMappingConfidence: "low",
-		SourceMappingReason: "Doctor AI assistance is not authorized; use the approved deterministic manual handoff.",
-		PatchSnapshot:       rawJSONObject(fix.ProposedFix), DiffSnapshot: rawJSONObject(fix.ProposedFix),
-		ResolutionCriteria: criteria, GroundingSnapshot: grounding, Status: "manual_apply_required",
-	}, GenerationResult{Provider: "none", Model: "none", Status: "skipped", ErrorCode: "doctor_ai_not_authorized"}, nil
 }
 
 func rawJSONObject(raw json.RawMessage) json.RawMessage {

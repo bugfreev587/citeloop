@@ -34,6 +34,8 @@ var ErrDoctorAIVerificationNotAuthorized = errors.New("Doctor AI verification is
 var ErrDoctorAIRequestAlreadyHandled = errors.New("Doctor AI verification request was already applied; use a new request id")
 var errDoctorSiteFixPreparationReclaim = errors.New("Doctor Site Fix preparation lease must be reclaimed")
 var errDoctorSiteFixPreparationLost = errors.New("Doctor Site Fix preparation lease was lost")
+var errCanonicalSiteFixFreshReprepare = errors.New("canonical Site Fix requires one fresh repository preparation")
+var errCanonicalSiteFixReprepareExhausted = errors.New("canonical Site Fix repository reprepare allowance exhausted")
 
 // DoctorSiteFixArbitrationHoldError preserves the audited internal decision at
 // the service boundary. HTTP responses derive a stable public explanation and
@@ -580,6 +582,11 @@ type postgresDoctorSiteFixService struct {
 	growthModel       string
 }
 
+type canonicalSiteFixApprovalStore interface {
+	GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error)
+	ApproveCanonicalSiteFix(context.Context, db.ApproveCanonicalSiteFixParams) (db.ApproveCanonicalSiteFixRow, error)
+}
+
 type growthProjectCutover interface {
 	EnsureProjectCutover(context.Context, uuid.UUID) error
 }
@@ -1072,19 +1079,54 @@ func (s *postgresDoctorSiteFixService) Approve(ctx context.Context, projectID, f
 	if s == nil || s.q == nil {
 		return DoctorSiteFixResponse{}, errors.New("canonical Site Fix database unavailable")
 	}
-	if _, err := s.Get(ctx, projectID, fixID); err != nil {
+	fix, err := approveCanonicalSiteFixIdempotently(ctx, s.q, projectID, fixID, approvedAt)
+	if err != nil {
 		return DoctorSiteFixResponse{}, err
 	}
-	if _, err := s.q.ApproveCanonicalSiteFix(ctx, db.ApproveCanonicalSiteFixParams{
+	return s.loadResponse(ctx, fix)
+}
+
+func approveCanonicalSiteFixIdempotently(ctx context.Context, store canonicalSiteFixApprovalStore, projectID, fixID uuid.UUID, approvedAt time.Time) (db.SiteFix, error) {
+	current, err := store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if err != nil {
+		return db.SiteFix{}, err
+	}
+	if canonicalSiteFixRevisionAlreadyApproved(current) {
+		return current, nil
+	}
+	if current.Status != "proposed" {
+		return db.SiteFix{}, ErrDoctorSiteFixTransitionConflict
+	}
+	_, err = store.ApproveCanonicalSiteFix(ctx, db.ApproveCanonicalSiteFixParams{
 		SiteFixID: fixID, ProjectID: projectID,
 		ApprovedAt: pgtype.Timestamptz{Time: approvedAt.UTC(), Valid: true},
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DoctorSiteFixResponse{}, ErrDoctorSiteFixTransitionConflict
-		}
-		return DoctorSiteFixResponse{}, err
+	})
+	if err == nil {
+		return store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
 	}
-	return s.Get(ctx, projectID, fixID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.SiteFix{}, err
+	}
+	current, reloadErr := store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{ID: fixID, ProjectID: projectID})
+	if reloadErr != nil {
+		return db.SiteFix{}, reloadErr
+	}
+	if canonicalSiteFixRevisionAlreadyApproved(current) {
+		return current, nil
+	}
+	return db.SiteFix{}, ErrDoctorSiteFixTransitionConflict
+}
+
+func canonicalSiteFixRevisionAlreadyApproved(fix db.SiteFix) bool {
+	if !fix.ApprovedAt.Valid {
+		return false
+	}
+	switch fix.Status {
+	case "approved", "preparing", "ready_to_apply", "applying", "awaiting_deploy", "verifying", "failed_retryable", "reopened", "verified":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *postgresDoctorSiteFixService) loadResponse(ctx context.Context, fix db.SiteFix) (DoctorSiteFixResponse, error) {
@@ -1141,6 +1183,30 @@ func (s *Server) doctorSiteFixLifecycleService() DoctorSiteFixLifecycleService {
 			Verifier:       sitefix.LLMPatchGroundingVerifier{Provider: s.LLM, Model: s.Env.TokenGateModel},
 		},
 	}
+}
+
+func (s *Server) doctorSiteFixLifecycleServiceForReadiness(projectID uuid.UUID, target githubPRReadinessTarget) (DoctorSiteFixLifecycleService, error) {
+	if s.SiteFixLifecycle != nil {
+		return s.SiteFixLifecycle, nil
+	}
+	if s.Pool == nil || s.Q == nil {
+		return nil, errors.New("canonical Site Fix lifecycle service unavailable")
+	}
+	sourceLoader, err := s.siteFixRepositorySourceLoaderForReadiness(projectID, target)
+	if err != nil {
+		return nil, err
+	}
+	return &postgresDoctorSiteFixLifecycleService{
+		pool: s.Pool,
+		q:    s.Q,
+		apply: sitefix.ApplyService{
+			Store:          sitefix.PostgresApplyStore{Pool: s.Pool, Q: s.Q},
+			SourceLoader:   sourceLoader,
+			SourceSelector: sitefix.LLMRepositorySourceSelector{Provider: s.LLM, Model: s.Env.TokenGateModel},
+			Generator:      sitefix.LLMApplicationGenerator{Provider: s.LLM, Model: s.Env.TokenGateModel},
+			Verifier:       sitefix.LLMPatchGroundingVerifier{Provider: s.LLM, Model: s.Env.TokenGateModel},
+		},
+	}, nil
 }
 
 func (s *Server) createDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
@@ -1257,17 +1323,26 @@ func (s *Server) approveDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	target, err := s.authorizeGitHubPRMutation(r.Context(), projectID)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
 	service := s.doctorSiteFixService()
 	if service == nil {
 		writeErr(w, http.StatusInternalServerError, "canonical Site Fix service unavailable")
 		return
 	}
-	fix, err := service.Approve(r.Context(), projectID, fixID, time.Now().UTC())
+	if _, err := service.Approve(r.Context(), projectID, fixID, time.Now().UTC()); err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
+	}
+	result, err := s.runCanonicalSiteFixPR(r.Context(), projectID, fixID, target)
 	if err != nil {
 		s.writeDoctorSiteFixError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, fix)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) applyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
@@ -1275,36 +1350,116 @@ func (s *Server) applyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	service := s.doctorSiteFixLifecycleService()
-	if service == nil {
-		writeErr(w, http.StatusInternalServerError, "canonical Site Fix lifecycle service unavailable")
-		return
-	}
-	result, err := service.Apply(r.Context(), projectID, fixID)
+	target, err := s.authorizeGitHubPRMutation(r.Context(), projectID)
 	if err != nil {
 		s.writeDoctorSiteFixError(w, err)
 		return
 	}
-	if result.Application.Status == "needs_follow_up" && result.SiteFix.Status == "applying" {
-		result.Application, err = s.Q.ReopenCanonicalSiteFixApply(r.Context(), db.ReopenCanonicalSiteFixApplyParams{
-			ProjectID: projectID, ApplicationID: result.Application.ID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
-		})
-		if err != nil {
-			s.writeDoctorSiteFixError(w, canonicalDoctorLifecycleTransitionError(err))
-			return
-		}
-	}
-	if result.Application.Status == "ready_for_pr" || result.Application.Status == "creating_pr" {
-		result, err = s.openCanonicalSiteFixGitHubPR(r.Context(), result)
-		if err != nil {
-			s.writeDoctorSiteFixError(w, err)
-			return
-		}
+	result, err := s.runCanonicalSiteFixPR(r.Context(), projectID, fixID, target)
+	if err != nil {
+		s.writeDoctorSiteFixError(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefix.ApplyResult) (sitefix.ApplyResult, error) {
+func (s *Server) runCanonicalSiteFixPR(ctx context.Context, projectID, fixID uuid.UUID, target githubPRReadinessTarget) (sitefix.ApplyResult, error) {
+	if s.canonicalSiteFixPRRunner != nil {
+		return s.canonicalSiteFixPRRunner(ctx, projectID, fixID, target)
+	}
+	return s.createCanonicalSiteFixPR(ctx, projectID, fixID, target)
+}
+
+func (s *Server) createCanonicalSiteFixPR(ctx context.Context, projectID, fixID uuid.UUID, target githubPRReadinessTarget) (sitefix.ApplyResult, error) {
+	service, err := s.doctorSiteFixLifecycleServiceForReadiness(projectID, target)
+	if err != nil {
+		return sitefix.ApplyResult{}, err
+	}
+	result, err := runCanonicalSiteFixPRAttempts(
+		ctx,
+		func(callCtx context.Context) (sitefix.ApplyResult, error) {
+			return service.Apply(callCtx, projectID, fixID)
+		},
+		func(callCtx context.Context, result sitefix.ApplyResult) (sitefix.ApplyResult, error) {
+			if result.SiteFix.Status == "applying" && canReopenCanonicalSiteFixPRCreation(result.Application) {
+				if s.Q == nil {
+					return result, errors.New("canonical Site Fix database unavailable")
+				}
+				result.Application, err = s.Q.ReopenCanonicalSiteFixApply(callCtx, db.ReopenCanonicalSiteFixApplyParams{
+					ProjectID: projectID, ApplicationID: result.Application.ID, SiteFixID: pgtype.UUID{Bytes: fixID, Valid: true},
+				})
+				if err != nil {
+					return result, canonicalDoctorLifecycleTransitionError(err)
+				}
+			}
+			if result.Application.Status == "ready_for_pr" || result.Application.Status == "creating_pr" {
+				return s.openCanonicalSiteFixGitHubPR(callCtx, result, target)
+			}
+			return result, validateCanonicalSiteFixPRResponse(result)
+		},
+	)
+	if err != nil && !errors.Is(err, errCanonicalSiteFixFreshReprepare) {
+		if downgradeErr := s.downgradeGitHubPRReadinessAfterMutationFailure(ctx, projectID, target, err); downgradeErr != nil {
+			err = errors.Join(err, downgradeErr)
+		}
+	}
+	return result, err
+}
+
+func runCanonicalSiteFixPRAttempts(
+	ctx context.Context,
+	apply func(context.Context) (sitefix.ApplyResult, error),
+	open func(context.Context, sitefix.ApplyResult) (sitefix.ApplyResult, error),
+) (sitefix.ApplyResult, error) {
+	var result sitefix.ApplyResult
+	for attempt := 0; attempt < 2; attempt++ {
+		var err error
+		result, err = apply(ctx)
+		if err != nil {
+			return result, err
+		}
+		result, err = open(ctx, result)
+		if err == nil || !errors.Is(err, errCanonicalSiteFixFreshReprepare) {
+			return result, err
+		}
+		if attempt == 1 {
+			return result, err
+		}
+	}
+	return result, errCanonicalSiteFixFreshReprepare
+}
+
+func canReopenCanonicalSiteFixPRCreation(app db.SiteChangeApplication) bool {
+	if app.Status != "needs_follow_up" || (app.GithubPrUrl != nil && strings.TrimSpace(*app.GithubPrUrl) != "") ||
+		(app.GithubPrState != nil && strings.TrimSpace(*app.GithubPrState) != "") {
+		return false
+	}
+	if app.FailureReason == nil {
+		return false
+	}
+	switch strings.TrimSpace(*app.FailureReason) {
+	case "pr_interrupted", "publisher_branch_conflict", "prepared_patch_invalid", "publisher_unavailable", "github_pr_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalSiteFixPRClaimCollisionIsComplete(app db.SiteChangeApplication) bool {
+	return app.Status != "creating_pr" && app.GithubPrUrl != nil && strings.TrimSpace(*app.GithubPrUrl) != ""
+}
+
+func validateCanonicalSiteFixPRResponse(result sitefix.ApplyResult) error {
+	if result.Application.GithubPrUrl != nil && strings.TrimSpace(*result.Application.GithubPrUrl) != "" {
+		return nil
+	}
+	if result.Application.Status == "creating_pr" {
+		return fmt.Errorf("%w: repair PR creation is already in progress", sitefix.ErrLifecycleConflict)
+	}
+	return fmt.Errorf("%w: repair PR is not available for this Site Fix application", sitefix.ErrLifecycleConflict)
+}
+
+func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefix.ApplyResult, target githubPRReadinessTarget) (sitefix.ApplyResult, error) {
 	if s.Q == nil {
 		return result, errors.New("canonical Site Fix database unavailable")
 	}
@@ -1312,32 +1467,19 @@ func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefi
 	if err != nil {
 		return result, err
 	}
-	conn, err := s.Q.GetEnabledPublisherConnectionForProject(ctx, db.GetEnabledPublisherConnectionForProjectParams{ProjectID: result.SiteFix.ProjectID, Kind: publisher.ConnectionKindGitHubNextJS})
-	if err != nil {
-		return result, err
+	if result.SiteFix.ProjectID == uuid.Nil || target.ConnectionID == uuid.Nil || !target.ExpectedUpdatedAt.Valid || strings.TrimSpace(target.token) == "" {
+		return result, errors.New("checked GitHub readiness target is incomplete")
 	}
-	cfg, err := publisher.ParseGitHubNextJSConfig(conn.Config)
-	if err != nil {
-		return result, err
-	}
-	if prepared.Repo != cfg.Repo || prepared.BaseBranch != cfg.Branch {
-		return result, errors.New("prepared repository target no longer matches the configured publisher target")
-	}
-	token, err := s.publisherConnectionToken(ctx, result.SiteFix.ProjectID, conn)
-	if err != nil || strings.TrimSpace(token) == "" {
-		return result, errors.New("GitHub publisher credential is unavailable")
-	}
-	client := publisher.NewGitHubPRClient(token, cfg.Repo, cfg.Branch, s.Log)
-	repositoryClient := &publisherSiteFixRepositoryClient{
-		GitHubPRClient: client, token: token, repo: cfg.Repo,
-		httpClient: &http.Client{Timeout: 30 * time.Second}, apiBase: "https://api.github.com",
-	}
-	workingBranch := siteFixRepositoryWorkingBranch(result.SiteFix.ID)
 	claimToken := uuid.New()
+	if err := s.ensureGitHubPRTargetCurrent(ctx, result.SiteFix.ProjectID, target); err != nil {
+		return result, err
+	}
 	claimed, err := s.Q.ClaimCanonicalSiteFixGitHubPR(ctx, db.ClaimCanonicalSiteFixGitHubPRParams{
 		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 300,
 		ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
-		SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		SiteFixID:             pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		PublisherConnectionID: target.ConnectionID, ExpectedConnectionUpdatedAt: target.ExpectedUpdatedAt,
+		ExpectedRepoFullName: target.Repo, ExpectedBaseBranch: target.Branch,
 	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -1348,32 +1490,49 @@ func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefi
 			return result, canonicalDoctorLifecycleTransitionError(loadErr)
 		}
 		result.Application = app
-		if app.Status == "github_pr_open" || app.Status == "creating_pr" {
-			return result, nil
+		if canonicalSiteFixPRClaimCollisionIsComplete(app) {
+			return reloadCanonicalSiteFixAfterPRObservation(ctx, s.Q, result)
 		}
-		return result, sitefix.ErrLifecycleConflict
+		return result, validateCanonicalSiteFixPRResponse(result)
 	}
 	result.Application = claimed
 	prepared, err = sitefix.ParseRepositoryPreparedPatch(claimed.PatchSnapshot)
 	if err != nil {
 		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, err)
 	}
-	if prepared.Repo != cfg.Repo || prepared.BaseBranch != cfg.Branch {
-		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("prepared repository target no longer matches the configured publisher target"))
+	if prepared.Repo != target.Repo || prepared.BaseBranch != target.Branch {
+		return s.resetCanonicalSiteFixPRForReprepare(
+			ctx, result, claimToken, "repository_target_changed",
+			errors.New("prepared repository target no longer matches the configured publisher target"),
+		)
+	}
+	workingBranch := siteFixRepositoryWorkingBranch(result.SiteFix.ID, claimed.ID)
+	client := publisher.NewGitHubPRClient(target.token, target.Repo, target.Branch, s.Log)
+	repositoryClient := &publisherSiteFixRepositoryClient{
+		GitHubPRClient: client, token: target.token, repo: target.Repo,
+		httpClient: &http.Client{Timeout: 30 * time.Second}, apiBase: "https://api.github.com",
 	}
 	renewClaim := func(callCtx context.Context) error {
+		if currentErr := s.ensureGitHubPRTargetCurrent(callCtx, result.SiteFix.ProjectID, target); currentErr != nil {
+			return currentErr
+		}
 		_, renewErr := s.Q.RenewCanonicalSiteFixGitHubPRClaim(callCtx, db.RenewCanonicalSiteFixGitHubPRClaimParams{
 			LeaseTtlSeconds: 300, ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
 			SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true}, PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+			PublisherConnectionID: target.ConnectionID, ExpectedConnectionUpdatedAt: target.ExpectedUpdatedAt,
+			ExpectedRepoFullName: target.Repo, ExpectedBaseBranch: target.Branch,
 		})
 		return canonicalDoctorLifecycleTransitionError(renewErr)
 	}
 	client.BeforeMutation = renewClaim
 	snapshot := sitefix.RepositorySnapshot{Repo: prepared.Repo, Branch: prepared.BaseBranch, BaseCommitSHA: prepared.BaseCommitSHA}
 	for _, file := range prepared.Files {
+		if currentErr := s.ensureGitHubPRTargetCurrent(ctx, result.SiteFix.ProjectID, target); currentErr != nil {
+			return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, currentErr)
+		}
 		content, readErr := repositoryClient.ReadBlobBounded(ctx, file.BaseSHA, sitefix.MaxRepositorySourceFileBytes)
 		if readErr != nil {
-			return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.New("prepared repository source blob is unavailable"))
+			return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, safeRepositorySourceFailure("prepared repository source blob is unavailable", readErr))
 		}
 		snapshot.Sources = append(snapshot.Sources, sitefix.RepositorySource{Path: file.Path, SHA: file.BaseSHA, Content: string(content)})
 	}
@@ -1403,45 +1562,137 @@ func (s *Server) openCanonicalSiteFixGitHubPR(ctx context.Context, result sitefi
 	firstPath, firstBaseSHA := prepared.Files[0].Path, prepared.Files[0].BaseSHA
 	repo, branch, baseCommit := prepared.Repo, prepared.BaseBranch, prepared.BaseCommitSHA
 	baseHash, proposedHash := prepared.SourceAggregateSHA256, prepared.ResultAggregateSHA256
+	if err := s.ensureGitHubPRTargetCurrent(ctx, result.SiteFix.ProjectID, target); err != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, err)
+	}
 	saved, err := s.Q.SaveCanonicalSiteFixPreparedPatch(ctx, db.SaveCanonicalSiteFixPreparedPatchParams{
-		PublisherConnectionID: pgtype.UUID{Bytes: conn.ID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
+		PublisherConnectionID: pgtype.UUID{Bytes: target.ConnectionID, Valid: true}, RepoFullName: &repo, BaseBranch: &branch,
 		BaseCommitSha: &baseCommit, SourceFilePath: &firstPath, SourceFilePaths: pathSnapshot, BaseFileSha: &firstBaseSHA,
 		BaseContentHash: &baseHash, ProposedContentHash: &proposedHash,
 		SourceMappingConfidence: claimed.SourceMappingConfidence, SourceMappingReason: claimed.SourceMappingReason,
 		PatchSnapshot: claimed.PatchSnapshot, DiffSnapshot: persistedDiff, ResolutionCriteria: claimed.ResolutionCriteria,
 		ProjectID: result.SiteFix.ProjectID, ApplicationID: claimed.ID, SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
 		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, WriterAuthorityFingerprint: claimed.PrClaimAuthorityFingerprint,
+		ExpectedConnectionUpdatedAt: target.ExpectedUpdatedAt, ExpectedRepoFullName: target.Repo, ExpectedBaseBranch: target.Branch,
 	})
 	if err != nil {
 		return result, canonicalDoctorLifecycleTransitionError(err)
 	}
 	result.Application = saved
-	pr, err := client.CreateFileUpdatesPR(ctx, publisher.GitHubFileUpdatesPRInput{
+	if err := s.ensureGitHubPRTargetCurrent(ctx, result.SiteFix.ProjectID, target); err != nil {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, err)
+	}
+	pr, reconciledWorkingBranch, err := createCanonicalSiteFixPRWithLegacyReconciliation(ctx, client, legacySiteFixRepositoryWorkingBranch(result.SiteFix.ID), publisher.GitHubFileUpdatesPRInput{
 		WorkingBranch: workingBranch, BaseCommitSHA: prepared.BaseCommitSHA, Files: files,
 		CommitMessage: "fix: apply CiteLoop Doctor Site Fix", CommitDate: claimed.CreatedAt.Time,
 		Title: "Apply CiteLoop Doctor Site Fix", Body: "Applies the approved Doctor Site Fix for " + result.Application.TargetUrl + ".\n\nMerging this PR moves the fix to awaiting deployment; verification runs separately.",
 	})
 	if err != nil {
+		if errors.Is(err, publisher.ErrSourceConflict) {
+			return s.resetCanonicalSiteFixPRForReprepare(ctx, result, claimToken, "repository_source_conflict", err)
+		}
 		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, err)
 	}
+	workingBranch = reconciledWorkingBranch
 	prNumber := int32(pr.Number)
 	if err := renewClaim(ctx); err != nil {
-		return result, err
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, err)
 	}
 	app, err := s.Q.MarkCanonicalSiteFixGitHubPR(ctx, db.MarkCanonicalSiteFixGitHubPRParams{
-		PublisherConnectionID: pgtype.UUID{Bytes: conn.ID, Valid: true}, RepoFullName: &repo,
+		PublisherConnectionID: target.ConnectionID, RepoFullName: &repo,
 		BaseBranch: &branch, WorkingBranch: &workingBranch, BaseCommitSha: &baseCommit, HeadCommitSha: &pr.HeadCommitSHA,
 		SourceFilePath: &firstPath, BaseFileSha: &firstBaseSHA, ProposedContentHash: &proposedHash,
-		GithubPrNumber: &prNumber, GithubPrUrl: &pr.URL, GithubPrState: &pr.State,
+		GithubPrNumber: &prNumber, GithubPrUrl: &pr.URL, GithubPrState: pr.State,
 		ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
-		SiteFixID:    pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
-		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+		SiteFixID:                   pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		PrClaimToken:                pgtype.UUID{Bytes: claimToken, Valid: true},
+		ExpectedConnectionUpdatedAt: target.ExpectedUpdatedAt, ExpectedRepoFullName: target.Repo, ExpectedBaseBranch: target.Branch,
+	})
+	if err != nil {
+		cause := canonicalDoctorLifecycleTransitionError(err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if currentErr := s.ensureGitHubPRTargetCurrent(ctx, result.SiteFix.ProjectID, target); currentErr != nil {
+				cause = currentErr
+			}
+		}
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, cause)
+	}
+	result.Application = app
+	return reloadCanonicalSiteFixAfterPRObservation(ctx, s.Q, result)
+}
+
+type canonicalSiteFixPRClient interface {
+	FindPullRequestByHead(context.Context, string) (publisher.GitHubPRResult, bool, error)
+	CreateFileUpdatesPR(context.Context, publisher.GitHubFileUpdatesPRInput) (publisher.GitHubPRResult, error)
+}
+
+func createCanonicalSiteFixPRWithLegacyReconciliation(
+	ctx context.Context,
+	client canonicalSiteFixPRClient,
+	legacyWorkingBranch string,
+	input publisher.GitHubFileUpdatesPRInput,
+) (publisher.GitHubPRResult, string, error) {
+	primaryWorkingBranch := input.WorkingBranch
+	legacyWorkingBranch = strings.TrimSpace(legacyWorkingBranch)
+	if legacyWorkingBranch != "" && legacyWorkingBranch != primaryWorkingBranch {
+		if _, found, err := client.FindPullRequestByHead(ctx, legacyWorkingBranch); err != nil {
+			return publisher.GitHubPRResult{}, "", err
+		} else if found {
+			legacyInput := input
+			legacyInput.WorkingBranch = legacyWorkingBranch
+			pr, createErr := client.CreateFileUpdatesPR(ctx, legacyInput)
+			if createErr == nil {
+				return pr, legacyWorkingBranch, nil
+			}
+			if !errors.Is(createErr, publisher.ErrDivergentPullRequest) {
+				return publisher.GitHubPRResult{}, "", createErr
+			}
+		}
+	}
+	input.WorkingBranch = primaryWorkingBranch
+	pr, err := client.CreateFileUpdatesPR(ctx, input)
+	return pr, primaryWorkingBranch, err
+}
+
+type canonicalSiteFixByIDStore interface {
+	GetCanonicalSiteFix(context.Context, db.GetCanonicalSiteFixParams) (db.SiteFix, error)
+}
+
+func reloadCanonicalSiteFixAfterPRObservation(
+	ctx context.Context,
+	store canonicalSiteFixByIDStore,
+	result sitefix.ApplyResult,
+) (sitefix.ApplyResult, error) {
+	fix, err := store.GetCanonicalSiteFix(ctx, db.GetCanonicalSiteFixParams{
+		ID: result.SiteFix.ID, ProjectID: result.SiteFix.ProjectID,
 	})
 	if err != nil {
 		return result, canonicalDoctorLifecycleTransitionError(err)
 	}
-	result.Application = app
+	result.SiteFix = fix
 	return result, nil
+}
+
+func (s *Server) resetCanonicalSiteFixPRForReprepare(
+	ctx context.Context,
+	result sitefix.ApplyResult,
+	claimToken uuid.UUID,
+	reason string,
+	cause error,
+) (sitefix.ApplyResult, error) {
+	app, err := s.Q.ResetCanonicalSiteFixSourceConflictForReprepare(ctx, db.ResetCanonicalSiteFixSourceConflictForReprepareParams{
+		ProjectID: result.SiteFix.ProjectID, ApplicationID: result.Application.ID,
+		SiteFixID:    pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
+		PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, ReprepareReason: reason,
+	})
+	if err == nil {
+		result.Application = app
+		return result, fmt.Errorf("%w: %s", errCanonicalSiteFixFreshReprepare, reason)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, fmt.Errorf("%w: %s", errCanonicalSiteFixReprepareExhausted, reason))
+	}
+	return s.failCanonicalSiteFixPRClaim(ctx, result, claimToken, errors.Join(cause, canonicalDoctorLifecycleTransitionError(err)))
 }
 
 func (s *Server) failCanonicalSiteFixPRClaim(ctx context.Context, result sitefix.ApplyResult, claimToken uuid.UUID, cause error) (sitefix.ApplyResult, error) {
@@ -1464,6 +1715,9 @@ func safeCanonicalSiteFixPRFailureCode(err error) string {
 	if errors.Is(err, publisher.ErrSourceConflict) {
 		return "repository_source_conflict"
 	}
+	if errors.Is(err, errCanonicalSiteFixReprepareExhausted) {
+		return "repository_reprepare_exhausted"
+	}
 	message := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(message, "divergent"):
@@ -1477,40 +1731,20 @@ func safeCanonicalSiteFixPRFailureCode(err error) string {
 	}
 }
 
-func siteFixRepositoryWorkingBranch(fixID uuid.UUID) string {
-	compact := strings.ReplaceAll(fixID.String(), "-", "")
+func siteFixRepositoryWorkingBranch(fixID, applicationID uuid.UUID) string {
+	return legacySiteFixRepositoryWorkingBranch(fixID) + "-" + compactSiteFixBranchID(applicationID)
+}
+
+func legacySiteFixRepositoryWorkingBranch(fixID uuid.UUID) string {
+	return "citeloop/doctor-site-fix-" + compactSiteFixBranchID(fixID)
+}
+
+func compactSiteFixBranchID(id uuid.UUID) string {
+	compact := strings.ReplaceAll(id.String(), "-", "")
 	if len(compact) > 12 {
 		compact = compact[:12]
 	}
-	return "citeloop/doctor-site-fix-" + compact
-}
-
-func canonicalSiteFixPRMutationFamily(fix db.SiteFix) string {
-	var payload struct {
-		Mutations []struct {
-			Field     string `json:"field"`
-			Operation string `json:"operation"`
-		} `json:"mutations"`
-	}
-	if json.Unmarshal(fix.ProposedFix, &payload) != nil || len(payload.Mutations) == 0 {
-		return ""
-	}
-	for _, mutation := range payload.Mutations {
-		field := strings.ToLower(strings.TrimSpace(mutation.Field))
-		op := strings.ToLower(strings.TrimSpace(mutation.Operation))
-		if (field != "title" && field != "meta_description") || (op != "add" && op != "replace" && op != "update") {
-			return ""
-		}
-	}
-	return "metadata_rewrite"
-}
-
-func emptyStringPointer(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	value = strings.TrimSpace(value)
-	return &value
+	return compact
 }
 
 func canonicalDoctorLifecycleTransitionError(err error) error {
@@ -1518,18 +1752,6 @@ func canonicalDoctorLifecycleTransitionError(err error) error {
 		return fmt.Errorf("%w: canonical state changed concurrently", sitefix.ErrLifecycleConflict)
 	}
 	return err
-}
-
-func (s *Server) fallbackCanonicalSiteFixManualApply(ctx context.Context, result sitefix.ApplyResult, reason string) (sitefix.ApplyResult, error) {
-	app, err := s.Q.MarkCanonicalSiteFixManualHandoff(ctx, db.MarkCanonicalSiteFixManualHandoffParams{
-		ProjectID: result.SiteFix.ProjectID, SiteFixID: pgtype.UUID{Bytes: result.SiteFix.ID, Valid: true},
-		ApplicationID: result.Application.ID, FailureReason: &reason,
-	})
-	if err != nil {
-		return result, canonicalDoctorLifecycleTransitionError(err)
-	}
-	result.Application = app
-	return result, nil
 }
 
 func (s *Server) verifyDoctorSiteFix(w http.ResponseWriter, r *http.Request) {
@@ -1597,6 +1819,8 @@ func (s *Server) writeDoctorSiteFixError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, sitefix.ErrLifecycleConflict):
 		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, errGitHubPRNotReady), errors.Is(err, errGitHubPRReadinessChanged):
+		writeErr(w, http.StatusConflict, "Connect GitHub and grant repository write access so CiteLoop can create a repair PR automatically.")
 	case errors.Is(err, ErrDoctorSiteFixManualEvidenceInvalid):
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, ErrDoctorAIVerificationNotAuthorized):

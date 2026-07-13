@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,6 +162,111 @@ func TestPublisherSiteFixRepositoryClientRejectsOversizedBlobAtHTTPBoundary(t *t
 	}
 }
 
+func TestPublisherSiteFixRepositoryClientReturnsSafeTypedGitHubStatusErrors(t *testing.T) {
+	const secretBody = "ghp_do_not_log_this raw upstream body"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(secretBody))
+	}))
+	defer server.Close()
+	client := &publisherSiteFixRepositoryClient{token: "token", repo: "acme/site", httpClient: server.Client(), apiBase: server.URL}
+	for _, operation := range []string{"resolve", "blob"} {
+		t.Run(operation, func(t *testing.T) {
+			var err error
+			switch operation {
+			case "resolve":
+				_, err = client.ResolveRefCommitSHA(context.Background(), "main")
+			case "blob":
+				_, err = client.ReadBlobBounded(context.Background(), "blob-1", 16)
+			}
+			var statusError interface{ StatusCode() int }
+			if !errors.As(err, &statusError) || statusError.StatusCode() != http.StatusForbidden {
+				t.Fatalf("error = %T %v", err, err)
+			}
+			if strings.Contains(err.Error(), secretBody) {
+				t.Fatalf("typed error leaked upstream body: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadinessFencedRepositoryClientChecksBeforeEveryRead(t *testing.T) {
+	delegate := &siteFixRepositoryClientStub{baseCommit: "base", entries: []publisher.GitHubTreeEntry{{SHA: "blob"}}, blobs: map[string][]byte{"blob": []byte("ok")}}
+	checks := 0
+	client := &readinessFencedSiteFixRepositoryClient{
+		delegate: delegate,
+		ensureCurrent: func(context.Context) error {
+			checks++
+			return nil
+		},
+	}
+	if _, err := client.ResolveRefCommitSHA(context.Background(), "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListTree(context.Background(), "base"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ReadBlobBounded(context.Background(), "blob", 16); err != nil {
+		t.Fatal(err)
+	}
+	if checks != 3 {
+		t.Fatalf("readiness checks = %d", checks)
+	}
+
+	changed := errors.New("target changed")
+	blocked := &readinessFencedSiteFixRepositoryClient{
+		delegate:      delegate,
+		ensureCurrent: func(context.Context) error { return changed },
+	}
+	delegate.resolvedBranch = ""
+	if _, err := blocked.ResolveRefCommitSHA(context.Background(), "release"); !errors.Is(err, changed) {
+		t.Fatalf("blocked error = %v", err)
+	}
+	if delegate.resolvedBranch != "" {
+		t.Fatal("delegate ran after the target fence failed")
+	}
+}
+
+func TestSiteFixRepositoryLoaderPreservesTypedGitHubFailuresForReadinessDowngrade(t *testing.T) {
+	projectID := uuid.New()
+	fix := db.SiteFix{ID: uuid.New(), ProjectID: projectID, FindingKind: "canonical", TargetUrls: json.RawMessage(`["https://example.com/"]`)}
+	for _, phase := range []string{"resolve", "tree", "blob"} {
+		t.Run(phase, func(t *testing.T) {
+			upstream := readinessHTTPStatusError{status: http.StatusForbidden}
+			client := &siteFixRepositoryClientStub{
+				baseCommit: "base-commit",
+				entries:    []publisher.GitHubTreeEntry{{Path: "app/page.tsx", Mode: "100644", Type: "blob", SHA: "blob-page", Size: 3}},
+				blobs:      map[string][]byte{"blob-page": []byte("old")},
+			}
+			switch phase {
+			case "resolve":
+				client.resolveErr = upstream
+			case "tree":
+				client.listErr = upstream
+			case "blob":
+				client.readErr = upstream
+			}
+			loader := newSiteFixRepositorySourceLoader(
+				func(context.Context, db.SiteFix) (resolvedSiteFixRepository, error) {
+					return resolvedSiteFixRepository{ConnectionID: uuid.New(), Repo: "acme/site", Branch: "main", Token: "token"}, nil
+				},
+				func(string, string, string) siteFixRepositoryClient { return client },
+			)
+			target, candidates, err := loader.Candidates(context.Background(), fix)
+			if phase == "blob" && err == nil {
+				_, err = loader.LoadSelected(context.Background(), target, []string{candidates[0].Path})
+			}
+			var statusError interface{ StatusCode() int }
+			if !errors.As(err, &statusError) || statusError.StatusCode() != http.StatusForbidden {
+				t.Fatalf("error = %T %v, want preserved typed status", err, err)
+			}
+			if strings.Contains(err.Error(), upstream.Error()) {
+				t.Fatalf("safe wrapper exposed raw upstream text: %v", err)
+			}
+		})
+	}
+}
+
 type siteFixRepositoryClientStub struct {
 	baseCommit     string
 	entries        []publisher.GitHubTreeEntry
@@ -168,20 +274,32 @@ type siteFixRepositoryClientStub struct {
 	resolvedBranch string
 	listedRef      string
 	readSHAs       []string
+	resolveErr     error
+	listErr        error
+	readErr        error
 }
 
 func (c *siteFixRepositoryClientStub) ResolveRefCommitSHA(_ context.Context, branch string) (string, error) {
 	c.resolvedBranch = branch
+	if c.resolveErr != nil {
+		return "", c.resolveErr
+	}
 	return c.baseCommit, nil
 }
 
 func (c *siteFixRepositoryClientStub) ListTree(_ context.Context, ref string) ([]publisher.GitHubTreeEntry, error) {
 	c.listedRef = ref
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
 	return append([]publisher.GitHubTreeEntry(nil), c.entries...), nil
 }
 
 func (c *siteFixRepositoryClientStub) ReadBlobBounded(_ context.Context, sha string, _ int) ([]byte, error) {
 	c.readSHAs = append(c.readSHAs, sha)
+	if c.readErr != nil {
+		return nil, c.readErr
+	}
 	return append([]byte(nil), c.blobs[sha]...), nil
 }
 
