@@ -5362,8 +5362,7 @@ updated_opportunity as (
 ),
 withdrawn_article as (
   update articles a set
-    status = 'rejected',
-    updated_at = now()
+    status = 'rejected'
   from candidate
   where a.id = candidate.draft_article_id
     and a.project_id = candidate.project_id

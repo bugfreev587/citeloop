@@ -1560,8 +1560,7 @@ updated_opportunity as (
 -- approved article stranded in the Publish "Ready to post" queue.
 withdrawn_article as (
   update articles a set
-    status = 'rejected',
-    updated_at = now()
+    status = 'rejected'
   from candidate
   where a.id = candidate.draft_article_id
     and a.project_id = candidate.project_id

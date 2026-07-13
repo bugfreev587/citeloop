@@ -2651,6 +2651,14 @@ func (s *Server) updateSEOContentActionStatus(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, action)
 }
 
+func writeContentActionMutationError(w http.ResponseWriter, err error, notFoundMessage, internalMessage string) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, notFoundMessage)
+		return
+	}
+	writeErr(w, http.StatusInternalServerError, internalMessage)
+}
+
 func (s *Server) returnSEOContentActionToOpportunity(w http.ResponseWriter, r *http.Request) {
 	projectID, actionID, ok := s.seoIDs(w, r, "actionID")
 	if !ok {
@@ -2673,7 +2681,7 @@ func (s *Server) returnSEOContentActionToOpportunity(w http.ResponseWriter, r *h
 		ProjectID: projectID,
 	})
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "action not found or no longer reversible")
+		writeContentActionMutationError(w, err, "action not found or no longer reversible", "could not move action back to Opportunities")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

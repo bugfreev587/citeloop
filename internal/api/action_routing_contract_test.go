@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestCreateSEOContentActionInfersMultiSurfaceAssetAndReviewOutput(t *testing.T) {
@@ -70,6 +73,27 @@ func TestSEOActionReturnDismissContracts(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Fatalf("SEO action lifecycle handler contract missing %q", want)
 		}
+	}
+}
+
+func TestWriteContentActionMutationErrorClassifiesNoRowsSeparately(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{"irreversible action", pgx.ErrNoRows, http.StatusNotFound, "action not found or no longer reversible"},
+		{"database failure", errors.New("column does not exist"), http.StatusInternalServerError, "could not move action back to Opportunities"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeContentActionMutationError(recorder, tt.err, "action not found or no longer reversible", "could not move action back to Opportunities")
+			if recorder.Code != tt.wantStatus || !strings.Contains(recorder.Body.String(), tt.wantBody) {
+				t.Fatalf("response status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
