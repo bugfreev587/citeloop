@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/aicalls"
 	"github.com/citeloop/citeloop/internal/config"
@@ -38,6 +39,12 @@ type Server struct {
 	SiteFixLifecycle DoctorSiteFixLifecycleService
 	SiteFixMigration siteFixMigrationService
 	githubAppClient  githubAppAPI
+
+	githubReadinessStore      githubPRReadinessStore
+	githubReadinessChecker    githubPRReadinessChecker
+	githubReadinessHTTPClient *http.Client
+	githubReadinessAPIBase    string
+	githubReadinessNow        func() time.Time
 
 	OnboardingRunner         projectOnboardingRunner
 	InsightInventoryRunner   insightInventoryRunner
@@ -145,6 +152,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/integrations/github/installation", s.storeGithubInstallation)
 			r.Get("/integrations/github/repos", s.listGithubRepos)
 			r.Post("/integrations/github/select-repo", s.selectGithubRepo)
+			r.Get("/integrations/github/pr-readiness", s.getGitHubPRReadiness)
+			r.Post("/integrations/github/pr-readiness/check", s.checkGitHubPRReadiness)
 			r.Get("/results/actions", s.listResultsActions)
 			r.Get("/results/actions/{actionID}", s.getResultsAction)
 			r.Post("/results/recompute", s.recomputeResults)
