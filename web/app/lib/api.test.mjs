@@ -832,18 +832,27 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
         { object_type: "content_action", object_id: "duplicate-action" },
       ],
     };
-    if (url.endsWith("/apply") || url.endsWith("/verify")) {
+    if (url.endsWith("/approve") || url.endsWith("/apply") || url.endsWith("/verify")) {
       const verifying = url.endsWith("/verify");
+      const approved = url.endsWith("/approve");
       return {
         ok: true,
         status: verifying ? 202 : 200,
         json: async () => ({
-          site_fix: { ...fix, status: verifying ? "verifying" : "awaiting_deploy" },
+          site_fix: { ...fix, status: verifying ? "verifying" : approved ? "applying" : "awaiting_deploy", approved_at: approved ? "2026-07-13T10:00:00Z" : null },
           application: {
             id: "application-1",
             site_fix_id: "fix-1",
-            status: verifying ? "verification_pending" : "manual_handoff",
+            status: verifying ? "verification_pending" : "github_pr_open",
             target_url: "https://example.test/page",
+            repo_full_name: " citeloop/site ",
+            base_branch: " main ",
+            working_branch: " citeloop/doctor-site-fix-fix1 ",
+            base_commit_sha: { invalid: true },
+            head_commit_sha: " abc123 ",
+            github_pr_number: 42,
+            github_pr_url: " https://github.com/citeloop/site/pull/42 ",
+            github_pr_state: " open ",
           },
         }),
       };
@@ -887,7 +896,15 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
       { object_type: "content_action", object_id: "duplicate-action" },
     ]);
     assert.equal(created.doctor_finding_id, "finding-1");
-    assert.equal(approved.status, "approved");
+    assert.equal(approved.site_fix.status, "applying");
+    assert.equal(approved.site_fix.approved_at, "2026-07-13T10:00:00Z");
+    assert.equal(approved.application.github_pr_url, "https://github.com/citeloop/site/pull/42");
+    assert.equal(approved.application.repo_full_name, "citeloop/site");
+    assert.equal(approved.application.base_branch, "main");
+    assert.equal(approved.application.working_branch, "citeloop/doctor-site-fix-fix1");
+    assert.equal(approved.application.base_commit_sha, null);
+    assert.equal(approved.application.head_commit_sha, "abc123");
+    assert.equal(approved.application.github_pr_state, "open");
     assert.equal(applied.site_fix.status, "awaiting_deploy");
     assert.equal(applied.application.site_fix_id, "fix-1");
     assert.equal(verification.site_fix.status, "verifying");
@@ -908,7 +925,7 @@ test("canonical Doctor Site Fix APIs use project-scoped lifecycle endpoints", as
   }
 });
 
-test("Doctor Site Fix create and apply use the bounded long mutation timeout", async () => {
+test("Doctor Site Fix create, approve, and apply use the bounded long mutation timeout", async () => {
   const timeouts = [];
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
@@ -923,8 +940,8 @@ test("Doctor Site Fix create and apply use the bounded long mutation timeout", a
     const fix = { id: "fix-1", project_id: "project-1", doctor_finding_id: "finding-1", status: "approved", finding_kind: "broken" };
     return {
       ok: true,
-      status: url.endsWith("/apply") ? 200 : 201,
-      json: async () => url.endsWith("/apply")
+      status: url.endsWith("/apply") || url.endsWith("/approve") ? 200 : 201,
+      json: async () => url.endsWith("/apply") || url.endsWith("/approve")
         ? { site_fix: { ...fix, status: "awaiting_deploy" }, application: { id: "application-1", site_fix_id: "fix-1" } }
         : fix,
     };
@@ -934,8 +951,9 @@ test("Doctor Site Fix create and apply use the bounded long mutation timeout", a
     const { createApi } = await loadApiModule();
     const api = createApi({ token: "session-token", timeoutMs: 1 });
     await api.createDoctorSiteFix("project-1", "finding-1");
+    await api.approveDoctorSiteFix("project-1", "fix-1");
     await api.applyDoctorSiteFix("project-1", "fix-1");
-    assert.deepEqual(timeouts, [120_000, 120_000]);
+    assert.deepEqual(timeouts, [120_000, 120_000, 120_000]);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.setTimeout = originalSetTimeout;

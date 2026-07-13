@@ -372,6 +372,7 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
 
   // Canonical Site Fix timestamps live on the dedicated repair-loop surface.
   const siteFixes = read("projects/[id]/site-fixes/site-fixes-client.tsx");
+  const siteFixProgress = read("lib/site-fix-pr-progress.ts");
   const siteFixesGridStart = siteFixes.indexOf("data-site-fixes-grid");
   const siteFixesGridEnd = siteFixes.indexOf("</section>", siteFixesGridStart);
   const siteFixDrawerStart = siteFixes.indexOf("data-site-fix-drawer");
@@ -383,7 +384,7 @@ test("analysis cards and drawers expose finding and action timestamps", () => {
   assert.match(siteFixes, /min-h-56/);
   assert.match(siteFixes, /Updated \{formatDate\(fix\.updated_at \?\? fix\.created_at \?\? null\)\}/);
   assert.match(siteFixDrawer, /<LifecycleStrip fix=\{selected\}/);
-  assert.match(siteFixes, /\["Finding", "Approved", "Applied \/ deploy", "Verified"\]/);
+  assert.match(siteFixProgress, /\["Finding", "Approved", "Applied \/ deploy", "Verified"\]/);
   assert.match(siteFixDrawer, /formatDate\(selected\.created_at \?\? null\)/);
 });
 

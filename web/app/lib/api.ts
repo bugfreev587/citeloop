@@ -1664,12 +1664,17 @@ function normalizeSiteChangeApplication(raw: any): SiteChangeApplication {
     source_file_paths: normalizeStringArray(data.source_file_paths),
     source_mapping_confidence: String(data.source_mapping_confidence ?? ""),
     source_mapping_reason: String(data.source_mapping_reason ?? ""),
+    repo_full_name: trimmedString(data.repo_full_name) ?? null,
+    base_branch: trimmedString(data.base_branch) ?? null,
+    working_branch: trimmedString(data.working_branch) ?? null,
+    base_commit_sha: trimmedString(data.base_commit_sha) ?? null,
+    head_commit_sha: trimmedString(data.head_commit_sha) ?? null,
     patch_snapshot: data.patch_snapshot ?? {},
     diff_snapshot: data.diff_snapshot ?? {},
     resolution_criteria: data.resolution_criteria ?? {},
     github_pr_number: data.github_pr_number == null ? null : Number(data.github_pr_number),
-    github_pr_url: data.github_pr_url ?? null,
-    github_pr_state: data.github_pr_state ?? null,
+    github_pr_url: trimmedString(data.github_pr_url) ?? null,
+    github_pr_state: trimmedString(data.github_pr_state) ?? null,
     deployment_snapshot: data.deployment_snapshot ?? {},
     verification_snapshot: data.verification_snapshot ?? {},
     failure_reason: data.failure_reason ?? null,
@@ -2638,9 +2643,13 @@ export function createApi(auth?: AuthOptions) {
     const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/dismiss-link`, { method: "POST" }, auth);
     return normalizeSiteFix(raw);
   },
-  approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFix> => {
-    const raw = await req<any>(`/projects/${id}/doctor/site-fixes/${fixID}/approve`, { method: "POST" }, auth);
-    return normalizeSiteFix(raw);
+  approveDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
+    const raw = await req<any>(
+      `/projects/${id}/doctor/site-fixes/${fixID}/approve`,
+      { method: "POST" },
+      withMinimumTimeout(auth, DOCTOR_SITE_FIX_MUTATION_TIMEOUT_MS),
+    );
+    return normalizeSiteFixLifecycleResult(raw);
   },
   applyDoctorSiteFix: async (id: string, fixID: string): Promise<SiteFixLifecycleResult> => {
     const raw = await req<any>(

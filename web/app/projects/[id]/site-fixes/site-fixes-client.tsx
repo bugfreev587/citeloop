@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -24,11 +24,22 @@ import {
   canonicalSiteFixTarget,
   canonicalSiteFixTitle,
 } from "../../../lib/site-fix";
+import {
+  canonicalSiteFixMilestones,
+  canonicalSiteFixProgressText,
+  shouldPollSiteFixLifecycle,
+  siteFixPullRequestAction,
+  siteFixPullRequestMutationAction,
+  siteFixReadinessGate,
+  validSiteFixPullRequestURL,
+} from "../../../lib/site-fix-pr-progress";
+import type { GithubPRReadiness } from "../../../lib/api";
 import type { SiteChangeApplication, SiteFix } from "../../../lib/types";
 import { useApi } from "../../../lib/use-api";
 import { useToast } from "../../../components/toast-provider";
 
 const CLOSED_STATUSES = new Set(["verified", "failed_terminal", "superseded", "migration_rolled_back"]);
+const SITE_FIX_POLL_INTERVAL_MS = 10_000;
 
 function statusTone(status: SiteFix["status"]): "neutral" | "red" | "amber" | "green" | "blue" | "violet" {
   if (status === "verified") return "green";
@@ -68,48 +79,92 @@ async function writeClipboardText(text: string) {
   if (!copied) throw new Error("Clipboard write failed.");
 }
 
-function lifecycleStep(fix: SiteFix) {
-  if (fix.status === "verified") return 3;
-  if (["preparing", "ready_to_apply", "applying", "awaiting_deploy", "verifying", "failed_retryable", "reopened"].includes(fix.status) || fix.applied_at || fix.application) return 2;
-  if (fix.status === "approved" || fix.approved_at) return 1;
-  return 0;
-}
-
 function LifecycleStrip({ fix }: { fix: SiteFix }) {
-  const current = lifecycleStep(fix);
-  const applicationStep = fix.status === "awaiting_deploy"
-    ? "Awaiting deploy"
-    : fix.status === "verifying"
-      ? "Verifying"
-      : fix.status === "failed_retryable" || fix.status === "reopened"
-        ? "Verification retry"
-        : "Applied / deploy";
-  const steps = ["Finding", "Approved", "Applied / deploy", "Verified"];
+  const milestones = canonicalSiteFixMilestones(fix);
   return (
     <ol aria-label="Site fix lifecycle" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {steps.map((step, index) => {
-        const isCurrent = index === current;
-        const isComplete = index < current || (index === 3 && fix.status === "verified");
+      {milestones.map((milestone, index) => {
         return (
           <li
-            key={`${index}-${step}`}
-            aria-current={isCurrent ? "step" : undefined}
+            key={`${index}-${milestone.label}`}
+            aria-current={milestone.current ? "step" : undefined}
             className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-              isComplete
+              milestone.complete
                 ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : isCurrent
+                : milestone.current
                   ? "border-sky-200 bg-sky-50 text-sky-800"
                   : "border-slate-200 bg-slate-50 text-slate-500"
             }`}
           >
             <span className="flex items-center gap-1.5">
-              {isComplete ? <Check aria-hidden="true" size={13} /> : <span aria-hidden="true">{index + 1}</span>}
-              {index === 2 ? applicationStep : step}
+              {milestone.complete ? <Check aria-hidden="true" size={13} /> : <span aria-hidden="true">{index + 1}</span>}
+              {milestone.label}
             </span>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+function ReadinessGuardedAction({
+  gate,
+  busy,
+  disabled = false,
+  busyLabel,
+  label,
+  projectId,
+  variant = "primary",
+  onAction,
+}: {
+  gate: ReturnType<typeof siteFixReadinessGate>;
+  busy: boolean;
+  disabled?: boolean;
+  busyLabel: string;
+  label: string;
+  projectId: string;
+  variant?: "primary" | "outline";
+  onAction: () => void;
+}) {
+  const warningID = useId();
+  const blocked = !gate.allowed;
+  return (
+    <div className="group/readiness relative">
+      <Button
+        variant={variant}
+        aria-disabled={blocked || undefined}
+        aria-describedby={blocked ? warningID : undefined}
+        disabled={busy || disabled}
+        onClick={(event) => {
+          if (blocked) {
+            event.preventDefault();
+            return;
+          }
+          onAction();
+        }}
+        className={blocked ? "cursor-not-allowed opacity-55" : undefined}
+      >
+        <ButtonProgress busy={busy} busyLabel={busyLabel} idleIcon={<Wrench aria-hidden="true" size={14} />}>
+          {label}
+        </ButtonProgress>
+      </Button>
+      {blocked && (
+        <div
+          id={warningID}
+          role="note"
+          className="pointer-events-none absolute bottom-full right-0 mb-2 w-72 translate-y-1 rounded-xl border border-amber-200 bg-white p-3 text-left opacity-0 shadow-lg transition duration-150 group-hover/readiness:pointer-events-auto group-hover/readiness:translate-y-0 group-hover/readiness:opacity-100 group-focus-within/readiness:pointer-events-auto group-focus-within/readiness:translate-y-0 group-focus-within/readiness:opacity-100"
+        >
+          <div className="text-xs font-bold text-slate-950">{gate.title}</div>
+          <p className="mt-1 text-xs leading-5 text-slate-600">{gate.detail}</p>
+          <Link
+            href={`/projects/${projectId}/settings#publisher`}
+            className="mt-2 inline-flex text-xs font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          >
+            Review Publisher settings
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -138,28 +193,64 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   const [siteFixes, setSiteFixes] = useState<SiteFix[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [githubReadiness, setGithubReadiness] = useState<GithubPRReadiness | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(true);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedID, setSelectedID] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const listRequestRef = useRef(0);
+  const pollRequestRef = useRef(0);
+  const fullListLoadingRef = useRef(false);
+  const readinessRequestRef = useRef(0);
+
+  const errorMessage = useCallback((err: any, fallback: string) => err?.apiMessage || err?.message || fallback, []);
 
   const refresh = useCallback(async () => {
+    const listRequest = ++listRequestRef.current;
+    const readinessRequest = ++readinessRequestRef.current;
+    pollRequestRef.current += 1;
+    fullListLoadingRef.current = true;
     setLoading(true);
+    setReadinessLoading(true);
     setError(null);
-    try {
-      const rows = await api.listDoctorSiteFixes(projectId);
-      setSiteFixes(rows);
-      const canonicalInitialFixID = canonicalFixIDForAlias(rows, initialFixId);
-      if (canonicalInitialFixID) setSelectedID(canonicalInitialFixID);
-    } catch (err: any) {
-      setError(err?.apiMessage || err?.message || "Could not load Site Fixes.");
-    } finally {
+    setReadinessError(null);
+    const [fixesResult, readinessResult] = await Promise.allSettled([
+      api.listDoctorSiteFixes(projectId),
+      api.getGithubPRReadiness(projectId),
+    ]);
+    if (listRequest === listRequestRef.current) {
+      if (fixesResult.status === "fulfilled") {
+        const rows = fixesResult.value;
+        setSiteFixes(rows);
+        const canonicalInitialFixID = canonicalFixIDForAlias(rows, initialFixId);
+        if (canonicalInitialFixID) setSelectedID(canonicalInitialFixID);
+      } else {
+        setError(errorMessage(fixesResult.reason, "Could not load Site Fixes."));
+      }
+      fullListLoadingRef.current = false;
       setLoading(false);
     }
-  }, [api, initialFixId, projectId]);
+    if (readinessRequest === readinessRequestRef.current) {
+      if (readinessResult.status === "fulfilled") {
+        setGithubReadiness(readinessResult.value);
+      } else {
+        setGithubReadiness(null);
+        setReadinessError(errorMessage(readinessResult.reason, "Could not load GitHub readiness."));
+      }
+      setReadinessLoading(false);
+    }
+  }, [api, errorMessage, initialFixId, projectId]);
 
   useEffect(() => {
     void refresh();
+    return () => {
+      listRequestRef.current += 1;
+      pollRequestRef.current += 1;
+      fullListLoadingRef.current = false;
+      readinessRequestRef.current += 1;
+    };
   }, [refresh]);
 
   const sortedFixes = useMemo(
@@ -169,6 +260,34 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   const active = sortedFixes.filter((fix) => !CLOSED_STATUSES.has(fix.status));
   const completed = sortedFixes.filter((fix) => CLOSED_STATUSES.has(fix.status));
   const selected = selectedID ? siteFixes.find((fix) => fix.id === selectedID) ?? null : null;
+
+  const pollSiteFixes = useCallback(async () => {
+    if (fullListLoadingRef.current) return;
+    const request = ++pollRequestRef.current;
+    try {
+      const rows = await api.listDoctorSiteFixes(projectId);
+      if (request !== pollRequestRef.current || fullListLoadingRef.current) return;
+      setSiteFixes(rows);
+    } catch {
+      // Background progress refreshes are best-effort. The last durable view
+      // stays visible until the next interval or an explicit page refresh.
+    }
+  }, [api, projectId]);
+
+  const reconcileAfterMutationFailure = useCallback(async (err: any) => {
+    if (err?.status === 409) {
+      await refresh();
+      return;
+    }
+    await pollSiteFixes();
+  }, [pollSiteFixes, refresh]);
+
+  const pollSelectedFix = shouldPollSiteFixLifecycle({ drawerOpen: Boolean(selected), fix: selected });
+  useEffect(() => {
+    if (!pollSelectedFix) return;
+    const intervalID = window.setInterval(() => void pollSiteFixes(), SITE_FIX_POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalID);
+  }, [pollSelectedFix, pollSiteFixes]);
 
   useEffect(() => {
     if (selectedID && !selected) setSelectedID(null);
@@ -193,10 +312,15 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   async function approveFix(fix: SiteFix) {
     setBusy(`approve-${fix.id}`);
     try {
-      const updated = await api.approveDoctorSiteFix(projectId, fix.id);
-      replaceFix(updated);
-      notify({ tone: "green", title: "Fix approved", detail: "The repair is ready for application." });
+      const result = await api.approveDoctorSiteFix(projectId, fix.id);
+      replaceFix(result.site_fix, result.application);
+      notify({
+        tone: "green",
+        title: result.application.github_pr_url ? "Repair PR created" : "Fix approved",
+        detail: result.application.github_pr_url ? "Review and merge the pull request, then wait for deployment." : "Pull request creation is in progress.",
+      });
     } catch (err: any) {
+      await reconcileAfterMutationFailure(err);
       notify({ tone: "red", title: "Could not approve fix", detail: err?.apiMessage || err?.message });
     } finally {
       setBusy(null);
@@ -204,18 +328,19 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   async function applyFix(fix: SiteFix) {
-    const retrying = fix.status === "preparing";
+    const retrying = fix.status === "preparing" && Boolean(fix.failure_reason || fix.application?.failure_reason);
     setBusy(`apply-${fix.id}`);
     try {
       const result = await api.applyDoctorSiteFix(projectId, fix.id);
       replaceFix(result.site_fix, result.application);
       notify({
         tone: "green",
-        title: retrying ? "Application retry started" : "Application started",
-        detail: result.application.github_pr_url ? "A source change is ready for deploy review." : "Follow the application handoff shown here.",
+        title: retrying ? "PR creation retried" : "Repair PR creation started",
+        detail: result.application.github_pr_url ? "Review and merge the pull request, then wait for deployment." : "Repository preparation is in progress.",
       });
     } catch (err: any) {
-      notify({ tone: "red", title: retrying ? "Could not retry apply" : "Could not apply fix", detail: err?.apiMessage || err?.message });
+      await reconcileAfterMutationFailure(err);
+      notify({ tone: "red", title: retrying ? "Could not retry PR creation" : "Could not create repair PR", detail: err?.apiMessage || err?.message });
     } finally {
       setBusy(null);
     }
@@ -268,7 +393,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
         <h3 className="mt-4 line-clamp-3 text-base font-bold leading-6 text-slate-950">{canonicalSiteFixTitle(fix)}</h3>
         <p className="mt-2 line-clamp-2 break-all text-sm leading-5 text-slate-500">{canonicalSiteFixTarget(fix)}</p>
         <div className="mt-auto border-t border-slate-100 pt-4">
-          <p className="line-clamp-2 text-xs leading-5 text-slate-600">{canonicalSiteFixNextAction(fix)}</p>
+          <p className="line-clamp-2 text-xs leading-5 text-slate-600">{canonicalSiteFixProgressText(fix) || canonicalSiteFixNextAction(fix)}</p>
           <p className="mt-2 text-[11px] text-slate-400">Updated {formatDate(fix.updated_at ?? fix.created_at ?? null)}</p>
         </div>
       </button>
@@ -276,11 +401,29 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   const drawerApplication = selected?.application ?? null;
-  const requiresManualApplyConfirmation = selected?.status === "applying" && drawerApplication?.status === "manual_apply_required";
-  const retryingApply = selected?.status === "preparing";
-  const canApprove = selected?.status === "proposed";
-  const canApply = Boolean(selected && ["approved", "preparing", "ready_to_apply"].includes(selected.status));
-  const canVerify = Boolean(selected && (["awaiting_deploy", "failed_retryable", "reopened"].includes(selected.status) || requiresManualApplyConfirmation));
+  const readinessGate = siteFixReadinessGate({ readiness: githubReadiness, loading: readinessLoading, fetchError: readinessError });
+  const primaryAction = selected ? siteFixPullRequestAction(selected) : null;
+  const mutationAction = selected ? siteFixPullRequestMutationAction(selected) : null;
+  const primaryMutationAction = primaryAction?.kind === "approve" || primaryAction?.kind === "apply" ? primaryAction : null;
+  const secondaryRetryAction = primaryAction?.kind === "open_pr" && mutationAction?.kind === "apply" && mutationAction.label.startsWith("Retry")
+    ? mutationAction
+    : null;
+  const pullRequestURL = validSiteFixPullRequestURL(drawerApplication?.github_pr_url);
+  const applicationRepositoryDetails = [
+    { label: "PR number", value: drawerApplication?.github_pr_number == null ? null : `#${drawerApplication.github_pr_number}` },
+    { label: "PR state", value: drawerApplication?.github_pr_state },
+    { label: "Repository", value: drawerApplication?.repo_full_name },
+    { label: "Base branch", value: drawerApplication?.base_branch },
+    { label: "Working branch", value: drawerApplication?.working_branch },
+    { label: "Base commit", value: drawerApplication?.base_commit_sha },
+    { label: "Head commit", value: drawerApplication?.head_commit_sha },
+  ].filter((detail): detail is { label: string; value: string } => Boolean(detail.value));
+  const canVerify = Boolean(selected && ["awaiting_deploy", "failed_retryable", "reopened"].includes(selected.status));
+  const readinessSurface = readinessGate.tone === "green"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+    : readinessGate.tone === "red"
+      ? "border-red-200 bg-red-50 text-red-950"
+      : "border-amber-200 bg-amber-50 text-amber-950";
 
   return (
     <>
@@ -311,6 +454,27 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="text-2xl font-bold text-slate-950">{siteFixes.filter((fix) => Boolean(fix.failure_reason)).length}</div>
               <div className="mt-1 text-xs font-medium text-slate-500">Needs attention</div>
+            </div>
+          </div>
+          <div aria-live="polite" aria-busy={readinessLoading} className={`mt-4 border-y px-3 py-3 ${readinessSurface}`}>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-sm font-bold">{readinessGate.title}</div>
+                <p className="mt-1 max-w-2xl text-sm leading-5 opacity-80">{readinessGate.detail}</p>
+                {(githubReadiness?.repo || githubReadiness?.branch) && (
+                  <p className="mt-2 text-xs font-semibold opacity-75">
+                    {[githubReadiness.repo, githubReadiness.branch].filter(Boolean).join(" @ ")}
+                  </p>
+                )}
+              </div>
+              {!readinessGate.allowed && (
+                <Link
+                  href={`/projects/${projectId}/settings#publisher`}
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-current/20 bg-white/70 px-3 text-xs font-bold transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                >
+                  Publisher settings
+                </Link>
+              )}
             </div>
           </div>
         </section>
@@ -361,22 +525,43 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               <Button onClick={() => void copyFixJSON(selected)}>
                 <Clipboard aria-hidden="true" size={14} /> Copy fix JSON
               </Button>
-              {canApprove && (
-                <Button variant="primary" onClick={() => void approveFix(selected)} disabled={Boolean(busy)}>
-                  <ButtonProgress busy={busy === `approve-${selected.id}`} busyLabel="Approving" idleIcon={<Check aria-hidden="true" size={14} />}>Approve fix</ButtonProgress>
-                </Button>
+              {primaryAction?.kind === "open_pr" && (
+                <a
+                  href={primaryAction.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-transparent bg-gradient-to-r from-[#d93820] to-[#f4503b] px-3 text-sm font-medium text-white transition-all duration-150 hover:brightness-[1.02] active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d93820] focus-visible:ring-offset-2"
+                >
+                  <ExternalLink aria-hidden="true" size={14} /> Open PR
+                </a>
               )}
-              {canApply && (
-                <Button variant="primary" onClick={() => void applyFix(selected)} disabled={Boolean(busy)}>
-                  <ButtonProgress busy={busy === `apply-${selected.id}`} busyLabel={retryingApply ? "Retrying" : "Applying"} idleIcon={<Wrench aria-hidden="true" size={14} />}>
-                    {selected.status === "preparing" ? "Retry apply" : "Apply fix"}
-                  </ButtonProgress>
-                </Button>
+              {primaryMutationAction && (
+                <ReadinessGuardedAction
+                  gate={readinessGate}
+                  busy={busy === `${primaryMutationAction.kind}-${selected.id}`}
+                  disabled={Boolean(busy)}
+                  busyLabel={primaryMutationAction.busyLabel}
+                  label={primaryMutationAction.label}
+                  projectId={projectId}
+                  onAction={() => primaryMutationAction.kind === "approve" ? void approveFix(selected) : void applyFix(selected)}
+                />
+              )}
+              {secondaryRetryAction && (
+                <ReadinessGuardedAction
+                  gate={readinessGate}
+                  busy={busy === `apply-${selected.id}`}
+                  disabled={Boolean(busy)}
+                  busyLabel={secondaryRetryAction.busyLabel}
+                  label={secondaryRetryAction.label}
+                  projectId={projectId}
+                  variant="outline"
+                  onAction={() => void applyFix(selected)}
+                />
               )}
               {canVerify && (
-                <Button variant="primary" onClick={() => void verifyFix(selected)} disabled={Boolean(busy)}>
+                <Button variant={primaryAction?.kind === "open_pr" ? "outline" : "primary"} onClick={() => void verifyFix(selected)} disabled={Boolean(busy)}>
                   <ButtonProgress busy={busy === `verify-${selected.id}`} busyLabel="Starting" idleIcon={<ShieldCheck aria-hidden="true" size={14} />}>
-                    {requiresManualApplyConfirmation ? "I applied this manually — start verification" : "Verify fix"}
+                    Verify fix
                   </ButtonProgress>
                 </Button>
               )}
@@ -389,16 +574,9 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
             <LifecycleStrip fix={selected} />
             <Notice
               tone={selected.status === "verified" ? "green" : selected.failure_reason ? "amber" : "neutral"}
-              title={canonicalSiteFixNextAction(selected)}
-              detail={selected.failure_reason || undefined}
+              title={canonicalSiteFixProgressText(selected) || canonicalSiteFixNextAction(selected)}
+              detail={selected.failure_reason || selected.application?.failure_reason || undefined}
             />
-            {requiresManualApplyConfirmation && (
-              <Notice
-                tone="amber"
-                title="Manual application required"
-                detail="Apply the proposed change to the target site first. Then confirm below to record it as applied and start evidence verification. Confirmation alone does not mark the fix verified."
-              />
-            )}
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-slate-50 p-3">
@@ -454,16 +632,26 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
                     <Badge tone="blue">{drawerApplication.status || "Application created"}</Badge>
                     {drawerApplication.application_kind && <Badge>{drawerApplication.application_kind}</Badge>}
                   </div>
+                  {applicationRepositoryDetails.length > 0 && (
+                    <dl className="grid gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 sm:grid-cols-2">
+                      {applicationRepositoryDetails.map((detail) => (
+                        <div key={detail.label} className="min-w-0">
+                          <dt className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">{detail.label}</dt>
+                          <dd className="mt-1 break-all font-mono text-xs text-slate-700">{detail.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
                   {drawerApplication.source_file_paths.length > 0 && <p className="break-all">Files: {drawerApplication.source_file_paths.join(", ")}</p>}
                   {drawerApplication.failure_reason && <Notice tone="amber" title="Application needs attention" detail={drawerApplication.failure_reason} />}
-                  {drawerApplication.github_pr_url && (
-                    <a className="inline-flex items-center gap-1.5 font-semibold text-sky-700 hover:text-sky-900" href={drawerApplication.github_pr_url} target="_blank" rel="noreferrer">
-                      Open source change <ExternalLink aria-hidden="true" size={13} />
+                  {pullRequestURL && (
+                    <a className="inline-flex items-center gap-1.5 font-semibold text-sky-700 hover:text-sky-900" href={pullRequestURL} target="_blank" rel="noreferrer">
+                      Open PR <ExternalLink aria-hidden="true" size={13} />
                     </a>
                   )}
                 </div>
               ) : (
-                <p className="mt-3 text-sm leading-6 text-slate-500">Application details appear after the approved repair is applied.</p>
+                <p className="mt-3 text-sm leading-6 text-slate-500">Application details appear when repository preparation begins.</p>
               )}
             </section>
 
