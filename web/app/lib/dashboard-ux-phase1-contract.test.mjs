@@ -734,6 +734,61 @@ test("publisher settings restore GitHub OAuth App connection as the primary path
   assert.match(settings, /Advanced: connect with a personal access token/);
 });
 
+test("publisher settings own live GitHub PR readiness checks and render every status", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+
+  for (const copy of [
+    "Ready to create repair PRs",
+    "Connect GitHub to create repair PRs",
+    "GitHub readiness needs a check",
+    "GitHub needs contents and pull-request write access",
+    "The selected repository or branch is unavailable",
+    "GitHub readiness could not be checked",
+    "Check again",
+    "Checking...",
+    "Last checked",
+  ]) {
+    assert.equal(settings.includes(copy), true, `GitHub readiness UI missing ${copy}`);
+  }
+
+  assert.match(settings, /GithubPRReadiness/);
+  assert.match(settings, /const \[githubPRReadiness, setGithubPRReadiness\]/);
+  assert.match(settings, /const \[githubReadinessBusy, setGithubReadinessBusy\] = useState<"checking" \| null>\(null\)/);
+  assert.match(settings, /const \[githubReadinessError, setGithubReadinessError\]/);
+  assert.match(settings, /const refreshGithubPRReadiness = useCallback/);
+  assert.match(settings, /api\s*\.checkGithubPRReadiness\(projectId\)/);
+  assert.match(settings, /aria-live="polite"/);
+  assert.match(settings, /aria-busy=\{githubReadinessBusy === "checking"\}/);
+  assert.match(settings, /disabled=\{githubReadinessBusy === "checking"\}/);
+  assert.doesNotMatch(settings, /setNotificationBusy\("checking"\)/);
+
+  const publisherPanel = settings.slice(settings.indexOf('id="settings-panel-publisher"'), settings.indexOf('id="settings-panel-ai-assistance"'));
+  assert.match(publisherPanel, /githubPRReadiness/);
+  assert.match(publisherPanel, /refreshGithubPRReadiness/);
+});
+
+test("GitHub PR readiness refreshes on Publisher entry and successful GitHub mutations", () => {
+  const settings = read("projects/[id]/settings/settings-client.tsx");
+  const activeTabEffect = settings.slice(
+    settings.indexOf('if (activeSettingsTab !== "publisher") return;'),
+    settings.indexOf("const refreshGSCConnection"),
+  );
+  assert.match(activeTabEffect, /refreshGithubPRReadiness\(\)/);
+  assert.match(settings, /setActiveSettingsTab\(settingsTabFromHash\(window\.location\.hash\)\)/);
+  assert.match(settings, /url\.searchParams\.get\("github"\) !== "connected"[\s\S]*setActiveSettingsTab\("publisher"\)/);
+  assert.match(settings, /rememberGithubConnectProject\(projectId,\s*`\/projects\/\$\{projectId\}\/settings\?github=connected#publisher`/);
+
+  const savePublisher = settings.slice(settings.indexOf("async function savePublisherConnection"), settings.indexOf("async function savePublisherCredential"));
+  const saveCredential = settings.slice(settings.indexOf("async function savePublisherCredential"), settings.indexOf("async function revokePublisherCredential"));
+  const revokeCredential = settings.slice(settings.indexOf("async function revokePublisherCredential"), settings.indexOf("async function saveDevToConnection"));
+  const toggleConnection = settings.slice(settings.indexOf("async function setPublisherConnectionEnabled"), settings.indexOf("async function retryDelivery"));
+
+  assert.match(savePublisher, /await refreshGithubPRReadiness\(\)/);
+  assert.match(saveCredential, /await refreshGithubPRReadiness\(\)/);
+  assert.match(revokeCredential, /await refreshGithubPRReadiness\(\)/);
+  assert.match(toggleConnection, /if \(enabled\)[\s\S]*await refreshGithubPRReadiness\(\)/);
+});
+
 test("context profile editors collapse after saving", () => {
   const context = read("projects/[id]/knowledge/knowledge-client.tsx");
 

@@ -401,6 +401,22 @@ export type GithubIntegrationStatus = {
   reusable_installation_id?: string;
 };
 
+export type GithubPRReadinessStatus =
+  | "not_connected"
+  | "not_checked"
+  | "ready"
+  | "permission_missing"
+  | "repository_unavailable"
+  | "error";
+
+export type GithubPRReadiness = {
+  status: GithubPRReadinessStatus;
+  checked_at?: string | null;
+  detail?: string;
+  repo?: string;
+  branch?: string;
+};
+
 export type SEOIntegration = {
   id: string;
   project_id: string;
@@ -2202,6 +2218,39 @@ function normalizeGithubIntegration(raw: any): GithubIntegrationStatus {
   };
 }
 
+const githubPRReadinessStatuses: GithubPRReadinessStatus[] = [
+  "not_connected",
+  "not_checked",
+  "ready",
+  "permission_missing",
+  "repository_unavailable",
+  "error",
+];
+
+function isGithubPRReadinessStatus(value: unknown): value is GithubPRReadinessStatus {
+  return typeof value === "string" && githubPRReadinessStatuses.includes(value as GithubPRReadinessStatus);
+}
+
+function trimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.trim() || undefined;
+}
+
+function normalizeGithubPRReadiness(raw: any): GithubPRReadiness {
+  const data = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const detail = trimmedString(data.detail);
+  const repo = trimmedString(data.repo);
+  const branch = trimmedString(data.branch);
+  const checkedAt = trimmedString(data.checked_at) ?? null;
+  return {
+    status: isGithubPRReadinessStatus(data.status) ? data.status : "error",
+    checked_at: checkedAt,
+    ...(detail ? { detail } : {}),
+    ...(repo ? { repo } : {}),
+    ...(branch ? { branch } : {}),
+  };
+}
+
 async function bearerHeader(auth?: AuthOptions): Promise<Record<string, string>> {
   const token = auth?.token ?? (auth?.getToken ? await auth.getToken() : null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -2479,6 +2528,18 @@ export function createApi(auth?: AuthOptions) {
   getGithubIntegration: async (id: string): Promise<GithubIntegrationStatus> => {
     const raw = await req<any>(`/projects/${id}/integrations/github`, undefined, auth);
     return normalizeGithubIntegration(raw);
+  },
+  getGithubPRReadiness: async (projectID: string): Promise<GithubPRReadiness> => {
+    const raw = await req<any>(`/projects/${projectID}/integrations/github/pr-readiness`, undefined, auth);
+    return normalizeGithubPRReadiness(raw);
+  },
+  checkGithubPRReadiness: async (projectID: string): Promise<GithubPRReadiness> => {
+    const raw = await req<any>(
+      `/projects/${projectID}/integrations/github/pr-readiness/check`,
+      { method: "POST" },
+      auth,
+    );
+    return normalizeGithubPRReadiness(raw);
   },
   storeGithubInstallation: async (id: string, installationID: string): Promise<{ repositories: GithubRepo[] }> => {
     const raw = await req<any>(

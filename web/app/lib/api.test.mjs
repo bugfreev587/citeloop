@@ -1360,6 +1360,120 @@ test("publisher connection APIs call project scoped endpoints without raw token 
   }
 });
 
+test("GitHub PR readiness GET is DB-only and normalizes the stored result", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "ready",
+        checked_at: " 2026-07-13T18:30:00Z ",
+        detail: "  GitHub can create branches and pull requests.  ",
+        repo: " owner/site ",
+        branch: " main ",
+        installation_secret: "must-not-survive-normalization",
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const readiness = await createApi().getGithubPRReadiness("project-1");
+
+    assert.deepEqual(readiness, {
+      status: "ready",
+      checked_at: "2026-07-13T18:30:00Z",
+      detail: "GitHub can create branches and pull requests.",
+      repo: "owner/site",
+      branch: "main",
+    });
+    assert.equal(calls.length, 1, "reading stored readiness must not trigger a second live request");
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/integrations/github/pr-readiness");
+    assert.equal(calls[0].init.method ?? "GET", "GET");
+    assert.equal(calls.some((call) => call.url.endsWith("/pr-readiness/check")), false);
+    assert.equal(Object.hasOwn(readiness, "installation_secret"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GitHub PR readiness live check uses the explicit POST endpoint and normalizes its result", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "permission_missing",
+        checked_at: 123,
+        detail: "  GitHub needs pull-request write access. ",
+        repo: " owner/site ",
+        branch: "   ",
+        access_token: "must-not-survive-normalization",
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const readiness = await createApi().checkGithubPRReadiness("project-1");
+
+    assert.deepEqual(readiness, {
+      status: "permission_missing",
+      checked_at: null,
+      detail: "GitHub needs pull-request write access.",
+      repo: "owner/site",
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.example.test/api/projects/project-1/integrations/github/pr-readiness/check");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(Object.hasOwn(readiness, "access_token"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GitHub PR readiness accepts only the six known statuses and fails closed", async () => {
+  const knownStatuses = [
+    "not_connected",
+    "not_checked",
+    "ready",
+    "permission_missing",
+    "repository_unavailable",
+    "error",
+  ];
+  const responses = [...knownStatuses.map((status) => ({ status })), { status: "future_status" }, null];
+  let responseIndex = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => responses[responseIndex++],
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const client = createApi();
+    const normalized = [];
+    for (const _response of responses) {
+      normalized.push(await client.getGithubPRReadiness("project-1"));
+    }
+
+    assert.deepEqual(
+      normalized.map((readiness) => readiness.status),
+      [...knownStatuses, "error", "error"],
+    );
+    assert.equal(normalized.at(-1).checked_at, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Dev.to publisher API uses project scoped connection and API key credential", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

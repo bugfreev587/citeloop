@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowRight, Bell, CheckCircle2, GitBranch, ListChecks, Plus, Power, RefreshCw, RotateCcw, Save, Search, Send, Settings2, Trash2, X } from "lucide-react";
 import {
   AutopilotReadiness,
@@ -9,6 +9,7 @@ import {
   GSCConnection,
   GitHubNextJSPublisherInput,
   GithubIntegrationStatus,
+  GithubPRReadiness,
   NotificationChannel,
   NotificationChannelKind,
   NotificationDelivery,
@@ -126,6 +127,48 @@ function ga4StatusLabel(status?: string, propertyID?: string) {
   if (status === "error") return "needs attention";
   if (propertyID?.trim()) return "property saved";
   return "not connected";
+}
+
+function githubPRReadinessPresentation(status?: GithubPRReadiness["status"]) {
+  switch (status) {
+    case "ready":
+      return {
+        title: "Ready to create repair PRs",
+        detail: "CiteLoop can reach the selected target and create the branch and pull request needed for a repair.",
+        tone: "green" as const,
+      };
+    case "not_connected":
+      return {
+        title: "Connect GitHub to create repair PRs",
+        detail: "Connect the GitHub App, then choose the repository and branch CiteLoop should repair.",
+        tone: "amber" as const,
+      };
+    case "permission_missing":
+      return {
+        title: "GitHub needs contents and pull-request write access",
+        detail: "Update the GitHub App repository access, then check again.",
+        tone: "red" as const,
+      };
+    case "repository_unavailable":
+      return {
+        title: "The selected repository or branch is unavailable",
+        detail: "Confirm the repository and base branch still exist and are available to the connected GitHub App.",
+        tone: "red" as const,
+      };
+    case "error":
+      return {
+        title: "GitHub readiness could not be checked",
+        detail: "Review the GitHub connection and target, then try the check again.",
+        tone: "red" as const,
+      };
+    case "not_checked":
+    default:
+      return {
+        title: "GitHub readiness needs a check",
+        detail: "Run the check to confirm repository, branch, and pull-request access before creating a repair PR.",
+        tone: "amber" as const,
+      };
+  }
 }
 
 const ga4ConnectionSteps = [
@@ -522,6 +565,11 @@ export function SettingsClient({ projectId }: { projectId: string }) {
   const [devToUsername, setDevToUsername] = useState("");
   const [devToCredentialDraft, setDevToCredentialDraft] = useState("");
   const [githubIntegration, setGithubIntegration] = useState<GithubIntegrationStatus | null>(null);
+  const [githubPRReadiness, setGithubPRReadiness] = useState<GithubPRReadiness | null>(null);
+  const [githubReadinessBusy, setGithubReadinessBusy] = useState<"checking" | null>(null);
+  const [githubReadinessError, setGithubReadinessError] = useState<string | null>(null);
+  const githubReadinessInFlightRef = useRef<Promise<GithubPRReadiness | null> | null>(null);
+  const githubReadinessMountedRef = useRef(false);
   const [showManualPublisherCredential, setShowManualPublisherCredential] = useState(false);
   const [gscConnection, setGSCConnection] = useState<GSCConnection | null>(null);
   const [seoProperty, setSEOProperty] = useState<SEOProperty | null>(null);
@@ -555,6 +603,13 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     if (next) notify(next);
   };
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTabId>("project");
+
+  useEffect(() => {
+    githubReadinessMountedRef.current = true;
+    return () => {
+      githubReadinessMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     function syncTabFromHash() {
@@ -702,6 +757,46 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     url.searchParams.delete("github");
     window.history.replaceState({}, "", url.pathname + url.search + url.hash);
   }, [refreshGithubIntegration, refreshPublisherConnections]);
+
+  const refreshGithubPRReadiness = useCallback((): Promise<GithubPRReadiness | null> => {
+    if (githubReadinessInFlightRef.current) return githubReadinessInFlightRef.current;
+
+    if (githubReadinessMountedRef.current) {
+      setGithubReadinessBusy("checking");
+      setGithubReadinessError(null);
+    }
+    const request = api
+      .checkGithubPRReadiness(projectId)
+      .then((nextReadiness) => {
+        if (githubReadinessMountedRef.current) {
+          setGithubPRReadiness(nextReadiness);
+        }
+        return nextReadiness;
+      })
+      .catch(() => {
+        if (githubReadinessMountedRef.current) {
+          setGithubReadinessError("We couldn't check GitHub readiness. Review the connection and try again.");
+        }
+        return null;
+      })
+      .finally(() => {
+        if (githubReadinessInFlightRef.current === request) {
+          githubReadinessInFlightRef.current = null;
+        }
+        if (githubReadinessMountedRef.current) {
+          setGithubReadinessBusy(null);
+        }
+      });
+    githubReadinessInFlightRef.current = request;
+    return request;
+  }, [api, projectId]);
+
+  useEffect(() => {
+    if (activeSettingsTab !== "publisher") return;
+    // The GitHub callback saves the selected repository and branch before it
+    // returns to #publisher, so this tab-owned effect performs the live check.
+    void refreshGithubPRReadiness();
+  }, [activeSettingsTab, refreshGithubPRReadiness]);
 
   const refreshGSCConnection = useCallback(async () => {
     try {
@@ -1049,6 +1144,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
         const rest = current.filter((connection) => connection.id !== saved.id && connection.kind !== saved.kind);
         return [saved, ...rest];
       });
+      await refreshGithubPRReadiness();
       setMessage({ title: "Publisher connection saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1076,6 +1172,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
       });
       setPublisherCredentialDraft("");
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      await refreshGithubPRReadiness();
       setMessage({ title: "Publisher credential saved", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential save failed", detail: friendlyError(e.message), tone: "red" });
@@ -1091,6 +1188,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const saved = await api.revokePublisherCredential(projectId, githubPublisher.id);
       setPublisherConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+      await refreshGithubPRReadiness();
       setMessage({ title: "Publisher credential revoked", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Credential revoke failed", detail: e.message, tone: "red" });
@@ -1295,6 +1393,7 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const tested = await api.testPublisherConnection(projectId, connectionID);
       setPublisherConnections((current) => current.map((connection) => (connection.id === tested.id ? tested : connection)));
+      await refreshGithubPRReadiness();
       setMessage({ title: "Publisher connection verified", tone: "green" });
     } catch (e: any) {
       setMessage({ title: "Publisher test failed", detail: e.message, tone: "red" });
@@ -1310,6 +1409,9 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     try {
       const saved = await api.setPublisherConnectionEnabled(projectId, connection.id, enabled);
       setPublisherConnections((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+      if (enabled) {
+        if (connection.kind === "github_nextjs") await refreshGithubPRReadiness();
+      }
       setMessage({ title: enabled ? "Publisher connection enabled" : "Publisher connection disabled", tone: "green" });
     } catch (e: any) {
       setMessage({ title: enabled ? "Enable failed" : "Disable failed", detail: friendlyError(e.message), tone: "red" });
@@ -1442,6 +1544,18 @@ export function SettingsClient({ projectId }: { projectId: string }) {
     : githubAppReusable
       ? "This owner already has the CiteLoop GitHub App installed. Reuse that installation or connect a different account."
       : "Install the CiteLoop GitHub App to publish without storing a personal access token.";
+  const githubReadinessPresentation = githubPRReadinessPresentation(githubPRReadiness?.status);
+  const githubReadinessTarget = githubPRReadiness?.repo
+    ? `${githubPRReadiness.repo}${githubPRReadiness.branch ? ` on ${githubPRReadiness.branch}` : ""}`
+    : githubPRReadiness?.branch
+      ? `Branch ${githubPRReadiness.branch}`
+      : "";
+  const githubReadinessSurface =
+    githubReadinessPresentation.tone === "green"
+      ? "border-green-200 bg-green-50/70 text-green-950"
+      : githubReadinessPresentation.tone === "red"
+        ? "border-red-200 bg-red-50/70 text-red-950"
+        : "border-amber-200 bg-amber-50/70 text-amber-950";
 
   const openSafeModeEvents = safeModeEvents.filter((event) => !event.exited_at);
   const openSafeModeCount = openSafeModeEvents.length;
@@ -2215,6 +2329,58 @@ export function SettingsClient({ projectId }: { projectId: string }) {
               </div>
             </div>
           )}
+
+          <div
+            aria-live="polite"
+            aria-busy={githubReadinessBusy === "checking"}
+            className={cx("border-y px-3 py-3", githubReadinessSurface)}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 text-sm font-bold">
+                  {githubPRReadiness?.status === "ready" ? (
+                    <CheckCircle2 aria-hidden="true" size={16} />
+                  ) : (
+                    <AlertTriangle aria-hidden="true" size={16} />
+                  )}
+                  {githubReadinessPresentation.title}
+                </div>
+                <p className="mt-1 max-w-2xl text-sm leading-5 opacity-80">
+                  {githubPRReadiness?.detail || githubReadinessPresentation.detail}
+                </p>
+                {(githubReadinessTarget || githubPRReadiness?.checked_at) && (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium opacity-75">
+                    {githubReadinessTarget && <span>Target: {githubReadinessTarget}</span>}
+                    {githubPRReadiness?.checked_at && <span>Last checked: {formatDate(githubPRReadiness.checked_at)}</span>}
+                  </div>
+                )}
+                {githubReadinessBusy === "checking" && (
+                  <div className="mt-2 text-xs font-semibold">Checking repository and pull-request access...</div>
+                )}
+                {githubReadinessError && (
+                  <div role="alert" className="mt-2 text-sm font-semibold text-red-800">
+                    {githubReadinessError}
+                  </div>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Check GitHub PR readiness again"
+                onClick={() => void refreshGithubPRReadiness()}
+                disabled={githubReadinessBusy === "checking"}
+                className="shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+              >
+                <ButtonProgress
+                  busy={githubReadinessBusy === "checking"}
+                  busyLabel="Checking..."
+                  idleIcon={<RefreshCw aria-hidden="true" size={14} />}
+                >
+                  Check again
+                </ButtonProgress>
+              </Button>
+            </div>
+          </div>
 
           <ConnectionInstructions
             steps={[
