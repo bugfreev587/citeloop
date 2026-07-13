@@ -1945,6 +1945,8 @@ test("content plan treats topic generation as a per-topic background operation",
   assert.match(topics, /generatingIds/);
   assert.match(topics, /isGenerating/);
   assert.match(topics, /Starting draft generation/);
+  assert.match(topics, /Draft already moved forward/);
+  assert.match(topics, /already moved beyond Review/);
   assert.doesNotMatch(topics, /disabled=\{!!busy \|\| topic\.status === "archived"\} size="sm" variant="primary" onClick=\{\(\) => generate\(topic\)\}/);
 });
 
@@ -1983,7 +1985,7 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   assert.doesNotMatch(topics, /create a new content brief/);
   assert.match(topics, /aria-busy=\{selectedActionDraftBusy\}/);
   assert.match(topics, /disabled=\{reviewingContentPlanAction\}/);
-  assert.match(topics, /reviewHrefForAction\(projectId, selectedContentPlanAction\)/);
+  assert.match(topics, /reviewHrefForAction\(projectId, selectedActionReviewArticleID\)/);
   assert.doesNotMatch(topics, /onClick=\{\(\) => draftAcceptedAction\(action\)\}/);
   assert.doesNotMatch(topics, /Waiting in Content Plan/);
 });
@@ -2056,16 +2058,16 @@ test("content plan only links to Review after a draft article exists", () => {
   const topics = read("projects/[id]/topics/topics-client.tsx");
   const logic = read("lib/content-plan-logic.ts");
 
-  assert.match(logic, /hasReviewableDraft/);
-  assert.match(topics, /hasReviewableDraft\(selectedContentPlanAction\)/);
+  assert.match(logic, /reviewArticleIDForAction/);
+  assert.match(topics, /reviewArticleIDForAction\(/);
   // The accepted card opens the drawer; the Review-link gating now lives in the
   // drawer footer rather than on the card itself.
-  assert.match(topics, /const selectedActionHasReviewContent = hasReviewableDraft\(selectedContentPlanAction\)/);
-  assert.match(topics, /selectedActionHasReviewContent \? \(/);
+  assert.match(topics, /const selectedActionReviewArticleID = selectedContentPlanAction/);
+  assert.match(topics, /selectedActionReviewArticleID \? \(/);
   assert.match(topics, /View in Review/);
   assert.doesNotMatch(topics, /action\.lifecycle_stage === "ready_for_review" \|\| Boolean\(action\.draft_article_id\)/);
-  assert.doesNotMatch(topics, /const selectedActionHasReviewContent = Boolean\(selectedContentPlanAction\?\.draft_article_id\)/);
-  assert.match(topics, /\/projects\/\$\{projectId\}\/review\?article=\$\{action\.draft_article_id\}/);
+  assert.doesNotMatch(topics, /const selectedActionReviewArticleID = selectedContentPlanAction\?\.draft_article_id/);
+  assert.match(topics, /href=\{reviewHrefForAction\(projectId, selectedActionReviewArticleID\)\}/);
   assert.doesNotMatch(topics, /: `\/projects\/\$\{projectId\}\/review`/);
 });
 

@@ -185,7 +185,7 @@ export type AdminUserDeleteResult = {
 export type ReviewGroup = { topic_id: string; articles: Article[] };
 
 export type GenerateTopicResult = {
-  status: "generating" | "ready";
+  status: "generating" | "ready" | "advanced";
   topic?: Topic;
   articles: Article[];
 };
@@ -1368,7 +1368,7 @@ function normalizeGenerateTopicResult(raw: any): GenerateTopicResult {
     return { status: "ready", articles: raw.map(normalizeArticle) };
   }
   return {
-    status: raw?.status === "generating" ? "generating" : "ready",
+    status: raw?.status === "generating" ? "generating" : raw?.status === "advanced" ? "advanced" : "ready",
     topic: raw?.topic ? normalizeTopic(raw.topic) : undefined,
     articles: arrayFrom(raw?.articles).map(normalizeArticle),
   };

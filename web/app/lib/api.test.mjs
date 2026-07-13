@@ -672,6 +672,25 @@ test("generateTopic normalizes accepted background generation responses", async 
   }
 });
 
+test("generateTopic preserves an advanced existing-draft response", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: "advanced", topic: { id: "topic-1", status: "drafted" }, articles: [] }),
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const result = await createApi().generateTopic("project-1", "topic-1");
+
+    assert.equal(result.status, "advanced");
+    assert.deepEqual(result.articles, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("planSEOContentAction creates a topic from an accepted opportunity action", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
