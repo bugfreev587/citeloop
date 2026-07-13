@@ -433,6 +433,7 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 	}
 	nonRejected := make([]db.Article, 0, len(existing))
 	pendingReview := make([]db.Article, 0, len(existing))
+	hasGenerating := false
 	for _, article := range existing {
 		if article.Status != "rejected" {
 			nonRejected = append(nonRejected, article)
@@ -440,8 +441,15 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		if article.Status == "pending_review" {
 			pendingReview = append(pendingReview, article)
 		}
+		if article.Status == "generating" {
+			hasGenerating = true
+		}
 	}
 	if len(nonRejected) > 0 {
+		if hasGenerating {
+			writeJSON(w, http.StatusAccepted, map[string]any{"status": "generating", "topic": topic, "articles": []db.Article{}})
+			return
+		}
 		topic, err = s.reconcileDraftedTopicStatus(r.Context(), s.Q, topic)
 		if err != nil {
 			writeErr(w, 500, err.Error())

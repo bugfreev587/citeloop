@@ -136,7 +136,7 @@ test("reviewArticleIDForAction uses a pending sibling when the linked canonical 
       { draft_article_id: "canonical-1", draft_article_status: "pending_review" },
       "variant-1",
     ),
-    "canonical-1",
+    "variant-1",
   );
 });
 

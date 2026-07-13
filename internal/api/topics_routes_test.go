@@ -244,6 +244,64 @@ func TestGenerateTopicExistingArticlesReportOnlyPendingReview(t *testing.T) {
 	}
 }
 
+func TestGenerateTopicExistingGeneratingArticleStaysGenerating(t *testing.T) {
+	projectID := uuid.New()
+	topicID := uuid.New()
+	topic := db.Topic{
+		ID:            topicID,
+		ProjectID:     projectID,
+		Channel:       "blog",
+		Title:         "Generation in progress",
+		InternalLinks: json.RawMessage("[]"),
+		Status:        "generating",
+	}
+	article := db.Article{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		TopicID:   topicID,
+		Kind:      "canonical",
+		ContentMd: "",
+		SeoMeta:   json.RawMessage("{}"),
+		QaIssues:  json.RawMessage("[]"),
+		Status:    "generating",
+	}
+	fakeDB := &generateTopicDB{topic: topic, articles: []db.Article{article}}
+	srv := &Server{Q: db.New(fakeDB)}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/topics/"+topicID.String()+"/generate", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("projectID", projectID.String())
+	routeCtx.URLParams.Add("topicID", topicID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	res := httptest.NewRecorder()
+
+	srv.generateTopic(res, req)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	var body struct {
+		Status   string       `json:"status"`
+		Topic    db.Topic     `json:"topic"`
+		Articles []db.Article `json:"articles"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "generating" {
+		t.Fatalf("response status = %q, want generating", body.Status)
+	}
+	if body.Topic.Status != "generating" {
+		t.Fatalf("topic status = %q, want generating", body.Topic.Status)
+	}
+	if len(body.Articles) != 0 {
+		t.Fatalf("articles = %d, want 0", len(body.Articles))
+	}
+	if len(fakeDB.statusUpdates) != 0 {
+		t.Fatalf("status updates = %#v, want none", fakeDB.statusUpdates)
+	}
+}
+
 type generateTopicDB struct {
 	topic         db.Topic
 	articles      []db.Article

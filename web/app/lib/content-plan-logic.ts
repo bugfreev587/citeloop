@@ -162,8 +162,10 @@ export function reviewArticleIDForAction(
   action: ContentPlanReviewDraft | null | undefined,
   topicPendingReviewArticleID?: string | null,
 ) {
+  const topicArticleID = topicPendingReviewArticleID?.trim();
+  if (topicArticleID) return topicArticleID;
   if (hasReviewableDraft(action)) return action?.draft_article_id?.trim() || null;
-  return topicPendingReviewArticleID?.trim() || null;
+  return null;
 }
 
 const advancedDraftStatuses = new Set([
