@@ -166,7 +166,7 @@ export function canonicalSiteFixMilestones(fix: ProgressSiteFix) {
     "reopened",
     "verified",
   ].includes(status);
-  const deploymentProvingStatus = ["verifying", "failed_retryable", "reopened", "verified"].includes(status);
+  const deploymentProvingStatus = ["verifying", "verified"].includes(status);
   const complete = [
     true,
     approved,

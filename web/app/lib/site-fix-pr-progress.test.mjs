@@ -148,8 +148,25 @@ test("lifecycle milestones require deployed and verified evidence", async () => 
   const verifying = progress.canonicalSiteFixMilestones({ status: "verifying", application: { deployed_at: "now", verified_at: "now" } });
   assert.deepEqual(verifying[2], { label: "Applied / deploy", complete: true, current: false });
   assert.deepEqual(verifying[3], { label: "Verified", complete: true, current: false });
-  for (const status of ["verifying", "failed_retryable", "reopened", "verified"]) {
+  for (const status of ["verifying", "verified"]) {
     assert.equal(progress.canonicalSiteFixMilestones({ status })[2].complete, true, `${status} proves deployment`);
+  }
+  for (const status of ["failed_retryable", "reopened"]) {
+    const withoutDeployment = progress.canonicalSiteFixMilestones({
+      status,
+      applied_at: null,
+      deployed_at: null,
+      application: { deployed_at: null },
+    });
+    assert.deepEqual(withoutDeployment[2], { label: "Applied / deploy", complete: false, current: true });
+    assert.deepEqual(withoutDeployment[3], { label: "Verified", complete: false, current: false });
+
+    const withFixDeployment = progress.canonicalSiteFixMilestones({ status, deployed_at: "now" });
+    assert.deepEqual(withFixDeployment[2], { label: "Applied / deploy", complete: true, current: false });
+    assert.deepEqual(withFixDeployment[3], { label: "Verified", complete: false, current: true });
+
+    const withApplicationDeployment = progress.canonicalSiteFixMilestones({ status, application: { deployed_at: "now" } });
+    assert.deepEqual(withApplicationDeployment[2], { label: "Applied / deploy", complete: true, current: false });
   }
   assert.equal(progress.canonicalSiteFixMilestones({ status: "verifying", verified_at: "now" })[3].complete, true);
   const verified = progress.canonicalSiteFixMilestones({ status: "verified" });
