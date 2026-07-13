@@ -921,12 +921,21 @@ func firstTargetURL(raw json.RawMessage) (string, error) {
 func decodeJSONObject(text string, out any) error {
 	trimmed := stripMarkdownCodeFence(strings.TrimSpace(text))
 	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
-		return errInvalidModelResponse
+		return fmt.Errorf("%w; response begins %q", errInvalidModelResponse, responseSnippet(text))
 	}
 	if err := json.Unmarshal([]byte(trimmed), out); err != nil {
-		return errInvalidModelResponse
+		return fmt.Errorf("%w; response begins %q", errInvalidModelResponse, responseSnippet(text))
 	}
 	return nil
+}
+
+func responseSnippet(text string) string {
+	const limit = 200
+	snippet := []rune(strings.TrimSpace(text))
+	if len(snippet) <= limit {
+		return string(snippet)
+	}
+	return string(snippet[:limit]) + "…"
 }
 
 // stripMarkdownCodeFence unwraps a response that is exactly one fenced code
