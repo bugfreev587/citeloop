@@ -47,7 +47,7 @@ As of 2026-07-12, `PRD-CiteLoop-Doctor-Opportunities-Two-Line-Optimization.md` c
 - Doctor and Opportunities are the only user-visible sources of newly created work.
 - Doctor creates immediately verifiable Site Fixes; Opportunities creates measured Growth Actions, and only accepted work that materially creates or refreshes content becomes a Content Brief.
 - Content Plan provides no manual Topic/Opportunity/Brief intake. A user-triggered run creates only internal candidates; ownership arbitration happens before any user-visible record, an eligible growth candidate becomes a `needs_decision` AI Opportunity, and only acceptance creates a Growth Action or—when the scope materially creates or refreshes content—a Content Brief.
-- Pre-boundary or provenance-incomplete Topics—including source-less and partially linked records—keep only the backward-compatible operations in Section 15.4; they are never cloned, backfilled, or migrated into new work.
+- Current status depends only on accepted AI Opportunity source plus complete provenance, so provenance-complete older work remains current. Legacy compatibility applies only to records that already existed at the 2026-07-12 cutover and were provenance-incomplete then; pre-boundary age is a common explanation, not a criterion by itself. Any post-cutover provenance-incomplete record is invalid, fails closed into quarantine, and receives no legacy operations.
 
 ## 3. Background
 
@@ -95,7 +95,7 @@ The page should answer those questions through structure, not documentation.
 - Remove the user-facing Planned Topics section from Content Plan.
 - Make Content Briefs the primary Content Plan queue.
 - Make every newly created Content Plan item a Content Brief derived from an accepted AI-generated Opportunity whose scope materially creates or refreshes content.
-- Keep pre-boundary or provenance-incomplete Topics available only through legacy compatibility, outside the current-work source contract.
+- Keep only cutover-existing, provenance-incomplete Topics in legacy compatibility; quarantine every post-cutover provenance-incomplete record without legacy operations.
 - Route immediately verifiable work through Doctor to Site Fixes before it reaches Content Plan.
 - Add a clear Publish to selector in the Content Brief drawer.
 - Let AI recommend Blog, Syndication, or Both with a short reason.
@@ -125,14 +125,14 @@ User-facing naming:
 
 | Current term | Proposed user-facing term | Notes |
 | --- | --- | --- |
-| Topic | Content Brief | Use only for provenance-complete current work in Content Plan; legacy compatibility retains pre-boundary or provenance-incomplete records without conversion. |
+| Topic | Content Brief | Use for every provenance-complete accepted AI Opportunity, regardless of record age; legacy compatibility retains only cutover-existing, provenance-incomplete records without conversion. |
 | Channel | Publish to / 发布渠道 | Use when selecting Blog / Syndication / Both. |
 | Canonical | Source Article / 主站原文 | Use for owned-site article. |
 | Syndication | Distribution Draft / 内容分发 | Use for external-platform variants. |
 | Content Action | Content Brief | Avoid exposing implementation language. |
 | Topic planned | Preparing draft | Use lifecycle language from the brief perspective. |
 
-In this PRD, a **current Content Brief** means work authorized by an accepted AI-generated Opportunity and backed by the complete logical provenance chain: source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists. A pre-boundary record that lacks any required relationship is legacy compatibility even if it already has an Opportunity, Content Action, or Topic link.
+In this PRD, a **current Content Brief** exists if and only if it is authorized by an accepted AI-generated Opportunity and backed by the complete logical provenance chain: source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists. Record age and pre-boundary origin do not affect this classification, so provenance-complete older AI work is current. **Legacy compatibility** applies if and only if the record already existed at the 2026-07-12 cutover and was provenance-incomplete then, even if it had a partial Opportunity, Content Action, or Topic link. A provenance-incomplete record created after cutover is invalid and must fail closed into quarantine without current or legacy operations.
 
 ### 7.2 Topic Becomes Internal
 
@@ -156,7 +156,7 @@ That means:
 - Content Plan should not show pure link-only actions. Only an accepted Opportunity whose scope materially creates or refreshes content can become a Content Brief.
 - Content Plan should not ask the user to create another Topic manually.
 - Content Plan should not classify a user-authored or provenance-incomplete record as a current Content Brief.
-- Pre-boundary records that lack any required current-work provenance remain legacy compatibility records even when they already have an Opportunity, Content Action, or Topic link; they are not migrated into current Content Briefs.
+- A record that existed at cutover and lacked required current-work provenance remains legacy compatibility even when partially linked. Provenance-complete older AI work is current; a post-cutover provenance-incomplete record is invalid and quarantined, not legacy.
 
 ## 8. Routing Rules
 
@@ -349,9 +349,9 @@ Removing Topic cards must not remove scheduling.
 V1 decision:
 
 - Provenance-complete current Topics follow the normal Content Brief lifecycle. They require an accepted AI-generated Opportunity and the complete source Opportunity/action, AI provenance, acceptance/approval, and applicable internal Topic relationships; their cards/drawers support view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through the Content Brief.
-- Pre-boundary or provenance-incomplete Topics remain in the labeled compatibility surface, including records with a source link but missing any required current-work provenance. Existing records continue to support view/edit, cancel/reschedule, draft/generate, and archive/dismiss.
+- Topics that already existed at cutover and were provenance-incomplete remain in the labeled compatibility surface, including partially linked records. Those cutover legacy records continue to support view/edit, cancel/reschedule, draft/generate, and archive/dismiss.
 - Every legacy operation mutates or advances only the existing Topic. It cannot create, clone, backfill, migrate, or seed another Topic, Opportunity, Content Action, or Content Brief.
-- The scheduler can continue to use Topic internally, but the user-facing object for provenance-complete current work is the Content Brief; every pre-boundary or provenance-incomplete record remains explicitly legacy.
+- The scheduler can continue to use Topic internally, but every provenance-complete accepted AI Opportunity uses the current Content Brief lifecycle regardless of age. Cutover-existing incomplete records remain legacy, while post-cutover incomplete records fail closed into quarantine with no scheduler or legacy operations.
 
 ### 11.6 New-Work Source Boundary
 
@@ -363,7 +363,7 @@ V1 decision:
 - Content Plan exposes no Topic, Opportunity, or Content Brief creation form or API contract.
 - The only new-work CTA from Content Plan opens Opportunities; only acceptance of a `needs_decision` AI Opportunity whose scope materially creates or refreshes content can create the Brief that returns to Content Plan.
 - A user-triggered AI Opportunity Finding run is allowed, but it creates only internal candidates. A candidate is never shown in Opportunities; ownership arbitration must first convert an eligible growth candidate into a `needs_decision` AI Opportunity, whose acceptance then creates a Growth Action or eligible Content Brief.
-- Pre-boundary or provenance-incomplete Topics remain available through legacy compatibility only and cannot be copied, converted, or reused to seed future Content Briefs, even when they already have an Opportunity, Content Action, or Topic link.
+- Only Topics that existed at cutover and were provenance-incomplete remain available through legacy compatibility, and they cannot be copied, converted, or reused to seed future Content Briefs. Post-cutover incomplete records are quarantined and receive none of those compatibility operations.
 - If the backend needs a Topic for an Opportunity-derived Content Brief, it creates that Topic internally after the Content Brief exists.
 
 ## 12. Lifecycle Labels
@@ -472,15 +472,16 @@ Known code risks to cover:
 
 ### 15.4 Legacy Topic Compatibility (No Migration)
 
-The source-boundary rollout classifies records by complete provenance, not by the presence of a link alone. A current Content Brief requires an accepted AI-generated Opportunity plus source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists. Any pre-boundary record missing one of those required relationships is legacy compatibility, even if it already has an Opportunity, Content Action, or Topic link.
+The source-boundary rollout uses mutually exclusive classification. A record is current if and only if it has an accepted AI-generated Opportunity plus source Opportunity ID, source Content Action ID, AI run/model/prompt/evidence provenance, one acceptance timestamp and approval source, and internal Topic linkage when an internal Topic exists; age does not matter, so provenance-complete older AI work is current. A record is legacy compatibility if and only if it existed at the 2026-07-12 cutover and was provenance-incomplete then, including source-less or partially linked records. Any post-cutover provenance-incomplete record is invalid and must fail closed into quarantine.
 
 | Topic class | User-facing surface | Allowed operations on the existing record | Forbidden operations |
 | --- | --- | --- | --- |
-| Provenance-complete current Topic/Brief | Linked Content Brief and normal lifecycle surfaces | View/edit; schedule, cancel, reschedule; draft/generate; archive/dismiss; Sent to Review handoff | Independent manual creation or clone; severing or replacing source provenance |
-| Pre-boundary or provenance-incomplete Topic, including source-less and partially linked records | Clearly labeled legacy compatibility surface | View/edit; cancel/reschedule; draft/generate; archive/dismiss | Create or clone a record; backfill, convert, or migrate it into a current Content Brief; seed any new Topic, Opportunity, Content Action, or Content Brief |
+| Provenance-complete accepted-AI Topic/Brief, regardless of age | Linked Content Brief and normal lifecycle surfaces | View/edit; schedule, cancel, reschedule; draft/generate; archive/dismiss; Sent to Review handoff | Independent manual creation or clone; severing or replacing source provenance |
+| Record that existed at cutover and was provenance-incomplete then, including source-less and partially linked records | Clearly labeled legacy compatibility surface | View/edit; cancel/reschedule; draft/generate; archive/dismiss | Create or clone a record; backfill, convert, or migrate it into a current Content Brief; seed any new Topic, Opportunity, Content Action, or Content Brief |
+| Post-cutover provenance-incomplete record | Fail-closed quarantine; no current or legacy surface | No user lifecycle operations | All current and legacy operations, including view/edit, schedule/cancel/reschedule, draft/generate, archive/dismiss, clone, backfill, migration, or seeding new work |
 
 - Allowed legacy operations advance only the existing Topic and do not make it a current new-work source.
-- All pre-boundary or provenance-incomplete Topics are excluded from current-source Content Brief counts and source-integrity metrics, whether they are source-less or partially linked.
+- Only cutover-existing, provenance-incomplete legacy records are excluded from current-source Content Brief counts. Post-cutover incomplete records are invalid integrity failures, remain quarantined, and must not be excluded as legacy compatibility.
 
 The compatibility layer can continue to read the existing `topic.channel` values `blog`, `syndication`, and `both`; this does not authorize a new Topic entry point.
 
@@ -587,7 +588,8 @@ The drawer should not explain backend concepts. It should help the user decide w
 - Doctor findings and Site Fixes do not appear as Content Briefs.
 - Review handoff still works after drafting.
 - Provenance-complete current Topics retain their normal view/edit, scheduling, generation, and archive/dismiss lifecycle through the Content Brief.
-- Pre-boundary or provenance-incomplete Topics—including source-less and partially linked records—retain view/edit, cancel/reschedule, draft/generate, and archive/dismiss on the existing record, but cannot be created, cloned, backfilled, migrated, or used to seed future work.
+- Cutover-existing, provenance-incomplete Topics—including source-less and partially linked records—retain view/edit, cancel/reschedule, draft/generate, and archive/dismiss on the existing record, but cannot be created, cloned, backfilled, migrated, or used to seed future work.
+- Post-cutover provenance-incomplete records fail closed into quarantine and receive no current or legacy operations.
 - A user-triggered AI Opportunity Finding run creates only non-user-visible internal candidates; arbitration must create a `needs_decision` AI Opportunity before acceptance can create a Growth Action or eligible Content Brief.
 - Existing generated content remains accessible and is not deleted by this UI simplification.
 
@@ -613,11 +615,11 @@ The drawer should not explain backend concepts. It should help the user decide w
 - Existing accepted content actions still load in either the current or legacy surface according to provenance completeness.
 - Existing Topic-backed drafts still appear in Review or editor surfaces.
 - Provenance-complete current Topics retain view/edit, schedule/cancel/reschedule, draft/generate, and archive/dismiss through normal lifecycle surfaces.
-- A pre-boundary or provenance-incomplete Topic, including a partially linked record, retains view/edit, cancel/reschedule, draft/generate, and archive/dismiss through the compatibility surface.
+- A Topic that existed at cutover and was provenance-incomplete, including a partially linked record, retains view/edit, cancel/reschedule, draft/generate, and archive/dismiss through the compatibility surface.
 - Auto workflow can still draft content.
 - Content Plan has no manual Topic, Opportunity, or Content Brief creation entry point.
 - A user-triggered AI Opportunity Finding run produces only an internal candidate; only arbitration may create a `needs_decision` AI Opportunity, and only acceptance creates a Growth Action or eligible Content Brief.
-- A pre-boundary or provenance-incomplete Topic cannot be created, cloned, backfilled, migrated, or used to seed another Topic, Opportunity, Content Action, or Content Brief.
+- A cutover legacy Topic cannot be created, cloned, backfilled, migrated, or used to seed another Topic, Opportunity, Content Action, or Content Brief; a post-cutover provenance-incomplete record is quarantined and receives no legacy operation at all.
 - Non-content actions cannot trigger content generation.
 
 ### 20.3 Contract Tests To Update
@@ -639,7 +641,7 @@ Recommended rollout:
 4. Update contract tests to match the new routing and handoff rules.
 5. Add a publish strategy recommendation only to already provenance-complete current actions; do not promote incomplete records into current work.
 6. Render provenance-complete current Topics through their Opportunity-derived Content Briefs without rewriting source provenance.
-7. Preserve the Section 15.4 operation matrix for all pre-boundary or provenance-incomplete Topics, including source-less and partially linked records, without creating or migrating records.
+7. Preserve the Section 15.4 operation matrix only for cutover-existing, provenance-incomplete Topics, including source-less and partially linked records; quarantine post-cutover incomplete records without legacy operations.
 8. Add Publish to selector to the Content Brief drawer.
 9. Update draft generation to use selected publish strategy.
 10. Fix both known `Channel: "blog"` hardcoded opportunity/scheduler paths.
@@ -658,7 +660,7 @@ Recommended rollout:
 - Auto mode may draft with the AI recommendation before a user override.
 - Content Plan must keep Sent to Review handoff cards.
 - Every newly created Content Brief must come from an accepted AI-generated Opportunity whose scope materially creates or refreshes content; Content Plan has no manual creation path.
-- Provenance-complete current Topics use the normal Content Brief lifecycle, while every pre-boundary or provenance-incomplete Topic—including source-less and partially linked records—retains exactly the existing-record compatibility operations in Section 15.4.
+- Provenance-complete accepted-AI Topics use the normal Content Brief lifecycle regardless of age; only cutover-existing, provenance-incomplete Topics retain Section 15.4 compatibility operations, and post-cutover incomplete records fail closed into quarantine.
 
 ## 23. Open Questions
 
