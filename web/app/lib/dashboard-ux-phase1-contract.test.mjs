@@ -1977,9 +1977,10 @@ test("content plan lets users draft accepted opportunities manually when Auto is
   assert.match(topics, /Publish to/);
   assert.match(topics, /recommendedPublishStrategyForAction/);
   assert.match(topics, /publishStrategyReasonForAction/);
-  assert.match(topics, /New Content Brief/);
-  assert.match(topics, /createManualBrief/);
-  assert.match(topics, /api\.createTopic\(projectId/);
+  assert.doesNotMatch(topics, /New Content Brief/);
+  assert.doesNotMatch(topics, /createManualBrief/);
+  assert.doesNotMatch(topics, /api\.createTopic\(projectId/);
+  assert.doesNotMatch(topics, /create a new content brief/);
   assert.match(topics, /aria-busy=\{selectedActionDraftBusy\}/);
   assert.match(topics, /disabled=\{reviewingContentPlanAction\}/);
   assert.match(topics, /reviewHrefForAction\(projectId, selectedContentPlanAction\)/);
