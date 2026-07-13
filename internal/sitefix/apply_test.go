@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -324,13 +325,48 @@ func TestDecodeJSONObjectRequiresOneObjectWithoutProse(t *testing.T) {
 	var output struct {
 		OK bool `json:"ok"`
 	}
-	for _, raw := range []string{`before {"ok":true}`, `{"ok":true} after`, "```json\n{\"ok\":true}\n```", `{"ok":true} {"extra":true}`, `[ {"ok":true} ]`} {
-		if err := decodeJSONObject(raw, &output); err == nil {
+	rejected := []string{
+		`before {"ok":true}`, `{"ok":true} after`, `{"ok":true} {"extra":true}`, `[ {"ok":true} ]`,
+		"prose before\n```json\n{\"ok\":true}\n```", "```json\n{\"ok\":true}\n```\nprose after",
+		"```json\n{\"ok\":true}\n```\n```json\n{\"extra\":true}\n```", "```json\n[ {\"ok\":true} ]\n```",
+	}
+	for _, raw := range rejected {
+		err := decodeJSONObject(raw, &output)
+		if err == nil {
 			t.Fatalf("non-object-only provider response was accepted: %q", raw)
 		}
+		if !errors.Is(err, errInvalidModelResponse) {
+			t.Fatalf("decode failure lost its sentinel: %v", err)
+		}
 	}
-	if err := decodeJSONObject(" \n\t{\"ok\":true}\r\n", &output); err != nil || !output.OK {
-		t.Fatalf("single JSON object was rejected: output=%+v err=%v", output, err)
+	accepted := []string{
+		" \n\t{\"ok\":true}\r\n",
+		"```json\n{\"ok\":true}\n```",
+		"```\n{\"ok\":true}\n```",
+		"  ```json\n{\"ok\":true}\n```  ",
+	}
+	for _, raw := range accepted {
+		output.OK = false
+		if err := decodeJSONObject(raw, &output); err != nil || !output.OK {
+			t.Fatalf("single JSON object was rejected: raw=%q output=%+v err=%v", raw, output, err)
+		}
+	}
+}
+
+func TestSafePreparationFailureCodeSeparatesModelResponseFromProviderOutage(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{errInvalidModelResponse, "invalid_response"},
+		{fmt.Errorf("generation failed: %w", errInvalidModelResponse), "invalid_response"},
+		{errors.New("Doctor fix generation provider is unavailable"), "provider_unavailable"},
+		{errors.New("provider fallback disabled for site_fix"), "provider_unavailable"},
+	}
+	for _, test := range tests {
+		if got := safePreparationFailureCode(test.err); got != test.want {
+			t.Fatalf("safePreparationFailureCode(%v) = %q, want %q", test.err, got, test.want)
+		}
 	}
 }
 
