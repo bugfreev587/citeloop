@@ -153,8 +153,10 @@ func TestOpportunityWorkQueuesSchemaAndRoutes(t *testing.T) {
 		t.Fatalf("read server.go: %v", err)
 	}
 	routes := string(serverRaw)
+	if strings.Contains(routes, `r.Post("/topics", s.createTopic)`) {
+		t.Fatal("manual Topic creation route must not be registered")
+	}
 	for _, want := range []string{
-		`r.Post("/topics", s.createTopic)`,
 		`r.Post("/opportunities/{opportunityID}/snooze", s.snoozeSEOOpportunity)`,
 		`r.Post("/opportunities/{opportunityID}/unsnooze", s.unsnoozeSEOOpportunity)`,
 		`r.Post("/opportunities/{opportunityID}/watch", s.watchSEOOpportunity)`,

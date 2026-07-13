@@ -54,6 +54,18 @@ func TestTopicMutationRoutesAreRegistered(t *testing.T) {
 	}
 }
 
+func TestManualTopicCreationRouteIsNotRegistered(t *testing.T) {
+	router := (&Server{}).Router()
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/not-a-uuid/topics", nil)
+	res := httptest.NewRecorder()
+
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestGenerateTopicRouteStartsBackgroundGeneration(t *testing.T) {
 	source, err := os.ReadFile("handlers_agents.go")
 	if err != nil {
