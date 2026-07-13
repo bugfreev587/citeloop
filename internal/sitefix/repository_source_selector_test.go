@@ -62,6 +62,39 @@ func TestRankRepositorySourceCandidatesFiltersUnsafePathsAndRanksFindingFamilies
 	}
 }
 
+// Regression: a sitemap fix in a repository where hundreds of paths match the
+// generic target-URL tokens and metadata hints must still surface the sitemap
+// source within the bounded candidate list, or the generator can never patch it.
+func TestRankRepositorySourceCandidatesKeepsIntentMatchInNoisyRepository(t *testing.T) {
+	candidates := []RepositorySourceCandidate{{Path: "dashboard/src/app/sitemap.ts", SHA: "sitemap", Size: 900}}
+	for i := 0; i < MaxRepositorySourceCandidates+100; i++ {
+		// Every noisy path matches URL tokens ("api", "publishing") and the
+		// metadata family hint ("page"), like a large marketing/docs site.
+		candidates = append(candidates, RepositorySourceCandidate{
+			Path: fmt.Sprintf("dashboard/src/app/docs/api/publishing/section-%03d/page.tsx", i), SHA: fmt.Sprintf("noise-%03d", i), Size: 900,
+		})
+	}
+	fix := db.SiteFix{
+		FindingKind: "broken",
+		TargetUrls:  json.RawMessage(`["https://example.com/blog/evidence-led-social-publishing-api-planning-brief"]`),
+		ProposedFix: json.RawMessage(`{"fix_intent":"Include the canonical URL in the sitemap.","mutations":[{"field":"sitemap_entry","operation":"add"}]}`),
+		EvidenceSnapshot: json.RawMessage(`{"finding":{"title":"Sitemap missing canonical URL","description":"The page is absent from the sitemap."}}`),
+	}
+	ranked, err := RankRepositorySourceCandidates(fix, candidates, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ranked) != MaxRepositorySourceCandidates {
+		t.Fatalf("ranked = %d candidates, want the %d cap", len(ranked), MaxRepositorySourceCandidates)
+	}
+	for _, candidate := range ranked {
+		if candidate.Path == "dashboard/src/app/sitemap.ts" {
+			return
+		}
+	}
+	t.Fatalf("sitemap source was pushed out of the bounded candidate list; top=%q", ranked[0].Path)
+}
+
 func TestLLMRepositorySourceSelectorIntersectsSafeSetAndSendsMetadataOnly(t *testing.T) {
 	provider := &repositorySelectorProvider{response: `{"paths":["app/page.tsx","../../.env","unknown.ts","app/page.tsx","app/layout.tsx"]}`}
 	selector := LLMRepositorySourceSelector{Provider: provider, Model: "selector-test"}
