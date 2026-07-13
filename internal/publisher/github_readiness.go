@@ -106,11 +106,12 @@ func ProbeGitHubPRReadiness(
 	repositoryURL := base + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)
 	var repository struct {
 		FullName    string          `json:"full_name"`
+		Private     *bool           `json:"private"`
 		Permissions map[string]bool `json:"permissions"`
 	}
-	status, ok := githubReadinessGET(ctx, client, repositoryURL, input.Token, &repository)
+	repositoryMetadata, ok := githubReadinessGET(ctx, client, repositoryURL, input.Token, &repository)
 	if !ok {
-		return githubReadinessFailure(result, status)
+		return githubReadinessFailure(result, repositoryMetadata.statusCode, input.CredentialKind)
 	}
 	if repository.FullName == "" || !strings.EqualFold(repository.FullName, repo) {
 		result.Status = GitHubPRReadinessError
@@ -124,6 +125,14 @@ func ProbeGitHubPRReadiness(
 			result.Detail = githubPRTokenPermissionDetail
 			return result
 		}
+		_, hasRepoScope := repositoryMetadata.grantedOAuthScopes["repo"]
+		_, hasPublicRepoScope := repositoryMetadata.grantedOAuthScopes["public_repo"]
+		publicRepoScopeApplies := hasPublicRepoScope && repository.Private != nil && !*repository.Private
+		if !hasRepoScope && !publicRepoScopeApplies {
+			result.Status = GitHubPRReadinessPermissionMissing
+			result.Detail = githubPRTokenPermissionDetail
+			return result
+		}
 	}
 	refURL := repositoryURL + "/git/ref/heads/" + url.PathEscape(branch)
 	var ref struct {
@@ -132,9 +141,9 @@ func ProbeGitHubPRReadiness(
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	status, ok = githubReadinessGET(ctx, client, refURL, input.Token, &ref)
+	refMetadata, ok := githubReadinessGET(ctx, client, refURL, input.Token, &ref)
 	if !ok {
-		return githubReadinessFailure(result, status)
+		return githubReadinessFailure(result, refMetadata.statusCode, input.CredentialKind)
 	}
 	if ref.Ref != "refs/heads/"+branch || strings.TrimSpace(ref.Object.SHA) == "" {
 		result.Status = GitHubPRReadinessError
@@ -158,39 +167,64 @@ func githubRepositoryParts(repo string) (string, string, bool) {
 	return owner, name, true
 }
 
-func githubReadinessGET(ctx context.Context, client *http.Client, endpoint, token string, out any) (int, bool) {
+type githubReadinessResponseMetadata struct {
+	statusCode         int
+	grantedOAuthScopes map[string]struct{}
+}
+
+func githubReadinessGET(ctx context.Context, client *http.Client, endpoint, token string, out any) (githubReadinessResponseMetadata, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, false
+		return githubReadinessResponseMetadata{}, false
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	response, err := client.Do(req)
 	if err != nil {
-		return 0, false
+		return githubReadinessResponseMetadata{}, false
 	}
 	defer response.Body.Close()
+	metadata := githubReadinessResponseMetadata{
+		statusCode:         response.StatusCode,
+		grantedOAuthScopes: grantedGitHubOAuthScopes(response.Header.Values("X-OAuth-Scopes")),
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 32*1024))
-		return response.StatusCode, false
+		return metadata, false
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 32*1024))
 	if err := decoder.Decode(out); err != nil {
-		return 0, false
+		return githubReadinessResponseMetadata{}, false
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return 0, false
+		return githubReadinessResponseMetadata{}, false
 	}
-	return response.StatusCode, true
+	return metadata, true
 }
 
-func githubReadinessFailure(result GitHubPRReadiness, status int) GitHubPRReadiness {
+func grantedGitHubOAuthScopes(headerValues []string) map[string]struct{} {
+	scopes := make(map[string]struct{})
+	for _, headerValue := range headerValues {
+		for _, scope := range strings.Split(headerValue, ",") {
+			if scope = strings.TrimSpace(scope); scope != "" {
+				scopes[scope] = struct{}{}
+			}
+		}
+	}
+	return scopes
+}
+
+func githubReadinessFailure(result GitHubPRReadiness, status int, credentialKind GitHubPRCredentialKind) GitHubPRReadiness {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		result.Status = GitHubPRReadinessPermissionMissing
-		result.Detail = githubPRAppPermissionDetail
+		if credentialKind == GitHubPRCredentialAdvancedToken {
+			result.Detail = githubPRTokenPermissionDetail
+		} else {
+			result.Detail = githubPRAppPermissionDetail
+		}
 	case http.StatusNotFound:
 		result.Status = GitHubPRReadinessRepositoryUnavailable
 		result.Detail = githubPRRepositoryDetail

@@ -33,27 +33,61 @@ func TestGitHubPRPermissionsRequireContentsAndPullRequestsWrite(t *testing.T) {
 
 func TestGitHubPRReadinessProbeUsesExactRepositoryAndConfiguredBaseRef(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		credentialKind   GitHubPRCredentialKind
-		permissions      map[string]string
-		repositoryBody   string
-		wantStatus       GitHubPRReadinessStatus
-		wantRequestCount int
+		name                string
+		credentialKind      GitHubPRCredentialKind
+		permissions         map[string]string
+		repositoryBody      string
+		grantedOAuthScopes  string
+		acceptedPermissions string
+		wantStatus          GitHubPRReadinessStatus
+		wantRequestCount    int
 	}{
 		{
 			name:             "GitHub App grants plus exact reads are ready",
 			credentialKind:   GitHubPRCredentialGitHubApp,
 			permissions:      map[string]string{"contents": "write", "pull_requests": "write"},
-			repositoryBody:   `{"full_name":"acme/site","permissions":{"push":false}}`,
+			repositoryBody:   `{"full_name":"acme/site","private":true,"permissions":{"push":false}}`,
 			wantStatus:       GitHubPRReadinessReady,
 			wantRequestCount: 2,
 		},
 		{
-			name:             "advanced token explicitly proves push authority",
+			name:             "advanced token push without granted scopes is ambiguous",
 			credentialKind:   GitHubPRCredentialAdvancedToken,
-			repositoryBody:   `{"full_name":"acme/site","permissions":{"push":true}}`,
-			wantStatus:       GitHubPRReadinessReady,
-			wantRequestCount: 2,
+			repositoryBody:   `{"full_name":"acme/site","private":false,"permissions":{"push":true}}`,
+			wantStatus:       GitHubPRReadinessPermissionMissing,
+			wantRequestCount: 1,
+		},
+		{
+			name:               "classic repo scope plus push proves authority",
+			credentialKind:     GitHubPRCredentialAdvancedToken,
+			repositoryBody:     `{"full_name":"acme/site","private":true,"permissions":{"push":true}}`,
+			grantedOAuthScopes: "read:user, repo, workflow",
+			wantStatus:         GitHubPRReadinessReady,
+			wantRequestCount:   2,
+		},
+		{
+			name:               "classic public repo scope plus public push proves authority",
+			credentialKind:     GitHubPRCredentialAdvancedToken,
+			repositoryBody:     `{"full_name":"acme/site","private":false,"permissions":{"push":true}}`,
+			grantedOAuthScopes: "public_repo",
+			wantStatus:         GitHubPRReadinessReady,
+			wantRequestCount:   2,
+		},
+		{
+			name:               "classic public repo scope cannot authorize private repository",
+			credentialKind:     GitHubPRCredentialAdvancedToken,
+			repositoryBody:     `{"full_name":"acme/site","private":true,"permissions":{"push":true}}`,
+			grantedOAuthScopes: "public_repo",
+			wantStatus:         GitHubPRReadinessPermissionMissing,
+			wantRequestCount:   1,
+		},
+		{
+			name:                "accepted permissions header is not a granted scope",
+			credentialKind:      GitHubPRCredentialAdvancedToken,
+			repositoryBody:      `{"full_name":"acme/site","private":false,"permissions":{"push":true}}`,
+			acceptedPermissions: "contents=write, pull_requests=write",
+			wantStatus:          GitHubPRReadinessPermissionMissing,
+			wantRequestCount:    1,
 		},
 		{
 			name:             "advanced token ambiguous permissions are rejected",
@@ -72,7 +106,10 @@ func TestGitHubPRReadinessProbeUsesExactRepositoryAndConfiguredBaseRef(t *testin
 				}
 				switch req.URL.EscapedPath() {
 				case "/repos/acme/site":
-					return publisherReadinessResponse(req, http.StatusOK, tc.repositoryBody), nil
+					response := publisherReadinessResponse(req, http.StatusOK, tc.repositoryBody)
+					response.Header.Set("X-OAuth-Scopes", tc.grantedOAuthScopes)
+					response.Header.Set("X-Accepted-GitHub-Permissions", tc.acceptedPermissions)
+					return response, nil
 				case "/repos/acme/site/git/ref/heads/release":
 					return publisherReadinessResponse(req, http.StatusOK, `{"ref":"refs/heads/release","object":{"sha":"base-sha"}}`), nil
 				default:
@@ -116,15 +153,16 @@ func TestGitHubPRReadinessProbeClassifiesRepositoryAndBaseRefFailuresSafely(t *t
 		refBody        string
 		transportCall  int
 		wantStatus     GitHubPRReadinessStatus
+		wantDetail     string
 	}{
-		{name: "repository unauthorized", repositoryCode: http.StatusUnauthorized, repositoryBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing},
-		{name: "repository forbidden", repositoryCode: http.StatusForbidden, repositoryBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing},
+		{name: "repository unauthorized", repositoryCode: http.StatusUnauthorized, repositoryBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing, wantDetail: githubPRTokenPermissionDetail},
+		{name: "repository forbidden", repositoryCode: http.StatusForbidden, repositoryBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing, wantDetail: githubPRTokenPermissionDetail},
 		{name: "repository missing", repositoryCode: http.StatusNotFound, repositoryBody: unsafe, wantStatus: GitHubPRReadinessRepositoryUnavailable},
 		{name: "repository server error", repositoryCode: http.StatusBadGateway, repositoryBody: unsafe, wantStatus: GitHubPRReadinessError},
 		{name: "repository malformed", repositoryCode: http.StatusOK, repositoryBody: `{`, wantStatus: GitHubPRReadinessError},
 		{name: "repository transport error", transportCall: 1, wantStatus: GitHubPRReadinessError},
-		{name: "base ref unauthorized", repositoryCode: http.StatusOK, refCode: http.StatusUnauthorized, refBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing},
-		{name: "base ref forbidden", repositoryCode: http.StatusOK, refCode: http.StatusForbidden, refBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing},
+		{name: "base ref unauthorized", repositoryCode: http.StatusOK, refCode: http.StatusUnauthorized, refBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing, wantDetail: githubPRTokenPermissionDetail},
+		{name: "base ref forbidden", repositoryCode: http.StatusOK, refCode: http.StatusForbidden, refBody: unsafe, wantStatus: GitHubPRReadinessPermissionMissing, wantDetail: githubPRTokenPermissionDetail},
 		{name: "base ref missing", repositoryCode: http.StatusOK, refCode: http.StatusNotFound, refBody: unsafe, wantStatus: GitHubPRReadinessRepositoryUnavailable},
 		{name: "base ref server error", repositoryCode: http.StatusOK, refCode: http.StatusInternalServerError, refBody: unsafe, wantStatus: GitHubPRReadinessError},
 		{name: "base ref malformed", repositoryCode: http.StatusOK, refCode: http.StatusOK, refBody: `{}`, wantStatus: GitHubPRReadinessError},
@@ -146,7 +184,11 @@ func TestGitHubPRReadinessProbeClassifiesRepositoryAndBaseRefFailuresSafely(t *t
 					if body == "" {
 						body = `{"full_name":"acme/site","permissions":{"push":true}}`
 					}
-					return publisherReadinessResponse(req, code, body), nil
+					response := publisherReadinessResponse(req, code, body)
+					if code == http.StatusOK {
+						response.Header.Set("X-OAuth-Scopes", "repo")
+					}
+					return response, nil
 				}
 				code := tc.refCode
 				if code == 0 {
@@ -167,6 +209,9 @@ func TestGitHubPRReadinessProbeClassifiesRepositoryAndBaseRefFailuresSafely(t *t
 			})
 			if got.Status != tc.wantStatus {
 				t.Fatalf("status = %q, want %q (detail %q)", got.Status, tc.wantStatus, got.Detail)
+			}
+			if tc.wantDetail != "" && got.Detail != tc.wantDetail {
+				t.Fatalf("detail = %q, want %q", got.Detail, tc.wantDetail)
 			}
 			for _, secret := range []string{"ghp_leaked", "private-token", "Authorization", "raw upstream body"} {
 				if strings.Contains(got.Detail, secret) {

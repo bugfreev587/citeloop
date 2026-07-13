@@ -199,11 +199,7 @@ func (c serverGitHubPRReadinessChecker) Check(ctx context.Context, projectID uui
 			}), target, nil
 		}
 		if tokenErr != nil {
-			return controlledGitHubPRReadiness(publisher.GitHubPRReadiness{
-				Status: publisher.GitHubPRReadinessError,
-				Repo:   target.Repo,
-				Branch: target.Branch,
-			}), target, nil
+			return publisher.GitHubPRReadiness{}, target, tokenErr
 		}
 		target.credentialKind = publisher.GitHubPRCredentialAdvancedToken
 		target.token = token

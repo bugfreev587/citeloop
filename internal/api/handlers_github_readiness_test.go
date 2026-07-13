@@ -14,8 +14,10 @@ import (
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/githubapp"
 	"github.com/citeloop/citeloop/internal/publisher"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -339,6 +341,49 @@ func TestGitHubPRReadinessPOSTDistinguishesNoConnectionFromDatabaseFailure(t *te
 	}
 }
 
+func TestGitHubPRReadinessPOSTDoesNotPersistCredentialDatabaseFailure(t *testing.T) {
+	projectID := uuid.New()
+	connection := githubPRReadinessConnection(
+		projectID,
+		publisher.GitHubPRReadinessNotChecked,
+		`{"repo":"acme/site","branch":"main","base_url":"https://example.com/blog"}`,
+		nil,
+		nil,
+	)
+	credentialRef := publisher.PublisherCredentialRef(uuid.New())
+	connection.CredentialRef = &credentialRef
+	rawDatabaseError := errors.New("credential database failed with ghp_secret raw text")
+	store := &fakeGitHubPRReadinessStore{getResults: []fakeGitHubPRReadinessStoreResult{{connection: connection}}}
+	server := &Server{
+		Q:                    db.New(readinessCredentialErrorDB{err: rawDatabaseError}),
+		githubReadinessStore: store,
+		githubReadinessHTTPClient: &http.Client{Transport: apiGitHubReadinessRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("credential database failure must stop before GitHub probe")
+			return nil, nil
+		})},
+	}
+	server.Env.NotificationSecretKey = "test-secretbox-key"
+
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/integrations/github/pr-readiness/check", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("projectID", projectID.String())
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	response := httptest.NewRecorder()
+	server.checkGitHubPRReadiness(response, request)
+
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "GitHub readiness could not be checked") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if store.setCalls != 0 {
+		t.Fatalf("credential database failure persisted readiness %d times", store.setCalls)
+	}
+	for _, unsafe := range []string{"credential database failed", "ghp_secret", "raw text"} {
+		if strings.Contains(response.Body.String(), unsafe) {
+			t.Fatalf("response leaked %q: %s", unsafe, response.Body.String())
+		}
+	}
+}
+
 func TestGitHubPRReadinessTargetKeepsCredentialPrivate(t *testing.T) {
 	target := githubPRReadinessTarget{
 		ConnectionID:      uuid.New(),
@@ -442,6 +487,30 @@ func (f apiGitHubReadinessRoundTripFunc) RoundTrip(req *http.Request) (*http.Res
 
 type readinessHTTPStatusError struct {
 	status int
+}
+
+type readinessCredentialErrorDB struct {
+	err error
+}
+
+func (db readinessCredentialErrorDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, db.err
+}
+
+func (db readinessCredentialErrorDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, db.err
+}
+
+func (db readinessCredentialErrorDB) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return readinessCredentialErrorRow{err: db.err}
+}
+
+type readinessCredentialErrorRow struct {
+	err error
+}
+
+func (row readinessCredentialErrorRow) Scan(...interface{}) error {
+	return row.err
 }
 
 func (e readinessHTTPStatusError) Error() string {
