@@ -214,11 +214,15 @@ func safeRepositoryCandidate(candidate RepositorySourceCandidate) bool {
 	if _, err := validateRepositoryPath(candidate.Path); err != nil || strings.TrimSpace(candidate.SHA) == "" || candidate.Size < 0 || candidate.Size > MaxRepositorySourceFileBytes {
 		return false
 	}
+	if strings.Contains(candidate.Path, "%") {
+		return false
+	}
 	lower := strings.ToLower(candidate.Path)
 	parts := strings.Split(lower, "/")
 	blockedDirs := map[string]struct{}{
-		".git": {}, ".github": {}, ".next": {}, ".nuxt": {}, "node_modules": {}, "vendor": {},
+		".git": {}, ".github": {}, ".circleci": {}, ".buildkite": {}, ".gitlab": {}, ".next": {}, ".nuxt": {}, "node_modules": {}, "vendor": {},
 		"dist": {}, "build": {}, "out": {}, "coverage": {}, "target": {}, "generated": {}, "__generated__": {},
+		"workflows": {}, "pipelines": {},
 	}
 	for _, part := range parts[:len(parts)-1] {
 		if _, blocked := blockedDirs[part]; blocked {
@@ -226,7 +230,8 @@ func safeRepositoryCandidate(candidate RepositorySourceCandidate) bool {
 		}
 	}
 	base := parts[len(parts)-1]
-	if base == "jenkinsfile" || base == ".gitlab-ci.yml" || strings.HasPrefix(base, ".env") ||
+	if blockedRepositoryWorkflowFile(base) || blockedRepositoryDependencyManifest(base) || sensitiveRepositoryPath(parts) || generatedRepositoryFile(base) ||
+		strings.HasPrefix(base, ".env") ||
 		strings.Contains(base, "secret") || strings.Contains(base, "credential") ||
 		strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, "-lock.json") ||
 		base == "go.sum" || base == "composer.lock" || base == "gemfile.lock" || base == "cargo.lock" {
@@ -240,6 +245,67 @@ func safeRepositoryCandidate(candidate RepositorySourceCandidate) bool {
 	}
 	_, ok := allowed[ext]
 	return ok
+}
+
+func blockedRepositoryWorkflowFile(base string) bool {
+	switch base {
+	case "jenkinsfile", ".gitlab-ci.yml", ".gitlab-ci.yaml", "azure-pipelines.yml", "azure-pipelines.yaml",
+		"bitbucket-pipelines.yml", "bitbucket-pipelines.yaml", ".travis.yml", ".travis.yaml",
+		"appveyor.yml", "appveyor.yaml", "buildspec.yml", "buildspec.yaml", "cloudbuild.yml", "cloudbuild.yaml":
+		return true
+	default:
+		return false
+	}
+}
+
+func blockedRepositoryDependencyManifest(base string) bool {
+	switch base {
+	case "package.json", "pyproject.toml", "pipfile", "pipfile.lock", "gemfile", "gemfile.lock",
+		"go.mod", "go.work", "cargo.toml", "cargo.lock", "composer.json", "composer.lock", "pom.xml",
+		"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradle.properties":
+		return true
+	}
+	ext := path.Ext(base)
+	return strings.HasPrefix(base, "requirements") && (ext == ".txt" || ext == ".in")
+}
+
+func sensitiveRepositoryPath(parts []string) bool {
+	for _, part := range parts {
+		stem := strings.TrimSuffix(part, path.Ext(part))
+		compact := strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, stem)
+		if strings.Contains(compact, "serviceaccount") || strings.Contains(compact, "privatekey") ||
+			strings.HasPrefix(compact, "firebase") || strings.HasSuffix(compact, "token") || strings.HasSuffix(compact, "cert") {
+			return true
+		}
+		tokens := strings.FieldsFunc(part, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+		tokenSet := make(map[string]struct{}, len(tokens))
+		for _, token := range tokens {
+			tokenSet[token] = struct{}{}
+			switch token {
+			case "secret", "secrets", "credential", "credentials", "auth", "token", "firebase", "cert", "certificate":
+				return true
+			}
+		}
+		_, service := tokenSet["service"]
+		_, account := tokenSet["account"]
+		_, private := tokenSet["private"]
+		_, key := tokenSet["key"]
+		if (service && account) || (private && key) {
+			return true
+		}
+	}
+	return false
+}
+
+func generatedRepositoryFile(base string) bool {
+	return strings.Contains(base, ".generated.") || strings.Contains(base, ".gen.") || strings.Contains(base, ".min.") ||
+		strings.HasSuffix(strings.TrimSuffix(base, path.Ext(base)), ".generated") || strings.HasSuffix(strings.TrimSuffix(base, path.Ext(base)), ".gen") ||
+		strings.HasSuffix(strings.TrimSuffix(base, path.Ext(base)), ".min")
 }
 
 func repositoryTargetTokens(raw json.RawMessage) []string {

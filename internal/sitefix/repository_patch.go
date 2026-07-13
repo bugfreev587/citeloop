@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -15,9 +16,13 @@ import (
 )
 
 const (
-	MaxRepositorySourceFiles      = 8
-	MaxRepositorySourceFileBytes  = 128 * 1024
-	MaxRepositorySourceTotalBytes = 512 * 1024
+	MaxRepositorySourceFiles             = 8
+	MaxRepositorySourceFileBytes         = 128 * 1024
+	MaxRepositorySourceTotalBytes        = 512 * 1024
+	MaxRepositoryReplacementsPerFile     = 64
+	MaxRepositoryReplacementsTotal       = 128
+	MaxRepositoryReplacementBytesPerFile = 256 * 1024
+	MaxRepositoryReplacementBytesTotal   = 512 * 1024
 )
 
 type RepositorySource struct {
@@ -115,6 +120,7 @@ func ApplyRepositoryPatch(snapshot RepositorySnapshot, patch RepositoryPatch) ([
 	updates := make([]RepositoryFileUpdate, 0, len(patch.Files))
 	actual := repositoryActualDiff{Files: make([]repositoryActualFileDiff, 0, len(patch.Files))}
 	resultTotal := 0
+	replacementTotal, replacementBytesTotal := 0, 0
 	for _, filePatch := range patch.Files {
 		path, err := validateRepositoryPath(filePatch.Path)
 		if err != nil {
@@ -132,11 +138,14 @@ func ApplyRepositoryPatch(snapshot RepositorySnapshot, patch RepositoryPatch) ([
 		if baseSHA == "" || baseSHA != source.SHA {
 			return nil, nil, fmt.Errorf("repository patch base sha does not match selected source %q", path)
 		}
-		if len(filePatch.Replacements) == 0 {
-			return nil, nil, fmt.Errorf("repository patch for %q has no replacements", path)
+		if len(filePatch.Replacements) == 0 || len(filePatch.Replacements) > MaxRepositoryReplacementsPerFile {
+			return nil, nil, fmt.Errorf("repository patch for %q must contain between one and %d replacements", path, MaxRepositoryReplacementsPerFile)
 		}
-		original := []byte(source.Content)
-		ranges := make([]replacementRange, 0, len(filePatch.Replacements))
+		replacementTotal += len(filePatch.Replacements)
+		if replacementTotal > MaxRepositoryReplacementsTotal {
+			return nil, nil, fmt.Errorf("repository patch exceeds %d total replacements", MaxRepositoryReplacementsTotal)
+		}
+		replacementBytes := 0
 		for _, replacement := range filePatch.Replacements {
 			if replacement.OldText == "" {
 				return nil, nil, fmt.Errorf("repository patch for %q contains empty old_text", path)
@@ -150,12 +159,30 @@ func ApplyRepositoryPatch(snapshot RepositorySnapshot, patch RepositoryPatch) ([
 			if err := validateRepositoryText(replacement.NewText, "new_text"); err != nil {
 				return nil, nil, fmt.Errorf("repository patch for %q: %w", path, err)
 			}
+			if len(replacement.OldText) > MaxRepositoryReplacementBytesPerFile-replacementBytes {
+				return nil, nil, fmt.Errorf("repository patch replacement text for %q exceeds %d bytes", path, MaxRepositoryReplacementBytesPerFile)
+			}
+			replacementBytes += len(replacement.OldText)
+			if len(replacement.NewText) > MaxRepositoryReplacementBytesPerFile-replacementBytes {
+				return nil, nil, fmt.Errorf("repository patch replacement text for %q exceeds %d bytes", path, MaxRepositoryReplacementBytesPerFile)
+			}
+			replacementBytes += len(replacement.NewText)
+		}
+		if replacementBytes > MaxRepositoryReplacementBytesTotal-replacementBytesTotal {
+			return nil, nil, fmt.Errorf("repository patch exceeds %d total replacement bytes", MaxRepositoryReplacementBytesTotal)
+		}
+		replacementBytesTotal += replacementBytes
+		original := []byte(source.Content)
+		ranges := make([]replacementRange, 0, len(filePatch.Replacements))
+		finalSize := len(original)
+		for _, replacement := range filePatch.Replacements {
 			old := []byte(replacement.OldText)
 			if bytes.Count(original, old) != 1 {
 				return nil, nil, fmt.Errorf("repository patch old_text must occur exactly once in %q", path)
 			}
 			start := bytes.Index(original, old)
 			ranges = append(ranges, replacementRange{start: start, end: start + len(old), replacement: replacement})
+			finalSize += len(replacement.NewText) - len(old)
 		}
 		sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
 		for i := 1; i < len(ranges); i++ {
@@ -163,21 +190,24 @@ func ApplyRepositoryPatch(snapshot RepositorySnapshot, patch RepositoryPatch) ([
 				return nil, nil, fmt.Errorf("repository patch replacements overlap in %q", path)
 			}
 		}
-		result := append([]byte(nil), original...)
-		for i := len(ranges) - 1; i >= 0; i-- {
-			r := ranges[i]
-			result = append(append(append([]byte(nil), result[:r.start]...), []byte(r.replacement.NewText)...), result[r.end:]...)
+		if finalSize <= 0 || finalSize > MaxRepositorySourceFileBytes || finalSize > MaxRepositorySourceTotalBytes-resultTotal {
+			return nil, nil, fmt.Errorf("repository patch result for %q exceeds bounded output size", path)
 		}
-		if len(result) == 0 || bytes.Equal(result, original) {
+		result := make([]byte, 0, finalSize)
+		cursor := 0
+		for _, r := range ranges {
+			result = append(result, original[cursor:r.start]...)
+			result = append(result, r.replacement.NewText...)
+			cursor = r.end
+		}
+		result = append(result, original[cursor:]...)
+		if len(result) != finalSize || bytes.Equal(result, original) {
 			return nil, nil, fmt.Errorf("repository patch for %q produced empty or unchanged content", path)
 		}
 		if len(result) > MaxRepositorySourceFileBytes || !utf8.Valid(result) || bytes.IndexByte(result, 0) >= 0 {
 			return nil, nil, fmt.Errorf("repository patch result for %q is not bounded UTF-8 text", path)
 		}
-		resultTotal += len(result)
-		if resultTotal > MaxRepositorySourceTotalBytes {
-			return nil, nil, fmt.Errorf("repository patch results exceed %d bytes", MaxRepositorySourceTotalBytes)
-		}
+		resultTotal += finalSize
 		changes := make([]repositoryActualChange, 0, len(ranges))
 		for _, r := range ranges {
 			changes = append(changes, repositoryActualChange{Before: r.replacement.OldText, After: r.replacement.NewText})
@@ -221,6 +251,9 @@ func ValidateRepositorySnapshot(snapshot RepositorySnapshot) error {
 			return fmt.Errorf("repository source %q exceeds %d bytes", path, MaxRepositorySourceFileBytes)
 		}
 		if err := validateRepositoryText(source.Content, "source content"); err != nil {
+			return fmt.Errorf("repository source %q: %w", path, err)
+		}
+		if err := validateRepositorySourceContentSafety(source.Content); err != nil {
 			return fmt.Errorf("repository source %q: %w", path, err)
 		}
 		total += len(source.Content)
@@ -382,9 +415,69 @@ func validRepositoryContentHash(value string) bool {
 	return err == nil
 }
 
+var repositorySecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`),
+	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{20,}`),
+	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{20,}`),
+	regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),
+	regexp.MustCompile(`sk_live_[0-9A-Za-z]{16,}`),
+	regexp.MustCompile(`npm_[0-9A-Za-z]{20,}`),
+}
+
+func validateRepositorySourceContentSafety(content string) error {
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "-----begin private key-----") ||
+		strings.Contains(lower, "-----begin rsa private key-----") ||
+		strings.Contains(lower, "-----begin ec private key-----") ||
+		strings.Contains(lower, "-----begin openssh private key-----") {
+		return errors.New("repository source contains private key material")
+	}
+	for _, pattern := range repositorySecretPatterns {
+		if pattern.FindStringIndex(content) != nil {
+			return errors.New("repository source contains a known credential pattern")
+		}
+	}
+	if strings.Contains(content, "DO NOT EDIT") ||
+		strings.Contains(lower, "code generated") ||
+		strings.Contains(lower, "@generated") {
+		return errors.New("repository source is generated")
+	}
+	if looksMinifiedRepositorySource(content) {
+		return errors.New("repository source appears minified")
+	}
+	return nil
+}
+
+func looksMinifiedRepositorySource(content string) bool {
+	if len(content) < 8*1024 {
+		return false
+	}
+	for _, line := range strings.Split(content, "\n") {
+		if len(line) < 8*1024 {
+			continue
+		}
+		spaces := 0
+		for _, r := range line {
+			if unicode.IsSpace(r) {
+				spaces++
+			}
+		}
+		if spaces*5 < len(line) {
+			return true
+		}
+	}
+	return false
+}
+
 func validateRepositoryText(value, label string) error {
 	if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
 		return fmt.Errorf("%s must be UTF-8 text without NUL bytes", label)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+			return fmt.Errorf("%s must not contain binary control characters", label)
+		}
 	}
 	return nil
 }

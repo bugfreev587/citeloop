@@ -447,6 +447,7 @@ type Querier interface {
 	RepointApplicationToCanonicalSiteFix(ctx context.Context, arg RepointApplicationToCanonicalSiteFixParams) (SiteChangeApplication, error)
 	RepointDuplicateGrowthContentActions(ctx context.Context, arg RepointDuplicateGrowthContentActionsParams) (RepointDuplicateGrowthContentActionsRow, error)
 	RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Context, arg RepointLegacyApplicationsToCanonicalSiteFixParams) ([]SiteChangeApplication, error)
+	ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (ResetCanonicalSiteFixSourceConflictForReprepareRow, error)
 	ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
 	ResolveLegacyObjectAlias(ctx context.Context, arg ResolveLegacyObjectAliasParams) (LegacyObjectAlias, error)
 	ResolveMigrationReviewItem(ctx context.Context, arg ResolveMigrationReviewItemParams) (MigrationReviewItem, error)

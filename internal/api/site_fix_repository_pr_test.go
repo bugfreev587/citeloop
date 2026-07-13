@@ -2,10 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/google/uuid"
 )
 
@@ -45,5 +47,8 @@ func TestCanonicalSiteFixPRFailureAndBranchValuesAreControlled(t *testing.T) {
 	id := uuid.MustParse("12345678-90ab-cdef-1234-567890abcdef")
 	if branch := siteFixRepositoryWorkingBranch(id); branch != "citeloop/doctor-site-fix-1234567890ab" {
 		t.Fatalf("working branch=%q", branch)
+	}
+	if conflictCode := safeCanonicalSiteFixPRFailureCode(fmt.Errorf("atomic apply: %w", publisher.ErrSourceConflict)); conflictCode != "repository_source_conflict" {
+		t.Fatalf("typed source conflict code=%q", conflictCode)
 	}
 }

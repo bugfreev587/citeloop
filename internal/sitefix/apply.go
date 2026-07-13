@@ -135,7 +135,7 @@ func (s ApplyService) Apply(ctx context.Context, projectID, fixID uuid.UUID) (re
 	}
 	if app, ok, err := s.Store.FindApplication(ctx, fix); err != nil {
 		return ApplyResult{}, err
-	} else if ok {
+	} else if ok && app.Status != "failed" {
 		if !app.SiteFixID.Valid || app.ContentActionID.Valid || uuid.UUID(app.SiteFixID.Bytes) != fix.ID {
 			return ApplyResult{}, errors.New("canonical application returned an invalid source")
 		}
@@ -953,11 +953,14 @@ func firstTargetURL(raw json.RawMessage) (string, error) {
 }
 
 func decodeJSONObject(text string, out any) error {
-	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
-	if start < 0 || end < start {
-		return errors.New("provider response did not contain a JSON object")
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return errors.New("provider response must contain exactly one JSON object")
 	}
-	return json.Unmarshal([]byte(text[start:end+1]), out)
+	if err := json.Unmarshal([]byte(trimmed), out); err != nil {
+		return errors.New("provider response must contain exactly one valid JSON object")
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

@@ -3824,6 +3824,108 @@ where app.project_id = sqlc.arg(project_id)
   and exists (select 1 from authority)
 returning app.*;
 
+-- name: ResetCanonicalSiteFixSourceConflictForReprepare :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = sqlc.arg(project_id) and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         app.id as application_id
+  from site_change_applications app
+  join site_fixes sf
+    on sf.id = app.site_fix_id and sf.project_id = app.project_id
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  where app.project_id = sqlc.arg(project_id)
+    and app.id = sqlc.arg(application_id)
+    and app.site_fix_id = sqlc.arg(site_fix_id)
+    and app.site_fix_id is not null and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = sqlc.arg(project_id)
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select app.id
+  from site_change_applications app
+  join eligible e on e.application_id = app.id and e.project_id = app.project_id
+  where app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of app
+), locked_work as materialized (
+  select e.*
+  from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application app where app.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), failed_application as (
+  update site_change_applications app
+  set status = 'failed', failure_reason = 'repository_source_conflict',
+      pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+      updated_at = now()
+  from locked_work e
+  where app.id = e.application_id and app.project_id = e.project_id
+    and app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = sqlc.arg(pr_claim_token)
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning app.*
+), transitioned as (
+  update site_fixes sf
+  set status = 'preparing', failure_reason = 'repository_source_conflict', updated_at = now()
+  from locked_work e
+  where sf.id = e.id and sf.project_id = e.project_id and sf.status = 'applying'
+    and exists (select 1 from failed_application app where app.site_fix_id = sf.id)
+  returning sf.id, sf.project_id, sf.work_signature_id
+), signature_transition as (
+  update work_signature_registry w
+  set status = 'preparing', active = true, updated_at = now()
+  from transitioned sf
+  where w.id = sf.work_signature_id and w.project_id = sf.project_id
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+  returning w.id
+)
+select failed_application.* from failed_application
+cross join transitioned
+cross join signature_transition;
+
 -- name: FailCanonicalSiteFixGitHubPRClaim :one
 with authority as materialized (
   select pwa.project_id,

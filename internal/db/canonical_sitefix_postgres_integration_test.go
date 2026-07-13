@@ -213,6 +213,66 @@ func TestCanonicalSiteFixPostgresTransitions(t *testing.T) {
 		}
 	})
 
+	t.Run("source conflict reset is claim fenced and re-enters preparation", func(t *testing.T) {
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+		claimToken := uuid.New()
+		claimed, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 60,
+			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+		})
+		if err != nil || claimed.Status != "creating_pr" {
+			t.Fatalf("claim app=%+v err=%v", claimed, err)
+		}
+		if _, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
+			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("lost claim reset source conflict: %v", err)
+		}
+		failed, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
+			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+		})
+		if err != nil || failed.Status != "failed" || failed.FailureReason == nil || *failed.FailureReason != "repository_source_conflict" || failed.PrClaimToken.Valid {
+			t.Fatalf("reset application=%+v err=%v", failed, err)
+		}
+		var fixState, signatureState string
+		var signatureActive bool
+		if err := pool.QueryRow(ctx, `select sf.status,w.status,w.active from site_fixes sf join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where sf.project_id=$1 and sf.id=$2`, pid, fid).Scan(&fixState, &signatureState, &signatureActive); err != nil {
+			t.Fatal(err)
+		}
+		if fixState != "preparing" || signatureState != "preparing" || !signatureActive {
+			t.Fatalf("reset fix=%s signature=%s active=%v", fixState, signatureState, signatureActive)
+		}
+	})
+
+	t.Run("source conflict reset rejects lost authority", func(t *testing.T) {
+		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "ready_for_pr")
+		claimToken := uuid.New()
+		if _, err := New(pool).ClaimCanonicalSiteFixGitHubPR(ctx, ClaimCanonicalSiteFixGitHubPRParams{
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true}, LeaseTtlSeconds: 60,
+			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `update product_writer_authority set authority_changed_at=authority_changed_at+interval '1 second',updated_at=now() where project_id=$1 and product='doctor'`, pid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := New(pool).ResetCanonicalSiteFixSourceConflictForReprepare(ctx, ResetCanonicalSiteFixSourceConflictForReprepareParams{
+			ProjectID: pid, ApplicationID: aid, SiteFixID: pgtype.UUID{Bytes: fid, Valid: true},
+			PrClaimToken: pgtype.UUID{Bytes: claimToken, Valid: true},
+		}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("lost authority reset source conflict: %v", err)
+		}
+		var appState, fixState, signatureState string
+		if err := pool.QueryRow(ctx, `select app.status,sf.status,w.status from site_change_applications app join site_fixes sf on sf.id=app.site_fix_id and sf.project_id=app.project_id join work_signature_registry w on w.id=sf.work_signature_id and w.project_id=sf.project_id where app.project_id=$1 and app.id=$2`, pid, aid).Scan(&appState, &fixState, &signatureState); err != nil {
+			t.Fatal(err)
+		}
+		if appState != "creating_pr" || fixState != "applying" || signatureState != "executing" {
+			t.Fatalf("lost authority mutated app=%s fix=%s signature=%s", appState, fixState, signatureState)
+		}
+	})
+
 	t.Run("apply failure reopens without verification retry", func(t *testing.T) {
 		pid, fid, aid := insertCanonicalSiteFixFixture(t, ctx, pool, "applying", "executing", "github_pr_open")
 		reason := "closed PR"

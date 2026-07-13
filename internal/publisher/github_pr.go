@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,10 @@ import (
 	"time"
 	"unicode"
 )
+
+// ErrSourceConflict marks an immutable base-ref or source-blob identity that
+// no longer matches the repository snapshot used to prepare a patch.
+var ErrSourceConflict = errors.New("repository source changed since preparation")
 
 type GitHubPRClient struct {
 	Token          string
@@ -70,8 +75,10 @@ type GitHubFileUpdatesPRInput struct {
 }
 
 const (
-	gitHubCommitIdentityName  = "CiteLoop"
-	gitHubCommitIdentityEmail = "noreply@citeloop.dev"
+	gitHubCommitIdentityName   = "CiteLoop"
+	gitHubCommitIdentityEmail  = "noreply@citeloop.dev"
+	maxGitHubTreeResponseBytes = 8 << 20
+	maxGitHubTreeEntries       = 25_000
 )
 
 type GitHubPRResult struct {
@@ -121,8 +128,11 @@ func (c *GitHubPRClient) ListTree(ctx context.Context, ref string) ([]GitHubTree
 		return nil, err
 	}
 	defer resp.Body.Close()
+	raw, err := readBoundedGitHubBody(resp.Body, maxGitHubTreeResponseBytes)
+	if err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("github tree lookup %d: %s", resp.StatusCode, string(raw))
 	}
 	var out struct {
@@ -135,11 +145,19 @@ func (c *GitHubPRClient) ListTree(ctx context.Context, ref string) ([]GitHubTree
 			Size int64  `json:"size"`
 		} `json:"tree"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&out); err != nil {
 		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("github recursive tree response contains trailing data")
 	}
 	if out.Truncated {
 		return nil, fmt.Errorf("github recursive tree is truncated")
+	}
+	if len(out.Tree) > maxGitHubTreeEntries {
+		return nil, fmt.Errorf("github recursive tree exceeds %d entries", maxGitHubTreeEntries)
 	}
 	entries := make([]GitHubTreeEntry, 0, len(out.Tree))
 	for _, entry := range out.Tree {
@@ -159,6 +177,17 @@ func (c *GitHubPRClient) ListTree(ctx context.Context, ref string) ([]GitHubTree
 		})
 	}
 	return entries, nil
+}
+
+func readBoundedGitHubBody(body io.Reader, maxBytes int) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, int64(maxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxBytes {
+		return nil, fmt.Errorf("github response exceeds %d bytes", maxBytes)
+	}
+	return raw, nil
 }
 
 // ReadBlob reads content by immutable Git blob SHA rather than by a moving
@@ -220,7 +249,7 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 			return GitHubPRResult{}, err
 		}
 		if liveBaseCommitSHA != baseCommitSHA {
-			return GitHubPRResult{}, fmt.Errorf("base branch changed since source preparation: expected %s got %s", baseCommitSHA, liveBaseCommitSHA)
+			return GitHubPRResult{}, fmt.Errorf("%w: base branch expected %s got %s", ErrSourceConflict, baseCommitSHA, liveBaseCommitSHA)
 		}
 	}
 	baseCommit, err := c.gitCommit(ctx, baseCommitSHA)
@@ -238,10 +267,10 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 	for _, file := range prepared.Files {
 		entry, ok := entriesByPath[file.Path]
 		if !ok || entry.Type != "blob" {
-			return GitHubPRResult{}, fmt.Errorf("source file %s is not an existing blob on %s", file.Path, c.BaseBranch)
+			return GitHubPRResult{}, fmt.Errorf("%w: source file %s is not an existing blob on %s", ErrSourceConflict, file.Path, c.BaseBranch)
 		}
 		if entry.SHA != file.BaseBlobSHA {
-			return GitHubPRResult{}, fmt.Errorf("source file %s changed since source preparation: expected %s got %s", file.Path, file.BaseBlobSHA, entry.SHA)
+			return GitHubPRResult{}, fmt.Errorf("%w: source file %s expected blob %s got %s", ErrSourceConflict, file.Path, file.BaseBlobSHA, entry.SHA)
 		}
 	}
 

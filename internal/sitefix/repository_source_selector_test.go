@@ -145,6 +145,31 @@ func TestRepositorySourceSelectorBoundsLargeTreeMetadata(t *testing.T) {
 	}
 }
 
+func TestRepositorySourceCandidateRejectsOperationalAndSensitivePaths(t *testing.T) {
+	denied := []string{
+		".circleci/config.yml", ".buildkite/pipeline.yml", ".gitlab/ci.yml",
+		"ops/workflows/deploy.yml", "ops/pipelines/release.yaml", "azure-pipelines.yml",
+		"bitbucket-pipelines.yml", ".travis.yml", "appveyor.yml", "buildspec.yml", "cloudbuild.yaml",
+		"package.json", "requirements.txt", "requirements-dev.txt", "pyproject.toml", "Pipfile", "Gemfile",
+		"go.mod", "Cargo.toml", "composer.json", "pom.xml", "build.gradle", "settings.gradle.kts",
+		"config/service-account.json", "config/firebase.json", "config/auth-token.ts", "secrets/private-key.pem", "certs/server.crt",
+		"config/serviceAccount.json", "config/privateKey.ts", "config/firebaseClient.json", "config/clientToken.ts", "certs/clientCert.ts",
+		"app/page%2etsx", "src/routes.generated.ts", "src/client.gen.ts", "public/bundle.min.js",
+	}
+	for _, candidatePath := range denied {
+		t.Run(candidatePath, func(t *testing.T) {
+			if safeRepositoryCandidate(RepositorySourceCandidate{Path: candidatePath, SHA: "blob", Size: 100}) {
+				t.Fatalf("sensitive/operational path was accepted: %s", candidatePath)
+			}
+		})
+	}
+	for _, candidatePath := range []string{"app/products/widget/page.tsx", "components/CertificationCard.tsx", "content/security-authors.mdx"} {
+		if !safeRepositoryCandidate(RepositorySourceCandidate{Path: candidatePath, SHA: "blob", Size: 100}) {
+			t.Fatalf("ordinary page source was rejected: %s", candidatePath)
+		}
+	}
+}
+
 type repositorySelectorProvider struct {
 	request  llm.CompletionReq
 	response string

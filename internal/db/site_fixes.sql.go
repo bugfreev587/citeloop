@@ -8927,6 +8927,220 @@ func (q *Queries) RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Contex
 	return items, nil
 }
 
+const resetCanonicalSiteFixSourceConflictForReprepare = `-- name: ResetCanonicalSiteFixSourceConflictForReprepare :one
+with authority as materialized (
+  select pwa.project_id,
+         concat(pwa.writer_authority, ':', pwa.write_fenced::text, ':', pwa.authority_changed_at::text) as fingerprint
+  from product_writer_authority pwa
+  where pwa.project_id = $1 and pwa.product = 'doctor'
+    and pwa.writer_authority = 'canonical' and pwa.write_fenced = false
+  for update
+), eligible as materialized (
+  select sf.id, sf.project_id, sf.work_signature_id, w.conflict_bucket_keys,
+         app.id as application_id
+  from site_change_applications app
+  join site_fixes sf
+    on sf.id = app.site_fix_id and sf.project_id = app.project_id
+  join work_signature_registry w
+    on w.id = sf.work_signature_id and w.project_id = sf.project_id
+  where app.project_id = $1
+    and app.id = $2
+    and app.site_fix_id = $3
+    and app.site_fix_id is not null and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = $4
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and exists (select 1 from authority)
+), expected_keys as materialized (
+  select distinct keys.bucket_key
+  from eligible e
+  cross join lateral jsonb_array_elements_text(e.conflict_bucket_keys) keys(bucket_key)
+  order by keys.bucket_key
+), locked_buckets as materialized (
+  select b.id, b.bucket_key
+  from work_conflict_buckets b
+  join expected_keys keys on keys.bucket_key = b.bucket_key
+  where b.project_id = $1
+  order by b.bucket_key
+  for update of b
+), locked_application as materialized (
+  select app.id
+  from site_change_applications app
+  join eligible e on e.application_id = app.id and e.project_id = app.project_id
+  where app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = $4
+    and app.pr_claim_expires_at > clock_timestamp()
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of app
+), locked_work as materialized (
+  select e.id, e.project_id, e.work_signature_id, e.conflict_bucket_keys, e.application_id
+  from eligible e
+  join site_fixes sf on sf.id = e.id and sf.project_id = e.project_id
+  join work_signature_registry w on w.id = e.work_signature_id and w.project_id = e.project_id
+  where sf.status = 'applying'
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+    and w.conflict_bucket_keys = e.conflict_bucket_keys
+    and jsonb_array_length(e.conflict_bucket_keys) > 0
+    and exists (select 1 from locked_application app where app.id = e.application_id)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  for update of sf, w
+), bumped as (
+  update work_conflict_buckets b
+  set bucket_version = bucket_version + 1, updated_at = now()
+  from locked_buckets locked
+  where b.id = locked.id
+    and exists (select 1 from locked_work)
+    and (select count(*) from locked_buckets) = (select count(*) from expected_keys)
+  returning b.id
+), failed_application as (
+  update site_change_applications app
+  set status = 'failed', failure_reason = 'repository_source_conflict',
+      pr_claim_token = null, pr_claim_expires_at = null, pr_claim_authority_fingerprint = null,
+      updated_at = now()
+  from locked_work e
+  where app.id = e.application_id and app.project_id = e.project_id
+    and app.site_fix_id = e.id and app.content_action_id is null
+    and app.status = 'creating_pr'
+    and app.pr_claim_token = $4
+    and app.pr_claim_authority_fingerprint = (select fingerprint from authority)
+    and (select count(*) from bumped) = (select count(*) from expected_keys)
+  returning app.id, app.project_id, app.source_opportunity_id, app.content_action_id, app.page_update_draft_id, app.application_kind, app.target_url, app.normalized_target_url, app.opportunity_key, app.publisher_connection_id, app.repo_full_name, app.base_branch, app.working_branch, app.base_commit_sha, app.head_commit_sha, app.source_file_path, app.source_file_paths, app.source_mapping_confidence, app.source_mapping_reason, app.base_file_sha, app.base_content_hash, app.proposed_content_hash, app.patch_snapshot, app.diff_snapshot, app.resolution_criteria, app.github_pr_number, app.github_pr_url, app.github_pr_state, app.deployment_snapshot, app.verification_snapshot, app.failure_reason, app.status, app.created_at, app.updated_at, app.pr_created_at, app.merged_at, app.deployed_at, app.verified_at, app.next_poll_at, app.next_notify_at, app.site_fix_id, app.pr_claim_token, app.pr_claim_expires_at, app.pr_claim_authority_fingerprint
+), transitioned as (
+  update site_fixes sf
+  set status = 'preparing', failure_reason = 'repository_source_conflict', updated_at = now()
+  from locked_work e
+  where sf.id = e.id and sf.project_id = e.project_id and sf.status = 'applying'
+    and exists (select 1 from failed_application app where app.site_fix_id = sf.id)
+  returning sf.id, sf.project_id, sf.work_signature_id
+), signature_transition as (
+  update work_signature_registry w
+  set status = 'preparing', active = true, updated_at = now()
+  from transitioned sf
+  where w.id = sf.work_signature_id and w.project_id = sf.project_id
+    and w.status = 'executing' and w.mode = 'enforced' and w.active = true
+  returning w.id
+)
+select failed_application.id, failed_application.project_id, failed_application.source_opportunity_id, failed_application.content_action_id, failed_application.page_update_draft_id, failed_application.application_kind, failed_application.target_url, failed_application.normalized_target_url, failed_application.opportunity_key, failed_application.publisher_connection_id, failed_application.repo_full_name, failed_application.base_branch, failed_application.working_branch, failed_application.base_commit_sha, failed_application.head_commit_sha, failed_application.source_file_path, failed_application.source_file_paths, failed_application.source_mapping_confidence, failed_application.source_mapping_reason, failed_application.base_file_sha, failed_application.base_content_hash, failed_application.proposed_content_hash, failed_application.patch_snapshot, failed_application.diff_snapshot, failed_application.resolution_criteria, failed_application.github_pr_number, failed_application.github_pr_url, failed_application.github_pr_state, failed_application.deployment_snapshot, failed_application.verification_snapshot, failed_application.failure_reason, failed_application.status, failed_application.created_at, failed_application.updated_at, failed_application.pr_created_at, failed_application.merged_at, failed_application.deployed_at, failed_application.verified_at, failed_application.next_poll_at, failed_application.next_notify_at, failed_application.site_fix_id, failed_application.pr_claim_token, failed_application.pr_claim_expires_at, failed_application.pr_claim_authority_fingerprint from failed_application
+cross join transitioned
+cross join signature_transition
+`
+
+type ResetCanonicalSiteFixSourceConflictForReprepareParams struct {
+	ProjectID     uuid.UUID   `json:"project_id"`
+	ApplicationID uuid.UUID   `json:"application_id"`
+	SiteFixID     pgtype.UUID `json:"site_fix_id"`
+	PrClaimToken  pgtype.UUID `json:"pr_claim_token"`
+}
+
+type ResetCanonicalSiteFixSourceConflictForReprepareRow struct {
+	ID                          uuid.UUID          `json:"id"`
+	ProjectID                   uuid.UUID          `json:"project_id"`
+	SourceOpportunityID         pgtype.UUID        `json:"source_opportunity_id"`
+	ContentActionID             pgtype.UUID        `json:"content_action_id"`
+	PageUpdateDraftID           pgtype.UUID        `json:"page_update_draft_id"`
+	ApplicationKind             string             `json:"application_kind"`
+	TargetUrl                   string             `json:"target_url"`
+	NormalizedTargetUrl         string             `json:"normalized_target_url"`
+	OpportunityKey              string             `json:"opportunity_key"`
+	PublisherConnectionID       pgtype.UUID        `json:"publisher_connection_id"`
+	RepoFullName                *string            `json:"repo_full_name"`
+	BaseBranch                  *string            `json:"base_branch"`
+	WorkingBranch               *string            `json:"working_branch"`
+	BaseCommitSha               *string            `json:"base_commit_sha"`
+	HeadCommitSha               *string            `json:"head_commit_sha"`
+	SourceFilePath              *string            `json:"source_file_path"`
+	SourceFilePaths             json.RawMessage    `json:"source_file_paths"`
+	SourceMappingConfidence     string             `json:"source_mapping_confidence"`
+	SourceMappingReason         string             `json:"source_mapping_reason"`
+	BaseFileSha                 *string            `json:"base_file_sha"`
+	BaseContentHash             *string            `json:"base_content_hash"`
+	ProposedContentHash         *string            `json:"proposed_content_hash"`
+	PatchSnapshot               json.RawMessage    `json:"patch_snapshot"`
+	DiffSnapshot                json.RawMessage    `json:"diff_snapshot"`
+	ResolutionCriteria          json.RawMessage    `json:"resolution_criteria"`
+	GithubPrNumber              *int32             `json:"github_pr_number"`
+	GithubPrUrl                 *string            `json:"github_pr_url"`
+	GithubPrState               *string            `json:"github_pr_state"`
+	DeploymentSnapshot          json.RawMessage    `json:"deployment_snapshot"`
+	VerificationSnapshot        json.RawMessage    `json:"verification_snapshot"`
+	FailureReason               *string            `json:"failure_reason"`
+	Status                      string             `json:"status"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PrCreatedAt                 pgtype.Timestamptz `json:"pr_created_at"`
+	MergedAt                    pgtype.Timestamptz `json:"merged_at"`
+	DeployedAt                  pgtype.Timestamptz `json:"deployed_at"`
+	VerifiedAt                  pgtype.Timestamptz `json:"verified_at"`
+	NextPollAt                  pgtype.Timestamptz `json:"next_poll_at"`
+	NextNotifyAt                pgtype.Timestamptz `json:"next_notify_at"`
+	SiteFixID                   pgtype.UUID        `json:"site_fix_id"`
+	PrClaimToken                pgtype.UUID        `json:"pr_claim_token"`
+	PrClaimExpiresAt            pgtype.Timestamptz `json:"pr_claim_expires_at"`
+	PrClaimAuthorityFingerprint *string            `json:"pr_claim_authority_fingerprint"`
+}
+
+func (q *Queries) ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (ResetCanonicalSiteFixSourceConflictForReprepareRow, error) {
+	row := q.db.QueryRow(ctx, resetCanonicalSiteFixSourceConflictForReprepare,
+		arg.ProjectID,
+		arg.ApplicationID,
+		arg.SiteFixID,
+		arg.PrClaimToken,
+	)
+	var i ResetCanonicalSiteFixSourceConflictForReprepareRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SourceOpportunityID,
+		&i.ContentActionID,
+		&i.PageUpdateDraftID,
+		&i.ApplicationKind,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.OpportunityKey,
+		&i.PublisherConnectionID,
+		&i.RepoFullName,
+		&i.BaseBranch,
+		&i.WorkingBranch,
+		&i.BaseCommitSha,
+		&i.HeadCommitSha,
+		&i.SourceFilePath,
+		&i.SourceFilePaths,
+		&i.SourceMappingConfidence,
+		&i.SourceMappingReason,
+		&i.BaseFileSha,
+		&i.BaseContentHash,
+		&i.ProposedContentHash,
+		&i.PatchSnapshot,
+		&i.DiffSnapshot,
+		&i.ResolutionCriteria,
+		&i.GithubPrNumber,
+		&i.GithubPrUrl,
+		&i.GithubPrState,
+		&i.DeploymentSnapshot,
+		&i.VerificationSnapshot,
+		&i.FailureReason,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PrCreatedAt,
+		&i.MergedAt,
+		&i.DeployedAt,
+		&i.VerifiedAt,
+		&i.NextPollAt,
+		&i.NextNotifyAt,
+		&i.SiteFixID,
+		&i.PrClaimToken,
+		&i.PrClaimExpiresAt,
+		&i.PrClaimAuthorityFingerprint,
+	)
+	return i, err
+}
+
 const resolveLegacyObjectAlias = `-- name: ResolveLegacyObjectAlias :one
 select id, project_id, migration_batch_id, legacy_object_type, legacy_object_id, canonical_object_type, canonical_object_id, alias_state, provenance_snapshot, created_at, updated_at from legacy_object_aliases
 where project_id = $1

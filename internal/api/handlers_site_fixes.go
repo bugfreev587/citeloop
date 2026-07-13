@@ -1461,10 +1461,11 @@ func safeCanonicalSiteFixPRFailureCode(err error) string {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "pr_interrupted"
 	}
+	if errors.Is(err, publisher.ErrSourceConflict) {
+		return "repository_source_conflict"
+	}
 	message := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(message, "changed since source preparation"), strings.Contains(message, "base branch changed"):
-		return "repository_source_conflict"
 	case strings.Contains(message, "divergent"):
 		return "publisher_branch_conflict"
 	case strings.Contains(message, "prepared repository"), strings.Contains(message, "exact replacement"), strings.Contains(message, "hash"):

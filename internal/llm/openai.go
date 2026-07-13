@@ -21,6 +21,11 @@ type OpenAIChat struct {
 	client  *http.Client
 }
 
+const (
+	maxOpenAIChatResponseBytes      = 4 << 20
+	maxOpenAIChatErrorResponseBytes = 64 << 10
+)
+
 func NewOpenAIChat(apiKey, baseURL, model string) *OpenAIChat {
 	if baseURL == "" {
 		baseURL = "https://tokengate-production.up.railway.app/v1"
@@ -165,7 +170,14 @@ func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, m
 		return CompletionResp{Provider: "tokengate", Model: model}, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	responseLimit := maxOpenAIChatResponseBytes
+	if resp.StatusCode >= 400 {
+		responseLimit = maxOpenAIChatErrorResponseBytes
+	}
+	raw, err := readBoundedOpenAIChatBody(resp.Body, responseLimit)
+	if err != nil {
+		return CompletionResp{Provider: "tokengate", Model: model}, err
+	}
 	var cr openAIChatResp
 	_ = json.Unmarshal(raw, &cr)
 	ledger := openAICompletionLedger(cr, model)
@@ -176,13 +188,24 @@ func (c *OpenAIChat) completeWithModel(ctx context.Context, req CompletionReq, m
 		return CompletionResp{Provider: "tokengate", Model: model}, err
 	}
 	if cr.Error != nil {
-		return ledger, fmt.Errorf("tokengate chat completions: %s", cr.Error.Message)
+		return ledger, errors.New("tokengate chat completions: provider returned an error")
 	}
 	if len(cr.Choices) == 0 {
 		return ledger, fmt.Errorf("tokengate chat completions returned no choices")
 	}
 	ledger.Text = cr.Choices[0].Message.Content
 	return ledger, nil
+}
+
+func readBoundedOpenAIChatBody(body io.Reader, maxBytes int) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, int64(maxBytes)+1))
+	if err != nil {
+		return nil, fmt.Errorf("tokengate chat completions response could not be read: %w", err)
+	}
+	if len(raw) > maxBytes {
+		return nil, fmt.Errorf("tokengate chat completions response exceeds %d bytes", maxBytes)
+	}
+	return raw, nil
 }
 
 func openAICompletionLedger(cr openAIChatResp, requestedModel string) CompletionResp {
@@ -207,7 +230,7 @@ type openAIChatHTTPError struct {
 }
 
 func (e *openAIChatHTTPError) Error() string {
-	return fmt.Sprintf("tokengate chat completions %d: %s", e.status, string(e.raw))
+	return fmt.Sprintf("tokengate chat completions %d: provider request failed", e.status)
 }
 
 func fallbackOpenAIModel(purpose CompletionPurpose) string {

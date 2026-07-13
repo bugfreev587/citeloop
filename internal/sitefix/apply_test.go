@@ -77,6 +77,27 @@ func TestCanonicalApplyRetryReusesExistingApplicationWithoutAI(t *testing.T) {
 	}
 }
 
+func TestCanonicalApplyIgnoresTerminalFailedApplicationForReprepare(t *testing.T) {
+	projectID, fixID, failedAppID := uuid.New(), uuid.New(), uuid.New()
+	fix := db.SiteFix{ID: fixID, ProjectID: projectID, Status: "preparing", TargetUrls: json.RawMessage(`["https://example.com/"]`), EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`), AcceptanceTests: json.RawMessage(`[]`)}
+	store := &applyStoreStub{
+		fix:      fix,
+		existing: db.SiteChangeApplication{ID: failedAppID, ProjectID: projectID, SiteFixID: validPGUUID(fixID), Status: "failed"},
+	}
+	generator := &fixGeneratorStub{store: store, plan: ApplicationPlan{
+		TargetURL: "https://example.com/", NormalizedTargetURL: "https://example.com/", OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
+		SourceFilePaths: json.RawMessage(`["app/page.tsx"]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`), DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance_tests":[]}`),
+	}}
+	verifier := &patchVerifierStub{store: store, verification: PatchVerification{Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{}}}
+	result, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Application.ID == failedAppID || store.startedCalls != 1 {
+		t.Fatalf("failed app was reused: result=%+v generation starts=%d", result.Application, store.startedCalls)
+	}
+}
+
 func TestCanonicalApplyPreflightFailureIsSkippedNotProviderCall(t *testing.T) {
 	projectID, fixID := uuid.New(), uuid.New()
 	store := &applyStoreStub{fix: groundedOptimizationFix()}
@@ -287,6 +308,20 @@ func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
 	}
 	if grounding["context_profile_version"] != float64(7) || grounding["primary_intent_before"] != "describe product" {
 		t.Fatalf("grounding = %#v", grounding)
+	}
+}
+
+func TestDecodeJSONObjectRequiresOneObjectWithoutProse(t *testing.T) {
+	var output struct {
+		OK bool `json:"ok"`
+	}
+	for _, raw := range []string{`before {"ok":true}`, `{"ok":true} after`, "```json\n{\"ok\":true}\n```", `{"ok":true} {"extra":true}`, `[ {"ok":true} ]`} {
+		if err := decodeJSONObject(raw, &output); err == nil {
+			t.Fatalf("non-object-only provider response was accepted: %q", raw)
+		}
+	}
+	if err := decodeJSONObject(" \n\t{\"ok\":true}\r\n", &output); err != nil || !output.OK {
+		t.Fatalf("single JSON object was rejected: output=%+v err=%v", output, err)
 	}
 }
 

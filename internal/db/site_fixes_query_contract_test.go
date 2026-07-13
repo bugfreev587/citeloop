@@ -445,6 +445,31 @@ func TestCanonicalSiteFixPreparationFailurePreservesRetryablePreparingState(t *t
 	requireQuerySQL(t, ready, "set status = 'ready_to_apply', failure_reason = null")
 }
 
+func TestResetCanonicalSiteFixSourceConflictForReprepareIsClaimAndAuthorityFenced(t *testing.T) {
+	siteFixes, _ := readSiteFixQueryContracts(t)
+	reset := namedSQL(t, siteFixes, "ResetCanonicalSiteFixSourceConflictForReprepare")
+	if got := strings.Count(reset, "app.pr_claim_expires_at > clock_timestamp()"); got != 2 {
+		t.Fatalf("claim expiry must be checked before and while locking, not after dependent writes; got %d checks", got)
+	}
+	requireQuerySQL(t, reset,
+		"app.project_id = sqlc.arg(project_id)",
+		"app.id = sqlc.arg(application_id)",
+		"app.site_fix_id = sqlc.arg(site_fix_id)",
+		"app.status = 'creating_pr'",
+		"app.pr_claim_token = sqlc.arg(pr_claim_token)",
+		"app.pr_claim_expires_at > clock_timestamp()",
+		"app.pr_claim_authority_fingerprint = (select fingerprint from authority)",
+		"expected_keys as materialized",
+		"locked_buckets as materialized",
+		"order by b.bucket_key",
+		"for update of b",
+		"bucket_version = bucket_version + 1",
+		"set status = 'failed', failure_reason = 'repository_source_conflict'",
+		"set status = 'preparing', failure_reason = 'repository_source_conflict'",
+		"set status = 'preparing', active = true",
+	)
+}
+
 func TestCanonicalApplyFailureNeverEntersVerificationRetryLifecycle(t *testing.T) {
 	siteFixes, _ := readSiteFixQueryContracts(t)
 	applyFailure := namedSQL(t, siteFixes, "MarkCanonicalSiteFixApplyFailure")

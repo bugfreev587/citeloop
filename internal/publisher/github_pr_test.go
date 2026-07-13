@@ -379,6 +379,47 @@ func TestGitHubPRClientRejectsTruncatedTree(t *testing.T) {
 	}
 }
 
+func TestGitHubPRClientBoundsRecursiveTreeResponse(t *testing.T) {
+	t.Run("oversized body", func(t *testing.T) {
+		client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+		body := `{"sha":"tree","truncated":false,"tree":[]}` + strings.Repeat(" ", maxGitHubTreeResponseBytes)
+		client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, body), nil
+		})}
+		if _, err := client.ListTree(context.Background(), "main"); err == nil {
+			t.Fatal("oversized recursive tree response was accepted")
+		}
+	})
+
+	t.Run("entry limit", func(t *testing.T) {
+		entries := make([]map[string]any, maxGitHubTreeEntries+1)
+		for i := range entries {
+			entries[i] = map[string]any{"path": fmt.Sprintf("app/file-%05d.tsx", i), "mode": "100644", "type": "blob", "sha": fmt.Sprintf("blob-%05d", i), "size": 1}
+		}
+		raw, err := json.Marshal(map[string]any{"sha": "tree", "truncated": false, "tree": entries})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+		client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, string(raw)), nil
+		})}
+		if _, err := client.ListTree(context.Background(), "main"); err == nil {
+			t.Fatal("recursive tree entry limit was not enforced")
+		}
+	})
+
+	t.Run("trailing json", func(t *testing.T) {
+		client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
+		client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{"sha":"tree","truncated":false,"tree":[]} {}`), nil
+		})}
+		if _, err := client.ListTree(context.Background(), "main"); err == nil {
+			t.Fatal("recursive tree response with trailing JSON was accepted")
+		}
+	})
+}
+
 func TestGitHubPRClientEscapesConfiguredBaseRefPath(t *testing.T) {
 	const branch = "citeloop/修复#50%/part"
 	const escapedPath = "/repos/owner/unipost/git/ref/heads/citeloop%2F%E4%BF%AE%E5%A4%8D%2350%25%2Fpart"
@@ -623,13 +664,32 @@ func TestGitHubPRClientAtomicFileUpdatesRejectsSHAMismatchWithoutMutation(t *tes
 	input.Files[0].BaseBlobSHA = "stale-a"
 
 	_, err := client.CreateFileUpdatesPR(context.Background(), input)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "changed") {
+	if err == nil || !errors.Is(err, ErrSourceConflict) || !strings.Contains(strings.ToLower(err.Error()), "changed") {
 		t.Fatalf("expected source-change error, got %v", err)
 	}
 	counts := clientTestCounts(client)
 	if counts["mutation"] != 0 || counts["ref"] != 0 {
 		t.Fatalf("validation failure mutated GitHub: %+v", counts)
 	}
+}
+
+func TestGitHubPRClientAtomicSourceConflictsAreTyped(t *testing.T) {
+	t.Run("base ref changed", func(t *testing.T) {
+		client := newAtomicPreparationClient(t, "base-advanced", nil)
+		_, err := client.CreateFileUpdatesPR(context.Background(), atomicFileUpdatesInput())
+		if !errors.Is(err, ErrSourceConflict) {
+			t.Fatalf("base ref conflict is not typed: %v", err)
+		}
+	})
+	t.Run("tree source missing", func(t *testing.T) {
+		client := newAtomicPreparationClient(t, "", nil)
+		input := atomicFileUpdatesInput()
+		input.Files[0].Path = "app/missing.tsx"
+		_, err := client.CreateFileUpdatesPR(context.Background(), input)
+		if !errors.Is(err, ErrSourceConflict) {
+			t.Fatalf("missing tree source conflict is not typed: %v", err)
+		}
+	})
 }
 
 func TestGitHubPRClientAtomicPreparationFailureDoesNotMutateRef(t *testing.T) {
@@ -968,6 +1028,9 @@ func newAtomicPreparationClient(t *testing.T, failurePhase string, unexpected fu
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/pulls":
 			return jsonResponse(http.StatusOK, `[]`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
+			if failurePhase == "base-advanced" {
+				return jsonResponse(http.StatusOK, `{"object":{"sha":"advanced-commit"}}`), nil
+			}
 			return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit"}}`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/commits/base-commit":
 			return jsonResponse(http.StatusOK, `{"sha":"base-commit","tree":{"sha":"base-tree"}}`), nil
