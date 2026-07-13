@@ -10,7 +10,7 @@ import {
   contentPlanActionPrimaryCTA,
   contentPlanActionPublishControlsVisible,
   normalizePublishStrategy,
-  hasReviewableDraft,
+  hasAdvancedDraftHandoff,
   isActiveContentPlanLoopAction,
   isBacklogStatus,
   isPageUpdateAction,
@@ -24,6 +24,7 @@ import {
   publishStrategyReasonForAction,
   recommendedPublishStrategyForAction,
   recommendedTopicIds,
+  reviewArticleIDForAction,
   normalizedTopicPriority,
   topicWhy,
 } from "../../../lib/content-plan-logic";
@@ -204,8 +205,8 @@ function topicFromAcceptedAction(action: VisibilityActionInLoop, channel: Conten
   };
 }
 
-function reviewHrefForAction(projectId: string, action: VisibilityActionInLoop) {
-  return `/projects/${projectId}/review?article=${action.draft_article_id}`;
+function reviewHrefForAction(projectId: string, articleID: string) {
+  return `/projects/${projectId}/review?article=${articleID}`;
 }
 
 function contentPlanConfirmationCopy(confirmation: Exclude<ContentPlanConfirmation, null>) {
@@ -306,14 +307,21 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const sentToReviewActions = useMemo(
     () =>
       contentPlanActions
-        .filter((action) => hasReviewableDraft(action))
+        .filter((action) =>
+          Boolean(reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null)),
+        )
         .slice()
         .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))),
-    [contentPlanActions],
+    [contentPlanActions, reviewArticleByTopic],
   );
   const acceptedPlanActions = useMemo(
-    () => contentPlanActions.filter((action) => !hasReviewableDraft(action)),
-    [contentPlanActions],
+    () =>
+      contentPlanActions.filter(
+        (action) =>
+          !reviewArticleIDForAction(action, action.topic_id ? reviewArticleByTopic[action.topic_id] : null) &&
+          !hasAdvancedDraftHandoff(action),
+      ),
+    [contentPlanActions, reviewArticleByTopic],
   );
   const acceptedPageUpdateActions = useMemo(
     () => acceptedPlanActions.filter((action) => isPageUpdateAction(action)),
@@ -443,7 +451,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedActionDraftBusy = selectedContentPlanAction ? busy === `draft-action-${selectedContentPlanAction.id}` : false;
   const selectedActionDismissBusy = selectedContentPlanAction ? busy === `dismiss-action-${selectedContentPlanAction.id}` : false;
   const selectedActionReturnBusy = selectedContentPlanAction ? busy === `return-action-${selectedContentPlanAction.id}` : false;
-  const selectedActionHasReviewContent = hasReviewableDraft(selectedContentPlanAction);
+  const selectedActionReviewArticleID = selectedContentPlanAction
+    ? reviewArticleIDForAction(
+        selectedContentPlanAction,
+        selectedContentPlanAction.topic_id ? reviewArticleByTopic[selectedContentPlanAction.topic_id] : null,
+      )
+    : null;
   const selectedActionRiskReasons = selectedContentPlanAction ? contentPlanRiskReasons(selectedContentPlanAction) : [];
   const selectedActionTopic = selectedContentPlanAction?.topic_id
     ? topics.find((topic) => topic.id === selectedContentPlanAction.topic_id) ?? null
@@ -646,6 +659,14 @@ export function TopicsClient({ projectId }: { projectId: string }) {
         return;
       }
       await refresh();
+      if (result.status === "advanced") {
+        setMessage({
+          title: "Draft already moved forward",
+          detail: "This content brief already moved beyond Review. Open Publish or Results to continue with it.",
+          tone: "amber",
+        });
+        return;
+      }
       const existing = result.articles?.length ?? 0;
       setMessage(
         existing > 0
@@ -1331,6 +1352,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
               {sentToReviewActions.map((action) => {
                 const actionReturnBusy = busy === `return-action-${action.id}`;
                 const actionDismissBusy = busy === `dismiss-action-${action.id}`;
+                const reviewArticleID = reviewArticleIDForAction(
+                  action,
+                  action.topic_id ? reviewArticleByTopic[action.topic_id] : null,
+                );
+                if (!reviewArticleID) return null;
                 return (
                   <div
                     key={action.id}
@@ -1350,7 +1376,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                       </div>
                       <div className="mt-auto grid gap-2 border-t border-slate-100 pt-3">
                         <a
-                          href={reviewHrefForAction(projectId, action)}
+                          href={reviewHrefForAction(projectId, reviewArticleID)}
                           className="inline-flex h-8 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d93820] active:translate-y-px"
                           aria-label={`Open "${contentPlanActionTitle(action)}" in Review`}
                         >
@@ -1479,9 +1505,9 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                   {selectedActionPrimaryCTA}
                 </ButtonProgress>
               </Button>
-            ) : selectedActionHasReviewContent ? (
+            ) : selectedActionReviewArticleID ? (
               <a
-                href={reviewHrefForAction(projectId, selectedContentPlanAction)}
+                href={reviewHrefForAction(projectId, selectedActionReviewArticleID)}
                 className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
               >
                 View in Review

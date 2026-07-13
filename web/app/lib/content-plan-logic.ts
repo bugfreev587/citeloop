@@ -158,6 +158,32 @@ export function hasReviewableDraft(action: ContentPlanReviewDraft | null | undef
   return Boolean(draftID) && draftStatus === "pending_review";
 }
 
+export function reviewArticleIDForAction(
+  action: ContentPlanReviewDraft | null | undefined,
+  topicPendingReviewArticleID?: string | null,
+) {
+  const topicArticleID = topicPendingReviewArticleID?.trim();
+  if (topicArticleID) return topicArticleID;
+  if (hasReviewableDraft(action)) return action?.draft_article_id?.trim() || null;
+  return null;
+}
+
+const advancedDraftStatuses = new Set([
+  "approved",
+  "scheduled",
+  "pending_url_verification",
+  "published",
+  "publish_failed",
+  "ready_to_distribute",
+  "distributed",
+]);
+
+export function hasAdvancedDraftHandoff(action: ContentPlanReviewDraft | null | undefined) {
+  const draftID = action?.draft_article_id?.trim();
+  const draftStatus = action?.draft_article_status?.trim().toLowerCase();
+  return Boolean(draftID && draftStatus && advancedDraftStatuses.has(draftStatus));
+}
+
 const contentPlanLifecycleStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
 const terminalContentActionStatuses = new Set(["returned", "dismissed"]);
 const terminalContentOpportunityStatuses = new Set(["dismissed", "archived"]);

@@ -121,6 +121,42 @@ test("hasReviewableDraft only links actions with pending Review drafts", async (
   );
 });
 
+test("reviewArticleIDForAction uses a pending sibling when the linked canonical is approved", async () => {
+  const { reviewArticleIDForAction } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    reviewArticleIDForAction(
+      { draft_article_id: "canonical-1", draft_article_status: "approved" },
+      "variant-1",
+    ),
+    "variant-1",
+  );
+  assert.equal(
+    reviewArticleIDForAction(
+      { draft_article_id: "canonical-1", draft_article_status: "pending_review" },
+      "variant-1",
+    ),
+    "variant-1",
+  );
+});
+
+test("hasAdvancedDraftHandoff excludes approved drafts from accepted content work", async () => {
+  const { hasAdvancedDraftHandoff } = await loadContentPlanLogicModule();
+
+  assert.equal(
+    hasAdvancedDraftHandoff({ draft_article_id: "canonical-1", draft_article_status: "approved" }),
+    true,
+  );
+  assert.equal(
+    hasAdvancedDraftHandoff({ draft_article_id: "canonical-1", draft_article_status: "pending_review" }),
+    false,
+  );
+  assert.equal(
+    hasAdvancedDraftHandoff({ draft_article_id: "canonical-1", draft_article_status: "rejected" }),
+    false,
+  );
+});
+
 test("Content Plan never renders returned or dismissed actions from stale visibility payloads", async () => {
   const { isActiveContentPlanLoopAction } = await loadContentPlanLogicModule();
 
