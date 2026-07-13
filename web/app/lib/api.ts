@@ -2364,10 +2364,6 @@ export function createApi(auth?: AuthOptions) {
   },
   deleteInventory: (id: string, itemID: string) =>
     req<void>(`/projects/${id}/inventory/${itemID}`, { method: "DELETE" }, auth),
-  runStrategist: async (id: string) => {
-    const raw = await req<any[]>(`/projects/${id}/strategist`, { method: "POST" }, auth);
-    return arrayFrom(raw).map(normalizeTopic);
-  },
   listTopics: async (id: string) => {
     const raw = await req<any[]>(`/projects/${id}/topics`, undefined, auth);
     return arrayFrom(raw).map(normalizeTopic);

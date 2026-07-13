@@ -112,7 +112,6 @@ func (s *Server) Router() http.Handler {
 			r.Put("/inventory/{itemID}", s.updateInventory)
 			r.Delete("/inventory/{itemID}", s.deleteInventory)
 
-			r.Post("/strategist", s.runStrategist)
 			r.Get("/topics", s.listTopics)
 			r.Put("/topics/{topicID}", s.updateTopic)
 			r.Post("/topics/{topicID}/generate", s.generateTopic)
