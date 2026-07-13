@@ -271,7 +271,7 @@ git commit -m "docs: make Doctor and Opportunities the only work sources"
 - [ ] **Step 1: Write failing browser and route contracts**
 
 Require `client.runStrategist` to be absent, and require POST on the legacy
-Strategist collection route to return HTTP 405 with a valid project UUID.
+Strategist collection route to return HTTP 404 with a valid project UUID.
 Replace the obsolete positive workflow-event test for `runStrategist` with a
 negative server-source assertion.
 
@@ -281,11 +281,11 @@ negative server-source assertion.
 cd web
 node --test app/lib/api.test.mjs
 cd ..
-go test ./internal/api -run 'TestStrategistRouteIsNotRegistered|TestWorkflowEvents' -count=1
+go test ./internal/api -run 'TestStrategistRouteIsNotRegistered|TestLegacyStrategistHandlerIsNotExposed' -count=1
 ```
 
 Expected: the client still exposes `runStrategist`, and the registered route
-returns a handler response instead of HTTP 405.
+returns a handler response instead of HTTP 404.
 
 - [ ] **Step 3: Remove the exposed bypass**
 

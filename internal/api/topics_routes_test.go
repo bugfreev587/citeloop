@@ -81,8 +81,8 @@ func TestStrategistRouteIsNotRegistered(t *testing.T) {
 
 	router.ServeHTTP(res, req)
 
-	if res.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNotFound)
 	}
 }
 
