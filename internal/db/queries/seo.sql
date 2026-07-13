@@ -1506,6 +1506,7 @@ left join articles a
   on a.id = ca.draft_article_id
   and a.project_id = ca.project_id
 where ca.project_id = $1
+  and ca.status not in ('returned','dismissed')
 order by ca.updated_at desc, ca.created_at desc
 limit $2;
 

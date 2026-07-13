@@ -11,6 +11,7 @@ import {
   contentPlanActionPublishControlsVisible,
   normalizePublishStrategy,
   hasReviewableDraft,
+  isActiveContentPlanLoopAction,
   isBacklogStatus,
   isPageUpdateAction,
   pageUpdateDraftBusyCTA,
@@ -298,8 +299,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
       (visibilitySummary?.actions_in_loop ?? []).filter(
         (action) =>
           isContentPlanAction(action) &&
-          ["added_to_plan", "planned", "drafting", "ready_for_review"].includes(action.lifecycle_stage) &&
-          !["dismissed", "archived"].includes(String(action.opportunity_status ?? "").toLowerCase()),
+          isActiveContentPlanLoopAction(action),
       ),
     [visibilitySummary],
   );

@@ -17,6 +17,12 @@ export type ContentPlanReviewDraft = {
   draft_article_status?: string | null;
 };
 
+export type ContentPlanLoopAction = {
+  status?: string | null;
+  lifecycle_stage?: string | null;
+  opportunity_status?: string | null;
+};
+
 export type ContentPlanPublishStrategy = "blog" | "syndication" | "both";
 
 export type ContentPlanPublishAction = {
@@ -150,6 +156,22 @@ export function hasReviewableDraft(action: ContentPlanReviewDraft | null | undef
   const draftID = action?.draft_article_id?.trim();
   const draftStatus = action?.draft_article_status?.trim().toLowerCase();
   return Boolean(draftID) && draftStatus === "pending_review";
+}
+
+const contentPlanLifecycleStages = new Set(["added_to_plan", "planned", "drafting", "ready_for_review"]);
+const terminalContentActionStatuses = new Set(["returned", "dismissed"]);
+const terminalContentOpportunityStatuses = new Set(["dismissed", "archived"]);
+
+export function isActiveContentPlanLoopAction(action: ContentPlanLoopAction | null | undefined) {
+  if (!action) return false;
+  const status = String(action.status ?? "").trim().toLowerCase();
+  const stage = String(action.lifecycle_stage ?? "").trim().toLowerCase();
+  const opportunityStatus = String(action.opportunity_status ?? "").trim().toLowerCase();
+  return (
+    !terminalContentActionStatuses.has(status) &&
+    !terminalContentOpportunityStatuses.has(opportunityStatus) &&
+    contentPlanLifecycleStages.has(stage)
+  );
 }
 
 export function normalizePublishStrategy(value: any): ContentPlanPublishStrategy | null {
