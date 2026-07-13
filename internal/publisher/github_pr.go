@@ -204,12 +204,15 @@ func (c *GitHubPRClient) CreateFileUpdatesPR(ctx context.Context, in GitHubFileU
 		return GitHubPRResult{}, err
 	}
 
-	baseCommitSHA, err := c.baseCommitSHA(ctx)
-	if err != nil {
-		return GitHubPRResult{}, err
-	}
-	if baseCommitSHA != prepared.BaseCommitSHA {
-		return GitHubPRResult{}, fmt.Errorf("base branch changed since source preparation: expected %s got %s", prepared.BaseCommitSHA, baseCommitSHA)
+	baseCommitSHA := prepared.BaseCommitSHA
+	if !existingPRFound {
+		liveBaseCommitSHA, err := c.baseCommitSHA(ctx)
+		if err != nil {
+			return GitHubPRResult{}, err
+		}
+		if liveBaseCommitSHA != baseCommitSHA {
+			return GitHubPRResult{}, fmt.Errorf("base branch changed since source preparation: expected %s got %s", baseCommitSHA, liveBaseCommitSHA)
+		}
 	}
 	baseCommit, err := c.gitCommit(ctx, baseCommitSHA)
 	if err != nil {

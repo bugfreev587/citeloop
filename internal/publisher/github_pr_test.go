@@ -602,14 +602,16 @@ func TestGitHubPRClientRejectsDivergentAtomicBranchWithoutRefUpdate(t *testing.T
 func TestGitHubPRClientAtomicExistingPRMustMatchDesiredTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
+		prState   string
 		mergedAt  string
 		headTree  string
 		wantState string
 		wantError bool
 	}{
-		{name: "matching closed", mergedAt: "null", headTree: "desired-tree", wantState: "closed"},
-		{name: "matching merged", mergedAt: `"2026-07-12T12:00:00Z"`, headTree: "desired-tree", wantState: "merged"},
-		{name: "mismatching head", mergedAt: "null", headTree: "unrelated-tree", wantError: true},
+		{name: "matching open after base advances", prState: "open", mergedAt: "null", headTree: "desired-tree", wantState: "open"},
+		{name: "matching closed after base advances", prState: "closed", mergedAt: "null", headTree: "desired-tree", wantState: "closed"},
+		{name: "matching merged after base advances", prState: "closed", mergedAt: `"2026-07-12T12:00:00Z"`, headTree: "desired-tree", wantState: "merged"},
+		{name: "mismatching head after base advances", prState: "open", mergedAt: "null", headTree: "unrelated-tree", wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := NewGitHubPRClient("gh-token", "owner/unipost", "main", slog.Default())
@@ -617,9 +619,10 @@ func TestGitHubPRClientAtomicExistingPRMustMatchDesiredTarget(t *testing.T) {
 			client.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch {
 				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/pulls":
-					return jsonResponse(http.StatusOK, `[{"number":44,"html_url":"https://github.com/owner/unipost/pull/44","state":"closed","merged_at":`+tc.mergedAt+`,"head":{"sha":"pr-head"}}]`), nil
+					return jsonResponse(http.StatusOK, `[{"number":44,"html_url":"https://github.com/owner/unipost/pull/44","state":"`+tc.prState+`","merged_at":`+tc.mergedAt+`,"head":{"sha":"pr-head"}}]`), nil
 				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/ref/heads/main":
-					return jsonResponse(http.StatusOK, `{"object":{"sha":"base-commit"}}`), nil
+					calls["live-base"]++
+					return jsonResponse(http.StatusOK, `{"object":{"sha":"advanced-base-commit"}}`), nil
 				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/commits/base-commit":
 					return jsonResponse(http.StatusOK, `{"sha":"base-commit","tree":{"sha":"base-tree"}}`), nil
 				case req.Method == http.MethodGet && req.URL.Path == "/repos/owner/unipost/git/trees/base-tree":
@@ -658,7 +661,7 @@ func TestGitHubPRClientAtomicExistingPRMustMatchDesiredTarget(t *testing.T) {
 					t.Fatalf("result=%+v", result)
 				}
 			}
-			if calls["head-check"] != 1 || calls["ref"] != 0 || calls["pr"] != 0 {
+			if calls["live-base"] != 0 || calls["head-check"] != 1 || calls["ref"] != 0 || calls["pr"] != 0 {
 				t.Fatalf("existing PR reconciliation calls=%+v", calls)
 			}
 		})
