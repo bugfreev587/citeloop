@@ -209,6 +209,56 @@ func TestValidateRepositorySnapshotRejectsSensitiveGeneratedOrMinifiedContent(t 
 	}
 }
 
+func TestValidateRepositorySnapshotRejectsLiteralCredentialAssignments(t *testing.T) {
+	unsafe := map[string]string{
+		"uppercase shell password": `DATABASE_PASSWORD='hunter2'`,
+		"hyphenated yaml secret":   `client-secret: value`,
+		"dotted toml api key":      `api.key = "opaque-live-key"`,
+		"json private key":         `{"private_key":"opaque-private-material"}`,
+		"camel case token":         `const accessToken = "ordinary-looking-token";`,
+		"numeric password":         `password: 123456`,
+		"typed password literal":   `const password: string = "hunter2";`,
+	}
+	for name, content := range unsafe {
+		t.Run(name, func(t *testing.T) {
+			snapshot := RepositorySnapshot{Repo: "acme/site", Branch: "main", BaseCommitSHA: "commit", Sources: []RepositorySource{{Path: "app/settings.ts", SHA: "blob", Content: content}}}
+			if err := ValidateRepositorySnapshot(snapshot); err == nil {
+				t.Fatalf("literal credential assignment was accepted: %s", content)
+			}
+		})
+	}
+}
+
+func TestValidateRepositorySnapshotAllowsCredentialPlaceholdersReferencesAndProse(t *testing.T) {
+	allowed := map[string]string{
+		"empty value":          `password: ""`,
+		"null value":           `client_secret: null`,
+		"shell environment":    `DATABASE_PASSWORD=${DATABASE_PASSWORD}`,
+		"javascript env":       `const password = process.env.DATABASE_PASSWORD;`,
+		"config reference":     `api_key = settings.API_KEY`,
+		"function lookup":      `client_secret: os.getenv("CLIENT_SECRET")`,
+		"angle placeholder":    `client-secret: <set-in-secret-manager>`,
+		"template placeholder": `private_key: "{{ vault.private_key }}"`,
+		"named placeholder":    `api.key = "YOUR_API_KEY"`,
+		"redacted placeholder": `token: REDACTED`,
+		"type annotation":      `interface Credentials { password: string }`,
+		"optional type field":  `interface Credentials { token?: string }`,
+		"variable reference":   `const config = { token: generatedToken };`,
+		"ordinary prose":       `<p>Password: must be at least 12 characters.</p>`,
+		"ordinary url":         `const passwordResetURL = "https://example.com/reset?token=preview";`,
+		"schema json":          `{"@context":"https://schema.org","api":"https://example.com/docs"}`,
+		"sitemap yaml":         "sitemap:\n  url: https://example.com/sitemap.xml\n",
+	}
+	for name, content := range allowed {
+		t.Run(name, func(t *testing.T) {
+			snapshot := RepositorySnapshot{Repo: "acme/site", Branch: "main", BaseCommitSHA: "commit", Sources: []RepositorySource{{Path: "app/settings.ts", SHA: "blob", Content: content}}}
+			if err := ValidateRepositorySnapshot(snapshot); err != nil {
+				t.Fatalf("safe source was rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestReapplyRepositoryPreparedPatchVerifiesDurableHashes(t *testing.T) {
 	snapshot := RepositorySnapshot{
 		Repo: "acme/site", Branch: "citeloop-content", BaseCommitSHA: "commit-1",

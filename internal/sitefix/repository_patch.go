@@ -425,6 +425,13 @@ var repositorySecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`npm_[0-9A-Za-z]{20,}`),
 }
 
+var (
+	repositoryCredentialAssignmentPattern      = regexp.MustCompile(`(?i)(?:^|[ \t{(\[,;])["']?([a-z][a-z0-9_.-]*)["']?[ \t]*(?::=|=>|=|:)[ \t]*`)
+	repositoryTypedCredentialAssignmentPattern = regexp.MustCompile(`(?i)^(?:string|str|bytes|secretstring)[ \t]*=[ \t]*(.+)$`)
+	repositoryEnvironmentReferencePattern      = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	repositoryIdentifierReferencePattern       = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
 func validateRepositorySourceContentSafety(content string) error {
 	lower := strings.ToLower(content)
 	if strings.Contains(lower, "-----begin private key-----") ||
@@ -438,6 +445,9 @@ func validateRepositorySourceContentSafety(content string) error {
 			return errors.New("repository source contains a known credential pattern")
 		}
 	}
+	if containsLiteralRepositoryCredentialAssignment(content) {
+		return errors.New("repository source contains a literal credential assignment")
+	}
 	if strings.Contains(content, "DO NOT EDIT") ||
 		strings.Contains(lower, "code generated") ||
 		strings.Contains(lower, "@generated") {
@@ -447,6 +457,173 @@ func validateRepositorySourceContentSafety(content string) error {
 		return errors.New("repository source appears minified")
 	}
 	return nil
+}
+
+func containsLiteralRepositoryCredentialAssignment(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		matches := repositoryCredentialAssignmentPattern.FindAllStringSubmatchIndex(line, -1)
+		for i, match := range matches {
+			if len(match) < 4 || !sensitiveRepositoryCredentialKey(line[match[2]:match[3]]) {
+				continue
+			}
+			valueEnd := len(line)
+			if i+1 < len(matches) {
+				valueEnd = matches[i+1][0]
+			}
+			if literalRepositoryCredentialValue(line[match[1]:valueEnd]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sensitiveRepositoryCredentialKey(key string) bool {
+	compact := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, key)
+	for _, suffix := range []string{"password", "passwd", "pwd", "token", "apikey", "secret", "privatekey", "credential", "credentials"} {
+		if strings.HasSuffix(compact, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func literalRepositoryCredentialValue(raw string) bool {
+	value := trimRepositoryCredentialAssignmentValue(raw)
+	if value == "" {
+		return false
+	}
+	if annotated := repositoryTypedCredentialAssignmentPattern.FindStringSubmatch(value); annotated != nil {
+		return literalRepositoryCredentialValue(annotated[1])
+	}
+	if quoted, ok := repositoryQuotedAssignmentValue(value); ok {
+		return strings.TrimSpace(quoted) != "" &&
+			!repositoryCredentialPlaceholder(quoted) &&
+			!repositoryCredentialRuntimeReference(quoted)
+	}
+	lower := strings.ToLower(value)
+	if lower == "null" || lower == "nil" || lower == "none" || lower == "undefined" {
+		return false
+	}
+	if repositoryCredentialPlaceholder(value) || repositoryCredentialRuntimeReference(value) {
+		return false
+	}
+	// Unquoted values containing whitespace are usually prose, type unions, or
+	// structured expressions rather than the simple scalar assignments guarded
+	// here. Quoted values remain fail-closed regardless of whitespace.
+	return !strings.ContainsAny(value, " \t")
+}
+
+func trimRepositoryCredentialAssignmentValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	for _, marker := range []string{" #", " //"} {
+		if index := strings.Index(value, marker); index >= 0 {
+			value = value[:index]
+		}
+	}
+	value = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(value), ",;"))
+	for value != "" {
+		last := value[len(value)-1]
+		if (last != '}' || strings.HasPrefix(value, "{") || strings.HasPrefix(value, "${")) &&
+			(last != ']' || strings.HasPrefix(value, "[")) {
+			break
+		}
+		value = strings.TrimSpace(value[:len(value)-1])
+	}
+	return value
+}
+
+func repositoryQuotedAssignmentValue(value string) (string, bool) {
+	if len(value) == 0 || (value[0] != '\'' && value[0] != '"' && value[0] != '`') {
+		return "", false
+	}
+	quote := value[0]
+	escaped := false
+	for i := 1; i < len(value); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if value[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if value[i] == quote {
+			return value[1:i], true
+		}
+	}
+	return value[1:], true
+}
+
+func repositoryCredentialPlaceholder(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return true
+	}
+	if (strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">")) ||
+		(strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}")) ||
+		(strings.HasPrefix(trimmed, "${") && strings.HasSuffix(trimmed, "}")) ||
+		(strings.HasPrefix(trimmed, "$") && repositoryEnvironmentReferencePattern.MatchString(trimmed[1:])) {
+		return true
+	}
+	marker := strings.Trim(strings.ToLower(trimmed), "_-.[]() ")
+	switch marker {
+	case "placeholder", "redacted", "omitted", "unset", "notset", "todo", "changeme", "change-me", "change_me", "replaceme", "replace-me", "replace_me":
+		return true
+	}
+	if strings.HasPrefix(marker, "your_") || strings.HasPrefix(marker, "your-") || strings.HasPrefix(marker, "placeholder_") {
+		return true
+	}
+	for _, r := range marker {
+		if r != 'x' && r != '*' {
+			return false
+		}
+	}
+	return marker != ""
+}
+
+func repositoryCredentialRuntimeReference(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	for _, fragment := range []string{
+		"process.env.", "import.meta.env.", "os.getenv(", "os.environ[", "getenv(", "env(",
+		"settings.", "config.", "secrets.", "vault.", "getsecret(", "loadsecret(",
+	} {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	if repositoryEnvironmentReferencePattern.MatchString(trimmed) {
+		return true
+	}
+	if repositoryCredentialTypeReference(lower) {
+		return true
+	}
+	if repositoryIdentifierReferencePattern.MatchString(trimmed) {
+		if sensitiveRepositoryCredentialKey(trimmed) {
+			return true
+		}
+		for _, r := range trimmed[1:] {
+			if unicode.IsUpper(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func repositoryCredentialTypeReference(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "string", "str", "bytes", "secretstring":
+		return true
+	default:
+		return false
+	}
 }
 
 func looksMinifiedRepositorySource(content string) bool {
