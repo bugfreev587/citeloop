@@ -173,6 +173,77 @@ func TestGenerateTopicReconcilesExistingDraftTopic(t *testing.T) {
 	}
 }
 
+func TestGenerateTopicExistingArticlesReportOnlyPendingReview(t *testing.T) {
+	projectID := uuid.New()
+	topicID := uuid.New()
+	topic := db.Topic{
+		ID:            topicID,
+		ProjectID:     projectID,
+		Channel:       "both",
+		Title:         "Canonical approved with variants in review",
+		InternalLinks: json.RawMessage("[]"),
+		Status:        "drafted",
+	}
+	articles := []db.Article{
+		{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			TopicID:   topicID,
+			Kind:      "canonical",
+			ContentMd: "canonical",
+			SeoMeta:   json.RawMessage("{}"),
+			QaIssues:  json.RawMessage("[]"),
+			Status:    "approved",
+		},
+	}
+	for _, platform := range []string{"dev_to", "hashnode", "reddit"} {
+		articles = append(articles, db.Article{
+			ID:        uuid.New(),
+			ProjectID: projectID,
+			TopicID:   topicID,
+			Kind:      "syndication_variant",
+			Platform:  &platform,
+			ContentMd: platform,
+			SeoMeta:   json.RawMessage("{}"),
+			QaIssues:  json.RawMessage("[]"),
+			Status:    "pending_review",
+		})
+	}
+	fakeDB := &generateTopicDB{topic: topic, articles: articles}
+	srv := &Server{Q: db.New(fakeDB)}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID.String()+"/topics/"+topicID.String()+"/generate", nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("projectID", projectID.String())
+	routeCtx.URLParams.Add("topicID", topicID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	res := httptest.NewRecorder()
+
+	srv.generateTopic(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	var body struct {
+		Status   string       `json:"status"`
+		Articles []db.Article `json:"articles"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "ready" {
+		t.Fatalf("response status = %q, want ready", body.Status)
+	}
+	if len(body.Articles) != 3 {
+		t.Fatalf("review articles = %d, want 3", len(body.Articles))
+	}
+	for _, article := range body.Articles {
+		if article.Status != "pending_review" {
+			t.Fatalf("article %s status = %q, want pending_review", article.ID, article.Status)
+		}
+	}
+}
+
 type generateTopicDB struct {
 	topic         db.Topic
 	articles      []db.Article

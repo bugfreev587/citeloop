@@ -432,9 +432,13 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nonRejected := make([]db.Article, 0, len(existing))
+	pendingReview := make([]db.Article, 0, len(existing))
 	for _, article := range existing {
 		if article.Status != "rejected" {
 			nonRejected = append(nonRejected, article)
+		}
+		if article.Status == "pending_review" {
+			pendingReview = append(pendingReview, article)
 		}
 	}
 	if len(nonRejected) > 0 {
@@ -443,7 +447,11 @@ func (s *Server) generateTopic(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "topic": topic, "articles": emptySlice(nonRejected)})
+		status := "advanced"
+		if len(pendingReview) > 0 {
+			status = "ready"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": status, "topic": topic, "articles": emptySlice(pendingReview)})
 		return
 	}
 	if topic.Status == string(topicstate.StatusGenerating) {

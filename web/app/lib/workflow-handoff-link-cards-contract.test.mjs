@@ -97,7 +97,8 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
     "Recently Drafted",
     "Sent to Review",
     "sentToReviewActions",
-    "hasReviewableDraft(action)",
+    "reviewArticleIDForAction(action",
+    "hasAdvancedDraftHandoff(action)",
     "reviewArticleByTopic",
     'topic.status === "drafted" && reviewArticleByTopic[topic.id]',
   ]) {
@@ -109,7 +110,7 @@ test("Content Plan keeps Sent to Review handoff link cards for drafted content b
     /review\?article=\$\{reviewArticleByTopic\[topic\.id\]\}/,
     "legacy sent topic card must deep-link to the draft article in Review",
   );
-  assert.match(source, /href=\{reviewHrefForAction\(projectId, action\)\}/);
+  assert.match(source, /href=\{reviewHrefForAction\(projectId, reviewArticleID\)\}/);
   assert.match(source, /aria-label=\{`Open "\$\{contentPlanActionTitle\(action\)\}" in Review`\}/);
   assert.match(source, /aria-label=\{`Open "\$\{topic\.title\}" in Review`\}/);
   assert.match(source, /<a[\s\S]{0,200}data-content-plan-sent-card/, "sent topic card must be a link, not a button or details");
@@ -169,7 +170,7 @@ test("Sent to Review cards only expose review links and pre-publish reconsiderat
 
   assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "return", action \}\)/);
   assert.match(section, /setPendingContentPlanConfirmation\(\{ kind: "dismiss", action \}\)/);
-  assert.match(section, /href=\{reviewHrefForAction\(projectId, action\)\}/);
+  assert.match(section, /href=\{reviewHrefForAction\(projectId, reviewArticleID\)\}/);
 
   for (const forbidden of ["Schedule", "Archive", "Draft Content", "aria-expanded", "RightDrawer"]) {
     assert.equal(section.includes(forbidden), false, `sent card section must not contain ${forbidden}`);
