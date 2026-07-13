@@ -64,9 +64,13 @@ Remove manual Content Brief creation at both exposed layers:
    copy from Content Plan.
 2. Remove the frontend `createTopic` method and its create-only input type.
 3. Remove `POST /projects/{projectID}/topics` and the `createTopic` HTTP handler.
-4. Keep the internal `db.CreateTopic` query. Accepted Opportunity planning and
+4. Remove the legacy browser `runStrategist` method and
+   `POST /projects/{projectID}/strategist` handler. That endpoint creates
+   source-less Topics directly and bypasses Opportunity arbitration and
+   acceptance.
+5. Keep the internal `db.CreateTopic` query. Accepted Opportunity planning and
    scheduled automation still use it to materialize internal generation Topics.
-5. Do not add manual Opportunity creation. A user-triggered `Find opportunities`
+6. Do not add manual Opportunity creation. A user-triggered `Find opportunities`
    run remains valid because AI creates the Opportunities; the user is not
    authoring an Opportunity record.
 
@@ -101,6 +105,7 @@ After this change:
 | Archive an existing Topic | Preserved |
 | Plan an accepted Opportunity content action | Preserved |
 | Create an arbitrary Topic over HTTP | Removed |
+| Run legacy Strategist directly over HTTP | Removed |
 | Create a Content Brief from the Content Plan UI | Removed |
 | Create a manual Opportunity | Not supported |
 
@@ -138,10 +143,11 @@ Automated contracts must prove:
    handler, or copy offering manual creation.
 2. The web API client exposes no `createTopic` mutation.
 3. The Go router exposes no `POST /projects/{projectID}/topics` handler.
-4. Topic list, update, schedule, generate, and archive capabilities remain.
-5. Accepted Opportunity planning still creates linked Topics through its own
+4. The web client and Go router expose no legacy direct Strategist execution.
+5. Topic list, update, schedule, generate, and archive capabilities remain.
+6. Accepted Opportunity planning still creates linked Topics through its own
    endpoint.
-6. Existing Go tests, Web tests, type checking, lint-equivalent checks, and
+7. Existing Go tests, Web tests, type checking, lint-equivalent checks, and
    production builds pass.
 
 Production verification must confirm that Content Plan no longer displays the

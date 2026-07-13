@@ -258,7 +258,54 @@ git add docs/PRD-CiteLoop-Content-Plan-Brief-First-Redesign.md docs/PRD-CiteLoop
 git commit -m "docs: make Doctor and Opportunities the only work sources"
 ```
 
-### Task 6: Full Verification And Delivery
+### Task 6: Close The Legacy Strategist Bypass
+
+**Files:**
+- Modify: `web/app/lib/api.test.mjs`
+- Modify: `web/app/lib/api.ts`
+- Modify: `internal/api/topics_routes_test.go`
+- Modify: `internal/api/server.go`
+- Modify: `internal/api/handlers_agents.go`
+- Modify: `internal/api/workflow_events_contract_test.go`
+
+- [ ] **Step 1: Write failing browser and route contracts**
+
+Require `client.runStrategist` to be absent, and require POST on the legacy
+Strategist collection route to return HTTP 405 with a valid project UUID.
+Replace the obsolete positive workflow-event test for `runStrategist` with a
+negative server-source assertion.
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+cd web
+node --test app/lib/api.test.mjs
+cd ..
+go test ./internal/api -run 'TestStrategistRouteIsNotRegistered|TestWorkflowEvents' -count=1
+```
+
+Expected: the client still exposes `runStrategist`, and the registered route
+returns a handler response instead of HTTP 405.
+
+- [ ] **Step 3: Remove the exposed bypass**
+
+Delete the browser `runStrategist` method, the `POST /strategist` registration,
+and the `runStrategist` HTTP handler. Keep the internal Strategist package and
+historical data; they are not externally executable after this change.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+```bash
+cd web
+node --test app/lib/api.test.mjs
+cd ..
+go test ./internal/api -count=1
+git diff --check
+git add web/app/lib/api.test.mjs web/app/lib/api.ts internal/api/topics_routes_test.go internal/api/server.go internal/api/handlers_agents.go internal/api/workflow_events_contract_test.go
+git commit -m "feat: close legacy strategist entry point"
+```
+
+### Task 7: Full Verification And Delivery
 
 **Files:**
 - Verify all changed files.
