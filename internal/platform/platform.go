@@ -32,8 +32,9 @@ func SupportsCanonical(p Platform) bool {
 	return supportsCanonical[p]
 }
 
-// SyndicationTargets is the default V1 set of platforms a syndication topic is
-// rewritten for. Kept small and conservative for the MVP.
+// SyndicationTargets is the legacy V1 fallback for topics that predate exact
+// content target plans. New Writer work must load content_target_plan_items and
+// must not use this list as generation authority.
 var SyndicationTargets = []Platform{DevTo, Hashnode, Reddit}
 
 func (p Platform) String() string { return string(p) }
