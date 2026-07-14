@@ -588,7 +588,7 @@ func validateMeasurementPlanMode(referenceTime time.Time, targetsRaw json.RawMes
 		metrics = append(metrics, secondary)
 	}
 	for _, guardrail := range policy.Guardrails {
-		if guardrail.Metric == "" || guardrail.Metric != normalizeClassifierToken(guardrail.Metric) || !supportedMetric(guardrail.Metric) || !metricSourcePairSupported(guardrail.Metric, policy.RequiredDataSources) {
+		if guardrail.Metric == "" || guardrail.Metric != normalizeClassifierToken(guardrail.Metric) || !supportedMetric(guardrail.Metric) || !metricSourcePairSupported(guardrail.Metric, policy.RequiredDataSources) || !guardrailSupportedForPrimary(metric, guardrail.Metric) {
 			return document, nil, finiteMeasurementPolicy{}, false
 		}
 		if !seenMetrics[guardrail.Metric] {
@@ -613,6 +613,19 @@ func validateMeasurementPlanMode(referenceTime time.Time, targetsRaw json.RawMes
 		BaselineSnapshot: document.BaselineSnapshot, BaselineProvenance: document.BaselineProvenance,
 		PolicySnapshot: document.PolicySnapshot,
 	}, policy, true
+}
+
+func guardrailSupportedForPrimary(primary, guardrail string) bool {
+	switch primary {
+	case "ctr", "clicks", "position":
+		return guardrail == "impressions"
+	case "conversion_rate", "qualified_actions":
+		return guardrail == "referral_sessions"
+	case "citations":
+		return guardrail == "brand_mentions"
+	default:
+		return false
+	}
 }
 
 func finitePolicyValid(policy finiteMeasurementPolicy) bool {

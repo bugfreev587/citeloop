@@ -37,6 +37,12 @@ where project_id = sqlc.arg(project_id) and site_fix_id = sqlc.arg(site_fix_id)
 order by measurement_generation desc
 limit 1;
 
+-- name: GetSiteFixMeasurementGeneration :one
+select * from site_fix_measurements
+where project_id = sqlc.arg(project_id)
+  and site_fix_id = sqlc.arg(site_fix_id)
+  and measurement_generation = sqlc.arg(measurement_generation);
+
 -- name: UpdateSiteFixMeasurementBaseline :one
 update site_fix_measurements
 set baseline_snapshot = sqlc.arg(baseline_snapshot),
@@ -64,7 +70,7 @@ set status = 'observing',
 where project_id = sqlc.arg(project_id)
   and site_fix_id = sqlc.arg(site_fix_id)
   and measurement_generation = sqlc.arg(measurement_generation)
-  and status in ('ready','planned','baseline_blocked','failed_retryable')
+  and status = 'ready'
 returning *;
 
 -- name: ClaimDueSiteFixMeasurement :one
@@ -105,6 +111,42 @@ insert into site_fix_measurement_checkpoints (
 on conflict (measurement_id, checkpoint_key, attempt_number) do update
 set id = site_fix_measurement_checkpoints.id
 returning *;
+
+-- name: CompleteSiteFixMeasurementCheckpoint :one
+with completed as (
+  update site_fix_measurement_checkpoints checkpoint
+  set data_availability = sqlc.arg(data_availability),
+      seo_metrics = sqlc.arg(seo_metrics),
+      ga4_metrics = sqlc.arg(ga4_metrics),
+      geo_metrics = sqlc.arg(geo_metrics),
+      execution_metrics = sqlc.arg(execution_metrics),
+      guardrail_results = sqlc.arg(guardrail_results),
+      outcome_label = sqlc.arg(outcome_label),
+      outcome_reason = sqlc.arg(outcome_reason),
+      attribution_confidence = sqlc.arg(attribution_confidence),
+      computed_at = sqlc.arg(computed_at),
+      failure_reason = sqlc.narg(failure_reason),
+      retry_classification = sqlc.arg(retry_classification)
+  where checkpoint.project_id = sqlc.arg(project_id)
+    and checkpoint.measurement_id = sqlc.arg(measurement_id)
+    and checkpoint.checkpoint_key = sqlc.arg(checkpoint_key)
+    and checkpoint.attempt_number = sqlc.arg(attempt_number)
+    and checkpoint.computed_at is null
+  returning *
+), canonical as (
+  select checkpoint.*
+  from site_fix_measurement_checkpoints checkpoint
+  where checkpoint.project_id = sqlc.arg(project_id)
+    and checkpoint.measurement_id = sqlc.arg(measurement_id)
+    and checkpoint.checkpoint_key = sqlc.arg(checkpoint_key)
+    and checkpoint.attempt_number = sqlc.arg(attempt_number)
+    and checkpoint.computed_at is not null
+)
+select * from completed
+union all
+select * from canonical
+where not exists (select 1 from completed)
+limit 1;
 
 -- name: ListSiteFixMeasurementCheckpoints :many
 select * from site_fix_measurement_checkpoints
@@ -221,6 +263,56 @@ where status = 'processing'
   and locked_until <= sqlc.arg(now_at)
   and attempt_count >= max_attempts
 returning *;
+
+-- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
+with candidates as (
+  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation
+  from site_fixes fix
+  join lateral (
+    select candidate.measurement_generation
+    from site_fix_measurements candidate
+    where candidate.project_id = fix.project_id
+      and candidate.site_fix_id = fix.id
+      and candidate.status <> 'terminal'
+    order by candidate.measurement_generation desc
+    limit 1
+  ) measurement on true
+  where fix.status = 'verified'
+    and fix.measurement_policy = 'measurement_required'
+    and not exists (
+      select 1 from site_fix_measurement_handoff_outbox existing
+      where existing.project_id = fix.project_id
+        and existing.site_fix_id = fix.id
+        and existing.measurement_generation = measurement.measurement_generation
+    )
+  order by fix.project_id, fix.id
+  limit least(greatest(sqlc.arg(limit_rows)::int, 1), 100)
+)
+insert into site_fix_measurement_handoff_outbox (
+  id, project_id, site_fix_id, measurement_generation, idempotency_key,
+  max_attempts, next_attempt_at
+)
+select gen_random_uuid(), candidate.project_id, candidate.site_fix_id,
+       candidate.measurement_generation,
+       'reconcile:' || candidate.site_fix_id::text || ':' || candidate.measurement_generation::text,
+       8, sqlc.arg(now_at)
+from candidates candidate
+on conflict (project_id, site_fix_id, measurement_generation) do nothing
+returning *;
+
+-- name: ListVerifiedRequiredSiteFixesMissingMeasurement :many
+select fix.*
+from site_fixes fix
+where fix.status = 'verified'
+  and fix.measurement_policy = 'measurement_required'
+  and not exists (
+    select 1 from site_fix_measurements measurement
+    where measurement.project_id = fix.project_id
+      and measurement.site_fix_id = fix.id
+      and measurement.status <> 'terminal'
+  )
+order by fix.updated_at, fix.id
+limit least(greatest(sqlc.arg(limit_rows)::int, 1), 100);
 
 -- name: RetrySiteFixMeasurementHandoff :one
 update site_fix_measurement_handoff_outbox

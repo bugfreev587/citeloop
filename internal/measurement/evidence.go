@@ -16,6 +16,11 @@ type MetricContract struct {
 	ImmutableBaselineValue      *float64
 	ImmutableBaselineSampleSize float64
 	ImmutableBaselineWindowDays int
+	MinimumAfterRows            int
+	MinimumAfterSample          float64
+	GuardrailThresholds         map[string]float64
+	UseExplicitGuardrails       bool
+	UseExplicitMinimumSample    bool
 }
 
 type EvidenceEvaluation struct {
@@ -116,6 +121,31 @@ func EvaluateSourceEvidence(contract MetricContract, raw json.RawMessage, now ti
 	if source == "ga4" {
 		minimumAfterSample = 30
 	}
+	if contract.UseExplicitMinimumSample {
+		minimumAfterRows = max(1, contract.MinimumAfterRows)
+		minimumAfterSample = math.Max(1, contract.MinimumAfterSample)
+	} else {
+		if contract.MinimumAfterRows > 0 {
+			minimumAfterRows = contract.MinimumAfterRows
+		}
+		if contract.MinimumAfterSample > 0 {
+			minimumAfterSample = contract.MinimumAfterSample
+		}
+	}
+	if contract.UseExplicitGuardrails {
+		filtered := guardrails[:0]
+		for _, guardrail := range guardrails {
+			if _, ok := contract.GuardrailThresholds[guardrail.Name]; ok {
+				filtered = append(filtered, guardrail)
+			}
+		}
+		guardrails = filtered
+	}
+	for index := range guardrails {
+		if threshold, ok := contract.GuardrailThresholds[guardrails[index].Name]; ok && threshold > 0 {
+			guardrails[index].MaxAdverseRelative = threshold
+		}
+	}
 	freshnessReference := now
 	if afterEnd, ok := envelope.Windows["after_end"].(string); ok {
 		if parsed := parseMetricTime(afterEnd); !parsed.IsZero() && parsed.Before(now) {
@@ -158,6 +188,10 @@ func metricSamples(metric string, envelope evidenceEnvelope) (MetricSample, Metr
 		return gscSample(safeRatio(envelope.GSC.BaselineClicks, envelope.GSC.BaselineImpressions), envelope.GSC.BaselineImpressions, envelope.GSC.BaselineRows, envelope.GSC.BaselinePartial, firstNonBlank(envelope.GSC.BaselineDataThrough, envelope.GSC.BaselineUpdatedAt)),
 			gscSample(safeRatio(envelope.GSC.AfterClicks, envelope.GSC.AfterImpressions), envelope.GSC.AfterImpressions, envelope.GSC.AfterRows, envelope.GSC.AfterPartial, firstNonBlank(envelope.GSC.AfterDataThrough, envelope.GSC.AfterUpdatedAt)),
 			[]Guardrail{gscImpressionGuardrail(envelope)}, "gsc", nil
+	case "gsc_impressions":
+		return gscSample(envelope.GSC.BaselineImpressions, envelope.GSC.BaselineImpressions, envelope.GSC.BaselineRows, envelope.GSC.BaselinePartial, firstNonBlank(envelope.GSC.BaselineDataThrough, envelope.GSC.BaselineUpdatedAt)),
+			gscSample(envelope.GSC.AfterImpressions, envelope.GSC.AfterImpressions, envelope.GSC.AfterRows, envelope.GSC.AfterPartial, firstNonBlank(envelope.GSC.AfterDataThrough, envelope.GSC.AfterUpdatedAt)),
+			nil, "gsc", nil
 	case "gsc_position":
 		return gscSample(envelope.GSC.BaselinePosition, envelope.GSC.BaselineImpressions, envelope.GSC.BaselineRows, envelope.GSC.BaselinePartial, firstNonBlank(envelope.GSC.BaselineDataThrough, envelope.GSC.BaselineUpdatedAt)),
 			gscSample(envelope.GSC.AfterPosition, envelope.GSC.AfterImpressions, envelope.GSC.AfterRows, envelope.GSC.AfterPartial, firstNonBlank(envelope.GSC.AfterDataThrough, envelope.GSC.AfterUpdatedAt)),
@@ -170,10 +204,20 @@ func metricSamples(metric string, envelope evidenceEnvelope) (MetricSample, Metr
 		return plainSample(envelope.GA4.BaselineKeyEvents, envelope.GA4.BaselineSessions, envelope.GA4.BaselineRows, firstNonBlank(envelope.GA4.BaselineDataThrough, envelope.GA4.BaselineUpdatedAt)),
 			plainSample(envelope.GA4.AfterKeyEvents, envelope.GA4.AfterSessions, envelope.GA4.AfterRows, firstNonBlank(envelope.GA4.AfterDataThrough, envelope.GA4.AfterUpdatedAt)),
 			[]Guardrail{ga4SessionGuardrail(envelope)}, "ga4", nil
+	case "ga4_conversion_rate":
+		return plainSample(safeRatio(envelope.GA4.BaselineKeyEvents, envelope.GA4.BaselineSessions), envelope.GA4.BaselineSessions, envelope.GA4.BaselineRows, firstNonBlank(envelope.GA4.BaselineDataThrough, envelope.GA4.BaselineUpdatedAt)),
+			plainSample(safeRatio(envelope.GA4.AfterKeyEvents, envelope.GA4.AfterSessions), envelope.GA4.AfterSessions, envelope.GA4.AfterRows, firstNonBlank(envelope.GA4.AfterDataThrough, envelope.GA4.AfterUpdatedAt)),
+			[]Guardrail{ga4SessionGuardrail(envelope)}, "ga4", nil
+	case "ga4_sessions":
+		return plainSample(envelope.GA4.BaselineSessions, envelope.GA4.BaselineSessions, envelope.GA4.BaselineRows, firstNonBlank(envelope.GA4.BaselineDataThrough, envelope.GA4.BaselineUpdatedAt)),
+			plainSample(envelope.GA4.AfterSessions, envelope.GA4.AfterSessions, envelope.GA4.AfterRows, firstNonBlank(envelope.GA4.AfterDataThrough, envelope.GA4.AfterUpdatedAt)), nil, "ga4", nil
 	case "ai_citation_count":
 		return plainSample(envelope.GEO.BaselineCitations, float64(envelope.GEO.BaselineRows), envelope.GEO.BaselineRows, envelope.GEO.BaselineObservedAt),
 			plainSample(envelope.GEO.AfterCitations, float64(envelope.GEO.AfterRows), envelope.GEO.AfterRows, envelope.GEO.AfterObservedAt),
 			[]Guardrail{{Name: "ai_brand_mention_rate", Baseline: plainSample(envelope.GEO.BaselineBrandRate, float64(envelope.GEO.BaselineRows), envelope.GEO.BaselineRows, envelope.GEO.BaselineObservedAt), After: plainSample(envelope.GEO.AfterBrandRate, float64(envelope.GEO.AfterRows), envelope.GEO.AfterRows, envelope.GEO.AfterObservedAt), MaxAdverseRelative: .30}}, "geo", nil
+	case "ai_brand_mention_rate":
+		return plainSample(envelope.GEO.BaselineBrandRate, float64(envelope.GEO.BaselineRows), envelope.GEO.BaselineRows, envelope.GEO.BaselineObservedAt),
+			plainSample(envelope.GEO.AfterBrandRate, float64(envelope.GEO.AfterRows), envelope.GEO.AfterRows, envelope.GEO.AfterObservedAt), nil, "geo", nil
 	default:
 		return MetricSample{}, MetricSample{}, nil, "", fmt.Errorf("unsupported primary metric %q", metric)
 	}
@@ -243,7 +287,7 @@ func providerExplicitlyUnavailable(source, status string) bool {
 
 func metricIsCumulativeCount(metric string) bool {
 	switch strings.ToLower(strings.TrimSpace(metric)) {
-	case "gsc_clicks", "ga4_key_events":
+	case "gsc_clicks", "gsc_impressions", "ga4_key_events", "ga4_sessions":
 		return true
 	default:
 		return false

@@ -237,6 +237,10 @@ func TestClassifySiteFixMeasurementRequiredReadiness(t *testing.T) {
 		{name: "non-normalized target URL", target: json.RawMessage(`["HTTPS://EXAMPLE.COM/pricing#top"]`)},
 		{name: "blank hypothesis", mutate: func(plan map[string]any) { plan["growth_hypothesis"] = " " }},
 		{name: "unsupported metric source pair", mutate: func(plan map[string]any) { plan["primary_metric"] = "conversion_rate" }},
+		{name: "unsupported same-source guardrail", mutate: func(plan map[string]any) {
+			policy := plan["policy_snapshot"].(map[string]any)
+			policy["guardrails"] = []any{map[string]any{"metric": "clicks", "max_adverse_relative": 0.2}}
+		}},
 		{name: "missing target query", mutate: func(plan map[string]any) { delete(plan, "target_query") }},
 		{name: "missing baseline snapshot", mutate: func(plan map[string]any) { plan["baseline_snapshot"] = map[string]any{} }},
 		{name: "missing baseline provenance", mutate: func(plan map[string]any) { delete(plan, "baseline_provenance") }},

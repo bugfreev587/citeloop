@@ -135,6 +135,28 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	if err != nil || replayedCheckpoint.ID != checkpoint.ID {
 		t.Fatalf("checkpoint replay row=%+v err=%v", replayedCheckpoint, err)
 	}
+	checkpointOutcome, checkpointReason := "positive", "threshold crossed"
+	completeArgs := CompleteSiteFixMeasurementCheckpointParams{
+		DataAvailability: json.RawMessage(`{"gsc":"available"}`), SeoMetrics: json.RawMessage(`{"ctr":0.08}`),
+		Ga4Metrics: json.RawMessage(`{}`), GeoMetrics: json.RawMessage(`{}`), ExecutionMetrics: json.RawMessage(`{}`), GuardrailResults: json.RawMessage(`{}`),
+		OutcomeLabel: &checkpointOutcome, OutcomeReason: &checkpointReason, AttributionConfidence: "high", ComputedAt: pgutil.TS(now),
+		RetryClassification: "not_applicable", ProjectID: projectID, MeasurementID: measurement.ID, CheckpointKey: checkpoint.CheckpointKey, AttemptNumber: checkpoint.AttemptNumber,
+	}
+	completedCheckpoint, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, completeArgs)
+	if err != nil || !completedCheckpoint.ComputedAt.Valid || completedCheckpoint.OutcomeLabel == nil || *completedCheckpoint.OutcomeLabel != "positive" {
+		t.Fatalf("checkpoint completion=%+v err=%v", completedCheckpoint, err)
+	}
+	completeArgs.SeoMetrics = json.RawMessage(`{"ctr":999}`)
+	replayedCompletion, err := q.CompleteSiteFixMeasurementCheckpoint(ctx, completeArgs)
+	if err != nil || replayedCompletion.ID != completedCheckpoint.ID || string(replayedCompletion.SeoMetrics) != string(completedCheckpoint.SeoMetrics) {
+		t.Fatalf("completion replay mutated evidence: row=%+v err=%v", replayedCompletion, err)
+	}
+	if _, err := pool.Exec(ctx, `update site_fix_measurement_checkpoints set outcome_reason='mutated' where id=$1`, checkpoint.ID); err == nil {
+		t.Fatal("completed checkpoint accepted result mutation")
+	}
+	if _, err := pool.Exec(ctx, `delete from site_fix_measurement_checkpoints where id=$1`, checkpoint.ID); err == nil {
+		t.Fatal("completed checkpoint accepted delete")
+	}
 
 	outcomeArgs := GetOrCreateSiteFixMeasurementTerminalOutcomeParams{
 		ID: uuid.New(), ProjectID: projectID, MeasurementID: measurement.ID, OutcomeLabel: "positive", RecordKind: "directional_learning",
@@ -194,9 +216,21 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 	if err != nil || len(page) != 1 {
 		t.Fatalf("paginated Results rows=%d err=%v", len(page), err)
 	}
+	validPlan := json.RawMessage(`{"growth_hypothesis":"A clearer title improves qualified organic CTR.","primary_metric":"gsc_ctr","secondary_metrics":["gsc_impressions"],"target_query":"social publishing","target_identity":{},"baseline_window":{"start":"2026-05-01T00:00:00Z","end":"2026-05-28T00:00:00Z"},"baseline_snapshot":{"gsc_ctr":0.04,"gsc_impressions":1000},"baseline_provenance":{"source":"gsc","captured_at":"2026-05-28T01:00:00Z"},"policy_snapshot":` + string(validPolicy) + `}`)
+	if _, err := pool.Exec(ctx, `update site_fixes set status='verified',measurement_policy='measurement_required',fix_type='metadata_ctr_optimization',impact_mode='conversion_or_ctr',classifier_version='site-fix-policy-v1',decision_origin='system_rule',decision_confidence='high',growth_hypothesis='A clearer title improves qualified organic CTR.',primary_metric='gsc_ctr',secondary_metrics='["gsc_impressions"]',measurement_policy_version='site-fix-measurement-v1',measurement_policy_snapshot=$3,measurement_plan_snapshot=$4 where project_id=$1 and id=$2`, projectID, fixID, validPolicy, validPlan); err != nil {
+		t.Fatal(err)
+	}
+	reconciled, err := q.ReconcileVerifiedSiteFixMeasurementHandoffs(ctx, ReconcileVerifiedSiteFixMeasurementHandoffsParams{NowAt: pgutil.TS(now), LimitRows: 10})
+	if err != nil || len(reconciled) != 1 || reconciled[0].MeasurementGeneration != qualityMeasurement.MeasurementGeneration {
+		t.Fatalf("reconciled=%+v err=%v", reconciled, err)
+	}
+	reconciled, err = q.ReconcileVerifiedSiteFixMeasurementHandoffs(ctx, ReconcileVerifiedSiteFixMeasurementHandoffsParams{NowAt: pgutil.TS(now), LimitRows: 10})
+	if err != nil || len(reconciled) != 0 {
+		t.Fatalf("reconcile replay=%+v err=%v", reconciled, err)
+	}
 
 	handoff, err := q.EnqueueSiteFixMeasurementHandoff(ctx, EnqueueSiteFixMeasurementHandoffParams{
-		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: measurement.MeasurementGeneration,
+		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: qualityMeasurement.MeasurementGeneration,
 		IdempotencyKey: "verified:event-1", MaxAttempts: 3, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)),
 	})
 	if err != nil {
@@ -227,8 +261,12 @@ func TestSiteFixMeasurementPostgresIdempotencyAndLeaseRecovery(t *testing.T) {
 		t.Fatalf("recovered owner completion=%+v err=%v", completed, err)
 	}
 
+	exhaustedMeasurement, err := q.CreateSiteFixMeasurement(ctx, createArgs(uuid.New(), "exhausted:event-4"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	exhausted, err := q.EnqueueSiteFixMeasurementHandoff(ctx, EnqueueSiteFixMeasurementHandoffParams{
-		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: secondGeneration.MeasurementGeneration,
+		ID: uuid.New(), ProjectID: projectID, SiteFixID: fixID, MeasurementGeneration: exhaustedMeasurement.MeasurementGeneration,
 		IdempotencyKey: "verified:event-2", MaxAttempts: 1, NextAttemptAt: pgutil.TS(now.Add(-time.Minute)),
 	})
 	if err != nil {

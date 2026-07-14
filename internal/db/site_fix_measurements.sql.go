@@ -29,7 +29,7 @@ set status = 'observing',
 where project_id = $3
   and site_fix_id = $4
   and measurement_generation = $5
-  and status in ('ready','planned','baseline_blocked','failed_retryable')
+  and status = 'ready'
 returning id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at
 `
 
@@ -200,6 +200,138 @@ func (q *Queries) ClaimSiteFixMeasurementHandoff(ctx context.Context, arg ClaimS
 		&i.CompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const completeSiteFixMeasurementCheckpoint = `-- name: CompleteSiteFixMeasurementCheckpoint :one
+with completed as (
+  update site_fix_measurement_checkpoints checkpoint
+  set data_availability = $1,
+      seo_metrics = $2,
+      ga4_metrics = $3,
+      geo_metrics = $4,
+      execution_metrics = $5,
+      guardrail_results = $6,
+      outcome_label = $7,
+      outcome_reason = $8,
+      attribution_confidence = $9,
+      computed_at = $10,
+      failure_reason = $11,
+      retry_classification = $12
+  where checkpoint.project_id = $13
+    and checkpoint.measurement_id = $14
+    and checkpoint.checkpoint_key = $15
+    and checkpoint.attempt_number = $16
+    and checkpoint.computed_at is null
+  returning id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at
+), canonical as (
+  select checkpoint.id, checkpoint.project_id, checkpoint.measurement_id, checkpoint.checkpoint_key, checkpoint.checkpoint_role, checkpoint.scheduled_at, checkpoint.window_start, checkpoint.window_end, checkpoint.attempt_number, checkpoint.required_data_sources, checkpoint.data_availability, checkpoint.minimum_sample, checkpoint.seo_metrics, checkpoint.ga4_metrics, checkpoint.geo_metrics, checkpoint.execution_metrics, checkpoint.guardrail_results, checkpoint.outcome_label, checkpoint.outcome_reason, checkpoint.attribution_confidence, checkpoint.computed_at, checkpoint.failure_reason, checkpoint.retry_classification, checkpoint.created_at
+  from site_fix_measurement_checkpoints checkpoint
+  where checkpoint.project_id = $13
+    and checkpoint.measurement_id = $14
+    and checkpoint.checkpoint_key = $15
+    and checkpoint.attempt_number = $16
+    and checkpoint.computed_at is not null
+)
+select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from completed
+union all
+select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from canonical
+where not exists (select 1 from completed)
+limit 1
+`
+
+type CompleteSiteFixMeasurementCheckpointParams struct {
+	DataAvailability      json.RawMessage    `json:"data_availability"`
+	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
+	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
+	OutcomeLabel          *string            `json:"outcome_label"`
+	OutcomeReason         *string            `json:"outcome_reason"`
+	AttributionConfidence string             `json:"attribution_confidence"`
+	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryClassification   string             `json:"retry_classification"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	MeasurementID         uuid.UUID          `json:"measurement_id"`
+	CheckpointKey         string             `json:"checkpoint_key"`
+	AttemptNumber         int32              `json:"attempt_number"`
+}
+
+type CompleteSiteFixMeasurementCheckpointRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	ProjectID             uuid.UUID          `json:"project_id"`
+	MeasurementID         uuid.UUID          `json:"measurement_id"`
+	CheckpointKey         string             `json:"checkpoint_key"`
+	CheckpointRole        string             `json:"checkpoint_role"`
+	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
+	WindowStart           pgtype.Timestamptz `json:"window_start"`
+	WindowEnd             pgtype.Timestamptz `json:"window_end"`
+	AttemptNumber         int32              `json:"attempt_number"`
+	RequiredDataSources   json.RawMessage    `json:"required_data_sources"`
+	DataAvailability      json.RawMessage    `json:"data_availability"`
+	MinimumSample         json.RawMessage    `json:"minimum_sample"`
+	SeoMetrics            json.RawMessage    `json:"seo_metrics"`
+	Ga4Metrics            json.RawMessage    `json:"ga4_metrics"`
+	GeoMetrics            json.RawMessage    `json:"geo_metrics"`
+	ExecutionMetrics      json.RawMessage    `json:"execution_metrics"`
+	GuardrailResults      json.RawMessage    `json:"guardrail_results"`
+	OutcomeLabel          *string            `json:"outcome_label"`
+	OutcomeReason         *string            `json:"outcome_reason"`
+	AttributionConfidence string             `json:"attribution_confidence"`
+	ComputedAt            pgtype.Timestamptz `json:"computed_at"`
+	FailureReason         *string            `json:"failure_reason"`
+	RetryClassification   string             `json:"retry_classification"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CompleteSiteFixMeasurementCheckpoint(ctx context.Context, arg CompleteSiteFixMeasurementCheckpointParams) (CompleteSiteFixMeasurementCheckpointRow, error) {
+	row := q.db.QueryRow(ctx, completeSiteFixMeasurementCheckpoint,
+		arg.DataAvailability,
+		arg.SeoMetrics,
+		arg.Ga4Metrics,
+		arg.GeoMetrics,
+		arg.ExecutionMetrics,
+		arg.GuardrailResults,
+		arg.OutcomeLabel,
+		arg.OutcomeReason,
+		arg.AttributionConfidence,
+		arg.ComputedAt,
+		arg.FailureReason,
+		arg.RetryClassification,
+		arg.ProjectID,
+		arg.MeasurementID,
+		arg.CheckpointKey,
+		arg.AttemptNumber,
+	)
+	var i CompleteSiteFixMeasurementCheckpointRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.MeasurementID,
+		&i.CheckpointKey,
+		&i.CheckpointRole,
+		&i.ScheduledAt,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.AttemptNumber,
+		&i.RequiredDataSources,
+		&i.DataAvailability,
+		&i.MinimumSample,
+		&i.SeoMetrics,
+		&i.Ga4Metrics,
+		&i.GeoMetrics,
+		&i.ExecutionMetrics,
+		&i.GuardrailResults,
+		&i.OutcomeLabel,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.ComputedAt,
+		&i.FailureReason,
+		&i.RetryClassification,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -793,6 +925,60 @@ func (q *Queries) GetSiteFixMeasurement(ctx context.Context, arg GetSiteFixMeasu
 	return i, err
 }
 
+const getSiteFixMeasurementGeneration = `-- name: GetSiteFixMeasurementGeneration :one
+select id, project_id, site_fix_id, measurement_generation, creation_idempotency_key, target_url, normalized_target_url, target_query, target_identity, fix_type, impact_mode, classifier_version, decision_origin, decision_confidence, prospective_observation, growth_hypothesis, primary_metric, secondary_metrics, measurement_policy_version, measurement_policy_snapshot, baseline_window, baseline_snapshot, baseline_status, started_at, absolute_terminal_at, status, terminal_outcome, outcome_reason, attribution_confidence, confounders, results_deep_link, created_at, updated_at from site_fix_measurements
+where project_id = $1
+  and site_fix_id = $2
+  and measurement_generation = $3
+`
+
+type GetSiteFixMeasurementGenerationParams struct {
+	ProjectID             uuid.UUID `json:"project_id"`
+	SiteFixID             uuid.UUID `json:"site_fix_id"`
+	MeasurementGeneration int32     `json:"measurement_generation"`
+}
+
+func (q *Queries) GetSiteFixMeasurementGeneration(ctx context.Context, arg GetSiteFixMeasurementGenerationParams) (SiteFixMeasurement, error) {
+	row := q.db.QueryRow(ctx, getSiteFixMeasurementGeneration, arg.ProjectID, arg.SiteFixID, arg.MeasurementGeneration)
+	var i SiteFixMeasurement
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.SiteFixID,
+		&i.MeasurementGeneration,
+		&i.CreationIdempotencyKey,
+		&i.TargetUrl,
+		&i.NormalizedTargetUrl,
+		&i.TargetQuery,
+		&i.TargetIdentity,
+		&i.FixType,
+		&i.ImpactMode,
+		&i.ClassifierVersion,
+		&i.DecisionOrigin,
+		&i.DecisionConfidence,
+		&i.ProspectiveObservation,
+		&i.GrowthHypothesis,
+		&i.PrimaryMetric,
+		&i.SecondaryMetrics,
+		&i.MeasurementPolicyVersion,
+		&i.MeasurementPolicySnapshot,
+		&i.BaselineWindow,
+		&i.BaselineSnapshot,
+		&i.BaselineStatus,
+		&i.StartedAt,
+		&i.AbsoluteTerminalAt,
+		&i.Status,
+		&i.TerminalOutcome,
+		&i.OutcomeReason,
+		&i.AttributionConfidence,
+		&i.Confounders,
+		&i.ResultsDeepLink,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listSiteFixMeasurementCheckpoints = `-- name: ListSiteFixMeasurementCheckpoints :many
 select id, project_id, measurement_id, checkpoint_key, checkpoint_role, scheduled_at, window_start, window_end, attempt_number, required_data_sources, data_availability, minimum_sample, seo_metrics, ga4_metrics, geo_metrics, execution_metrics, guardrail_results, outcome_label, outcome_reason, attribution_confidence, computed_at, failure_reason, retry_classification, created_at from site_fix_measurement_checkpoints
 where project_id = $1 and measurement_id = $2
@@ -949,6 +1135,161 @@ func (q *Queries) ListSiteFixMeasurementsForResults(ctx context.Context, arg Lis
 			&i.UpdatedAt,
 			&i.SourceType,
 			&i.SourceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVerifiedRequiredSiteFixesMissingMeasurement = `-- name: ListVerifiedRequiredSiteFixesMissingMeasurement :many
+select fix.id, fix.project_id, fix.doctor_finding_id, fix.candidate_id, fix.work_signature_id, fix.supersedes_site_fix_id, fix.status, fix.finding_kind, fix.target_urls, fix.evidence_snapshot, fix.proposed_fix, fix.acceptance_tests, fix.verification_snapshot, fix.failure_reason, fix.retry_count, fix.max_retries, fix.legacy_opportunity_id, fix.legacy_content_action_id, fix.migration_batch_id, fix.approved_at, fix.applied_at, fix.deployed_at, fix.verified_at, fix.created_at, fix.updated_at, fix.doctor_link_dismissed_at, fix.doctor_link_dismissed_by, fix.fix_type, fix.impact_mode, fix.measurement_policy, fix.classifier_version, fix.decision_origin, fix.decision_confidence, fix.growth_hypothesis, fix.primary_metric, fix.secondary_metrics, fix.measurement_policy_version, fix.measurement_policy_snapshot, fix.measurement_plan_snapshot
+from site_fixes fix
+where fix.status = 'verified'
+  and fix.measurement_policy = 'measurement_required'
+  and not exists (
+    select 1 from site_fix_measurements measurement
+    where measurement.project_id = fix.project_id
+      and measurement.site_fix_id = fix.id
+      and measurement.status <> 'terminal'
+  )
+order by fix.updated_at, fix.id
+limit least(greatest($1::int, 1), 100)
+`
+
+func (q *Queries) ListVerifiedRequiredSiteFixesMissingMeasurement(ctx context.Context, limitRows int32) ([]SiteFix, error) {
+	rows, err := q.db.Query(ctx, listVerifiedRequiredSiteFixesMissingMeasurement, limitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFix
+	for rows.Next() {
+		var i SiteFix
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.DoctorFindingID,
+			&i.CandidateID,
+			&i.WorkSignatureID,
+			&i.SupersedesSiteFixID,
+			&i.Status,
+			&i.FindingKind,
+			&i.TargetUrls,
+			&i.EvidenceSnapshot,
+			&i.ProposedFix,
+			&i.AcceptanceTests,
+			&i.VerificationSnapshot,
+			&i.FailureReason,
+			&i.RetryCount,
+			&i.MaxRetries,
+			&i.LegacyOpportunityID,
+			&i.LegacyContentActionID,
+			&i.MigrationBatchID,
+			&i.ApprovedAt,
+			&i.AppliedAt,
+			&i.DeployedAt,
+			&i.VerifiedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DoctorLinkDismissedAt,
+			&i.DoctorLinkDismissedBy,
+			&i.FixType,
+			&i.ImpactMode,
+			&i.MeasurementPolicy,
+			&i.ClassifierVersion,
+			&i.DecisionOrigin,
+			&i.DecisionConfidence,
+			&i.GrowthHypothesis,
+			&i.PrimaryMetric,
+			&i.SecondaryMetrics,
+			&i.MeasurementPolicyVersion,
+			&i.MeasurementPolicySnapshot,
+			&i.MeasurementPlanSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reconcileVerifiedSiteFixMeasurementHandoffs = `-- name: ReconcileVerifiedSiteFixMeasurementHandoffs :many
+with candidates as (
+  select fix.project_id, fix.id as site_fix_id, measurement.measurement_generation
+  from site_fixes fix
+  join lateral (
+    select candidate.measurement_generation
+    from site_fix_measurements candidate
+    where candidate.project_id = fix.project_id
+      and candidate.site_fix_id = fix.id
+      and candidate.status <> 'terminal'
+    order by candidate.measurement_generation desc
+    limit 1
+  ) measurement on true
+  where fix.status = 'verified'
+    and fix.measurement_policy = 'measurement_required'
+    and not exists (
+      select 1 from site_fix_measurement_handoff_outbox existing
+      where existing.project_id = fix.project_id
+        and existing.site_fix_id = fix.id
+        and existing.measurement_generation = measurement.measurement_generation
+    )
+  order by fix.project_id, fix.id
+  limit least(greatest($2::int, 1), 100)
+)
+insert into site_fix_measurement_handoff_outbox (
+  id, project_id, site_fix_id, measurement_generation, idempotency_key,
+  max_attempts, next_attempt_at
+)
+select gen_random_uuid(), candidate.project_id, candidate.site_fix_id,
+       candidate.measurement_generation,
+       'reconcile:' || candidate.site_fix_id::text || ':' || candidate.measurement_generation::text,
+       8, $1
+from candidates candidate
+on conflict (project_id, site_fix_id, measurement_generation) do nothing
+returning id, project_id, site_fix_id, measurement_generation, event_type, idempotency_key, status, attempt_count, max_attempts, next_attempt_at, lock_token, locked_until, last_error_classification, last_error, completed_at, created_at, updated_at
+`
+
+type ReconcileVerifiedSiteFixMeasurementHandoffsParams struct {
+	NowAt     pgtype.Timestamptz `json:"now_at"`
+	LimitRows int32              `json:"limit_rows"`
+}
+
+func (q *Queries) ReconcileVerifiedSiteFixMeasurementHandoffs(ctx context.Context, arg ReconcileVerifiedSiteFixMeasurementHandoffsParams) ([]SiteFixMeasurementHandoffOutbox, error) {
+	rows, err := q.db.Query(ctx, reconcileVerifiedSiteFixMeasurementHandoffs, arg.NowAt, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteFixMeasurementHandoffOutbox
+	for rows.Next() {
+		var i SiteFixMeasurementHandoffOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.SiteFixID,
+			&i.MeasurementGeneration,
+			&i.EventType,
+			&i.IdempotencyKey,
+			&i.Status,
+			&i.AttemptCount,
+			&i.MaxAttempts,
+			&i.NextAttemptAt,
+			&i.LockToken,
+			&i.LockedUntil,
+			&i.LastErrorClassification,
+			&i.LastError,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

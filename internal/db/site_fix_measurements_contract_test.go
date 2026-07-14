@@ -168,6 +168,7 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		"on conflict (project_id, site_fix_id, measurement_generation)",
 		"-- name: getsitefixmeasurement :one",
 		"-- name: getlatestsitefixmeasurementforfix :one",
+		"-- name: getsitefixmeasurementgeneration :one",
 		"-- name: updatesitefixmeasurementbaseline :one",
 		"-- name: activatesitefixmeasurement :one",
 		"-- name: claimduesitefixmeasurement :one",
@@ -185,12 +186,53 @@ func TestSiteFixMeasurementQueriesCoverLifecycleSchedulerAndResults(t *testing.T
 		"-- name: retrysitefixmeasurementhandoff :one",
 		"-- name: terminalizeexpiredsitefixmeasurementhandoffs :many",
 		"-- name: listsitefixmeasurementsforresults :many",
+		"-- name: completesitefixmeasurementcheckpoint :one",
+		"-- name: reconcileverifiedsitefixmeasurementhandoffs :many",
+		"-- name: listverifiedrequiredsitefixesmissingmeasurement :many",
 		"'site_fix'::text as source_type",
 		"limit least(greatest(sqlc.arg(page_limit)::int, 1), 100)",
 		"offset greatest(sqlc.arg(page_offset)::int, 0)",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("Site Fix measurement queries missing %q", want)
+		}
+	}
+}
+
+func TestSiteFixMeasurementCheckpointCompletionContract(t *testing.T) {
+	migration, err := os.ReadFile("../migrations/0091_site_fix_measurement_worker.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(migration))
+	for _, want := range []string{
+		"prevent_site_fix_measurement_checkpoint_mutation",
+		"old.computed_at is null and new.computed_at is not null",
+		"site fix measurement checkpoint schedule is immutable",
+		"site fix measurement checkpoint result is immutable after completion",
+		"site_fix_measurement_guardrails_supported_v1",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("checkpoint completion migration missing %q", want)
+		}
+	}
+	validation, err := os.ReadFile("../migrations/0092_site_fix_measurement_worker_validate.sql")
+	if err != nil || !strings.Contains(strings.ToLower(string(validation)), "validate constraint site_fix_measurements_guardrails_supported_check") {
+		t.Fatalf("worker validation migration missing guardrail validation: %v", err)
+	}
+	queries, err := os.ReadFile("queries/site_fix_measurements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	querySQL := strings.ToLower(string(queries))
+	activation := queryBlock(querySQL, "-- name: activatesitefixmeasurement :one")
+	if !strings.Contains(activation, "and status = 'ready'") || strings.Contains(activation, "baseline_blocked") {
+		t.Fatalf("activation must be a one-way ready -> observing transition: %s", activation)
+	}
+	completion := queryBlock(querySQL, "-- name: completesitefixmeasurementcheckpoint :one")
+	for _, want := range []string{"computed_at is null", "canonical", "returning"} {
+		if !strings.Contains(completion, want) {
+			t.Fatalf("checkpoint completion query missing %q", want)
 		}
 	}
 }
