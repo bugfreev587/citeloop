@@ -38,7 +38,7 @@ func TestAnalyzeObservationsCreatesIdempotentGEOOpportunitiesAndBriefs(t *testin
 				ID:                   uuid.New(),
 				ProjectID:            projectID,
 				PromptID:             pgUUID(promptID),
-				Engine:               "Perplexity",
+				Engine:               "OpenAI",
 				SourceType:           ProviderManualFixture,
 				BrandMentioned:       false,
 				ProjectCitationCount: 0,
@@ -145,6 +145,57 @@ func TestGrowthRadarGapUsesDeterministicScoreAndExactContractTarget(t *testing.T
 	filtered, _, err := service.scoreGrowthRadarGap(context.Background(), projectID, geoGap{Type: "geo_competitor_cited_project_absent", AssetType: "comparison_page", Action: "create", Impact: "value", Evidence: map[string]any{"observation_id": uuid.New()}, PromptText: "our database password", TargetTopic: "database password", Intent: "comparison", Audience: "growth leaders", Recurrence: 5}, nil)
 	if err != nil || filtered.Disposition != "filtered" {
 		t.Fatalf("sensitive candidate must be filtered: %+v err=%v", filtered, err)
+	}
+}
+
+func TestGapsForObservationScoresObservedBrandAbsence(t *testing.T) {
+	promptID := uuid.New()
+	gaps := gapsForObservation(db.GeoObservation{
+		ID:                   uuid.New(),
+		PromptID:             pgUUID(promptID),
+		SourceType:           SourceTypeAnswerEngine,
+		ObservationState:     "observed",
+		BrandMentioned:       false,
+		ProjectCitationCount: 0,
+		CompetitorCitations:  json.RawMessage(`null`),
+		CitedUrls:            json.RawMessage(`[]`),
+		Confidence:           ConfidenceMedium,
+	}, map[uuid.UUID]db.GeoPrompt{promptID: {
+		ID: promptID, PromptText: "best audit history tools", TargetTopic: "audit history",
+		IntentType: "category_recommendation", TargetPersona: "developers",
+	}})
+	if len(gaps) != 1 || gaps[0].Type != "geo_project_absent_from_answer" {
+		t.Fatalf("gaps = %+v, want one brand-absence candidate", gaps)
+	}
+	if gaps[0].PromptText != "best audit history tools" || gaps[0].TargetTopic != "audit history" {
+		t.Fatalf("gap did not preserve prompt context: %+v", gaps[0])
+	}
+
+	// Provider failures are not observations and must never become candidates.
+	failed := db.GeoObservation{PromptID: pgUUID(promptID), ObservationState: "provider_unavailable", CompetitorCitations: json.RawMessage(`null`)}
+	if got := gapsForObservation(failed, map[uuid.UUID]db.GeoPrompt{promptID: {ID: promptID}}); len(got) != 0 {
+		t.Fatalf("provider failure produced candidates: %+v", got)
+	}
+}
+
+func TestLatestObservedByPromptEngineIgnoresStaleAndFailedStates(t *testing.T) {
+	promptID := uuid.New()
+	base := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	rows := []db.GeoObservation{
+		{ID: uuid.New(), PromptID: pgUUID(promptID), Engine: "OpenAI", ObservationState: "provider_unavailable", ObservedAt: pgutil.TS(base)},
+		{ID: uuid.New(), PromptID: pgUUID(promptID), Engine: "OpenAI", ObservationState: "observed", ProjectCitationCount: 1, ObservedAt: pgutil.TS(base.Add(-time.Hour))},
+		{ID: uuid.New(), PromptID: pgUUID(promptID), Engine: "OpenAI", ObservationState: "observed", ProjectCitationCount: 0, ObservedAt: pgutil.TS(base.Add(-2 * time.Hour))},
+		{ID: uuid.New(), PromptID: pgUUID(promptID), Engine: "Perplexity", ObservationState: "observed", ProjectCitationCount: 0, ObservedAt: pgutil.TS(base.Add(-3 * time.Hour))},
+	}
+	latest := latestObservedByPromptEngine(rows)
+	if len(latest) != 2 {
+		t.Fatalf("latest observations = %+v", latest)
+	}
+	if latest[0].Engine != "OpenAI" || latest[0].ProjectCitationCount != 1 {
+		t.Fatalf("newest valid OpenAI observation not selected: %+v", latest[0])
+	}
+	if latest[1].Engine != "Perplexity" || latest[1].ProjectCitationCount != 0 {
+		t.Fatalf("independent engine observation missing: %+v", latest[1])
 	}
 }
 

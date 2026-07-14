@@ -125,6 +125,7 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	if err != nil {
 		return finish("error", result, err)
 	}
+	currentObservations := latestObservedByPromptEngine(observations)
 	prompts, err := s.Q.ListGEOPrompts(ctx, db.ListGEOPromptsParams{ProjectID: projectID})
 	if err != nil {
 		return finish("error", result, err)
@@ -134,7 +135,7 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		promptByID[prompt.ID] = prompt
 	}
 	recurrenceByPrompt := map[uuid.UUID]int{}
-	for _, observation := range observations {
+	for _, observation := range currentObservations {
 		if observation.PromptID.Valid {
 			recurrenceByPrompt[observation.PromptID.Bytes]++
 		}
@@ -146,7 +147,7 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 	scorer := learning.NewProjectScorer(s.Q, projectID)
 
 	seen := map[string]struct{}{}
-	for _, observation := range observations {
+	for _, observation := range currentObservations {
 		for _, gap := range gapsForObservation(observation, promptByID) {
 			gap.Recurrence = recurrenceByPrompt[uuidFromPG(observation.PromptID)]
 			gap, err = applyGEOLearningScore(ctx, gap, scorer)
@@ -211,6 +212,30 @@ func (s Service) AnalyzeObservations(ctx context.Context, projectID uuid.UUID, r
 		}
 	}
 	return finish("ok", result, nil)
+}
+
+// ListGEOObservations is newest-first. Candidate generation represents the
+// current answer state, so each prompt/engine contributes only its newest
+// successful observation. Provider failures are diagnostic events and do not
+// erase the last usable answer.
+func latestObservedByPromptEngine(observations []db.GeoObservation) []db.GeoObservation {
+	latest := make([]db.GeoObservation, 0, len(observations))
+	seen := make(map[string]struct{}, len(observations))
+	for _, observation := range observations {
+		if observation.ObservationState != "observed" {
+			continue
+		}
+		key := "observation:" + observation.ID.String()
+		if observation.PromptID.Valid {
+			key = uuid.UUID(observation.PromptID.Bytes).String() + "\x00" + strings.ToLower(strings.TrimSpace(observation.Engine))
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		latest = append(latest, observation)
+	}
+	return latest
 }
 
 func applyGEOLearningScore(ctx context.Context, gap geoGap, scorer learning.CandidateScorer) (geoGap, error) {
@@ -311,6 +336,22 @@ func gapsForObservation(observation db.GeoObservation, prompts map[uuid.UUID]db.
 			PromptText:  promptText,
 			TargetTopic: targetTopic,
 			Priority:    78,
+			Confidence:  confidenceScore(observation.Confidence),
+			Intent:      prompt.IntentType,
+			Audience:    prompt.TargetPersona,
+		})
+	}
+	if observation.ObservationState == "observed" && !observation.BrandMentioned && observation.ProjectCitationCount == 0 && jsonArrayLen(observation.CompetitorCitations) == 0 {
+		gaps = append(gaps, geoGap{
+			Type:        "geo_project_absent_from_answer",
+			AssetType:   assetTypeForIntent(prompt.IntentType, false),
+			Action:      "create answer-ready canonical",
+			Impact:      "Create a relevant, evidence-backed source for an answer where the project is currently absent.",
+			Risk:        "low",
+			Evidence:    observationEvidence(observation),
+			PromptText:  promptText,
+			TargetTopic: targetTopic,
+			Priority:    70,
 			Confidence:  confidenceScore(observation.Confidence),
 			Intent:      prompt.IntentType,
 			Audience:    prompt.TargetPersona,
