@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/citeloop/citeloop/internal/articleassets"
@@ -360,6 +361,7 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		ContentMD: art.ContentMd,
 		SEOMeta:   completeSEOMeta(topic, meta, plat, canonical),
 	}
+	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 	if len(qa.Issues) == 0 && art.QaBlocking {
 		qa.Issues = []string{"draft is blocked by QA without structured issue details"}
 	}
@@ -375,11 +377,8 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	qa = approvedQAAfterAppliedFix(qa, "automatic AI repair")
 
-	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
-		ID:        articleID,
-		ProjectID: projectID,
-		ContentMd: out.ContentMD,
-		SeoMeta:   toJSON(out.SEOMeta),
+	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
+		ID: articleID, ProjectID: projectID, ContentMd: out.ContentMD, SeoMeta: toJSON(out.SEOMeta), PlatformMetadata: toJSON(out.PlatformMetadata),
 	})
 	if err != nil {
 		return db.Article{}, err
@@ -397,7 +396,12 @@ func (w *Writer) RepairArticle(ctx context.Context, projectID, articleID uuid.UU
 		return db.Article{}, err
 	}
 	repairStatus, requiresHuman := repairOutcome(qa, updated.RepairAttempts, maxDraftRepairAttempts)
-	return w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
+	finished, err := w.finishRepair(ctx, updated, qa, repairStatus, repairFailureReason(qa, repairStatus), requiresHuman)
+	if err != nil {
+		return db.Article{}, err
+	}
+	validated, _, err := platformcontract.RevalidateArticle(ctx, w.Q, finished, time.Now().UTC())
+	return validated, err
 }
 
 // RepairArticleWithInstruction applies a specific QA-proposed resolution to a
@@ -425,6 +429,7 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	var meta SEOMeta
 	_ = json.Unmarshal(art.SeoMeta, &meta)
 	out := &WriterOutput{ContentMD: art.ContentMd, SEOMeta: completeSEOMeta(topic, meta, plat, canonical)}
+	_ = json.Unmarshal(art.PlatformMetadata, &out.PlatformMetadata)
 
 	qa := qaFromArticle(art)
 	if strings.TrimSpace(instruction) != "" {
@@ -443,11 +448,8 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 	out.SEOMeta = completeSEOMeta(topic, out.SEOMeta, plat, canonical)
 	checked := approvedQAAfterAppliedFix(qa, instruction)
 
-	updated, err := w.Q.UpdateArticleContentForProject(ctx, db.UpdateArticleContentForProjectParams{
-		ID:        articleID,
-		ProjectID: projectID,
-		ContentMd: out.ContentMD,
-		SeoMeta:   toJSON(out.SEOMeta),
+	updated, err := w.Q.UpdateArticleContentAndPlatformMetadataForProject(ctx, db.UpdateArticleContentAndPlatformMetadataForProjectParams{
+		ID: articleID, ProjectID: projectID, ContentMd: out.ContentMD, SeoMeta: toJSON(out.SEOMeta), PlatformMetadata: toJSON(out.PlatformMetadata),
 	})
 	if err != nil {
 		return db.Article{}, err
@@ -465,7 +467,12 @@ func (w *Writer) RepairArticleWithInstruction(ctx context.Context, projectID, ar
 		return db.Article{}, err
 	}
 	repairStatus, requiresHuman := repairOutcome(checked, updated.RepairAttempts, maxDraftRepairAttempts)
-	return w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+	finished, err := w.finishRepair(ctx, updated, checked, repairStatus, repairFailureReason(checked, repairStatus), requiresHuman)
+	if err != nil {
+		return db.Article{}, err
+	}
+	validated, _, err := platformcontract.RevalidateArticle(ctx, w.Q, finished, time.Now().UTC())
+	return validated, err
 }
 
 func approvedQAAfterAppliedFix(previous *QAOutput, instruction string) *QAOutput {

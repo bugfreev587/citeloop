@@ -810,6 +810,7 @@ type GrowthRadarItem struct {
 	Reason            string             `json:"reason"`
 	Score             json.RawMessage    `json:"score"`
 	ScoringSnapshot   json.RawMessage    `json:"scoring_snapshot"`
+	Evidence          json.RawMessage    `json:"evidence"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -821,6 +822,23 @@ type GrowthRadarRun struct {
 	Funnel    json.RawMessage    `json:"funnel"`
 	CostUsd   pgtype.Numeric     `json:"cost_usd"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type GrowthRadarWatchlist struct {
+	ProjectID             uuid.UUID          `json:"project_id"`
+	CandidateIdentity     string             `json:"candidate_identity"`
+	Status                string             `json:"status"`
+	Reason                string             `json:"reason"`
+	Score                 json.RawMessage    `json:"score"`
+	ScoringSnapshot       json.RawMessage    `json:"scoring_snapshot"`
+	Evidence              json.RawMessage    `json:"evidence"`
+	EvidenceFingerprint   string             `json:"evidence_fingerprint"`
+	FirstSeenAt           pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt            pgtype.Timestamptz `json:"last_seen_at"`
+	LastEvidenceChangedAt pgtype.Timestamptz `json:"last_evidence_changed_at"`
+	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
+	ReopenedCount         int32              `json:"reopened_count"`
+	LastRunID             pgtype.UUID        `json:"last_run_id"`
 }
 
 type GrowthSearchEvidence struct {

@@ -26,4 +26,6 @@ test("Hacker News preview is a link package, not an article body", async () => {
   const preview = platformPreview({ platform: "hacker_news", output_type: "link_submission", platform_metadata: { title: "How contracts work", url: "{{CANONICAL_URL}}" }, content_md: "" });
   assert.equal(preview.bodyLabel, "No generated comment or article body");
   assert.match(preview.detailLines.join(" "), /CANONICAL_URL/);
+  assert.equal(preview.validationPassed, false);
+  assert.match(preview.validationMessages.join(" "), /not been validated/i);
 });

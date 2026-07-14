@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/growthradar"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) getGrowthRadarDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -16,6 +18,11 @@ func (s *Server) getGrowthRadarDiagnostics(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	rows, err := s.Q.ListRecentGrowthRadarRuns(r.Context(), db.ListRecentGrowthRadarRunsParams{ProjectID: projectID, LimitRows: 10})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	watchlist, err := s.Q.ListActiveGrowthRadarWatchlist(r.Context(), db.ListActiveGrowthRadarWatchlistParams{ProjectID: projectID, NowAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -30,5 +37,5 @@ func (s *Server) getGrowthRadarDiagnostics(w http.ResponseWriter, r *http.Reques
 		funnels = append(funnels, funnel)
 		items = append(items, map[string]any{"id": row.ID, "phase": row.Phase, "status": row.Status, "funnel": funnel, "cost_usd": pgutil.Float(row.CostUsd), "created_at": row.CreatedAt})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"summary": growthradar.CombineFunnels(funnels...), "runs": items})
+	writeJSON(w, http.StatusOK, map[string]any{"summary": growthradar.CombineFunnels(funnels...), "runs": items, "watchlist": watchlist})
 }

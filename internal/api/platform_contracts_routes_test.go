@@ -14,6 +14,7 @@ func TestPlatformContractRoutesAreRegistered(t *testing.T) {
 		"GET /api/projects/{projectID}/platform-target-contexts",
 		"POST /api/projects/{projectID}/platform-target-contexts",
 		"POST /api/projects/{projectID}/platform-target-contexts/{contextID}/reconfirm",
+		"POST /api/projects/{projectID}/articles/{articleID}/target-context",
 	}
 	registered := make(map[string]bool)
 	if err := chi.Walk(router.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

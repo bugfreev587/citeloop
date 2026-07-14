@@ -238,7 +238,7 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const [scheduleDrafts, setScheduleDrafts] = useState<Record<string, string>>({});
   const [publishStrategyDrafts, setPublishStrategyDrafts] = useState<Record<string, ContentPlanPublishStrategy>>({});
   const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapability[]>([]);
-  const [redditContexts, setRedditContexts] = useState<PlatformTargetContext[]>([]);
+  const [platformTargetContexts, setPlatformTargetContexts] = useState<PlatformTargetContext[]>([]);
   const [targetSelections, setTargetSelections] = useState<Record<string, ExactTargetSelection>>({});
   const [recentDraftsDrawerOpen, setRecentDraftsDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -351,11 +351,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
     const assetType = selectedContentPlanAction.asset_type || "blog_post";
     Promise.all([
       api.getPlatformCapabilities(projectId, assetType),
-      api.listPlatformTargetContexts(projectId, "reddit"),
+      api.listPlatformTargetContexts(projectId),
     ]).then(([capabilities, contexts]) => {
       if (cancelled) return;
       setPlatformCapabilities(capabilities);
-      setRedditContexts(contexts);
+      setPlatformTargetContexts(contexts);
       setTargetSelections((current) => {
         if (current[selectedContentPlanAction.id]) return current;
         try {
@@ -497,9 +497,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
   const selectedTargetValidation = selectedTargetSelection
     ? validateTargetSelection(selectedTargetSelection, platformCapabilities)
     : { valid: false, errors: ["Platform contracts are loading."] };
-  const currentRedditContext = redditContexts.find((context) =>
-    context.status === "confirmed" && Boolean(context.expires_at) && new Date(context.expires_at as string).getTime() > Date.now(),
+  const currentTargetContext = (platform: string) => platformTargetContexts.find((context) =>
+    context.platform === platform && context.status === "confirmed" && Boolean(context.expires_at) && new Date(context.expires_at as string).getTime() > Date.now(),
   ) ?? null;
+  const currentRedditContext = currentTargetContext("reddit");
+  const currentHashnodeContext = currentTargetContext("hashnode");
   const selectedActionScheduleKey = selectedContentPlanAction ? selectedActionTopic?.id ?? selectedContentPlanAction.id : "";
   const selectedActionScheduleBusy = selectedContentPlanAction
     ? busy === `schedule-action-${selectedContentPlanAction.id}` || (selectedActionTopic ? busy === `schedule-${selectedActionTopic.id}` : false)
@@ -1476,12 +1478,12 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2" role="group" aria-label="Choose exact target platforms">
                   {platformCapabilities.map((capability) => {
-                    const targetContext = capability.platform === "reddit" ? currentRedditContext : null;
+                    const targetContext = ["reddit", "hashnode"].includes(capability.platform) ? currentTargetContext(capability.platform) : null;
                     const selected = Boolean(selectedTargetSelection?.target_platforms.some((target) =>
-                      target.platform === capability.platform && (capability.platform !== "reddit" || target.target_context_id === targetContext?.id),
+                      target.platform === capability.platform && (!targetContext || target.target_context_id === targetContext.id),
                     ));
                     const canonical = capability.platform === "blog";
-                    const blocked = !capability.generation_supported || !capability.target_context_ready || (capability.platform === "reddit" && !targetContext);
+                    const blocked = !capability.generation_supported || !capability.target_context_ready || (["reddit", "hashnode"].includes(capability.platform) && !targetContext);
                     return (
                       <button
                         key={capability.platform}
@@ -1520,6 +1522,11 @@ export function TopicsClient({ projectId }: { projectId: string }) {
                 {!currentRedditContext && platformCapabilities.some((item) => item.platform === "reddit") && (
                   <a className="mt-2 inline-block text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#reddit-rules`}>
                     Confirm subreddit rules in Settings before selecting Reddit
+                  </a>
+                )}
+                {!currentHashnodeContext && platformCapabilities.some((item) => item.platform === "hashnode") && (
+                  <a className="mt-2 ml-3 inline-block text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#hashnode-publication`}>
+                    Confirm a Hashnode publication in Settings before selecting Hashnode
                   </a>
                 )}
                 {!selectedTargetValidation.valid && selectedTargetValidation.errors.map((error) => (

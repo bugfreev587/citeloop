@@ -1002,7 +1002,7 @@ function GrowthRadarDiagnosticsPanel({ diagnostics }: { diagnostics: GrowthRadar
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-4">
         <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Candidates</div><div className="mt-1 text-sm font-semibold">{diagnostics.summary.candidates.generated} generated</div></div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Disposition</div><div className="mt-1 text-sm font-semibold">{summary.watchlist} watchlist · {summary.rejected} rejected</div></div>
+        <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Disposition</div><div className="mt-1 text-sm font-semibold">{diagnostics.watchlist?.length ?? 0} active watchlist · {summary.rejected} rejected</div></div>
         <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Prompt rotation</div><div className="mt-1 text-sm font-semibold">{summary.promptRotation}</div></div>
         <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-xs font-bold uppercase text-slate-500">Provider cost</div><div className="mt-1 text-sm font-semibold">{summary.cost}</div></div>
       </div>

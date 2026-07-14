@@ -51,6 +51,7 @@ type Querier interface {
 	CountNonRejectedArticlesForTopic(ctx context.Context, topicID uuid.UUID) (int64, error)
 	CountNotificationChannelProjectSubscriptions(ctx context.Context, arg CountNotificationChannelProjectSubscriptionsParams) (int32, error)
 	CountOpenSEOOpportunities(ctx context.Context, projectID uuid.UUID) (int64, error)
+	CountRecentGrowthSearchEvidenceForQuery(ctx context.Context, arg CountRecentGrowthSearchEvidenceForQueryParams) (int64, error)
 	// CountStockedCanonical counts canonical articles already in flight toward
 	// publishing plus topics reserved for generation before their first article
 	// exists. The scheduler uses this to fill only the buffer-window deficit
@@ -132,6 +133,7 @@ type Querier interface {
 	// claim a human must resolve.
 	EscalateArticleToHumanForProject(ctx context.Context, arg EscalateArticleToHumanForProjectParams) (Article, error)
 	ExitSafeMode(ctx context.Context, arg ExitSafeModeParams) (SafeModeEvent, error)
+	ExpireGrowthRadarWatchlist(ctx context.Context, arg ExpireGrowthRadarWatchlistParams) ([]GrowthRadarWatchlist, error)
 	ExpirePlatformTargetContexts(ctx context.Context, nowAt pgtype.Timestamptz) ([]PlatformTargetContext, error)
 	FailCanonicalSiteFixGitHubPRClaim(ctx context.Context, arg FailCanonicalSiteFixGitHubPRClaimParams) (SiteChangeApplication, error)
 	FailDiscoveryShadowRun(ctx context.Context, arg FailDiscoveryShadowRunParams) (DiscoveryShadowRun, error)
@@ -205,6 +207,7 @@ type Querier interface {
 	GetGrowthExecutionChainForUpdate(ctx context.Context, arg GetGrowthExecutionChainForUpdateParams) (GetGrowthExecutionChainForUpdateRow, error)
 	GetGrowthMeasurementEvidence(ctx context.Context, arg GetGrowthMeasurementEvidenceParams) (json.RawMessage, error)
 	GetGrowthOpportunityWorkAlias(ctx context.Context, arg GetGrowthOpportunityWorkAliasParams) (GrowthOpportunityWorkAlias, error)
+	GetGrowthRadarDemandSnapshot(ctx context.Context, arg GetGrowthRadarDemandSnapshotParams) (GetGrowthRadarDemandSnapshotRow, error)
 	GetGrowthSearchUsage(ctx context.Context, arg GetGrowthSearchUsageParams) (GetGrowthSearchUsageRow, error)
 	GetInventoryItem(ctx context.Context, id uuid.UUID) (ContentInventory, error)
 	GetLatestAICallForRequest(ctx context.Context, arg GetLatestAICallForRequestParams) (AiCallRecord, error)
@@ -271,6 +274,7 @@ type Querier interface {
 	ListActionMeasurementsForProject(ctx context.Context, arg ListActionMeasurementsForProjectParams) ([]ActionMeasurement, error)
 	ListActiveDoctorFindingsForDiscoveryShadow(ctx context.Context, projectID uuid.UUID) ([]SeoDoctorFinding, error)
 	ListActiveGEOPrompts(ctx context.Context, projectID uuid.UUID) ([]GeoPrompt, error)
+	ListActiveGrowthRadarWatchlist(ctx context.Context, arg ListActiveGrowthRadarWatchlistParams) ([]GrowthRadarWatchlist, error)
 	ListActiveLegacyGrowthOpportunities(ctx context.Context, arg ListActiveLegacyGrowthOpportunitiesParams) ([]SeoOpportunity, error)
 	ListActivePlatformContentContracts(ctx context.Context) ([]PlatformContentContract, error)
 	ListActiveReviewMemoryForLegacyMigration(ctx context.Context, projectID uuid.UUID) ([]ListActiveReviewMemoryForLegacyMigrationRow, error)
@@ -480,6 +484,7 @@ type Querier interface {
 	RepointLegacyApplicationsToCanonicalSiteFix(ctx context.Context, arg RepointLegacyApplicationsToCanonicalSiteFixParams) ([]SiteChangeApplication, error)
 	ResetCanonicalSiteFixSourceConflictForReprepare(ctx context.Context, arg ResetCanonicalSiteFixSourceConflictForReprepareParams) (ResetCanonicalSiteFixSourceConflictForReprepareRow, error)
 	ResolveDiscoveryReviewItem(ctx context.Context, arg ResolveDiscoveryReviewItemParams) (DiscoveryReviewItem, error)
+	ResolveGrowthRadarWatchlistItem(ctx context.Context, arg ResolveGrowthRadarWatchlistItemParams) error
 	ResolveLegacyObjectAlias(ctx context.Context, arg ResolveLegacyObjectAliasParams) (LegacyObjectAlias, error)
 	ResolveMigrationReviewItem(ctx context.Context, arg ResolveMigrationReviewItemParams) (MigrationReviewItem, error)
 	ResolveMissingSEODoctorFindings(ctx context.Context, arg ResolveMissingSEODoctorFindingsParams) error
@@ -550,8 +555,11 @@ type Querier interface {
 	UpdateArbitrationDecisionStatus(ctx context.Context, arg UpdateArbitrationDecisionStatusParams) (DiscoveryArbitrationDecision, error)
 	UpdateArticleAssetEditorial(ctx context.Context, arg UpdateArticleAssetEditorialParams) (ArticleAsset, error)
 	UpdateArticleContent(ctx context.Context, arg UpdateArticleContentParams) (Article, error)
+	UpdateArticleContentAndPlatformMetadataForProject(ctx context.Context, arg UpdateArticleContentAndPlatformMetadataForProjectParams) (Article, error)
 	UpdateArticleContentForProject(ctx context.Context, arg UpdateArticleContentForProjectParams) (Article, error)
+	UpdateArticleContractValidation(ctx context.Context, arg UpdateArticleContractValidationParams) (Article, error)
 	UpdateArticleDistributionMetadataForProject(ctx context.Context, arg UpdateArticleDistributionMetadataForProjectParams) (Article, error)
+	UpdateArticleTargetContextForProject(ctx context.Context, arg UpdateArticleTargetContextForProjectParams) (Article, error)
 	UpdateContentActionExecutionMetadata(ctx context.Context, arg UpdateContentActionExecutionMetadataParams) (ContentAction, error)
 	UpdateContentActionOutcomeSummary(ctx context.Context, arg UpdateContentActionOutcomeSummaryParams) (ContentAction, error)
 	UpdateContentActionStatus(ctx context.Context, arg UpdateContentActionStatusParams) (ContentAction, error)
@@ -563,6 +571,7 @@ type Querier interface {
 	UpdateGEOPrompt(ctx context.Context, arg UpdateGEOPromptParams) (GeoPrompt, error)
 	UpdateGEOPromptSet(ctx context.Context, arg UpdateGEOPromptSetParams) (GeoPromptSet, error)
 	UpdateGrowthCutoverSessionEntryDecision(ctx context.Context, arg UpdateGrowthCutoverSessionEntryDecisionParams) (GrowthCutoverSessionEntry, error)
+	UpdateGrowthRadarRun(ctx context.Context, arg UpdateGrowthRadarRunParams) (GrowthRadarRun, error)
 	UpdateInventoryItem(ctx context.Context, arg UpdateInventoryItemParams) (ContentInventory, error)
 	UpdateNotificationChannelLabel(ctx context.Context, arg UpdateNotificationChannelLabelParams) (NotificationChannel, error)
 	UpdatePageUpdateDraftContent(ctx context.Context, arg UpdatePageUpdateDraftContentParams) (PageUpdateDraft, error)
@@ -587,6 +596,7 @@ type Querier interface {
 	UpsertGEOCompetitor(ctx context.Context, arg UpsertGEOCompetitorParams) (GeoCompetitor, error)
 	UpsertGEOExternalSurface(ctx context.Context, arg UpsertGEOExternalSurfaceParams) (GeoExternalSurface, error)
 	UpsertGEOObservationOpportunity(ctx context.Context, arg UpsertGEOObservationOpportunityParams) (UpsertGEOObservationOpportunityRow, error)
+	UpsertGrowthRadarWatchlistItem(ctx context.Context, arg UpsertGrowthRadarWatchlistItemParams) (GrowthRadarWatchlist, error)
 	UpsertInventory(ctx context.Context, arg UpsertInventoryParams) (ContentInventory, error)
 	UpsertNotificationSubscription(ctx context.Context, arg UpsertNotificationSubscriptionParams) (NotificationSubscription, error)
 	UpsertPagePerformanceDaily(ctx context.Context, arg UpsertPagePerformanceDailyParams) (PagePerformanceDaily, error)

@@ -13,12 +13,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRecentGrowthSearchEvidenceForQuery = `-- name: CountRecentGrowthSearchEvidenceForQuery :one
+select count(*) from growth_search_evidence
+where project_id = $1
+  and normalized_query = lower(regexp_replace(btrim($2), '[[:space:]]+', ' ', 'g'))
+  and synthetic = false
+  and fetched_at >= $3
+`
+
+type CountRecentGrowthSearchEvidenceForQueryParams struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	Query     string             `json:"query"`
+	SinceAt   pgtype.Timestamptz `json:"since_at"`
+}
+
+func (q *Queries) CountRecentGrowthSearchEvidenceForQuery(ctx context.Context, arg CountRecentGrowthSearchEvidenceForQueryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRecentGrowthSearchEvidenceForQuery, arg.ProjectID, arg.Query, arg.SinceAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createGrowthRadarItem = `-- name: CreateGrowthRadarItem :one
-insert into growth_radar_items (run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot)
-values ($1, $2, $3, $4, $5, $6, $7)
+insert into growth_radar_items (run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot, evidence)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 on conflict (run_id, candidate_identity) do update set
-  disposition = excluded.disposition, reason = excluded.reason, score = excluded.score, scoring_snapshot = excluded.scoring_snapshot
-returning id, run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot, created_at
+  disposition = excluded.disposition, reason = excluded.reason, score = excluded.score, scoring_snapshot = excluded.scoring_snapshot, evidence = excluded.evidence
+returning id, run_id, project_id, candidate_identity, disposition, reason, score, scoring_snapshot, evidence, created_at
 `
 
 type CreateGrowthRadarItemParams struct {
@@ -29,6 +50,7 @@ type CreateGrowthRadarItemParams struct {
 	Reason            string          `json:"reason"`
 	Score             json.RawMessage `json:"score"`
 	ScoringSnapshot   json.RawMessage `json:"scoring_snapshot"`
+	Evidence          json.RawMessage `json:"evidence"`
 }
 
 func (q *Queries) CreateGrowthRadarItem(ctx context.Context, arg CreateGrowthRadarItemParams) (GrowthRadarItem, error) {
@@ -40,6 +62,7 @@ func (q *Queries) CreateGrowthRadarItem(ctx context.Context, arg CreateGrowthRad
 		arg.Reason,
 		arg.Score,
 		arg.ScoringSnapshot,
+		arg.Evidence,
 	)
 	var i GrowthRadarItem
 	err := row.Scan(
@@ -51,6 +74,7 @@ func (q *Queries) CreateGrowthRadarItem(ctx context.Context, arg CreateGrowthRad
 		&i.Reason,
 		&i.Score,
 		&i.ScoringSnapshot,
+		&i.Evidence,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -152,6 +176,53 @@ func (q *Queries) CreateGrowthSearchEvidence(ctx context.Context, arg CreateGrow
 	return i, err
 }
 
+const expireGrowthRadarWatchlist = `-- name: ExpireGrowthRadarWatchlist :many
+update growth_radar_watchlist
+set status = 'expired'
+where project_id = $1 and status = 'active' and expires_at <= $2
+returning project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence, evidence_fingerprint, first_seen_at, last_seen_at, last_evidence_changed_at, expires_at, reopened_count, last_run_id
+`
+
+type ExpireGrowthRadarWatchlistParams struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	NowAt     pgtype.Timestamptz `json:"now_at"`
+}
+
+func (q *Queries) ExpireGrowthRadarWatchlist(ctx context.Context, arg ExpireGrowthRadarWatchlistParams) ([]GrowthRadarWatchlist, error) {
+	rows, err := q.db.Query(ctx, expireGrowthRadarWatchlist, arg.ProjectID, arg.NowAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GrowthRadarWatchlist
+	for rows.Next() {
+		var i GrowthRadarWatchlist
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.CandidateIdentity,
+			&i.Status,
+			&i.Reason,
+			&i.Score,
+			&i.ScoringSnapshot,
+			&i.Evidence,
+			&i.EvidenceFingerprint,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.LastEvidenceChangedAt,
+			&i.ExpiresAt,
+			&i.ReopenedCount,
+			&i.LastRunID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCachedGrowthSearchEvidence = `-- name: GetCachedGrowthSearchEvidence :one
 select id, project_id, normalized_query, request_hash, result_set_hash, provider, provider_order_not_rank, results, synthetic, trigger_kind, request_cost_usd, fetched_at, expires_at, created_at from growth_search_evidence
 where project_id = $1
@@ -189,6 +260,33 @@ func (q *Queries) GetCachedGrowthSearchEvidence(ctx context.Context, arg GetCach
 	return i, err
 }
 
+const getGrowthRadarDemandSnapshot = `-- name: GetGrowthRadarDemandSnapshot :one
+select
+  coalesce(sum(impressions) filter (where date >= current_date - 28), 0)::bigint current_impressions,
+  coalesce(sum(impressions) filter (where date < current_date - 28 and date >= current_date - 56), 0)::bigint previous_impressions
+from search_performance_daily
+where project_id = $1
+  and lower(btrim(query)) = lower(btrim($2))
+  and date >= current_date - 56
+`
+
+type GetGrowthRadarDemandSnapshotParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	Query     string    `json:"query"`
+}
+
+type GetGrowthRadarDemandSnapshotRow struct {
+	CurrentImpressions  int64 `json:"current_impressions"`
+	PreviousImpressions int64 `json:"previous_impressions"`
+}
+
+func (q *Queries) GetGrowthRadarDemandSnapshot(ctx context.Context, arg GetGrowthRadarDemandSnapshotParams) (GetGrowthRadarDemandSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, getGrowthRadarDemandSnapshot, arg.ProjectID, arg.Query)
+	var i GetGrowthRadarDemandSnapshotRow
+	err := row.Scan(&i.CurrentImpressions, &i.PreviousImpressions)
+	return i, err
+}
+
 const getGrowthSearchUsage = `-- name: GetGrowthSearchUsage :one
 select
   count(*) filter (where project_id = $1 and fetched_at >= $2 - interval '1 day')::int daily_requests,
@@ -223,6 +321,52 @@ func (q *Queries) GetGrowthSearchUsage(ctx context.Context, arg GetGrowthSearchU
 		&i.InstallationCostUsd,
 	)
 	return i, err
+}
+
+const listActiveGrowthRadarWatchlist = `-- name: ListActiveGrowthRadarWatchlist :many
+select project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence, evidence_fingerprint, first_seen_at, last_seen_at, last_evidence_changed_at, expires_at, reopened_count, last_run_id from growth_radar_watchlist
+where project_id = $1 and status = 'active' and expires_at > $2
+order by last_evidence_changed_at desc, candidate_identity
+`
+
+type ListActiveGrowthRadarWatchlistParams struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	NowAt     pgtype.Timestamptz `json:"now_at"`
+}
+
+func (q *Queries) ListActiveGrowthRadarWatchlist(ctx context.Context, arg ListActiveGrowthRadarWatchlistParams) ([]GrowthRadarWatchlist, error) {
+	rows, err := q.db.Query(ctx, listActiveGrowthRadarWatchlist, arg.ProjectID, arg.NowAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GrowthRadarWatchlist
+	for rows.Next() {
+		var i GrowthRadarWatchlist
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.CandidateIdentity,
+			&i.Status,
+			&i.Reason,
+			&i.Score,
+			&i.ScoringSnapshot,
+			&i.Evidence,
+			&i.EvidenceFingerprint,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.LastEvidenceChangedAt,
+			&i.ExpiresAt,
+			&i.ReopenedCount,
+			&i.LastRunID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRecentGrowthRadarRuns = `-- name: ListRecentGrowthRadarRuns :many
@@ -263,4 +407,142 @@ func (q *Queries) ListRecentGrowthRadarRuns(ctx context.Context, arg ListRecentG
 		return nil, err
 	}
 	return items, nil
+}
+
+const resolveGrowthRadarWatchlistItem = `-- name: ResolveGrowthRadarWatchlistItem :exec
+update growth_radar_watchlist
+set status = 'resolved', reason = $1, last_seen_at = now(), last_run_id = $2
+where project_id = $3 and candidate_identity = $4 and status = 'active'
+`
+
+type ResolveGrowthRadarWatchlistItemParams struct {
+	Reason            string      `json:"reason"`
+	LastRunID         pgtype.UUID `json:"last_run_id"`
+	ProjectID         uuid.UUID   `json:"project_id"`
+	CandidateIdentity string      `json:"candidate_identity"`
+}
+
+func (q *Queries) ResolveGrowthRadarWatchlistItem(ctx context.Context, arg ResolveGrowthRadarWatchlistItemParams) error {
+	_, err := q.db.Exec(ctx, resolveGrowthRadarWatchlistItem,
+		arg.Reason,
+		arg.LastRunID,
+		arg.ProjectID,
+		arg.CandidateIdentity,
+	)
+	return err
+}
+
+const updateGrowthRadarRun = `-- name: UpdateGrowthRadarRun :one
+update growth_radar_runs
+set status = $1, funnel = $2, cost_usd = $3
+where id = $4 and project_id = $5
+returning id, project_id, phase, status, funnel, cost_usd, created_at
+`
+
+type UpdateGrowthRadarRunParams struct {
+	Status    string          `json:"status"`
+	Funnel    json.RawMessage `json:"funnel"`
+	CostUsd   pgtype.Numeric  `json:"cost_usd"`
+	ID        uuid.UUID       `json:"id"`
+	ProjectID uuid.UUID       `json:"project_id"`
+}
+
+func (q *Queries) UpdateGrowthRadarRun(ctx context.Context, arg UpdateGrowthRadarRunParams) (GrowthRadarRun, error) {
+	row := q.db.QueryRow(ctx, updateGrowthRadarRun,
+		arg.Status,
+		arg.Funnel,
+		arg.CostUsd,
+		arg.ID,
+		arg.ProjectID,
+	)
+	var i GrowthRadarRun
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Phase,
+		&i.Status,
+		&i.Funnel,
+		&i.CostUsd,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertGrowthRadarWatchlistItem = `-- name: UpsertGrowthRadarWatchlistItem :one
+insert into growth_radar_watchlist (
+  project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence,
+  evidence_fingerprint, expires_at, last_run_id
+) values (
+  $1, $2, 'active', $3,
+  $4, $5, $6, $7,
+  $8, $9
+)
+on conflict (project_id, candidate_identity) do update set
+  status = case
+    when growth_radar_watchlist.evidence_fingerprint <> excluded.evidence_fingerprint then 'active'
+    else growth_radar_watchlist.status
+  end,
+  reason = excluded.reason,
+  score = excluded.score,
+  scoring_snapshot = excluded.scoring_snapshot,
+  evidence = excluded.evidence,
+  last_seen_at = now(),
+  last_evidence_changed_at = case
+    when growth_radar_watchlist.evidence_fingerprint <> excluded.evidence_fingerprint then now()
+    else growth_radar_watchlist.last_evidence_changed_at
+  end,
+  expires_at = case
+    when growth_radar_watchlist.evidence_fingerprint <> excluded.evidence_fingerprint then excluded.expires_at
+    else growth_radar_watchlist.expires_at
+  end,
+  reopened_count = growth_radar_watchlist.reopened_count + case
+    when growth_radar_watchlist.status in ('expired','resolved','dismissed')
+     and growth_radar_watchlist.evidence_fingerprint <> excluded.evidence_fingerprint then 1 else 0 end,
+  evidence_fingerprint = excluded.evidence_fingerprint,
+  last_run_id = excluded.last_run_id
+returning project_id, candidate_identity, status, reason, score, scoring_snapshot, evidence, evidence_fingerprint, first_seen_at, last_seen_at, last_evidence_changed_at, expires_at, reopened_count, last_run_id
+`
+
+type UpsertGrowthRadarWatchlistItemParams struct {
+	ProjectID           uuid.UUID          `json:"project_id"`
+	CandidateIdentity   string             `json:"candidate_identity"`
+	Reason              string             `json:"reason"`
+	Score               json.RawMessage    `json:"score"`
+	ScoringSnapshot     json.RawMessage    `json:"scoring_snapshot"`
+	Evidence            json.RawMessage    `json:"evidence"`
+	EvidenceFingerprint string             `json:"evidence_fingerprint"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	LastRunID           pgtype.UUID        `json:"last_run_id"`
+}
+
+func (q *Queries) UpsertGrowthRadarWatchlistItem(ctx context.Context, arg UpsertGrowthRadarWatchlistItemParams) (GrowthRadarWatchlist, error) {
+	row := q.db.QueryRow(ctx, upsertGrowthRadarWatchlistItem,
+		arg.ProjectID,
+		arg.CandidateIdentity,
+		arg.Reason,
+		arg.Score,
+		arg.ScoringSnapshot,
+		arg.Evidence,
+		arg.EvidenceFingerprint,
+		arg.ExpiresAt,
+		arg.LastRunID,
+	)
+	var i GrowthRadarWatchlist
+	err := row.Scan(
+		&i.ProjectID,
+		&i.CandidateIdentity,
+		&i.Status,
+		&i.Reason,
+		&i.Score,
+		&i.ScoringSnapshot,
+		&i.Evidence,
+		&i.EvidenceFingerprint,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.LastEvidenceChangedAt,
+		&i.ExpiresAt,
+		&i.ReopenedCount,
+		&i.LastRunID,
+	)
+	return i, err
 }

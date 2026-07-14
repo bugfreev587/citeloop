@@ -167,6 +167,19 @@ type geoStoreStub struct {
 	assetBriefID      uuid.UUID
 	assetBriefs       []db.GeoAssetBrief
 	createdTopics     []db.Topic
+	platformContracts []db.PlatformContentContract
+	demandSnapshot    db.GetGrowthRadarDemandSnapshotRow
+	searchEvidence    int64
+}
+
+func (s *geoStoreStub) ListActivePlatformContentContracts(context.Context) ([]db.PlatformContentContract, error) {
+	return s.platformContracts, nil
+}
+func (s *geoStoreStub) GetGrowthRadarDemandSnapshot(context.Context, db.GetGrowthRadarDemandSnapshotParams) (db.GetGrowthRadarDemandSnapshotRow, error) {
+	return s.demandSnapshot, nil
+}
+func (s *geoStoreStub) CountRecentGrowthSearchEvidenceForQuery(context.Context, db.CountRecentGrowthSearchEvidenceForQueryParams) (int64, error) {
+	return s.searchEvidence, nil
 }
 
 func (s *geoStoreStub) ListApplicableGrowthLearnings(_ context.Context, arg db.ListApplicableGrowthLearningsParams) ([]db.ListApplicableGrowthLearningsRow, error) {

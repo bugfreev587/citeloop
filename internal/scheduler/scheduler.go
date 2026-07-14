@@ -857,6 +857,13 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 	if err != nil {
 		return db.Topic{}, err
 	}
+	contexts, err := q.ListPlatformTargetContexts(ctx, db.ListPlatformTargetContextsParams{ProjectID: projectID, Platform: ""})
+	if err != nil {
+		return db.Topic{}, err
+	}
+	if err := platformcontract.ValidatePlanSelection(planInput, contracts, contexts, s.currentTime()); err != nil {
+		return db.Topic{}, err
+	}
 	targetPlan, err := platformcontract.CreatePlan(ctx, q, planInput)
 	if err != nil {
 		return db.Topic{}, err
@@ -1105,6 +1112,9 @@ func (s *Scheduler) executeOpportunityFindingStage(
 	}
 	switch stage {
 	case opportunityfinding.StageEvidenceRefresh:
+		if cfg.GrowthRadarMode == config.GrowthRadarOff {
+			return opportunityfinding.StageOutcome{Status: "skipped", Summary: map[string]any{"reason": "growth_radar_off"}}
+		}
 		summary := map[string]any{}
 		runErrors := make([]error, 0, 2)
 		if stages.SignalScan {
@@ -1120,7 +1130,7 @@ func (s *Scheduler) executeOpportunityFindingStage(
 			comparator := (growthwork.ComparatorAuthority{Provider: s.LLM}).ForConfig(cfg, trigger)
 			geoService := s.geoService(ctx, q, comparator)
 			searchCollector := growthradar.SearchCollector{Provider: s.Search, Store: growthradar.DBSearchEvidenceStore{Q: q}}
-			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector})
+			result, err := opportunityfinding.RefreshAIDiscoveryEvidence(ctx, p.ID, q, geoService, opportunityfinding.AIDiscoveryOptions{ObserveRequest: observeRequest, SearchCollector: &searchCollector, GrowthRadarMode: cfg.GrowthRadarMode})
 			summary["ai_discovery"] = result
 			if err == nil {
 				err = opportunityFindingStepErrors(result.Errors)

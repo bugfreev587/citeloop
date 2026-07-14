@@ -34,7 +34,9 @@ export function platformPreview(article: PreviewArticle): PlatformPreview {
     bodyLabel: article.platform === "hacker_news" && !article.content_md?.trim()
       ? "No generated comment or article body"
       : "Native content body",
-    validationPassed: validation.passed !== false,
-    validationMessages: [...(validation.failures ?? []), ...(validation.warnings ?? [])].map((item) => item.message || "Contract validation issue"),
+    validationPassed: validation.passed === true,
+    validationMessages: validation.passed === undefined
+      ? ["Legacy or edited artifact has not been validated against a pinned platform contract."]
+      : [...(validation.failures ?? []), ...(validation.warnings ?? [])].map((item) => item.message || "Contract validation issue"),
   };
 }

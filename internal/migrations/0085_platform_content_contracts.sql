@@ -154,6 +154,21 @@ select platform, 'platform-contract-v1', 'active', source_urls, now(), now(), no
 from contract_seed cross join asset_keys
 on conflict (platform, version) do nothing;
 
+-- Immutable compatibility contracts let historical artifacts be explicitly
+-- revalidated without pretending they were generated under the new rules.
+insert into platform_content_contracts
+  (platform, version, status, source_urls, source_retrieved_at, effective_at, review_due_at,
+   generation_supported, publish_mode, allowed_output_types, compatible_asset_types,
+   required_context_fields, capabilities, canonical_policy, hard_rules,
+   prompt_template, semantic_rubric, preview_renderer_key)
+select platform, 'legacy-v1', 'deprecated', source_urls, source_retrieved_at, effective_at, review_due_at,
+       false, publish_mode, allowed_output_types, compatible_asset_types,
+       required_context_fields, capabilities, canonical_policy, hard_rules,
+       prompt_template, semantic_rubric, preview_renderer_key
+from platform_content_contracts
+where version = 'platform-contract-v1'
+on conflict (platform, version) do nothing;
+
 -- Backfill existing unregistered GEO asset types without overwriting a
 -- conflicting non-empty forward value.
 update content_actions ca
@@ -177,3 +192,62 @@ from topics t
 where a.topic_id = t.id
   and t.asset_type in ('source_backed_evidence_page','faq_answer_block')
   and nullif(btrim(coalesce(a.seo_meta->>'asset_type', '')), '') is null;
+
+-- Normalize the two historical Writer aliases across existing forward records.
+update content_actions set asset_type = 'template_or_checklist' where asset_type = 'template_checklist';
+update content_actions set asset_type = 'integration_page' where asset_type = 'integration_docs_page';
+update topics set asset_type = 'template_or_checklist' where asset_type = 'template_checklist';
+update topics set asset_type = 'integration_page' where asset_type = 'integration_docs_page';
+
+-- Preserve the existing canonical Review queue by pinning it to the immutable
+-- legacy Blog contract. Blog validation only requires title and slug, so rows
+-- that already contain both can be marked deterministically valid.
+update articles a
+set platform_contract_id = contract.id,
+    platform_contract_version = contract.version,
+    output_type = 'long_form_article',
+    platform_metadata = jsonb_build_object(
+      'title', coalesce(a.seo_meta->>'title', ''),
+      'slug', coalesce(a.seo_meta->>'slug', '')
+    ),
+    contract_validation = case
+      when nullif(btrim(coalesce(a.seo_meta->>'title', '')), '') is not null
+       and nullif(btrim(coalesce(a.seo_meta->>'slug', '')), '') is not null
+      then '{"passed":true,"failures":[],"warnings":[{"code":"legacy_contract","message":"Pinned to the immutable legacy Blog contract."}]}'::jsonb
+      else '{"passed":false,"failures":[{"code":"legacy_canonical_metadata_missing","message":"Add title and slug before approval."}],"warnings":[]}'::jsonb
+    end
+from platform_content_contracts contract
+where a.platform_contract_id is null
+  and a.kind = 'canonical'
+  and contract.platform = 'blog'
+  and contract.version = 'legacy-v1';
+
+-- Pin recognizable historical variants to an immutable platform-specific
+-- contract. They remain invalid until approval/edit performs live validation;
+-- context-bound platforms still require a current target context.
+update articles a
+set platform_contract_id = contract.id,
+    platform_contract_version = contract.version,
+    output_type = case when lower(coalesce(a.platform, '')) = 'reddit' then 'community_post'
+                       when lower(coalesce(a.platform, '')) = 'hacker_news' then 'link_submission'
+                       else 'long_form_article' end,
+    platform_metadata = case
+      when lower(coalesce(a.platform, '')) = 'blog' then jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''), 'slug', coalesce(a.seo_meta->>'slug', ''))
+      when lower(coalesce(a.platform, '')) in ('dev_to','medium') then jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''), 'canonical_url', '{{CANONICAL_URL}}')
+      when lower(coalesce(a.platform, '')) = 'hashnode' then jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''), 'canonical_url', '{{CANONICAL_URL}}')
+      when lower(coalesce(a.platform, '')) = 'linkedin' then jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''), 'description', coalesce(a.seo_meta->>'meta_description', ''))
+      when lower(coalesce(a.platform, '')) = 'hacker_news' then jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''), 'url', '{{CANONICAL_URL}}')
+      else jsonb_build_object('title', coalesce(a.seo_meta->>'title', ''))
+    end,
+    contract_validation = '{"passed":false,"failures":[{"code":"legacy_variant_requires_validation","message":"Regenerate or explicitly validate this artifact against its pinned legacy platform contract."}],"warnings":[]}'::jsonb
+from platform_content_contracts contract
+where a.platform_contract_id is null
+  and a.kind <> 'canonical'
+  and contract.platform = lower(coalesce(a.platform, ''))
+  and contract.version = 'legacy-v1';
+
+-- Unknown historical platform values cannot be pinned safely. Make that state
+-- explicit so Review never presents them as contract-valid by omission.
+update articles
+set contract_validation = '{"passed":false,"failures":[{"code":"unvalidated_legacy_artifact","message":"Regenerate or explicitly validate this artifact against a pinned platform contract."}],"warnings":[]}'::jsonb
+where platform_contract_id is null and contract_validation = '{}'::jsonb;

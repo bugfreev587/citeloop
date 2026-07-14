@@ -90,7 +90,7 @@ export function validateTargetSelection(selection: ExactTargetSelection, capabil
     const capability = capabilities.find((item) => item.platform === target.platform);
     if (!capability?.generation_supported) errors.push(`${platformLabel(target.platform)} does not support this asset type.`);
     if (capability && !capability.target_context_ready) errors.push(`${platformLabel(target.platform)} rules or target context must be confirmed before generation.`);
-    if (target.platform === "reddit" && (!target.target_context_id || !target.target_key)) errors.push("Reddit rules must be confirmed and pinned before generation.");
+    if (["reddit", "hashnode"].includes(target.platform) && (!target.target_context_id || !target.target_key)) errors.push(`${platformLabel(target.platform)} target context must be confirmed and pinned before generation.`);
   }
   return { valid: errors.length === 0, errors };
 }

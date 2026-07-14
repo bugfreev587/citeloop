@@ -23,6 +23,7 @@ type MaterializationCandidate struct {
 type MaterializationResult struct {
 	Disposition string
 	Spec        growthspec.Result
+	Input       growthspec.V2Input
 }
 
 func MaterializeOpportunitySpec(candidate MaterializationCandidate) MaterializationResult {
@@ -35,11 +36,12 @@ func MaterializeOpportunitySpec(candidate MaterializationCandidate) Materializat
 	}
 	dedupe := DedupeIdentity(TopicIdentityInput{ProjectID: candidate.ProjectID.String(), Cluster: candidate.Topic, Intent: candidate.Intent, Audience: candidate.Audience, AssetType: candidate.AssetType, CanonicalTarget: candidate.Target.CanonicalTarget.Platform + ":" + candidate.Target.CanonicalTarget.TargetKey})
 	scoreJSON, _ := json.Marshal(candidate.Score)
-	spec := growthspec.BuildV2(growthspec.V2Input{
+	input := growthspec.V2Input{
 		Intent: candidate.Intent, JourneyStage: candidate.JourneyStage, Audience: []string{candidate.Audience}, TopicClusterID: candidate.ClusterID,
 		NormalizedTopic: candidate.Topic, AssetType: candidate.AssetType, RecommendedAction: candidate.Action, ExpectedUserValue: candidate.ExpectedUserValue,
 		Target: candidate.Target, Evidence: candidate.Evidence, ImageBrief: candidate.ImageBrief, SuccessMetric: candidate.SuccessMetric,
 		DedupeIdentity: dedupe, RelatedExistingWork: candidate.RelatedExistingWork, Score: scoreJSON, SourceVersions: candidate.SourceVersions,
-	})
-	return MaterializationResult{Disposition: disposition, Spec: spec}
+	}
+	spec := growthspec.BuildV2(input)
+	return MaterializationResult{Disposition: disposition, Spec: spec, Input: input}
 }

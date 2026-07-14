@@ -84,6 +84,31 @@ create table if not exists growth_radar_items (
   reason text not null default '',
   score jsonb not null default '{}'::jsonb,
   scoring_snapshot jsonb not null default '{}'::jsonb,
+  evidence jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   unique(run_id, candidate_identity)
 );
+
+-- Operational watchlist state is separate from immutable per-run audit items.
+-- An unchanged evidence fingerprint never extends the 90-day lifetime.
+create table if not exists growth_radar_watchlist (
+  project_id uuid not null references projects(id) on delete cascade,
+  candidate_identity text not null,
+  status text not null default 'active' check (status in ('active','expired','resolved','dismissed')),
+  reason text not null default '',
+  score jsonb not null default '{}'::jsonb,
+  scoring_snapshot jsonb not null default '{}'::jsonb,
+  evidence jsonb not null default '{}'::jsonb,
+  evidence_fingerprint text not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  last_evidence_changed_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  reopened_count int not null default 0,
+  last_run_id uuid references growth_radar_runs(id) on delete set null,
+  primary key (project_id, candidate_identity)
+);
+
+create index if not exists idx_growth_radar_watchlist_active
+  on growth_radar_watchlist(project_id, expires_at, last_seen_at desc)
+  where status = 'active';

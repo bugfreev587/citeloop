@@ -27,7 +27,7 @@ func TestPrepareTargetContextNormalizesAndVersionsRedditRules(t *testing.T) {
 	if !prepared.ExpiresAt.Equal(now.Add(30 * 24 * time.Hour)) {
 		t.Fatalf("expires_at = %s", prepared.ExpiresAt)
 	}
-	if len(prepared.AllowedPostTypes) != 2 || prepared.AllowedPostTypes[0] != "link" || prepared.AllowedPostTypes[1] != "text" {
+	if len(prepared.AllowedPostTypes) != 2 || prepared.AllowedPostTypes[0] != "community_post" || prepared.AllowedPostTypes[1] != "link_submission" {
 		t.Fatalf("post types = %#v", prepared.AllowedPostTypes)
 	}
 }
@@ -56,5 +56,18 @@ func TestTargetContextCurrentRequiresConfirmedUnexpiredRevision(t *testing.T) {
 	}
 	if TargetContextCurrent("confirmed", now, now) {
 		t.Fatal("expired-at-now revision must not be current")
+	}
+}
+
+func TestPrepareTargetContextSupportsConfirmedHashnodePublication(t *testing.T) {
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	prepared, err := PrepareTargetContext(ConfirmTargetContextInput{
+		Platform: "hashnode", TargetKey: "citeloop", SourceURL: "https://citeloop.hashnode.dev", Verified: true,
+	}, 0, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Platform != "hashnode" || prepared.TargetKey != "citeloop" || prepared.SourceKind != "user_confirmed_rules" || len(prepared.AllowedPostTypes) != 1 {
+		t.Fatalf("prepared hashnode context = %+v", prepared)
 	}
 }

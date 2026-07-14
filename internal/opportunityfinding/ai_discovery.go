@@ -2,7 +2,10 @@ package opportunityfinding
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/citeloop/citeloop/internal/config"
@@ -34,6 +37,15 @@ type FunnelStore interface {
 	CreateGrowthRadarRun(context.Context, db.CreateGrowthRadarRunParams) (db.GrowthRadarRun, error)
 }
 
+type candidateFunnelStore interface {
+	FunnelStore
+	CreateGrowthRadarItem(context.Context, db.CreateGrowthRadarItemParams) (db.GrowthRadarItem, error)
+	UpdateGrowthRadarRun(context.Context, db.UpdateGrowthRadarRunParams) (db.GrowthRadarRun, error)
+	UpsertGrowthRadarWatchlistItem(context.Context, db.UpsertGrowthRadarWatchlistItemParams) (db.GrowthRadarWatchlist, error)
+	ResolveGrowthRadarWatchlistItem(context.Context, db.ResolveGrowthRadarWatchlistItemParams) error
+	ExpireGrowthRadarWatchlist(context.Context, db.ExpireGrowthRadarWatchlistParams) ([]db.GrowthRadarWatchlist, error)
+}
+
 type AIDiscoveryService interface {
 	GeneratePromptSet(context.Context, uuid.UUID, geo.GeneratePromptSetRequest) (geo.GeneratePromptSetResult, error)
 	RunCrawlerAudit(context.Context, uuid.UUID, geo.CrawlerAuditRequest) (geo.CrawlerAuditResult, error)
@@ -45,6 +57,7 @@ type AIDiscoveryService interface {
 type AIDiscoveryOptions struct {
 	ObserveRequest  geo.ObserveAnswerProviderRequest
 	SearchCollector *growthradar.SearchCollector
+	GrowthRadarMode GrowthRadarMode
 }
 
 type AIDiscoveryResult struct {
@@ -69,6 +82,9 @@ type AIDiscoveryStep struct {
 }
 
 func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
+	if opts.GrowthRadarMode == GrowthRadarOff {
+		return skippedAIDiscoveryResult("growth_radar_off"), nil
+	}
 	evidenceResult, err := RefreshAIDiscoveryEvidence(ctx, projectID, store, service, opts)
 	if err != nil {
 		return evidenceResult, err
@@ -80,6 +96,12 @@ func RunAIDiscovery(ctx context.Context, projectID uuid.UUID, store PromptStore,
 		hypothesisResult, err = MaterializeAIDiscoveryHypotheses(ctx, projectID, service)
 	}
 	return mergeAIDiscoveryResults(evidenceResult, hypothesisResult), err
+}
+
+func skippedAIDiscoveryResult(reason string) AIDiscoveryResult {
+	result := AIDiscoveryResult{Funnel: growthradar.NormalizeFunnel(growthradar.Funnel{Status: "skipped", Reasons: map[string]int{reason: 1}})}
+	result.recordStep("discovery", "skipped", 0, 0, nil)
+	return result
 }
 
 func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store PromptStore, service AIDiscoveryService, opts AIDiscoveryOptions) (AIDiscoveryResult, error) {
@@ -167,7 +189,9 @@ func RefreshAIDiscoveryEvidence(ctx context.Context, projectID uuid.UUID, store 
 	surfaces, err := service.MonitorExternalSurfaces(ctx, projectID, geo.MonitorExternalSurfacesRequest{Limit: 25})
 	result.recordStep("external_surfaces", surfaces.Run.Status, surfaces.Checked, 0, err)
 	result.Funnel = evidenceFunnel(result, selection)
-	persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel)
+	if persistErr := persistAIDiscoveryFunnel(ctx, store, projectID, "evidence_refresh", result.Funnel); persistErr != nil {
+		return result, persistErr
+	}
 	return result, nil
 }
 
@@ -208,12 +232,45 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 		result.recordStep("analyze", "skipped", 0, 0, nil)
 		result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{Status: "skipped", Reasons: map[string]int{"growth_radar_off": 1}})
 		if len(stores) > 0 {
-			persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel)
+			if persistErr := persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel); persistErr != nil {
+				return result, persistErr
+			}
 		}
 		return result, nil
 	}
 	dryRun := mode != GrowthRadarCreate
-	analyzed, err := service.AnalyzeObservations(ctx, projectID, geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun})
+	request := geo.AnalyzeObservationsRequest{Limit: 100, DryRun: dryRun}
+	var auditSink candidateFunnelStore
+	var lifecycleSink candidateFunnelStore
+	var auditRun db.GrowthRadarRun
+	if len(stores) > 0 {
+		lifecycleSink, _ = stores[0].(candidateFunnelStore)
+		if lifecycleSink != nil {
+			if _, expireErr := lifecycleSink.ExpireGrowthRadarWatchlist(ctx, db.ExpireGrowthRadarWatchlistParams{ProjectID: projectID, NowAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}); expireErr != nil {
+				return result, fmt.Errorf("expire growth radar watchlist: %w", expireErr)
+			}
+		}
+	}
+	if mode == GrowthRadarCreate {
+		if len(stores) == 0 {
+			return result, fmt.Errorf("growth radar candidate audit store is required before opportunity creation")
+		}
+		auditSink = lifecycleSink
+		if auditSink == nil {
+			return result, fmt.Errorf("growth radar candidate audit store does not support replayable items")
+		}
+		pending := growthradar.NormalizeFunnel(growthradar.Funnel{Status: "ok", Reasons: map[string]int{"candidate_scoring_in_progress": 1}})
+		encoded, _ := json.Marshal(pending)
+		var createErr error
+		auditRun, createErr = auditSink.CreateGrowthRadarRun(ctx, db.CreateGrowthRadarRunParams{ProjectID: projectID, Phase: "candidate_analysis", Status: "ok", Funnel: encoded, CostUsd: pgutil.Numeric(0)})
+		if createErr != nil {
+			return result, fmt.Errorf("create growth radar audit run: %w", createErr)
+		}
+		request.BeforeCreate = func(candidate geo.GrowthRadarCandidate) error {
+			return persistGrowthRadarCandidate(ctx, auditSink, auditRun.ID, projectID, candidate)
+		}
+	}
+	analyzed, err := service.AnalyzeObservations(ctx, projectID, request)
 	if !dryRun {
 		result.OpportunityCount = len(analyzed.Opportunities)
 		result.AssetBriefCount = len(analyzed.AssetBriefs)
@@ -227,14 +284,104 @@ func materializeAIDiscoveryHypotheses(ctx context.Context, projectID uuid.UUID, 
 	if dryRun {
 		reasons["observe_only"] = generated
 	}
+	candidateCounts := growthradar.CandidateCounts{Generated: generated, Created: result.OpportunityCount}
+	for _, candidate := range analyzed.Candidates {
+		switch candidate.Disposition {
+		case "watchlist", "hold":
+			candidateCounts.Watchlist++
+		case "merged", "near_duplicate":
+			candidateCounts.Duplicates++
+		case "arbitration":
+			candidateCounts.Conflicts++
+		case "filtered", "dismissed":
+			candidateCounts.Filtered++
+		}
+	}
 	result.Funnel = growthradar.NormalizeFunnel(growthradar.Funnel{
-		Candidates: growthradar.CandidateCounts{Generated: generated, Created: result.OpportunityCount},
+		Candidates: candidateCounts,
 		Status:     stepStatus(analyzed.Run.Status, err), Reasons: reasons,
 	})
-	if len(stores) > 0 {
-		persistAIDiscoveryFunnel(ctx, stores[0], projectID, "candidate_analysis", result.Funnel)
+	if auditSink != nil {
+		encoded, _ := json.Marshal(result.Funnel)
+		status := result.Funnel.Status
+		if err != nil {
+			status = "failed"
+		}
+		if _, persistErr := auditSink.UpdateGrowthRadarRun(ctx, db.UpdateGrowthRadarRunParams{Status: status, Funnel: encoded, CostUsd: pgutil.Numeric(result.Funnel.CostUSD), ID: auditRun.ID, ProjectID: projectID}); persistErr != nil {
+			return result, fmt.Errorf("finalize growth radar audit run: %w", persistErr)
+		}
+	} else if len(stores) > 0 {
+		if persistErr := persistAIDiscoveryFunnelWithCandidates(ctx, stores[0], projectID, "candidate_analysis", result.Funnel, analyzed.Candidates); persistErr != nil {
+			return result, persistErr
+		}
 	}
-	return result, nil
+	return result, err
+}
+
+func persistAIDiscoveryFunnelWithCandidates(ctx context.Context, store FunnelStore, projectID uuid.UUID, phase string, funnel growthradar.Funnel, candidates []geo.GrowthRadarCandidate) error {
+	encoded, _ := json.Marshal(funnel)
+	run, err := store.CreateGrowthRadarRun(ctx, db.CreateGrowthRadarRunParams{ProjectID: projectID, Phase: phase, Status: funnel.Status, Funnel: encoded, CostUsd: pgutil.Numeric(funnel.CostUSD)})
+	if err != nil {
+		return fmt.Errorf("create growth radar run: %w", err)
+	}
+	sink, ok := store.(candidateFunnelStore)
+	if !ok {
+		return nil
+	}
+	for _, candidate := range candidates {
+		if err := persistGrowthRadarCandidate(ctx, sink, run.ID, projectID, candidate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func persistGrowthRadarCandidate(ctx context.Context, sink candidateFunnelStore, runID, projectID uuid.UUID, candidate geo.GrowthRadarCandidate) error {
+	score, err := json.Marshal(candidate.Score)
+	if err != nil {
+		return fmt.Errorf("encode growth radar score: %w", err)
+	}
+	snapshot, err := json.Marshal(candidate.Snapshot)
+	if err != nil {
+		return fmt.Errorf("encode growth radar scoring snapshot: %w", err)
+	}
+	evidence := candidate.Evidence
+	if len(evidence) == 0 {
+		evidence = json.RawMessage(`{}`)
+	}
+	if _, err := sink.CreateGrowthRadarItem(ctx, db.CreateGrowthRadarItemParams{
+		RunID: runID, ProjectID: projectID, CandidateIdentity: candidate.Identity,
+		Disposition: candidate.Disposition, Reason: candidate.Reason, Score: score, ScoringSnapshot: snapshot, Evidence: evidence,
+	}); err != nil {
+		return fmt.Errorf("create growth radar audit item: %w", err)
+	}
+	lastRunID := pgtype.UUID{Bytes: runID, Valid: runID != uuid.Nil}
+	if candidate.Disposition == "watchlist" || candidate.Disposition == "hold" {
+		fingerprintSnapshot := candidate.Snapshot
+		// Evidence aging is derived from the clock and must not keep an otherwise
+		// unchanged watchlist item alive forever.
+		fingerprintSnapshot.NewestEvidenceAgeDays = nil
+		fingerprintInput, _ := json.Marshal(struct {
+			Snapshot growthradar.Snapshot `json:"scoring_snapshot"`
+			Evidence json.RawMessage      `json:"evidence"`
+		}{Snapshot: fingerprintSnapshot, Evidence: evidence})
+		sum := sha256.Sum256(fingerprintInput)
+		fingerprint := hex.EncodeToString(sum[:])
+		if _, err := sink.UpsertGrowthRadarWatchlistItem(ctx, db.UpsertGrowthRadarWatchlistItemParams{
+			ProjectID: projectID, CandidateIdentity: candidate.Identity, Reason: candidate.Reason,
+			Score: score, ScoringSnapshot: snapshot, Evidence: evidence, EvidenceFingerprint: fingerprint,
+			ExpiresAt: pgtype.Timestamptz{Time: time.Now().UTC().Add(90 * 24 * time.Hour), Valid: true}, LastRunID: lastRunID,
+		}); err != nil {
+			return fmt.Errorf("upsert durable growth radar watchlist item: %w", err)
+		}
+		return nil
+	}
+	if err := sink.ResolveGrowthRadarWatchlistItem(ctx, db.ResolveGrowthRadarWatchlistItemParams{
+		Reason: candidate.Disposition, LastRunID: lastRunID, ProjectID: projectID, CandidateIdentity: candidate.Identity,
+	}); err != nil {
+		return fmt.Errorf("resolve durable growth radar watchlist item: %w", err)
+	}
+	return nil
 }
 
 func mergeAIDiscoveryResults(results ...AIDiscoveryResult) AIDiscoveryResult {
@@ -304,15 +451,19 @@ func stepStatus(status string, err error) string {
 	return "ok"
 }
 
-func persistAIDiscoveryFunnel(ctx context.Context, store any, projectID uuid.UUID, phase string, funnel growthradar.Funnel) {
+func persistAIDiscoveryFunnel(ctx context.Context, store any, projectID uuid.UUID, phase string, funnel growthradar.Funnel) error {
 	sink, ok := store.(FunnelStore)
 	if !ok {
-		return
+		return nil
 	}
 	encoded, _ := json.Marshal(funnel)
-	_, _ = sink.CreateGrowthRadarRun(ctx, db.CreateGrowthRadarRunParams{
+	_, err := sink.CreateGrowthRadarRun(ctx, db.CreateGrowthRadarRunParams{
 		ProjectID: projectID, Phase: phase, Status: funnel.Status, Funnel: encoded, CostUsd: pgutil.Numeric(funnel.CostUSD),
 	})
+	if err != nil {
+		return fmt.Errorf("create growth radar funnel run: %w", err)
+	}
+	return nil
 }
 
 func promptText(prompts []db.GeoPrompt, id uuid.UUID) string {

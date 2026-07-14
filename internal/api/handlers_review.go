@@ -12,6 +12,7 @@ import (
 	"github.com/citeloop/citeloop/internal/config"
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/citeloop/citeloop/internal/topicstate"
 	"github.com/citeloop/citeloop/internal/workflow"
 	"github.com/go-chi/chi/v5"
@@ -72,6 +73,93 @@ func (s *Server) getProjectArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, a)
+}
+
+// repinProjectArticleTargetContext is the explicit recovery path for an
+// expired or missing immutable Hashnode/Reddit context. It never mutates a
+// published artifact and revalidates the body against the selected revision.
+func (s *Server) repinProjectArticleTargetContext(w http.ResponseWriter, r *http.Request) {
+	projectID, err := s.projectID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad project id")
+		return
+	}
+	articleID, err := s.articleID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad article id")
+		return
+	}
+	var input struct {
+		TargetContextID uuid.UUID `json:"target_context_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.TargetContextID == uuid.Nil {
+		writeErr(w, http.StatusBadRequest, "target_context_id is required")
+		return
+	}
+	article, err := s.Q.GetArticleForProject(r.Context(), db.GetArticleForProjectParams{ID: articleID, ProjectID: projectID})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "article not found")
+		return
+	}
+	if article.Status == "published" {
+		writeErr(w, http.StatusConflict, "published artifacts cannot be re-pinned")
+		return
+	}
+	if !article.PlatformContractID.Valid || article.PlatformContractVersion == nil {
+		writeErr(w, http.StatusConflict, "article has no pinned platform contract")
+		return
+	}
+	contract, err := s.Q.GetPlatformContentContractByID(r.Context(), db.GetPlatformContentContractByIDParams{ID: article.PlatformContractID.Bytes, Version: *article.PlatformContractVersion})
+	if err != nil {
+		writeErr(w, http.StatusConflict, "pinned platform contract is unavailable")
+		return
+	}
+	contextRow, err := s.Q.GetPlatformTargetContextForProject(r.Context(), db.GetPlatformTargetContextForProjectParams{ID: input.TargetContextID, ProjectID: projectID})
+	if err != nil || contextRow.Platform != contract.Platform || !contextRow.ExpiresAt.Valid || !platformcontract.TargetContextCurrent(contextRow.Status, contextRow.ExpiresAt.Time, time.Now().UTC()) {
+		writeErr(w, http.StatusConflict, "a current target context for the article platform is required")
+		return
+	}
+	metadata := map[string]any{}
+	if len(article.PlatformMetadata) > 0 {
+		_ = json.Unmarshal(article.PlatformMetadata, &metadata)
+	}
+	switch contract.Platform {
+	case "hashnode":
+		if existing, _ := metadata["publication"].(string); strings.TrimSpace(existing) != "" && strings.TrimSpace(existing) != contextRow.TargetKey {
+			writeErr(w, http.StatusConflict, "changing the exact Hashnode publication requires regeneration")
+			return
+		}
+		metadata["publication"] = contextRow.TargetKey
+	case "reddit":
+		if existing, _ := metadata["subreddit"].(string); strings.TrimSpace(existing) != "" && strings.TrimSpace(existing) != contextRow.TargetKey {
+			writeErr(w, http.StatusConflict, "changing the exact subreddit requires regeneration")
+			return
+		}
+		metadata["subreddit"] = contextRow.TargetKey
+		if _, ok := metadata["post_type"]; !ok {
+			metadata["post_type"] = article.OutputType
+		}
+		if contextRow.RequiredFlair != nil && strings.TrimSpace(*contextRow.RequiredFlair) != "" {
+			metadata["flair"] = strings.TrimSpace(*contextRow.RequiredFlair)
+		}
+	default:
+		writeErr(w, http.StatusConflict, "article platform does not use a target context")
+		return
+	}
+	encoded, _ := json.Marshal(metadata)
+	updated, err := s.Q.UpdateArticleTargetContextForProject(r.Context(), db.UpdateArticleTargetContextForProjectParams{
+		TargetContextID: pgtype.UUID{Bytes: input.TargetContextID, Valid: true}, PlatformMetadata: encoded, ID: article.ID, ProjectID: projectID,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	updated, report, err := platformcontract.RevalidateArticle(r.Context(), s.Q, updated, time.Now().UTC())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"article": updated, "contract_validation": report})
 }
 
 func (s *Server) editProjectArticle(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +234,11 @@ func (s *Server) editArticleScoped(w http.ResponseWriter, r *http.Request, proje
 			return
 		}
 		updated = requalified
+	}
+	updated, _, err = platformcontract.RevalidateArticle(r.Context(), s.Q, updated, time.Now().UTC())
+	if err != nil {
+		writeErr(w, 500, "platform contract validation failed: "+err.Error())
+		return
 	}
 	writeJSON(w, 200, updated)
 }
@@ -277,6 +370,11 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 		writeErr(w, 409, "article has unresolved qa_blocking issues; resolve before approving")
 		return
 	}
+	a, _, err = platformcontract.RevalidateArticle(r.Context(), s.Q, a, time.Now().UTC())
+	if err != nil {
+		writeErr(w, 500, "platform contract validation failed: "+err.Error())
+		return
+	}
 	if contractValidationBlocks(a.ContractValidation) {
 		writeErr(w, http.StatusConflict, "article has unresolved platform contract violations; resolve before approving")
 		return
@@ -292,18 +390,26 @@ func (s *Server) approveArticleScoped(w http.ResponseWriter, r *http.Request, pr
 
 func contractValidationBlocks(raw json.RawMessage) bool {
 	if len(raw) == 0 {
-		return false
+		return true
 	}
 	var report struct {
 		Passed *bool `json:"passed"`
 	}
 	if json.Unmarshal(raw, &report) != nil || report.Passed == nil {
-		return false
+		return true
 	}
 	return !*report.Passed
 }
 
 func (s *Server) approveArticleRecord(ctx context.Context, a db.Article, projectID uuid.UUID, reviewedBy string) (db.Article, error) {
+	validated, report, err := platformcontract.RevalidateArticle(ctx, s.Q, a, time.Now().UTC())
+	if err != nil {
+		return db.Article{}, err
+	}
+	if !report.Passed {
+		return db.Article{}, errors.New("article has unresolved platform contract violations")
+	}
+	a = validated
 	schedAt := pgtype.Timestamptz{}
 	if a.Kind == "canonical" {
 		// scheduled_at single source of truth (§3): inherit topic or follow
@@ -327,7 +433,6 @@ func (s *Server) approveArticleRecord(ctx context.Context, a db.Article, project
 	}
 
 	var updated db.Article
-	var err error
 	if projectID == uuid.Nil {
 		updated, err = s.Q.ApproveArticle(ctx, db.ApproveArticleParams{
 			ID:          a.ID,

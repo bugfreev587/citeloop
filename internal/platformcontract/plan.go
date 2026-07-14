@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/citeloop/citeloop/internal/db"
 	"github.com/google/uuid"
@@ -22,6 +23,40 @@ type Target struct {
 	TargetContextID      uuid.UUID `json:"target_context_id,omitempty"`
 	TargetContextVersion *int32    `json:"target_context_version,omitempty"`
 	Rationale            string    `json:"rationale,omitempty"`
+}
+
+func ValidatePlanSelection(input PlanInput, contracts []db.PlatformContentContract, contexts []db.PlatformTargetContext, now time.Time) error {
+	plan, err := PreparePlan(input)
+	if err != nil {
+		return err
+	}
+	contractByID := make(map[uuid.UUID]db.PlatformContentContract, len(contracts))
+	for _, contract := range contracts {
+		if contract.Status == "active" {
+			contractByID[contract.ID] = contract
+		}
+	}
+	contextByID := make(map[uuid.UUID]db.PlatformTargetContext, len(contexts))
+	for _, targetContext := range contexts {
+		contextByID[targetContext.ID] = targetContext
+	}
+	for _, target := range plan.Targets {
+		contract, ok := contractByID[target.ContractID]
+		if !ok || contract.Platform != target.Platform || contract.Version != target.ContractVersion {
+			return fmt.Errorf("active pinned contract does not match target %s", target.Platform)
+		}
+		if !contract.GenerationSupported || !contains(decodeStrings(contract.CompatibleAssetTypes), plan.AssetType) || !contains(decodeStrings(contract.AllowedOutputTypes), target.OutputType) {
+			return fmt.Errorf("target %s is not generation-compatible with asset %s and output %s", target.Platform, plan.AssetType, target.OutputType)
+		}
+		if len(decodeStrings(contract.RequiredContextFields)) == 0 {
+			continue
+		}
+		contextRow, ok := contextByID[target.TargetContextID]
+		if !ok || contextRow.ProjectID != input.ProjectID || contextRow.Platform != target.Platform || contextRow.TargetKey != target.TargetKey || target.TargetContextVersion == nil || contextRow.Version != *target.TargetContextVersion || !contextRow.ExpiresAt.Valid || !TargetContextCurrent(contextRow.Status, contextRow.ExpiresAt.Time, now) {
+			return fmt.Errorf("target %s requires a current pinned target context", target.Platform)
+		}
+	}
+	return nil
 }
 
 type PlanInput struct {
@@ -61,6 +96,9 @@ func PreparePlan(input PlanInput) (Plan, error) {
 	canonical := normalizeTarget(input.CanonicalTarget)
 	if canonical.Platform == "" {
 		return Plan{}, fmt.Errorf("canonical target is required")
+	}
+	if canonical.Platform != "blog" {
+		return Plan{}, fmt.Errorf("canonical target must be the owned blog")
 	}
 	seen := map[string]Target{}
 	for _, raw := range input.Targets {
@@ -143,6 +181,9 @@ func LegacyPlanInput(base PlanInput, strategy string, contracts []db.PlatformCon
 		contract, ok := byPlatform[name]
 		if !ok {
 			return PlanInput{}, fmt.Errorf("active platform contract missing for %s", name)
+		}
+		if len(decodeStrings(contract.RequiredContextFields)) > 0 {
+			continue
 		}
 		outputs := decodeStrings(contract.AllowedOutputTypes)
 		if len(outputs) == 0 {

@@ -39,15 +39,33 @@ type PreparedTargetContext struct {
 
 func PrepareTargetContext(input ConfirmTargetContextInput, priorVersion int32, now time.Time) (PreparedTargetContext, error) {
 	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
-	if input.Platform != "reddit" {
-		return PreparedTargetContext{}, fmt.Errorf("target context is only supported for reddit")
-	}
-	input.TargetKey = normalizeRedditTarget(input.TargetKey)
-	if input.TargetKey == "" {
-		return PreparedTargetContext{}, fmt.Errorf("reddit target is required")
-	}
 	if !input.Verified {
-		return PreparedTargetContext{}, fmt.Errorf("rules must be explicitly verified")
+		return PreparedTargetContext{}, fmt.Errorf("target context must be explicitly verified")
+	}
+	sourceKind := "user_pasted_rules"
+	switch input.Platform {
+	case "reddit":
+		input.TargetKey = normalizeRedditTarget(input.TargetKey)
+		if input.TargetKey == "" {
+			return PreparedTargetContext{}, fmt.Errorf("reddit target is required")
+		}
+	case "hashnode":
+		input.TargetKey = strings.TrimSpace(input.TargetKey)
+		input.SourceURL = strings.TrimSpace(input.SourceURL)
+		if input.TargetKey == "" || input.SourceURL == "" {
+			return PreparedTargetContext{}, fmt.Errorf("hashnode publication key and URL are required")
+		}
+		parsed, err := url.Parse(input.SourceURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return PreparedTargetContext{}, fmt.Errorf("hashnode publication URL must be an https URL")
+		}
+		input.RulesText = "User-confirmed Hashnode publication: " + input.TargetKey
+		input.AllowedPostTypes = []string{"long_form_article"}
+		input.LinkPolicy = "rel=canonical required"
+		input.SelfPromotionPolicy = "publication owner confirmed"
+		sourceKind = "user_confirmed_rules"
+	default:
+		return PreparedTargetContext{}, fmt.Errorf("target context is only supported for hashnode and reddit")
 	}
 	input.RulesText = strings.TrimSpace(input.RulesText)
 	input.LinkPolicy = strings.TrimSpace(input.LinkPolicy)
@@ -55,7 +73,7 @@ func PrepareTargetContext(input ConfirmTargetContextInput, priorVersion int32, n
 	if input.RulesText == "" || input.LinkPolicy == "" || input.SelfPromotionPolicy == "" {
 		return PreparedTargetContext{}, fmt.Errorf("rules, link policy, and self-promotion policy are required")
 	}
-	input.AllowedPostTypes = normalizeValues(input.AllowedPostTypes)
+	input.AllowedPostTypes = normalizePostTypes(input.Platform, input.AllowedPostTypes)
 	if len(input.AllowedPostTypes) == 0 {
 		return PreparedTargetContext{}, fmt.Errorf("at least one allowed post type is required")
 	}
@@ -74,7 +92,7 @@ func PrepareTargetContext(input ConfirmTargetContextInput, priorVersion int32, n
 	return PreparedTargetContext{
 		ConfirmTargetContextInput: input,
 		Version:                   priorVersion + 1,
-		SourceKind:                "user_pasted_rules",
+		SourceKind:                sourceKind,
 		ContentHash:               hex.EncodeToString(sum[:]),
 		ConfirmedAt:               now,
 		ExpiresAt:                 now.Add(targetContextValidity),
@@ -117,4 +135,18 @@ func normalizeValues(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func normalizePostTypes(platform string, values []string) []string {
+	if platform == "reddit" {
+		for i, value := range values {
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "text":
+				values[i] = "community_post"
+			case "link":
+				values[i] = "link_submission"
+			}
+		}
+	}
+	return normalizeValues(values)
 }

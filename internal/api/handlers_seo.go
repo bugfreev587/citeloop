@@ -1160,7 +1160,32 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	targetPlan, err := platformcontract.CreatePlan(r.Context(), s.Q, planInput)
+	contracts, err := s.Q.ListActivePlatformContentContracts(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	contexts, err := s.Q.ListPlatformTargetContexts(r.Context(), db.ListPlatformTargetContextsParams{ProjectID: projectID, Platform: ""})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := platformcontract.ValidatePlanSelection(planInput, contracts, contexts, time.Now().UTC()); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.Pool == nil {
+		writeErr(w, http.StatusServiceUnavailable, "database transaction is unavailable")
+		return
+	}
+	tx, err := s.Pool.Begin(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(context.WithoutCancel(r.Context()))
+	q := db.New(tx)
+	targetPlan, err := platformcontract.CreatePlan(r.Context(), q, planInput)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -1169,12 +1194,12 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 	topicParams.Channel = platformcontract.DeriveChannel(targetPlan)
 	topicParams.AssetType = strPtr(targetPlan.AssetType)
 	topicParams.TargetPlanID = pgtype.UUID{Bytes: targetPlan.ID, Valid: true}
-	topic, err := s.Q.CreateTopic(r.Context(), topicParams)
+	topic, err := q.CreateTopic(r.Context(), topicParams)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := s.Q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{
+	if _, err := q.UpdateContentActionStatus(r.Context(), db.UpdateContentActionStatusParams{
 		ID:        action.ID,
 		ProjectID: projectID,
 		Status:    "approved",
@@ -1182,7 +1207,7 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := s.Q.EnqueueWorkflowEvent(r.Context(), db.EnqueueWorkflowEventParams{
+	if _, err := q.EnqueueWorkflowEvent(r.Context(), db.EnqueueWorkflowEventParams{
 		ProjectID:  projectID,
 		EventType:  workflow.EventContentPlanCreated,
 		DedupeKey:  workflowEventDedupeKey(workflow.EventContentPlanCreated, projectID, action.ID.String()),
@@ -1190,6 +1215,10 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		EntityType: strPtr("topic"),
 		EntityID:   pgtype.UUID{Bytes: topic.ID, Valid: true},
 	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

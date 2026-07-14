@@ -533,6 +533,7 @@ export type OpportunityFindingStatus = {
 export type GrowthRadarDiagnostics = {
   summary: import("./growth-radar").GrowthRadarFunnel;
   runs: Array<{ id: string; phase: string; status: string; funnel: import("./growth-radar").GrowthRadarFunnel; cost_usd: number; created_at: any }>;
+  watchlist: Array<{ candidate_identity: string; status: string; reason: string; score: Record<string, unknown>; scoring_snapshot: Record<string, unknown>; expires_at: string; last_evidence_changed_at: string }>;
 };
 
 export type ArticleAsset = {
@@ -1316,7 +1317,7 @@ export type PlatformTargetContext = {
   target_key: string;
   version: number;
   status: "draft" | "confirmed" | "superseded" | "expired";
-  source_kind: "user_pasted_rules" | "user_confirmed_rules";
+  source_kind: "user_pasted_rules" | "user_confirmed_rules" | "approved_provider";
   source_url?: string | null;
   rules_url?: string | null;
   rules_text: string;
@@ -1332,15 +1333,15 @@ export type PlatformTargetContext = {
 };
 
 export type ConfirmPlatformTargetContextInput = {
-  platform: "reddit";
+  platform: "reddit" | "hashnode";
   target_key: string;
   source_url?: string;
   rules_url?: string;
-  rules_text: string;
-  allowed_post_types: string[];
+  rules_text?: string;
+  allowed_post_types?: string[];
   required_flair?: string;
-  link_policy: string;
-  self_promotion_policy: string;
+  link_policy?: string;
+  self_promotion_policy?: string;
   disclosure_requirements?: string;
   notes?: string;
   verified: boolean;
@@ -3271,6 +3272,10 @@ export function createApi(auth?: AuthOptions) {
   edit: async (id: string, articleID: string, body: { content_md?: string; seo_meta?: any }) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}`, { method: "PUT", body: JSON.stringify(body) }, auth);
     return normalizeArticle(raw);
+  },
+  repinArticleTargetContext: async (id: string, articleID: string, targetContextID: string) => {
+    const raw = await req<any>(`/projects/${id}/articles/${articleID}/target-context`, { method: "POST", body: JSON.stringify({ target_context_id: targetContextID }) }, auth);
+    return normalizeArticle(raw.article);
   },
   fixArticle: async (id: string, articleID: string) => {
     const raw = await req<any>(`/projects/${id}/articles/${articleID}/ai-fix`, { method: "POST" }, auth);

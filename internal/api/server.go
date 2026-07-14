@@ -142,6 +142,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/articles", s.listArticles)
 			r.Get("/articles/{articleID}", s.getProjectArticle)
 			r.Put("/articles/{articleID}", s.editProjectArticle)
+			r.Post("/articles/{articleID}/target-context", s.repinProjectArticleTargetContext)
 			r.Post("/articles/{articleID}/ai-fix", s.fixProjectArticle)
 			r.Post("/articles/{articleID}/apply-fix", s.applyFixProjectArticle)
 			r.Post("/articles/{articleID}/recheck", s.recheckProjectArticle)

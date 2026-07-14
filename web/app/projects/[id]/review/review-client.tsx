@@ -420,6 +420,7 @@ export function ReviewClient({ projectId }: { projectId: string }) {
             applyingIndex={busy?.startsWith(`apply-${selectedArticle.id}-`) ? Number(busy.split("-").pop()) : null}
             onRecheck={() => onRecheck(selectedArticle)}
             recheckBusy={busy === `recheck-${selectedArticle.id}`}
+            onContextRepinned={refresh}
             onClose={() => setSelectedArticleId(null)}
           />
         </div>
@@ -539,6 +540,7 @@ function ReviewInspector({
   applyingIndex,
   onRecheck,
   recheckBusy,
+  onContextRepinned,
   onClose,
 }: {
   drawerRef: (node: HTMLElement | null) => void;
@@ -560,6 +562,7 @@ function ReviewInspector({
   applyingIndex: number | null;
   onRecheck: () => void;
   recheckBusy: boolean;
+  onContextRepinned: () => Promise<void>;
   onClose: () => void;
 }) {
   const title = articleReviewTitle(article);
@@ -637,6 +640,7 @@ function ReviewInspector({
           </section>
 
           <PlatformContractPanel preview={nativePreview} />
+          <TargetContextRecoveryPanel projectId={projectId} article={article} onRepinned={onContextRepinned} />
           <ArticleAssetsPanel projectId={projectId} articleId={article.id} />
           {(metadata.assetType || metadata.sourceEvidence.length > 0) && <AssetMetadataPanel metadata={metadata} />}
           <ClaimEvidencePanel article={article} />
@@ -662,6 +666,41 @@ function ReviewInspector({
         onRecheck={onRecheck}
       />
     </aside>
+  );
+}
+
+function TargetContextRecoveryPanel({ projectId, article, onRepinned }: { projectId: string; article: Article; onRepinned: () => Promise<void> }) {
+  const api = useApi();
+  const platform = article.platform ?? (article.kind === "canonical" ? "blog" : "");
+  const [contexts, setContexts] = useState<Awaited<ReturnType<typeof api.listPlatformTargetContexts>>>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!["hashnode", "reddit"].includes(platform)) return;
+    api.listPlatformTargetContexts(projectId, platform).then(setContexts).catch(() => setContexts([]));
+  }, [api, platform, projectId]);
+  if (!["hashnode", "reddit"].includes(platform)) return null;
+  const current = contexts.filter((context) => context.status === "confirmed" && context.expires_at && new Date(context.expires_at).getTime() > Date.now());
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <div className="text-xs font-bold uppercase tracking-[0.08em] text-amber-800">Target context recovery</div>
+      <p className="mt-1 text-xs leading-5 text-amber-900">Re-pin this draft to a current immutable {platform === "reddit" ? "subreddit rules" : "Hashnode publication"} revision, then validate it again.</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {current.map((context) => (
+          <Button key={context.id} size="sm" variant="outline" disabled={Boolean(busy)} onClick={async () => {
+            setBusy(context.id);
+            try {
+              await api.repinArticleTargetContext(projectId, article.id, context.id);
+              await onRepinned();
+            } finally {
+              setBusy(null);
+            }
+          }}>
+            {busy === context.id ? "Re-pinning" : `Use ${context.target_key} v${context.version}`}
+          </Button>
+        ))}
+        {current.length === 0 && <a className="text-xs font-semibold text-[#d93820] hover:underline" href={`/projects/${projectId}/settings#${platform === "reddit" ? "reddit-rules" : "hashnode-publication"}`}>Confirm a current target context in Settings</a>}
+      </div>
+    </section>
   );
 }
 

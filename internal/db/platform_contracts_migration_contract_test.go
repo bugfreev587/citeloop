@@ -59,6 +59,19 @@ func TestPlatformContentContractsMigrationBackfillsExistingGEOAssetTypesSafely(t
 	}
 }
 
+func TestGrowthRadarMigrationIncludesDurableWatchlistLifecycle(t *testing.T) {
+	raw, err := os.ReadFile("../migrations/0086_growth_radar.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(string(raw))
+	for _, required := range []string{"growth_radar_watchlist", "last_evidence_changed_at", "expires_at", "reopened_count"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("durable watchlist migration missing %q", required)
+		}
+	}
+}
+
 func TestPlatformContentContractQueriesExposeLifecycleAndPlanning(t *testing.T) {
 	raw, err := os.ReadFile("queries/platform_contracts.sql")
 	if err != nil {

@@ -28,6 +28,8 @@ type Classification struct {
 
 var internalTermPattern = regexp.MustCompile(`(?i)(aes[-_ ]?\d+|api[-_ ]?key|secret|credential|token[_ -]?gate|postgres(?:ql)?|mysql|redis|database|deployment|kubernetes|docker|private key|encryption key)`)
 
+func ContainsInternalSensitiveTerm(value string) bool { return internalTermPattern.MatchString(value) }
+
 func ClassifyContext(profile json.RawMessage, evidence EvidenceIndex) Classification {
 	var raw map[string]any
 	_ = json.Unmarshal(profile, &raw)

@@ -111,6 +111,28 @@ update articles set
 where id = $1 and project_id = $4
 returning *;
 
+-- name: UpdateArticleContractValidation :one
+update articles set contract_validation = sqlc.arg(contract_validation)
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleTargetContextForProject :one
+update articles set
+  target_context_id = sqlc.arg(target_context_id),
+  platform_metadata = sqlc.arg(platform_metadata),
+  contract_validation = '{"passed":false,"failures":[{"code":"target_context_revalidation_required","message":"The artifact was re-pinned and must be revalidated."}],"warnings":[]}'::jsonb
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
+-- name: UpdateArticleContentAndPlatformMetadataForProject :one
+update articles set
+  content_md = sqlc.arg(content_md),
+  seo_meta = sqlc.arg(seo_meta),
+  platform_metadata = sqlc.arg(platform_metadata),
+  content_hash = encode(digest(coalesce(sqlc.arg(content_md)::text, '') || coalesce(sqlc.arg(seo_meta)::jsonb::text, ''), 'sha256'), 'hex')
+where id = sqlc.arg(id) and project_id = sqlc.arg(project_id)
+returning *;
+
 -- name: UpdateArticleDistributionMetadataForProject :one
 update articles set
   publication_mode = $3,
