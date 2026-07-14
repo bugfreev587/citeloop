@@ -23,6 +23,125 @@ export type SiteFixStatus =
   | "superseded"
   | "migration_rolled_back";
 
+export type SiteFixType =
+  | "title_readability"
+  | "metadata_format"
+  | "metadata_ctr_optimization"
+  | "search_title_keyword_optimization"
+  | "canonical_repair"
+  | "robots_repair"
+  | "sitemap_repair"
+  | "redirect_or_http_repair"
+  | "schema_validity_repair"
+  | "schema_entity_optimization"
+  | "internal_link_patch"
+  | "internal_link_authority_optimization"
+  | "geo_entity_clarity"
+  | "geo_citation_optimization"
+  | "geo_content_clarity"
+  | "content_typo_or_clarity"
+  | "content_rewrite_for_search"
+  | "content_demand_expansion"
+  | "external_distribution"
+  | "conversion_or_cta_optimization"
+  | "metadata_rewrite"
+  | "schema_patch"
+  | "technical_fix"
+  | "unknown";
+
+export type SiteFixImpactMode =
+  | "unclassified"
+  | "presentation_only"
+  | "technical_reliability"
+  | "search_visibility"
+  | "geo_visibility"
+  | "content_demand"
+  | "conversion_or_ctr";
+
+export type SiteFixMeasurementPolicy = "verification_only" | "measurement_required" | "measurement_optional";
+export type SiteFixMeasurementHandoffStatus = "not_applicable" | "not_started" | "pending" | "started" | "failed";
+export type SiteFixMeasurementStatus =
+  | "planned"
+  | "baseline_blocked"
+  | "ready"
+  | "observing"
+  | "terminal"
+  | "failed_retryable"
+  | "failed_terminal";
+export type SiteFixMeasurementOutcome = "positive" | "negative" | "mixed" | "inconclusive" | "insufficient_data";
+export type SiteFixAttributionConfidence = "high" | "medium" | "low" | "none";
+
+export type SiteFixMeasurementSummary = {
+  source_type: "site_fix";
+  id: string;
+  project_id: string;
+  site_fix_id: string;
+  measurement_generation: number;
+  status: SiteFixMeasurementStatus;
+  target_url: string;
+  fix_type: SiteFixType;
+  impact_mode: SiteFixImpactMode;
+  prospective_observation: boolean;
+  growth_hypothesis: string;
+  primary_metric: string;
+  secondary_metrics: string[];
+  baseline_status: string;
+  started_at?: string | null;
+  absolute_terminal_at?: string | null;
+  terminal_outcome?: SiteFixMeasurementOutcome | null;
+  outcome_reason?: string | null;
+  attribution_confidence: SiteFixAttributionConfidence;
+  results_deep_link: string;
+  site_fix_status: SiteFixStatus;
+  verified_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ResultsSiteFixCheckpoint = {
+  id: string;
+  checkpoint_key: string;
+  checkpoint_role: string;
+  scheduled_at?: string | null;
+  window_start?: string | null;
+  window_end?: string | null;
+  attempt_number: number;
+  outcome_label?: SiteFixMeasurementOutcome | null;
+  outcome_reason?: string | null;
+  attribution_confidence: SiteFixAttributionConfidence;
+  computed_at?: string | null;
+  retry_classification: string;
+};
+
+export type ResultsSiteFixTerminal = {
+  id: string;
+  outcome_label: SiteFixMeasurementOutcome;
+  record_kind: string;
+  terminal_reason: string;
+  created_at?: string | null;
+};
+
+export type ResultsSiteFixPublic = {
+  id: string;
+  status: SiteFixStatus;
+  finding_kind: Exclude<DoctorFindingKind, "healthy">;
+  target_urls: string[];
+  fix_type: SiteFixType;
+  impact_mode: SiteFixImpactMode;
+  measurement_policy: SiteFixMeasurementPolicy;
+  verified_at?: string | null;
+};
+
+export type ResultsSiteFixMeasurementDetail = {
+  source_type: "site_fix";
+  measurement: SiteFixMeasurementSummary;
+  site_fix: ResultsSiteFixPublic;
+  checkpoints: ResultsSiteFixCheckpoint[];
+  terminal?: ResultsSiteFixTerminal | null;
+  measurement_summary: SiteFixMeasurementSummary;
+  measurement_handoff_status: SiteFixMeasurementHandoffStatus;
+};
+
 export type SiteFixVerification = {
   id: string;
   project_id: string;
@@ -84,6 +203,18 @@ export type SiteFix = {
   work_signature_id: string;
   supersedes_site_fix_id?: string | null;
   status: SiteFixStatus;
+  fix_type: SiteFixType;
+  impact_mode: SiteFixImpactMode;
+  measurement_policy: SiteFixMeasurementPolicy;
+  classifier_version: string;
+  decision_origin: string;
+  decision_confidence: "high" | "medium" | "low";
+  growth_hypothesis?: string | null;
+  primary_metric?: string | null;
+  secondary_metrics: string[];
+  measurement_policy_version?: string | null;
+  measurement_summary?: SiteFixMeasurementSummary | null;
+  measurement_handoff_status: SiteFixMeasurementHandoffStatus;
   finding_kind: Exclude<DoctorFindingKind, "healthy">;
   target_urls: string[];
   evidence_snapshot: unknown;

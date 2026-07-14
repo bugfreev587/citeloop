@@ -27,12 +27,59 @@ test("web API exposes Phase 4 results attribution endpoints", () => {
   }
 });
 
+test("Results API and UI use a strict cross-source discriminated union", () => {
+  const api = read("lib/api.ts");
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const card = read("projects/[id]/results/site-fix-results-card.tsx");
+  const drawer = read("projects/[id]/results/site-fix-results-drawer.tsx");
+
+  for (const marker of [
+    "export type ResultsContentAction",
+    "export type ResultsFeedItem = ResultsContentAction | ResultsSiteFixSummary",
+    "function normalizeResultsFeedItem",
+    "function isResultsContentAction",
+    "function isResultsSiteFixSummary",
+    "getResultsSiteFixMeasurement",
+    "`/projects/${id}/results/site-fixes/${measurementID}`",
+  ]) {
+    assert.match(api, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const marker of [
+    "ResultsFeedItem[]",
+    "isResultsContentAction",
+    "isResultsSiteFixSummary",
+    'searchParams.get("source_type")',
+    'searchParams.get("measurement")',
+    "data-results-site-fix-card",
+  ]) {
+    assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(card, /Site Fix/);
+  assert.match(card, /Open Site Fix measurement details/);
+  for (const marker of ["Independent measurement", "Prospective observation", "Attribution confidence", "Measurement checkpoints"]) {
+    assert.match(drawer, new RegExp(marker));
+  }
+});
+
+test("Site Fix Results stays outside ContentAction outcome and queue helpers", () => {
+  const seo = read("projects/[id]/seo/seo-client.tsx");
+  const helpers = read("lib/site-fix-results.ts");
+  assert.match(seo, /const resultsContentActions = resultsFeedItems\.filter\(isResultsContentAction\)/);
+  assert.match(seo, /const resultsSiteFixes = resultsFeedItems\.filter\(isResultsSiteFixSummary\)/);
+  assert.match(seo, /siteFixMeasurementOutcomeState\(siteFix\)/);
+  assert.match(seo, /siteFixMeasurementQueueState\(siteFix\)/);
+  assert.match(helpers, /function siteFixMeasurementOutcomeState/);
+  assert.match(helpers, /function siteFixMeasurementQueueState/);
+  assert.doesNotMatch(seo, /actionMeasurementState\(siteFix/);
+  assert.doesNotMatch(seo, /measurementQueueState\(siteFix/);
+});
+
 test("Results page renders action-level attribution rows", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const resultsStart = seo.indexOf('{mode === "results"');
   const resultsBlock = seo.slice(resultsStart);
   for (const marker of [
-    "resultsActions",
+  "resultsFeedItems",
     "api.listResultsActions(projectId, { limit: 50 })",
     "api.recomputeResults(projectId)",
     "Action-level attribution",

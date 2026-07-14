@@ -1734,6 +1734,71 @@ test("results action normalization preserves published article handoff fields", 
   }
 });
 
+test("Results feed normalizes legacy Content Actions and Site Fix summaries as a discriminated union", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      { id: "action-1", opportunity_id: "opp-1", action_type: "Publish", status: "completed", measurements: [] },
+      {
+        source_type: "site_fix",
+        id: "measurement-1",
+        project_id: "project-1",
+        site_fix_id: "fix-1",
+        measurement_generation: 2,
+        status: "observing",
+        target_url: "https://example.com/pricing",
+        prospective_observation: true,
+        attribution_confidence: "low",
+      },
+    ],
+  });
+
+  try {
+    const { createApi } = await loadApiModule();
+    const items = await createApi().listResultsActions("project-1");
+    assert.equal(items[0].source_type, "content_action");
+    assert.equal(items[0].action_type, "Publish");
+    assert.equal(items[1].source_type, "site_fix");
+    assert.equal(items[1].measurement_generation, 2);
+    assert.equal(items[1].prospective_observation, true);
+    assert.equal(items[1].attribution_confidence, "low");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Results Site Fix detail uses the project-scoped redacted endpoint", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        source_type: "site_fix",
+        measurement: { source_type: "site_fix", id: "measurement-1", project_id: "project-1", site_fix_id: "fix-1" },
+        site_fix: { id: "fix-1", status: "verified", finding_kind: "optimization", target_urls: [] },
+        checkpoints: [],
+        measurement_handoff_status: "started",
+      }),
+    };
+  };
+
+  try {
+    const { createApi } = await loadApiModule();
+    const detail = await createApi().getResultsSiteFixMeasurement("project-1", "measurement-1");
+    assert.equal(calls[0], "https://api.example.test/api/projects/project-1/results/site-fixes/measurement-1");
+    assert.equal(detail.source_type, "site_fix");
+    assert.equal(detail.measurement_handoff_status, "started");
+    assert.deepEqual(detail.checkpoints, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GSC OAuth APIs call project scoped endpoints without exposing tokens", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

@@ -23,6 +23,7 @@ import {
   canonicalSiteFixStatusLabel,
   canonicalSiteFixTarget,
   canonicalSiteFixTitle,
+  siteFixMeasurementPresentation,
 } from "../../../lib/site-fix";
 import {
   canonicalSiteFixMilestones,
@@ -261,6 +262,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   const active = sortedFixes.filter((fix) => !CLOSED_STATUSES.has(fix.status));
   const completed = sortedFixes.filter((fix) => CLOSED_STATUSES.has(fix.status));
   const selected = selectedID ? siteFixes.find((fix) => fix.id === selectedID) ?? null : null;
+  const measurementPresentation = selected ? siteFixMeasurementPresentation(selected) : null;
 
   const pollSiteFixes = useCallback(async () => {
     if (fullListLoadingRef.current) return;
@@ -371,6 +373,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
   }
 
   function renderCard(fix: SiteFix) {
+    const measurement = siteFixMeasurementPresentation(fix);
     return (
       <button
         key={fix.id}
@@ -384,6 +387,7 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
           <div className="flex flex-wrap gap-2">
             <Badge tone={fix.finding_kind === "broken" ? "red" : "violet"}>{fix.finding_kind === "broken" ? "Broken" : "Optimization"}</Badge>
             <Badge tone={statusTone(fix.status)}>{canonicalSiteFixStatusLabel(fix.status)}</Badge>
+            <Badge tone={measurement.tone}>{measurement.label}</Badge>
           </div>
           <ChevronRight aria-hidden="true" className="shrink-0 text-slate-400 transition group-hover:translate-x-0.5" size={17} />
         </div>
@@ -574,6 +578,32 @@ export function SiteFixesClient({ projectId, initialFixId }: { projectId: string
               title={canonicalSiteFixProgressText(selected) || canonicalSiteFixNextAction(selected)}
               detail={selected.failure_reason || selected.application?.failure_reason || undefined}
             />
+
+            {measurementPresentation && (
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-4" aria-label="Independent Results measurement">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Independent measurement</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge tone={measurementPresentation.tone}>{measurementPresentation.label}</Badge>
+                      {selected.measurement_summary?.status && <Badge tone="neutral">{selected.measurement_summary.status}</Badge>}
+                    </div>
+                  </div>
+                  {measurementPresentation.resultsHref && (
+                    <Link
+                      href={measurementPresentation.resultsHref}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-sky-700 transition hover:border-sky-200 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                    >
+                      View Results <ExternalLink aria-hidden="true" size={13} />
+                    </Link>
+                  )}
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-700">{measurementPresentation.detail}</p>
+                {measurementPresentation.caution && (
+                  <p className="mt-2 text-xs font-semibold leading-5 text-amber-800">{measurementPresentation.caution}</p>
+                )}
+              </section>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-slate-50 p-3">
