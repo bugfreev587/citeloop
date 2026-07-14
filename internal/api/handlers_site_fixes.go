@@ -1067,9 +1067,18 @@ func (s *postgresDoctorSiteFixService) List(ctx context.Context, projectID uuid.
 	if err != nil {
 		return nil, err
 	}
-	measurementStates, err := s.q.ListLatestSiteFixMeasurementStatesForFixes(ctx, projectID)
-	if err != nil {
-		return nil, err
+	fixIDs := make([]uuid.UUID, 0, len(fixes))
+	for _, fix := range fixes {
+		fixIDs = append(fixIDs, fix.ID)
+	}
+	var measurementStates []db.ListLatestSiteFixMeasurementStatesForFixesRow
+	if len(fixIDs) > 0 {
+		measurementStates, err = s.q.ListLatestSiteFixMeasurementStatesForFixes(ctx, db.ListLatestSiteFixMeasurementStatesForFixesParams{
+			ProjectID: projectID, SiteFixIds: fixIDs,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	applicationsByFix := make(map[uuid.UUID]db.SiteChangeApplication, len(applications))
 	for _, application := range applications {

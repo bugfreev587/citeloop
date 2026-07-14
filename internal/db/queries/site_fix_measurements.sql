@@ -526,7 +526,14 @@ limit 1;
 
 -- name: ListLatestSiteFixMeasurementStatesForFixes :many
 select distinct on (measurement.site_fix_id)
-  measurement.*,
+  measurement.id,
+  measurement.project_id,
+  measurement.site_fix_id,
+  measurement.measurement_generation,
+  measurement.status,
+  measurement.prospective_observation,
+  measurement.baseline_status,
+  measurement.attribution_confidence,
   coalesce(handoff.status, '')::text as handoff_status
 from site_fix_measurements measurement
 left join lateral (
@@ -539,4 +546,5 @@ left join lateral (
   limit 1
 ) handoff on true
 where measurement.project_id=sqlc.arg(project_id)
+  and measurement.site_fix_id = any(sqlc.arg(site_fix_ids)::uuid[])
 order by measurement.site_fix_id, measurement.measurement_generation desc, measurement.created_at desc, measurement.id desc;

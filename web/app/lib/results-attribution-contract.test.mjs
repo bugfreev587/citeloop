@@ -67,7 +67,9 @@ test("off-page Site Fix deep links hydrate detail and expose a stable failure st
   for (const marker of [
     "resultSiteFixDeepLinkError",
     "api.getResultsSiteFixMeasurement(projectId, requestedResultMeasurementID)",
-    "detail.measurement",
+    "reduceSiteFixDeepLinkState",
+    "pinSiteFixResultsSummary",
+    "resultSiteFixHandoff.feedSettled",
     "Requested Site Fix measurement unavailable",
   ]) {
     assert.match(seo, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -84,8 +86,8 @@ test("Impact Reports summary count includes both Results sources", () => {
 test("Site Fix Results stays outside ContentAction outcome and queue helpers", () => {
   const seo = read("projects/[id]/seo/seo-client.tsx");
   const helpers = read("lib/site-fix-results.ts");
-  assert.match(seo, /const resultsContentActions = resultsFeedItems\.filter\(isResultsContentAction\)/);
-  assert.match(seo, /const resultsSiteFixes = resultsFeedItems\.filter\(isResultsSiteFixSummary\)/);
+  assert.match(seo, /const resultsContentActions = visibleResultsFeedItems\.filter\(isResultsContentAction\)/);
+  assert.match(seo, /const resultsSiteFixes = visibleResultsFeedItems\.filter\(isResultsSiteFixSummary\)/);
   assert.match(seo, /siteFixMeasurementOutcomeState\(siteFix\)/);
   assert.match(seo, /siteFixMeasurementQueueState\(siteFix\)/);
   assert.match(helpers, /function siteFixMeasurementOutcomeState/);
@@ -99,7 +101,7 @@ test("Results page renders action-level attribution rows", () => {
   const resultsStart = seo.indexOf('{mode === "results"');
   const resultsBlock = seo.slice(resultsStart);
   for (const marker of [
-  "resultsFeedItems",
+    "visibleResultsFeedItems",
     "api.listResultsActions(projectId, { limit: 50 })",
     "api.recomputeResults(projectId)",
     "Action-level attribution",

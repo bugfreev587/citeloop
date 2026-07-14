@@ -1384,7 +1384,14 @@ func (q *Queries) GetSiteFixMeasurementTerminalOutcome(ctx context.Context, arg 
 
 const listLatestSiteFixMeasurementStatesForFixes = `-- name: ListLatestSiteFixMeasurementStatesForFixes :many
 select distinct on (measurement.site_fix_id)
-  measurement.id, measurement.project_id, measurement.site_fix_id, measurement.measurement_generation, measurement.creation_idempotency_key, measurement.target_url, measurement.normalized_target_url, measurement.target_query, measurement.target_identity, measurement.fix_type, measurement.impact_mode, measurement.classifier_version, measurement.decision_origin, measurement.decision_confidence, measurement.prospective_observation, measurement.growth_hypothesis, measurement.primary_metric, measurement.secondary_metrics, measurement.measurement_policy_version, measurement.measurement_policy_snapshot, measurement.baseline_window, measurement.baseline_snapshot, measurement.baseline_status, measurement.started_at, measurement.absolute_terminal_at, measurement.status, measurement.terminal_outcome, measurement.outcome_reason, measurement.attribution_confidence, measurement.confounders, measurement.results_deep_link, measurement.created_at, measurement.updated_at,
+  measurement.id,
+  measurement.project_id,
+  measurement.site_fix_id,
+  measurement.measurement_generation,
+  measurement.status,
+  measurement.prospective_observation,
+  measurement.baseline_status,
+  measurement.attribution_confidence,
   coalesce(handoff.status, '')::text as handoff_status
 from site_fix_measurements measurement
 left join lateral (
@@ -1397,48 +1404,29 @@ left join lateral (
   limit 1
 ) handoff on true
 where measurement.project_id=$1
+  and measurement.site_fix_id = any($2::uuid[])
 order by measurement.site_fix_id, measurement.measurement_generation desc, measurement.created_at desc, measurement.id desc
 `
 
-type ListLatestSiteFixMeasurementStatesForFixesRow struct {
-	ID                        uuid.UUID          `json:"id"`
-	ProjectID                 uuid.UUID          `json:"project_id"`
-	SiteFixID                 uuid.UUID          `json:"site_fix_id"`
-	MeasurementGeneration     int32              `json:"measurement_generation"`
-	CreationIdempotencyKey    string             `json:"creation_idempotency_key"`
-	TargetUrl                 string             `json:"target_url"`
-	NormalizedTargetUrl       string             `json:"normalized_target_url"`
-	TargetQuery               *string            `json:"target_query"`
-	TargetIdentity            json.RawMessage    `json:"target_identity"`
-	FixType                   string             `json:"fix_type"`
-	ImpactMode                string             `json:"impact_mode"`
-	ClassifierVersion         string             `json:"classifier_version"`
-	DecisionOrigin            string             `json:"decision_origin"`
-	DecisionConfidence        string             `json:"decision_confidence"`
-	ProspectiveObservation    bool               `json:"prospective_observation"`
-	GrowthHypothesis          string             `json:"growth_hypothesis"`
-	PrimaryMetric             string             `json:"primary_metric"`
-	SecondaryMetrics          json.RawMessage    `json:"secondary_metrics"`
-	MeasurementPolicyVersion  string             `json:"measurement_policy_version"`
-	MeasurementPolicySnapshot json.RawMessage    `json:"measurement_policy_snapshot"`
-	BaselineWindow            json.RawMessage    `json:"baseline_window"`
-	BaselineSnapshot          json.RawMessage    `json:"baseline_snapshot"`
-	BaselineStatus            string             `json:"baseline_status"`
-	StartedAt                 pgtype.Timestamptz `json:"started_at"`
-	AbsoluteTerminalAt        pgtype.Timestamptz `json:"absolute_terminal_at"`
-	Status                    string             `json:"status"`
-	TerminalOutcome           *string            `json:"terminal_outcome"`
-	OutcomeReason             *string            `json:"outcome_reason"`
-	AttributionConfidence     string             `json:"attribution_confidence"`
-	Confounders               json.RawMessage    `json:"confounders"`
-	ResultsDeepLink           *string            `json:"results_deep_link"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	HandoffStatus             string             `json:"handoff_status"`
+type ListLatestSiteFixMeasurementStatesForFixesParams struct {
+	ProjectID  uuid.UUID   `json:"project_id"`
+	SiteFixIds []uuid.UUID `json:"site_fix_ids"`
 }
 
-func (q *Queries) ListLatestSiteFixMeasurementStatesForFixes(ctx context.Context, projectID uuid.UUID) ([]ListLatestSiteFixMeasurementStatesForFixesRow, error) {
-	rows, err := q.db.Query(ctx, listLatestSiteFixMeasurementStatesForFixes, projectID)
+type ListLatestSiteFixMeasurementStatesForFixesRow struct {
+	ID                     uuid.UUID `json:"id"`
+	ProjectID              uuid.UUID `json:"project_id"`
+	SiteFixID              uuid.UUID `json:"site_fix_id"`
+	MeasurementGeneration  int32     `json:"measurement_generation"`
+	Status                 string    `json:"status"`
+	ProspectiveObservation bool      `json:"prospective_observation"`
+	BaselineStatus         string    `json:"baseline_status"`
+	AttributionConfidence  string    `json:"attribution_confidence"`
+	HandoffStatus          string    `json:"handoff_status"`
+}
+
+func (q *Queries) ListLatestSiteFixMeasurementStatesForFixes(ctx context.Context, arg ListLatestSiteFixMeasurementStatesForFixesParams) ([]ListLatestSiteFixMeasurementStatesForFixesRow, error) {
+	rows, err := q.db.Query(ctx, listLatestSiteFixMeasurementStatesForFixes, arg.ProjectID, arg.SiteFixIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1451,35 +1439,10 @@ func (q *Queries) ListLatestSiteFixMeasurementStatesForFixes(ctx context.Context
 			&i.ProjectID,
 			&i.SiteFixID,
 			&i.MeasurementGeneration,
-			&i.CreationIdempotencyKey,
-			&i.TargetUrl,
-			&i.NormalizedTargetUrl,
-			&i.TargetQuery,
-			&i.TargetIdentity,
-			&i.FixType,
-			&i.ImpactMode,
-			&i.ClassifierVersion,
-			&i.DecisionOrigin,
-			&i.DecisionConfidence,
-			&i.ProspectiveObservation,
-			&i.GrowthHypothesis,
-			&i.PrimaryMetric,
-			&i.SecondaryMetrics,
-			&i.MeasurementPolicyVersion,
-			&i.MeasurementPolicySnapshot,
-			&i.BaselineWindow,
-			&i.BaselineSnapshot,
-			&i.BaselineStatus,
-			&i.StartedAt,
-			&i.AbsoluteTerminalAt,
 			&i.Status,
-			&i.TerminalOutcome,
-			&i.OutcomeReason,
+			&i.ProspectiveObservation,
+			&i.BaselineStatus,
 			&i.AttributionConfidence,
-			&i.Confounders,
-			&i.ResultsDeepLink,
-			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.HandoffStatus,
 		); err != nil {
 			return nil, err

@@ -61,6 +61,18 @@ func TestResultsSiteFixHTTPPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update site_fix_measurements set updated_at=$3 where project_id=$1 and id=$2`, projectID, measurement.ID, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	scopedStates, err := q.ListLatestSiteFixMeasurementStatesForFixes(ctx, db.ListLatestSiteFixMeasurementStatesForFixesParams{
+		ProjectID: projectID, SiteFixIds: []uuid.UUID{verificationOnlyFixID},
+	})
+	if err != nil || len(scopedStates) != 0 {
+		t.Fatalf("measurement batch query ignored requested Site Fix scope: rows=%+v err=%v", scopedStates, err)
+	}
+	scopedStates, err = q.ListLatestSiteFixMeasurementStatesForFixes(ctx, db.ListLatestSiteFixMeasurementStatesForFixesParams{
+		ProjectID: projectID, SiteFixIds: []uuid.UUID{fixID},
+	})
+	if err != nil || len(scopedStates) != 1 || scopedStates[0].SiteFixID != fixID || scopedStates[0].Status != "ready" || scopedStates[0].HandoffStatus != "" {
+		t.Fatalf("measurement batch query lost scoped status: rows=%+v err=%v", scopedStates, err)
+	}
 
 	opportunityID, actionID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `insert into seo_opportunities(id,project_id,type,status,page_url,normalized_page_url,query,evidence) values($1,$2,'content_gap','accepted','https://example.com/content','https://example.com/content','query','{}')`, opportunityID, projectID); err != nil {
@@ -223,6 +235,9 @@ func assertDoctorListHandoffHTTP(t *testing.T, handler http.Handler, projectID, 
 	var rows []map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil {
 		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("Doctor list escaped requested project/fix scope: rows=%d body=%s", len(rows), response.Body.String())
 	}
 	for _, row := range rows {
 		if row["id"] != fixID.String() {

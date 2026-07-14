@@ -68,7 +68,14 @@ import { explainZeroOpportunities, summarizeGrowthRadarRun } from "../../../lib/
 import { GROWTH_STAGE_OPTIONS, GrowthStage, growthStageConfirmation, growthStageOption } from "../../../lib/growth-stage";
 import { RightDrawer } from "../../../components/right-drawer";
 import { Badge, Button, ButtonProgress, EmptyState, Field, Notice, SectionHeader, TextInput, cx, formatDate } from "../../../components/ui";
-import { siteFixMeasurementOutcomeState, siteFixMeasurementQueueState } from "../../../lib/site-fix-results";
+import {
+  createSiteFixDeepLinkState,
+  pinSiteFixResultsSummary,
+  reduceSiteFixDeepLinkState,
+  SiteFixDeepLinkState,
+  siteFixMeasurementOutcomeState,
+  siteFixMeasurementQueueState,
+} from "../../../lib/site-fix-results";
 import { SiteFixResultsCard } from "../results/site-fix-results-card";
 import { SiteFixResultsDrawer } from "../results/site-fix-results-drawer";
 
@@ -1047,6 +1054,9 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   const [opportunities, setOpportunities] = useState<SEOOpportunity[]>([]);
   const [actions, setActions] = useState<SEOContentAction[]>([]);
   const [resultsFeedItems, setResultsFeedItems] = useState<ResultsFeedItem[]>([]);
+  const [resultsFeedLoadVersion, setResultsFeedLoadVersion] = useState(0);
+  const [pinnedResultSiteFix, setPinnedResultSiteFix] = useState<ResultsSiteFixSummary | null>(null);
+  const [resultSiteFixHandoff, setResultSiteFixHandoff] = useState<SiteFixDeepLinkState | null>(null);
   const [growthLearnings, setGrowthLearnings] = useState<GrowthLearning[]>([]);
   const [doctorSiteFixes, setDoctorSiteFixes] = useState<SiteFix[]>([]);
   const [policy, setPolicy] = useState<SEOPolicy | null>(null);
@@ -1207,6 +1217,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       if (watchlistRows) setWatchlist(watchlistRows);
       if (actionRows) setActions(actionRows);
       if (resultsRows) setResultsFeedItems(resultsRows);
+      setResultsFeedLoadVersion((current) => current + 1);
       if (learningRows) setGrowthLearnings(learningRows);
       if (policyData) setPolicy(policyData);
       if (readinessData) setReadiness(readinessData);
@@ -1400,13 +1411,14 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   ];
   const measuredActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
   const resultActions = loopActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action));
-  const resultsContentActions = resultsFeedItems.filter(isResultsContentAction);
-  const resultsSiteFixes = resultsFeedItems.filter(isResultsSiteFixSummary);
-  const attributionActions = resultsFeedItems.length
+  const visibleResultsFeedItems = pinSiteFixResultsSummary(resultsFeedItems, pinnedResultSiteFix);
+  const resultsContentActions = visibleResultsFeedItems.filter(isResultsContentAction);
+  const resultsSiteFixes = visibleResultsFeedItems.filter(isResultsSiteFixSummary);
+  const attributionActions = visibleResultsFeedItems.length
     ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : resultActions;
-  const attributionFeedItems: ResultsFeedItem[] = resultsFeedItems.length
-    ? resultsFeedItems.filter(
+  const attributionFeedItems: ResultsFeedItem[] = visibleResultsFeedItems.length
+    ? visibleResultsFeedItems.filter(
         (item) => isResultsSiteFixSummary(item) || (!["archived", "dismissed"].includes(item.status) && hasResultsExecutionEvidence(item)),
       )
     : resultActions.map((action) => ({ ...action, source_type: "content_action", measurements: [] }) as ResultsContentAction);
@@ -1539,7 +1551,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
     target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "center" });
     target.focus({ preventScroll: true });
   }, [mode, requestedWatchOpportunityID, watchlist.length]);
-  const attributionMeasuredActions = resultsFeedItems.length
+  const attributionMeasuredActions = visibleResultsFeedItems.length
     ? resultsContentActions.filter((action) => !["archived", "dismissed"].includes(action.status) && hasResultsExecutionEvidence(action))
     : measuredActions;
   const outcomeCounts = attributionMeasuredActions.reduce(
@@ -1603,39 +1615,55 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
   }, [attributionActions, focusResultActionForHandoff, mode, projectId, requestedResultArticleID, router]);
 
   useEffect(() => {
-    if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID) return;
-    const handoffKey = `site_fix:${requestedResultMeasurementID}`;
-    if (consumedResultHandoffRef.current === handoffKey) return;
-    const match = resultsFeedItems.find(
-      (item): item is ResultsSiteFixSummary => isResultsSiteFixSummary(item) && item.id === requestedResultMeasurementID,
-    );
-    consumedResultHandoffRef.current = handoffKey;
-    setResultSiteFixDeepLinkError(null);
-    if (match) {
-      focusResultSiteFixForHandoff(match);
-      router.replace(`/projects/${projectId}/results`, { scroll: false });
+    if (mode !== "results" || requestedResultSourceType !== "site_fix" || !requestedResultMeasurementID) {
+      setResultSiteFixHandoff(null);
       return;
     }
-
-    const request = resultSiteFixRequestRef.current + 1;
-    resultSiteFixRequestRef.current = request;
+    let active = true;
+    setPinnedResultSiteFix((current) => current?.id === requestedResultMeasurementID ? current : null);
+    setResultSiteFixDeepLinkError(null);
+    setResultSiteFixHandoff(createSiteFixDeepLinkState(requestedResultMeasurementID));
     void api.getResultsSiteFixMeasurement(projectId, requestedResultMeasurementID)
       .then((detail) => {
-        if (request !== resultSiteFixRequestRef.current) return;
-        setResultsFeedItems((current) => current.some(
-          (item) => isResultsSiteFixSummary(item) && item.id === detail.measurement.id,
-        ) ? current : [...current, detail.measurement]);
-        focusResultSiteFixForHandoff(detail.measurement, detail);
-        router.replace(`/projects/${projectId}/results`, { scroll: false });
+        if (!active) return;
+        setResultSiteFixHandoff((current) => current?.measurementID === requestedResultMeasurementID
+          ? reduceSiteFixDeepLinkState(current, { type: "detail_succeeded", detail })
+          : current);
       })
       .catch(() => {
-        if (request !== resultSiteFixRequestRef.current) return;
-        setResultSiteFixDeepLinkError("The requested measurement may be outside this project or no longer available.");
+        if (!active) return;
+        setResultSiteFixHandoff((current) => current?.measurementID === requestedResultMeasurementID
+          ? reduceSiteFixDeepLinkState(current, { type: "detail_failed" })
+          : current);
       });
     return () => {
-      if (request === resultSiteFixRequestRef.current) resultSiteFixRequestRef.current += 1;
+      active = false;
     };
-  }, [api, focusResultSiteFixForHandoff, mode, projectId, requestedResultMeasurementID, requestedResultSourceType, resultsFeedItems, router]);
+  }, [api, mode, projectId, requestedResultMeasurementID, requestedResultSourceType]);
+
+  useEffect(() => {
+    if (!resultSiteFixHandoff || resultSiteFixHandoff.status !== "pending" || resultSiteFixHandoff.feedSettled || resultsFeedLoadVersion === 0) return;
+    setResultSiteFixHandoff((current) => current?.measurementID === resultSiteFixHandoff.measurementID
+      ? reduceSiteFixDeepLinkState(current, { type: "feed_settled", items: resultsFeedItems })
+      : current);
+  }, [resultSiteFixHandoff, resultsFeedItems, resultsFeedLoadVersion]);
+
+  useEffect(() => {
+    if (!resultSiteFixHandoff) return;
+    if (resultSiteFixHandoff.status === "failed") {
+      setResultSiteFixDeepLinkError("The requested measurement may be outside this project or no longer available.");
+      return;
+    }
+    const summary = resultSiteFixHandoff.pinnedSummary;
+    if (resultSiteFixHandoff.status !== "resolved" || !summary) return;
+    const handoffKey = `site_fix:${resultSiteFixHandoff.measurementID}`;
+    if (consumedResultHandoffRef.current === handoffKey) return;
+    consumedResultHandoffRef.current = handoffKey;
+    setPinnedResultSiteFix(summary);
+    setResultSiteFixDeepLinkError(null);
+    focusResultSiteFixForHandoff(summary, resultSiteFixHandoff.detail ?? undefined);
+    router.replace(`/projects/${projectId}/results`, { scroll: false });
+  }, [focusResultSiteFixForHandoff, projectId, resultSiteFixHandoff, router]);
 
   useEffect(() => {
     if (mode !== "results" || requestedResultActionID || requestedResultArticleID || requestedResultMeasurementID) return;
@@ -2652,7 +2680,7 @@ export function SEOClient({ projectId, mode = "analysis" }: { projectId: string;
       )}
 
       {mode === "results" && (
-        <div className="space-y-7" data-results-actions={resultsFeedItems.length}>
+        <div className="space-y-7" data-results-actions={visibleResultsFeedItems.length}>
           <section data-results-doctor-verification>
             <SectionHeader
               title="Doctor repair outcomes"

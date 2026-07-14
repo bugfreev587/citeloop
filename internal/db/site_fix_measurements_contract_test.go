@@ -108,13 +108,20 @@ func TestDoctorListMeasurementReadModelBatchesLatestActualRows(t *testing.T) {
 	query := namedSQL(t, strings.ToLower(string(raw)), "ListLatestSiteFixMeasurementStatesForFixes")
 	for _, want := range []string{
 		"distinct on (measurement.site_fix_id)",
+		"measurement.id",
+		"measurement.measurement_generation",
+		"measurement.attribution_confidence",
 		"left join lateral",
 		"site_fix_measurement_handoff_outbox",
 		"where measurement.project_id=sqlc.arg(project_id)",
+		"measurement.site_fix_id = any(sqlc.arg(site_fix_ids)::uuid[])",
 	} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("Doctor list measurement read model missing %q: %s", want, query)
 		}
+	}
+	if strings.Contains(query, "measurement.*") || strings.Contains(query, "target_identity") || strings.Contains(query, "measurement_policy_snapshot") {
+		t.Fatalf("Doctor polling query must use a narrow scalar projection: %s", query)
 	}
 }
 

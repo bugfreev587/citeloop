@@ -355,7 +355,7 @@ type Querier interface {
 	ListInventory(ctx context.Context, projectID uuid.UUID) ([]ContentInventory, error)
 	ListLatestAICrawlerAccessSnapshots(ctx context.Context, projectID uuid.UUID) ([]AiCrawlerAccessSnapshot, error)
 	ListLatestCanonicalSiteFixApplications(ctx context.Context, arg ListLatestCanonicalSiteFixApplicationsParams) ([]SiteChangeApplication, error)
-	ListLatestSiteFixMeasurementStatesForFixes(ctx context.Context, projectID uuid.UUID) ([]ListLatestSiteFixMeasurementStatesForFixesRow, error)
+	ListLatestSiteFixMeasurementStatesForFixes(ctx context.Context, arg ListLatestSiteFixMeasurementStatesForFixesParams) ([]ListLatestSiteFixMeasurementStatesForFixesRow, error)
 	ListLatestTechnicalChecks(ctx context.Context, arg ListLatestTechnicalChecksParams) ([]TechnicalCheck, error)
 	ListLegacyApplicationsForMigrationUpdate(ctx context.Context, arg ListLegacyApplicationsForMigrationUpdateParams) ([]SiteChangeApplication, error)
 	ListLegacyTechnicalActionsForMigration(ctx context.Context, projectID uuid.UUID) ([]ListLegacyTechnicalActionsForMigrationRow, error)
