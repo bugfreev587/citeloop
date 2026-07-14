@@ -2,10 +2,13 @@ package sitefix
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -25,9 +28,7 @@ func TestCanonicalApplyRecordsEveryGenerationAttemptOutsideLifecycleTransaction(
 		DiffSnapshot:       json.RawMessage(`{}`),
 		ResolutionCriteria: json.RawMessage(`{"asset_type":"canonical"}`),
 	}}
-	verifier := &patchVerifierStub{store: store, verification: PatchVerification{
-		Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
-	}}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification()}
 	service := applyServiceForTest(store, generator, verifier)
 
 	result, err := service.Apply(context.Background(), projectID, fixID)
@@ -70,9 +71,7 @@ func TestCanonicalApplyFeedsRejectionBackForCorrectableGenerationFailures(t *tes
 		DiffSnapshot:       json.RawMessage(`{}`),
 		ResolutionCriteria: json.RawMessage(`{"asset_type":"canonical"}`),
 	}}
-	verifier := &patchVerifierStub{store: store, verification: PatchVerification{
-		Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
-	}}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification()}
 	result, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
 	if err != nil {
 		t.Fatal(err)
@@ -83,9 +82,11 @@ func TestCanonicalApplyFeedsRejectionBackForCorrectableGenerationFailures(t *tes
 	if store.startedCalls != 2 || store.finishedCalls != 2 {
 		t.Fatalf("generation records started=%d finished=%d, want 2/2", store.startedCalls, store.finishedCalls)
 	}
-	if len(generator.rejections) != 2 || generator.rejections[0] != "" ||
-		!strings.Contains(generator.rejections[1], "must occur exactly once") {
-		t.Fatalf("rejections = %q", generator.rejections)
+	if len(generator.feedback) != 2 || !reflect.DeepEqual(generator.feedback[0], GenerationFeedback{}) ||
+		generator.feedback[1].Kind != generationFeedbackRepositoryPatch ||
+		generator.feedback[1].Code != "invalid_repository_patch" ||
+		!strings.Contains(generator.feedback[1].Explanation, "must occur exactly once") {
+		t.Fatalf("feedback = %#v", generator.feedback)
 	}
 	// The failed round stays on the audit trail and the correction round is
 	// chained to it, not to the source selection call.
@@ -99,11 +100,565 @@ func TestCanonicalApplyFeedsRejectionBackForCorrectableGenerationFailures(t *tes
 	}
 }
 
+func TestCanonicalApplyCorrectsCompleteGroundingRejection(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	rejected := newPatchGroundingRejectionError(PatchVerification{
+		PrimaryIntentPreserved: true,
+		PreservedPropositions:  []string{},
+		AddedPropositions:      []string{},
+		RemovedPropositions:    []string{},
+		UnsupportedClaims:      []string{"Unsupported promise."},
+		Reason:                 "The patch introduces an unsupported promise.",
+	})
+	approved := completeApprovedPatchVerification()
+	verifier := &patchVerifierStub{
+		store:     store,
+		decisions: []PatchVerification{rejected.Decision, approved},
+		results: []GenerationResult{
+			{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"},
+			{Provider: "test", Model: "verifier", Status: "ok"},
+		},
+		errors: []error{rejected, nil},
+	}
+
+	result, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Application.Status != "ready_for_pr" {
+		t.Fatalf("application status = %q", result.Application.Status)
+	}
+	if generator.calls != 2 || verifier.calls != 2 {
+		t.Fatalf("generator/verifier calls = %d/%d, want 2/2", generator.calls, verifier.calls)
+	}
+	if len(generator.feedback) != 2 || !reflect.DeepEqual(generator.feedback[0], GenerationFeedback{}) {
+		t.Fatalf("feedback = %#v", generator.feedback)
+	}
+	wantFeedback := newGroundingGenerationFeedback(rejected.Decision)
+	if !reflect.DeepEqual(generator.feedback[1], wantFeedback) {
+		t.Fatalf("grounding feedback = %#v, want %#v", generator.feedback[1], wantFeedback)
+	}
+	if store.finalizeCount != 1 {
+		t.Fatalf("finalize count = %d, want 1", store.finalizeCount)
+	}
+	assertGroundingRejectionResults(t, store.verificationResults, 1)
+	if len(store.verificationOutcomes) != 2 || store.verificationOutcomes[0] == nil || store.verificationOutcomes[1] == nil {
+		t.Fatalf("verifier outcomes = %#v, want rejected and approved audit outcomes", store.verificationOutcomes)
+	}
+	if store.verificationOutcomes[0].Approved || !store.verificationOutcomes[1].Approved {
+		t.Fatalf("verifier outcome decisions = %#v, want rejected then approved", store.verificationOutcomes)
+	}
+	if store.verificationOutcomes[0].CorrectionRound != 0 || store.verificationOutcomes[1].CorrectionRound != 1 ||
+		store.verificationOutcomes[0].GeneratorCallID != store.generationCallIDs[0] ||
+		store.verificationOutcomes[1].GeneratorCallID != store.generationCallIDs[1] {
+		t.Fatalf("verifier outcome rounds/causes = %#v, generation calls = %v", store.verificationOutcomes, store.generationCallIDs)
+	}
+}
+
+func TestCanonicalApplyAuditsCompleteApprovedGroundingOutcome(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	plan := applicationPlanForApplyTest(fixID)
+	plan.SourceFilePaths = json.RawMessage(`["app/page.tsx"," app/page.tsx ","app/layout.tsx"]`)
+	plan.PatchSnapshot = json.RawMessage(`{"artifact":"approved-patch"}`)
+	plan.DiffSnapshot = json.RawMessage(`{"artifact":"approved-diff"}`)
+	generator := &fixGeneratorStub{store: store, plan: plan}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification()}
+
+	if _, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] == nil {
+		t.Fatalf("verifier outcomes = %#v, want one approved outcome", store.verificationOutcomes)
+	}
+	outcome := store.verificationOutcomes[0]
+	if outcome.SchemaVersion != 1 || outcome.CorrectionRound != 0 || outcome.GeneratorCallID != store.generationCallIDs[0] ||
+		!outcome.Approved || !outcome.PrimaryIntentPreserved || outcome.IntentDrift {
+		t.Fatalf("approved verifier outcome = %#v", outcome)
+	}
+	if !reflect.DeepEqual(outcome.TouchedPaths, []string{"app/layout.tsx", "app/page.tsx"}) {
+		t.Fatalf("touched paths = %#v", outcome.TouchedPaths)
+	}
+	patchSum := sha256.Sum256(plan.PatchSnapshot)
+	diffSum := sha256.Sum256(plan.DiffSnapshot)
+	if outcome.PatchSHA256 != hex.EncodeToString(patchSum[:]) || outcome.DiffSHA256 != hex.EncodeToString(diffSum[:]) {
+		t.Fatalf("artifact fingerprints = %q/%q", outcome.PatchSHA256, outcome.DiffSHA256)
+	}
+}
+
+func TestCanonicalApplyDoesNotAuditApprovedDecisionWithFailedLedgerResult(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	verifier := &patchVerifierStub{
+		store:     store,
+		decisions: []PatchVerification{completeApprovedPatchVerification()},
+		results:   []GenerationResult{{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "provider_error"}},
+		errors:    []error{nil},
+	}
+
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err == nil || !strings.Contains(err.Error(), "verification ended in \"failed\"") {
+		t.Fatalf("Apply error = %v, want failed verifier ledger result", err)
+	}
+	if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+		t.Fatalf("untrusted approved outcome = %#v, want nil", store.verificationOutcomes)
+	}
+}
+
+func TestGroundingVerificationOutcomeIsDeterministicBoundedAndContainsNoRawArtifacts(t *testing.T) {
+	generatorCallID := uuid.New()
+	items := make([]string, 0, maxGenerationFeedbackItems+4)
+	paths := make([]string, 0, maxGenerationFeedbackItems+4)
+	for index := 0; index < maxGenerationFeedbackItems+4; index++ {
+		items = append(items, fmt.Sprintf("  proposition   %02d %s  ", index, strings.Repeat("界", maxGenerationFeedbackItemRunes)))
+		paths = append(paths, fmt.Sprintf("  app/path %02d/%s.tsx  ", index, strings.Repeat("x", maxGenerationFeedbackItemRunes)))
+	}
+	items = append(items, items[0])
+	paths = append(paths, paths[0])
+	pathsRaw, err := json.Marshal(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := PatchVerification{
+		PrimaryIntentPreserved: true,
+		PreservedPropositions:  items,
+		AddedPropositions:      items,
+		RemovedPropositions:    items,
+		UnsupportedClaims:      items,
+		IntentDrift:            true,
+		Reason:                 "  " + strings.Repeat("private verifier reason ", maxGenerationFeedbackExplanationRunes) + "  ",
+	}
+	plan := ApplicationPlan{
+		SourceFilePaths: pathsRaw,
+		PatchSnapshot:   json.RawMessage(`{"raw":"secret-patch-artifact"}`),
+		DiffSnapshot:    json.RawMessage(`{"raw":"secret-diff-artifact"}`),
+	}
+
+	first, err := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newGroundingVerificationOutcome(2, generatorCallID, decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("outcome is nondeterministic: first=%#v second=%#v", first, second)
+	}
+	for name, values := range map[string][]string{
+		"preserved":   first.PreservedPropositions,
+		"added":       first.AddedPropositions,
+		"removed":     first.RemovedPropositions,
+		"unsupported": first.UnsupportedClaims,
+		"paths":       first.TouchedPaths,
+	} {
+		if len(values) > maxGenerationFeedbackItems {
+			t.Errorf("%s item count = %d, want <= %d", name, len(values), maxGenerationFeedbackItems)
+		}
+		if !sort.StringsAreSorted(values) {
+			t.Errorf("%s items are not normalized deterministically: %#v", name, values)
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) != value || strings.Contains(value, "  ") || len([]rune(value)) > maxGenerationFeedbackItemRunes {
+				t.Errorf("%s item is not bounded/normalized: %q", name, value)
+			}
+		}
+	}
+	if len([]rune(first.Reason)) > maxGenerationFeedbackExplanationRunes || strings.TrimSpace(first.Reason) != first.Reason || strings.Contains(first.Reason, "  ") {
+		t.Fatalf("reason is not bounded/normalized: %q", first.Reason)
+	}
+	otherCallOutcome, err := newGroundingVerificationOutcome(2, uuid.New(), decision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PatchSHA256 != otherCallOutcome.PatchSHA256 || first.DiffSHA256 != otherCallOutcome.DiffSHA256 {
+		t.Fatal("AI call identity changed semantic artifact fingerprints")
+	}
+	otherCallOutcome.GeneratorCallID = first.GeneratorCallID
+	if !reflect.DeepEqual(first, otherCallOutcome) {
+		t.Fatal("AI call identity affected outcome fields beyond the audit-only generator_call_id")
+	}
+
+	raw, err := marshalGroundingVerificationOutcome(&first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(raw) || strings.Contains(string(raw), "secret-patch-artifact") || strings.Contains(string(raw), "secret-diff-artifact") {
+		t.Fatalf("marshaled outcome leaked raw artifacts: %s", raw)
+	}
+	empty, err := marshalGroundingVerificationOutcome(nil)
+	if err != nil || empty != nil {
+		t.Fatalf("nil outcome marshaled as %q, err=%v", empty, err)
+	}
+}
+
+func TestCanonicalApplyChainsGroundingCorrectionThroughVerifierCall(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	rejected := newPatchGroundingRejectionError(PatchVerification{
+		PrimaryIntentPreserved: true, PreservedPropositions: []string{}, IntentDrift: true,
+		AddedPropositions: []string{}, RemovedPropositions: []string{}, UnsupportedClaims: []string{},
+		Reason: "The patch changes the approved intent.",
+	})
+	verifier := &patchVerifierStub{
+		store:     store,
+		decisions: []PatchVerification{rejected.Decision, completeApprovedPatchVerification()},
+		results: []GenerationResult{
+			{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"},
+			{Provider: "test", Model: "verifier", Status: "ok"},
+		},
+		errors: []error{rejected, nil},
+	}
+
+	if _, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.generationCallIDs) != 2 || len(store.verifierCallIDs) != 2 ||
+		len(store.generationCausedBys) != 2 || len(store.verifierCausedBys) != 2 {
+		t.Fatalf("generation IDs/causes=%v/%v verifier IDs/causes=%v/%v",
+			store.generationCallIDs, store.generationCausedBys, store.verifierCallIDs, store.verifierCausedBys)
+	}
+	if store.generationCausedBys[0] != store.selectionCallID ||
+		store.verifierCausedBys[0] != store.generationCallIDs[0] ||
+		store.generationCausedBys[1] != store.verifierCallIDs[0] ||
+		store.verifierCausedBys[1] != store.generationCallIDs[1] {
+		t.Fatalf("causal chain selection=%s generations=%v generation causes=%v verifiers=%v verifier causes=%v",
+			store.selectionCallID, store.generationCallIDs, store.generationCausedBys, store.verifierCallIDs, store.verifierCausedBys)
+	}
+	wantTail := []string{
+		"start_ai", "provider", "finish_ai:ok", "start_verifier", "verifier", "finish_verifier:failed",
+		"start_ai", "provider", "finish_ai:ok", "start_verifier", "verifier", "finish_verifier:ok", "finalize",
+	}
+	if tail := store.events[len(store.events)-len(wantTail):]; !reflect.DeepEqual(tail, wantTail) {
+		t.Fatalf("event tail = %#v, want %#v", tail, wantTail)
+	}
+	assertGroundingRejectionResults(t, store.verificationResults, 1)
+}
+
+func TestCanonicalApplyExhaustsSharedBudgetAfterGroundingRejections(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	decisions := make([]PatchVerification, 0, 1+maxGenerationCorrectionRounds)
+	results := make([]GenerationResult, 0, 1+maxGenerationCorrectionRounds)
+	verifierErrors := make([]error, 0, 1+maxGenerationCorrectionRounds)
+	for round := 0; round < 1+maxGenerationCorrectionRounds; round++ {
+		rejected := newPatchGroundingRejectionError(PatchVerification{
+			PrimaryIntentPreserved: true, PreservedPropositions: []string{},
+			AddedPropositions: []string{}, RemovedPropositions: []string{},
+			UnsupportedClaims: []string{fmt.Sprintf("Unsupported claim %d.", round)},
+			Reason:            fmt.Sprintf("Grounding rejection %d.", round),
+		})
+		decisions = append(decisions, rejected.Decision)
+		results = append(results, GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"})
+		verifierErrors = append(verifierErrors, fmt.Errorf("wrapped grounding rejection %d: %w", round, rejected))
+	}
+	verifier := &patchVerifierStub{store: store, decisions: decisions, results: results, errors: verifierErrors}
+
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err == nil || !errors.Is(err, ErrPatchGroundingRejected) {
+		t.Fatalf("Apply error = %v, want grounding rejection", err)
+	}
+	if generator.calls != 1+maxGenerationCorrectionRounds || verifier.calls != 1+maxGenerationCorrectionRounds {
+		t.Fatalf("generator/verifier calls = %d/%d, want %d/%d", generator.calls, verifier.calls,
+			1+maxGenerationCorrectionRounds, 1+maxGenerationCorrectionRounds)
+	}
+	if store.finalizeCount != 0 {
+		t.Fatalf("finalize count = %d, want 0", store.finalizeCount)
+	}
+	if store.preparationFailure != "grounding_rejected" {
+		t.Fatalf("preparation failure = %q, want grounding_rejected", store.preparationFailure)
+	}
+	var exhaustedRejection *PatchGroundingRejectionError
+	if !errors.As(err, &exhaustedRejection) || exhaustedRejection == nil || !completePatchVerificationDecision(exhaustedRejection.Decision) {
+		t.Fatalf("Apply error = %v, want complete typed grounding rejection", err)
+	}
+	assertGroundingRejectionResults(t, store.verificationResults, 1+maxGenerationCorrectionRounds)
+}
+
+func TestCanonicalApplyDoesNotCorrectUntrustedVerifierErrors(t *testing.T) {
+	providerErr := errors.New("verifier provider unavailable")
+	incompleteErr := errors.New("independent patch grounding verifier returned an incomplete decision")
+	incompleteTypedErr := &PatchGroundingRejectionError{}
+	tests := []struct {
+		name            string
+		result          GenerationResult
+		err             error
+		wantIs          error
+		wantNotIs       []error
+		wantContains    string
+		wantPreparation string
+	}{
+		{
+			name: "provider error", result: GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "provider_error"},
+			err: providerErr, wantIs: providerErr, wantNotIs: []error{ErrPatchGroundingRejected}, wantPreparation: "provider_unavailable",
+		},
+		{
+			name: "incomplete decision error", result: GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "invalid_response"},
+			err: incompleteErr, wantIs: errInvalidModelResponse, wantNotIs: []error{incompleteErr, ErrPatchGroundingRejected}, wantPreparation: "invalid_response",
+		},
+		{
+			name: "typed rejection without complete decision", result: GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"},
+			err: incompleteTypedErr, wantIs: errInvalidModelResponse, wantNotIs: []error{incompleteTypedErr, ErrPatchGroundingRejected}, wantPreparation: "invalid_response",
+		},
+		{
+			name: "grounding sentinel without typed decision", result: GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"},
+			err: ErrPatchGroundingRejected, wantNotIs: []error{ErrPatchGroundingRejected},
+			wantContains: "missing its typed decision", wantPreparation: "preparation_failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectID, fixID := uuid.New(), uuid.New()
+			store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+			generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+			verifier := &patchVerifierStub{
+				store: store, decisions: []PatchVerification{{}}, results: []GenerationResult{test.result}, errors: []error{test.err},
+			}
+
+			_, applyErr := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+			if applyErr == nil {
+				t.Fatal("expected terminal verifier error")
+			}
+			if test.wantIs != nil && !errors.Is(applyErr, test.wantIs) {
+				t.Fatalf("Apply error = %v, want errors.Is(..., %v)", applyErr, test.wantIs)
+			}
+			for _, unwanted := range test.wantNotIs {
+				if errors.Is(applyErr, unwanted) {
+					t.Fatalf("Apply error = %v unexpectedly retained %v", applyErr, unwanted)
+				}
+			}
+			if test.wantContains != "" && !strings.Contains(applyErr.Error(), test.wantContains) {
+				t.Fatalf("Apply error = %v, want text %q", applyErr, test.wantContains)
+			}
+			if generator.calls != 1 || verifier.calls != 1 || len(generator.feedback) != 1 {
+				t.Fatalf("generator/verifier/feedback calls = %d/%d/%d, want 1/1/1", generator.calls, verifier.calls, len(generator.feedback))
+			}
+			if store.finalizeCount != 0 {
+				t.Fatalf("finalize count = %d, want 0", store.finalizeCount)
+			}
+			if store.preparationFailure != test.wantPreparation {
+				t.Fatalf("preparation failure = %q, want %q", store.preparationFailure, test.wantPreparation)
+			}
+			if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+				t.Fatalf("untrusted verifier outcomes = %#v, want one nil outcome", store.verificationOutcomes)
+			}
+		})
+	}
+}
+
+func TestCanonicalApplyRejectsIncompleteRawVerifierDecisions(t *testing.T) {
+	tests := []struct {
+		name     string
+		decision PatchVerification
+	}{
+		{
+			name: "approved without required lists or reason",
+			decision: PatchVerification{
+				Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{},
+			},
+		},
+		{
+			name:     "rejected with reason only",
+			decision: PatchVerification{Reason: "The verifier rejected the patch."},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectID, fixID := uuid.New(), uuid.New()
+			store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+			generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+			verifier := &patchVerifierStub{
+				store:     store,
+				decisions: []PatchVerification{test.decision},
+				results:   []GenerationResult{{Provider: "test", Model: "verifier", Status: "ok"}},
+				errors:    []error{nil},
+			}
+
+			_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+			if err == nil || !errors.Is(err, errInvalidModelResponse) || errors.Is(err, ErrPatchGroundingRejected) ||
+				!strings.Contains(err.Error(), "incomplete decision") {
+				t.Fatalf("Apply error = %v, want terminal invalid-response error", err)
+			}
+			if generator.calls != 1 || verifier.calls != 1 || store.finalizeCount != 0 {
+				t.Fatalf("generator/verifier/finalize calls = %d/%d/%d, want 1/1/0", generator.calls, verifier.calls, store.finalizeCount)
+			}
+			if len(store.verificationResults) != 1 || store.verificationResults[0].Status != "failed" ||
+				store.verificationResults[0].ErrorCode != "invalid_response" {
+				t.Fatalf("persisted verifier results = %+v, want one failed/invalid_response", store.verificationResults)
+			}
+			if store.preparationFailure != "invalid_response" {
+				t.Fatalf("preparation failure = %q, want invalid_response", store.preparationFailure)
+			}
+			if len(store.verificationOutcomes) != 1 || store.verificationOutcomes[0] != nil {
+				t.Fatalf("incomplete verifier outcomes = %#v, want one nil outcome", store.verificationOutcomes)
+			}
+		})
+	}
+}
+
+func TestCanonicalApplyRejectsInconsistentGroundingRejectionLedgerResults(t *testing.T) {
+	tests := []struct {
+		name   string
+		result GenerationResult
+	}{
+		{
+			name:   "successful status",
+			result: GenerationResult{Provider: "test", Model: "verifier", Status: "ok"},
+		},
+		{
+			name:   "wrong error code",
+			result: GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "provider_error"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectID, fixID := uuid.New(), uuid.New()
+			store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+			generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+			rejected := newPatchGroundingRejectionError(PatchVerification{
+				PrimaryIntentPreserved: true, PreservedPropositions: []string{}, IntentDrift: true,
+				AddedPropositions: []string{}, RemovedPropositions: []string{}, UnsupportedClaims: []string{},
+				Reason: "The patch changes the approved intent.",
+			})
+			verifier := &patchVerifierStub{
+				store: store, decisions: []PatchVerification{rejected.Decision},
+				results: []GenerationResult{test.result}, errors: []error{rejected},
+			}
+
+			_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+			if err == nil || errors.Is(err, ErrPatchGroundingRejected) || !strings.Contains(err.Error(), "ledger result is inconsistent") {
+				t.Fatalf("Apply error = %v, want terminal grounding ledger invariant error", err)
+			}
+			if generator.calls != 1 || verifier.calls != 1 || store.finalizeCount != 0 {
+				t.Fatalf("generator/verifier/finalize calls = %d/%d/%d, want 1/1/0", generator.calls, verifier.calls, store.finalizeCount)
+			}
+			if store.preparationFailure != "preparation_failed" {
+				t.Fatalf("preparation failure = %q, want preparation_failed", store.preparationFailure)
+			}
+			assertGroundingRejectionResults(t, store.verificationResults, 1)
+		})
+	}
+}
+
+func TestCanonicalApplyRejectsTypedNilGroundingRejectionWithoutPanic(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	var typedNil *PatchGroundingRejectionError
+	verifier := &patchVerifierStub{
+		store: store, decisions: []PatchVerification{{}},
+		results: []GenerationResult{{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"}},
+		errors:  []error{typedNil},
+	}
+
+	var applyErr error
+	var panicValue any
+	func() {
+		defer func() { panicValue = recover() }()
+		_, applyErr = applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	}()
+	if panicValue != nil {
+		t.Fatalf("Apply panicked for typed-nil grounding rejection: %v", panicValue)
+	}
+	if applyErr == nil || !strings.Contains(applyErr.Error(), "nil grounding rejection") {
+		t.Fatalf("Apply error = %v, want terminal nil-rejection invariant error", applyErr)
+	}
+	if errors.Is(applyErr, ErrPatchGroundingRejected) {
+		t.Fatalf("Apply error retained trusted grounding sentinel: %v", applyErr)
+	}
+	if generator.calls != 1 || verifier.calls != 1 || store.finalizeCount != 0 {
+		t.Fatalf("generator/verifier/finalize calls = %d/%d/%d, want 1/1/0", generator.calls, verifier.calls, store.finalizeCount)
+	}
+	if len(store.verificationResults) != 1 || store.verificationResults[0].Status != "failed" ||
+		store.verificationResults[0].ErrorCode != "invalid_response" {
+		t.Fatalf("persisted verifier results = %+v, want one failed/invalid_response", store.verificationResults)
+	}
+	if store.preparationFailure != "preparation_failed" {
+		t.Fatalf("preparation failure = %q, want preparation_failed", store.preparationFailure)
+	}
+}
+
+func TestCanonicalApplyCorrectsWrappedCompleteGroundingRejection(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{store: store, plan: applicationPlanForApplyTest(fixID)}
+	rejected := newPatchGroundingRejectionError(PatchVerification{
+		PrimaryIntentPreserved: true, PreservedPropositions: []string{}, IntentDrift: true,
+		AddedPropositions: []string{}, RemovedPropositions: []string{}, UnsupportedClaims: []string{},
+		Reason: "The patch changes the approved intent.",
+	})
+	verifier := &patchVerifierStub{
+		store:     store,
+		decisions: []PatchVerification{rejected.Decision, completeApprovedPatchVerification()},
+		results: []GenerationResult{
+			{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"},
+			{Provider: "test", Model: "verifier", Status: "ok"},
+		},
+		errors: []error{fmt.Errorf("wrapped verifier rejection: %w", rejected), nil},
+	}
+
+	if _, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID); err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 2 || verifier.calls != 2 || store.finalizeCount != 1 {
+		t.Fatalf("generator/verifier/finalize calls = %d/%d/%d, want 2/2/1", generator.calls, verifier.calls, store.finalizeCount)
+	}
+	if generator.feedback[1].Kind != generationFeedbackGrounding {
+		t.Fatalf("wrapped rejection feedback = %#v, want grounding feedback", generator.feedback)
+	}
+	assertGroundingRejectionResults(t, store.verificationResults, 1)
+}
+
+func TestCanonicalApplySharesBudgetBetweenRepositoryAndGroundingCorrections(t *testing.T) {
+	projectID, fixID := uuid.New(), uuid.New()
+	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
+	generator := &fixGeneratorStub{
+		store: store, failuresBeforeSuccess: 1, failureCode: "invalid_repository_patch", plan: applicationPlanForApplyTest(fixID),
+	}
+	decisions := make([]PatchVerification, 0, maxGenerationCorrectionRounds)
+	results := make([]GenerationResult, 0, maxGenerationCorrectionRounds)
+	verifierErrors := make([]error, 0, maxGenerationCorrectionRounds)
+	for round := 0; round < maxGenerationCorrectionRounds; round++ {
+		rejected := newPatchGroundingRejectionError(PatchVerification{
+			PrimaryIntentPreserved: true, PreservedPropositions: []string{}, IntentDrift: true,
+			AddedPropositions: []string{}, RemovedPropositions: []string{}, UnsupportedClaims: []string{},
+			Reason: fmt.Sprintf("Grounding rejection %d.", round),
+		})
+		decisions = append(decisions, rejected.Decision)
+		results = append(results, GenerationResult{Provider: "test", Model: "verifier", Status: "failed", ErrorCode: "grounding_rejected"})
+		verifierErrors = append(verifierErrors, rejected)
+	}
+	verifier := &patchVerifierStub{store: store, decisions: decisions, results: results, errors: verifierErrors}
+
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
+	if err == nil || !errors.Is(err, ErrPatchGroundingRejected) {
+		t.Fatalf("Apply error = %v, want grounding rejection", err)
+	}
+	if generator.calls != 1+maxGenerationCorrectionRounds || verifier.calls != maxGenerationCorrectionRounds {
+		t.Fatalf("generator/verifier calls = %d/%d, want %d/%d", generator.calls, verifier.calls,
+			1+maxGenerationCorrectionRounds, maxGenerationCorrectionRounds)
+	}
+	if store.finalizeCount != 0 {
+		t.Fatalf("finalize count = %d, want 0", store.finalizeCount)
+	}
+	if generator.feedback[1].Kind != generationFeedbackRepositoryPatch ||
+		generator.feedback[2].Kind != generationFeedbackGrounding {
+		t.Fatalf("feedback sequence = %#v", generator.feedback)
+	}
+	assertGroundingRejectionResults(t, store.verificationResults, maxGenerationCorrectionRounds)
+}
+
 func TestCanonicalApplyBoundsGenerationCorrectionRounds(t *testing.T) {
 	projectID, fixID := uuid.New(), uuid.New()
 	store := &applyStoreStub{fix: db.SiteFix{ID: fixID, ProjectID: projectID, Status: "approved", EvidenceSnapshot: json.RawMessage(`{"finding":{"preserved_propositions":[]}}`)}}
 	generator := &fixGeneratorStub{store: store, failuresBeforeSuccess: 99, failureCode: "invalid_repository_patch"}
-	_, err := applyServiceForTest(store, generator, &patchVerifierStub{store: store}).Apply(context.Background(), projectID, fixID)
+	verifier := &patchVerifierStub{store: store}
+	_, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
 	if err == nil {
 		t.Fatal("expected exhausted correction rounds to fail")
 	}
@@ -112,6 +667,9 @@ func TestCanonicalApplyBoundsGenerationCorrectionRounds(t *testing.T) {
 	}
 	if store.preparationFailure != "invalid_repository_patch" {
 		t.Fatalf("preparation failure = %q", store.preparationFailure)
+	}
+	if verifier.calls != 0 || store.finalizeCount != 0 {
+		t.Fatalf("verifier/finalize calls = %d/%d, want 0/0", verifier.calls, store.finalizeCount)
 	}
 
 	// Non-correctable failures never get a correction round.
@@ -176,7 +734,7 @@ func TestCanonicalApplyIgnoresTerminalFailedApplicationForReprepare(t *testing.T
 		TargetURL: "https://example.com/", NormalizedTargetURL: "https://example.com/", OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
 		SourceFilePaths: json.RawMessage(`["app/page.tsx"]`), PatchSnapshot: json.RawMessage(`{"change":"safe"}`), DiffSnapshot: json.RawMessage(`{}`), ResolutionCriteria: json.RawMessage(`{"acceptance_tests":[]}`),
 	}}
-	verifier := &patchVerifierStub{store: store, verification: PatchVerification{Approved: true, PrimaryIntentPreserved: true, PreservedPropositions: []string{}}}
+	verifier := &patchVerifierStub{store: store, verification: completeApprovedPatchVerification()}
 	result, err := applyServiceForTest(store, generator, verifier).Apply(context.Background(), projectID, fixID)
 	if err != nil {
 		t.Fatal(err)
@@ -299,6 +857,88 @@ func TestCanonicalApplyIndependentlyRejectsUnsupportedClaimHiddenByGeneratorSelf
 	}
 }
 
+func TestGroundingVerifierReturnsTypedBoundedRejectionDecision(t *testing.T) {
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	longReason := strings.Repeat(" private verifier detail ", maxGenerationFeedbackExplanationRunes)
+	added := make([]string, 0, maxGenerationFeedbackItems+2)
+	for i := 0; i < maxGenerationFeedbackItems+2; i++ {
+		added = append(added, fmt.Sprintf("  Added proposition %d   with spacing  ", i))
+	}
+	response, err := json.Marshal(map[string]any{
+		"approved": false, "primary_intent_preserved": false,
+		"preserved_propositions": []string{"Existing supported fact."},
+		"added_propositions":     added,
+		"removed_propositions":   []string{"  Existing proposition removed.  "},
+		"unsupported_claims":     []string{"  Unsupported commercial promise.  "},
+		"intent_drift":           true, "reason": longReason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &groundingProviderStub{response: string(response)}
+	verification, result, err := (LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}).Verify(
+		context.Background(), fix, contextSnapshot, ApplicationPlan{}, nil,
+	)
+	if result.Status != "failed" || result.ErrorCode != "grounding_rejected" {
+		t.Fatalf("result = %+v", result)
+	}
+	if !errors.Is(err, ErrPatchGroundingRejected) {
+		t.Fatalf("Verify error = %v, want grounding rejection", err)
+	}
+	var rejection *PatchGroundingRejectionError
+	if !errors.As(err, &rejection) {
+		t.Fatalf("Verify error type = %T, want *PatchGroundingRejectionError", err)
+	}
+	if err.Error() != ErrPatchGroundingRejected.Error() || strings.Contains(err.Error(), "private verifier detail") {
+		t.Fatalf("public rejection error exposed private reason: %q", err)
+	}
+	if !reflect.DeepEqual(verification, rejection.Decision) {
+		t.Fatalf("returned verification = %#v, rejection decision = %#v", verification, rejection.Decision)
+	}
+	if got := len(rejection.Decision.AddedPropositions); got != maxGenerationFeedbackItems {
+		t.Fatalf("bounded added propositions = %d, want %d", got, maxGenerationFeedbackItems)
+	}
+	if len([]rune(rejection.Decision.Reason)) > maxGenerationFeedbackExplanationRunes {
+		t.Fatalf("bounded reason has %d runes", len([]rune(rejection.Decision.Reason)))
+	}
+	if rejection.Decision.AddedPropositions[0] != "Added proposition 0 with spacing" ||
+		rejection.Decision.RemovedPropositions[0] != "Existing proposition removed." ||
+		rejection.Decision.UnsupportedClaims[0] != "Unsupported commercial promise." {
+		t.Fatalf("decision lists were not normalized: %#v", rejection.Decision)
+	}
+}
+
+func TestGroundingVerifierMalformedOrIncompleteOutputHasNoTrustedDecision(t *testing.T) {
+	fix := groundedOptimizationFix()
+	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{name: "malformed", response: `not json`},
+		{name: "incomplete", response: `{"approved":false,"primary_intent_preserved":false,"preserved_propositions":[],"added_propositions":[],"removed_propositions":[],"unsupported_claims":[],"intent_drift":true}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &groundingProviderStub{response: test.response}
+			verification, result, err := (LLMPatchGroundingVerifier{Provider: provider, Model: "verifier-model"}).Verify(
+				context.Background(), fix, contextSnapshot, ApplicationPlan{}, nil,
+			)
+			if err == nil || result.Status != "failed" || result.ErrorCode != "invalid_response" {
+				t.Fatalf("verification=%#v result=%+v err=%v", verification, result, err)
+			}
+			if !reflect.DeepEqual(verification, PatchVerification{}) {
+				t.Fatalf("untrusted verifier output escaped: %#v", verification)
+			}
+			var rejection *PatchGroundingRejectionError
+			if errors.As(err, &rejection) || errors.Is(err, ErrPatchGroundingRejected) {
+				t.Fatalf("invalid response became a trusted grounding decision: %v", err)
+			}
+		})
+	}
+}
+
 func TestGroundingVerifierRequestRejectsUnrelatedRepositoryEdits(t *testing.T) {
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
@@ -355,7 +995,7 @@ func TestDoctorAIApplicationIsGroundedInContextAndObservedEvidence(t *testing.T)
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), GenerationFeedback{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +1011,7 @@ func TestDoctorAIApplicationDerivesGroundingFromApprovedEvidence(t *testing.T) {
 	provider := &groundingProviderStub{response: `{"files":[{"path":"app/page.tsx","base_sha":"blob-1","replacements":[{"old_text":"Old title","new_text":"New title"}]}]}`}
 	fix := groundedOptimizationFix()
 	contextSnapshot := GenerationContext{ProductProfile: json.RawMessage(`{"positioning":"Existing product context"}`), ProfileVersion: 7, ObservedEvidence: fix.EvidenceSnapshot}
-	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), "", nil)
+	plan, _, err := (LLMApplicationGenerator{Provider: provider, Model: "test-model"}).Generate(context.Background(), fix, contextSnapshot, testRepositorySnapshot(), GenerationFeedback{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,6 +1147,11 @@ type applyStoreStub struct {
 	generationCausedBy              uuid.UUID
 	generationCausedBys             []uuid.UUID
 	generationCallIDs               []uuid.UUID
+	verifierCausedBys               []uuid.UUID
+	verifierCallIDs                 []uuid.UUID
+	verificationResults             []GenerationResult
+	verificationOutcomes            []*GroundingVerificationOutcome
+	finalizeCount                   int
 	preparationFailure              string
 }
 
@@ -556,12 +1201,17 @@ func (s *applyStoreStub) FinishGeneration(_ context.Context, _ db.SiteFix, _ uui
 	s.finishedCalls++
 	return nil
 }
-func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.SiteFix, _ GenerationCall, _ uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
+func (s *applyStoreStub) StartGroundingVerification(_ context.Context, _ db.SiteFix, _ GenerationCall, causedBy uuid.UUID) (uuid.UUID, siteFixAICallAttempt, error) {
 	s.events = append(s.events, "start_verifier")
-	return uuid.New(), &siteFixAttemptSpy{}, nil
+	s.verifierCausedBys = append(s.verifierCausedBys, causedBy)
+	callID := uuid.New()
+	s.verifierCallIDs = append(s.verifierCallIDs, callID)
+	return callID, &siteFixAttemptSpy{}, nil
 }
-func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult) error {
+func (s *applyStoreStub) FinishGroundingVerification(_ context.Context, _ db.SiteFix, _ uuid.UUID, result GenerationResult, outcome *GroundingVerificationOutcome) error {
 	s.events = append(s.events, "finish_verifier:"+result.Status)
+	s.verificationResults = append(s.verificationResults, result)
+	s.verificationOutcomes = append(s.verificationOutcomes, outcome)
 	return nil
 }
 func (s *applyStoreStub) RecordPreparationFailure(_ context.Context, _ db.SiteFix, code string) error {
@@ -570,6 +1220,7 @@ func (s *applyStoreStub) RecordPreparationFailure(_ context.Context, _ db.SiteFi
 }
 func (s *applyStoreStub) Finalize(_ context.Context, fix db.SiteFix, plan ApplicationPlan) (db.SiteFix, db.SiteChangeApplication, error) {
 	s.events = append(s.events, "finalize")
+	s.finalizeCount++
 	s.lifecycleTransactionOpen = true
 	defer func() { s.lifecycleTransactionOpen = false }()
 	fix.Status = "applying"
@@ -585,18 +1236,18 @@ type fixGeneratorStub struct {
 	failuresBeforeSuccess int
 	failureCode           string
 	calls                 int
-	rejections            []string
+	feedback              []GenerationFeedback
 }
 
-func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, string) GenerationCall {
+func (g *fixGeneratorStub) Describe(db.SiteFix, GenerationContext, RepositorySnapshot, GenerationFeedback) GenerationCall {
 	return GenerationCall{Provider: "test", Model: "model", PromptVersion: "doctor-fix-v1", RequestFingerprint: "fingerprint"}
 }
-func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, rejection string, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
+func (g *fixGeneratorStub) Generate(ctx context.Context, fix db.SiteFix, generationContext GenerationContext, _ RepositorySnapshot, feedback GenerationFeedback, attempt siteFixAICallAttempt) (ApplicationPlan, GenerationResult, error) {
 	if !g.skipAttempt {
 		_, _ = attempt.StartAttempt(ctx, "generator-test")
 	}
 	g.calls++
-	g.rejections = append(g.rejections, rejection)
+	g.feedback = append(g.feedback, feedback)
 	g.store.events = append(g.store.events, "provider")
 	g.store.providerSawLifecycleTransaction = g.store.lifecycleTransactionOpen
 	plan, result, err := g.generate()
@@ -622,6 +1273,10 @@ type patchVerifierStub struct {
 	store        *applyStoreStub
 	verification PatchVerification
 	err          error
+	decisions    []PatchVerification
+	results      []GenerationResult
+	errors       []error
+	calls        int
 }
 
 func (v *patchVerifierStub) Describe(db.SiteFix, GenerationContext, ApplicationPlan) GenerationCall {
@@ -632,10 +1287,30 @@ func (v *patchVerifierStub) Verify(ctx context.Context, _ db.SiteFix, _ Generati
 	_, _ = attempt.StartAttempt(ctx, "verifier-test")
 	v.store.events = append(v.store.events, "verifier")
 	v.store.verifierSawLifecycleTransaction = v.store.lifecycleTransactionOpen
+	call := v.calls
+	v.calls++
+	decision := v.verification
+	result := GenerationResult{Provider: "test", Model: "verifier", Status: "ok"}
+	verifyErr := v.err
 	if v.err != nil {
-		return PatchVerification{}, GenerationResult{Status: "failed", ErrorCode: "provider_unavailable"}, v.err
+		result = GenerationResult{Status: "failed", ErrorCode: "provider_unavailable"}
 	}
-	return v.verification, GenerationResult{Provider: "test", Model: "verifier", Status: "ok"}, nil
+	sequenceLength := max(len(v.decisions), len(v.results), len(v.errors))
+	if sequenceLength > 0 {
+		if call >= sequenceLength {
+			return PatchVerification{}, GenerationResult{Status: "failed", ErrorCode: "test_sequence_exhausted"}, errors.New("patch verifier stub outcome sequence exhausted")
+		}
+		if call < len(v.decisions) {
+			decision = v.decisions[call]
+		}
+		if call < len(v.results) {
+			result = v.results[call]
+		}
+		if call < len(v.errors) {
+			verifyErr = v.errors[call]
+		}
+	}
+	return decision, result, verifyErr
 }
 
 type siteFixAttemptSpy struct{ started bool }
@@ -660,6 +1335,40 @@ func applyServiceForTest(store *applyStoreStub, generator FixGenerator, verifier
 		Store: store, SourceLoader: loader,
 		SourceSelector: &repositorySelectorStub{store: store, paths: []string{repository.Sources[0].Path}},
 		Generator:      generator, Verifier: verifier,
+	}
+}
+
+func applicationPlanForApplyTest(fixID uuid.UUID) ApplicationPlan {
+	return ApplicationPlan{
+		TargetURL: "https://example.com/", NormalizedTargetURL: "https://example.com/",
+		OpportunityKey: "doctor:" + fixID.String(), Status: "ready_for_pr",
+		SourceFilePaths:    json.RawMessage(`["app/page.tsx"]`),
+		PatchSnapshot:      json.RawMessage(`{"change":"canonical"}`),
+		DiffSnapshot:       json.RawMessage(`{}`),
+		ResolutionCriteria: json.RawMessage(`{"asset_type":"canonical"}`),
+	}
+}
+
+func completeApprovedPatchVerification(propositions ...string) PatchVerification {
+	return PatchVerification{
+		Approved: true, PrimaryIntentPreserved: true,
+		PreservedPropositions: append([]string{}, propositions...),
+		AddedPropositions:     []string{},
+		RemovedPropositions:   []string{},
+		UnsupportedClaims:     []string{},
+		Reason:                "The patch preserves the approved intent and proposition set.",
+	}
+}
+
+func assertGroundingRejectionResults(t *testing.T, results []GenerationResult, want int) {
+	t.Helper()
+	if len(results) < want {
+		t.Fatalf("persisted verifier results = %+v, want at least %d grounding rejections", results, want)
+	}
+	for index := 0; index < want; index++ {
+		if results[index].Status != "failed" || results[index].ErrorCode != "grounding_rejected" {
+			t.Fatalf("persisted verifier result %d = %+v, want failed/grounding_rejected", index, results[index])
+		}
 	}
 }
 

@@ -90,7 +90,7 @@ where $11::uuid is null or exists (
     and parent.linked_object_id = $5
     and parent.request_fingerprint = $9
 )
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type CreateAICallRecordParams struct {
@@ -150,6 +150,7 @@ func (q *Queries) CreateAICallRecord(ctx context.Context, arg CreateAICallRecord
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -185,7 +186,7 @@ where $11::uuid is null or exists (
     and parent.linked_object_id = $5
     and parent.request_fingerprint = $9
 )
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type CreateSkippedAICallRecordParams struct {
@@ -245,6 +246,7 @@ func (q *Queries) CreateSkippedAICallRecord(ctx context.Context, arg CreateSkipp
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -266,7 +268,7 @@ update ai_call_records set
 where id = $9
   and project_id = $10
   and status = 'running'
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type FinishAICallRecordParams struct {
@@ -322,6 +324,7 @@ func (q *Queries) FinishAICallRecord(ctx context.Context, arg FinishAICallRecord
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -330,7 +333,7 @@ const finishAICallRecordIfRunning = `-- name: FinishAICallRecordIfRunning :one
 update ai_call_records set
   status = 'failed', error_code = $1, finished_at = now(), updated_at = now()
 where id = $2 and project_id = $3 and status = 'running'
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type FinishAICallRecordIfRunningParams struct {
@@ -368,6 +371,7 @@ func (q *Queries) FinishAICallRecordIfRunning(ctx context.Context, arg FinishAIC
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -384,10 +388,13 @@ update ai_call_records set
   cost_usd = case when status = 'skipped' or (status in ('queued', 'running') and $1::text = 'skipped') then 0::numeric else $8::numeric end,
   provider_called = case when status in ('queued', 'running') then $1::text <> 'skipped' else provider_called end,
   provider_started_at = case when status in ('queued', 'running') and $1::text = 'skipped' then null else provider_started_at end,
+  verifier_outcome = case when stage = 'fix_grounding_verification'
+    and (status in ('ok', 'partial') or (status in ('queued', 'running') and $1::text = 'skipped'))
+    then coalesce(verifier_outcome, $9) else verifier_outcome end,
   finished_at = coalesce(finished_at, now()),
   updated_at = now()
-where id = $9 and project_id = $10
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+where id = $10 and project_id = $11
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type FinishCanonicalAICallFencedParams struct {
@@ -399,6 +406,7 @@ type FinishCanonicalAICallFencedParams struct {
 	CompletionTokens int32          `json:"completion_tokens"`
 	TotalTokens      int32          `json:"total_tokens"`
 	CostUsd          pgtype.Numeric `json:"cost_usd"`
+	VerifierOutcome  []byte         `json:"verifier_outcome"`
 	ID               uuid.UUID      `json:"id"`
 	ProjectID        uuid.UUID      `json:"project_id"`
 }
@@ -413,6 +421,7 @@ func (q *Queries) FinishCanonicalAICallFenced(ctx context.Context, arg FinishCan
 		arg.CompletionTokens,
 		arg.TotalTokens,
 		arg.CostUsd,
+		arg.VerifierOutcome,
 		arg.ID,
 		arg.ProjectID,
 	)
@@ -443,6 +452,7 @@ func (q *Queries) FinishCanonicalAICallFenced(ctx context.Context, arg FinishCan
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -462,7 +472,7 @@ update ai_call_records set
 where id = $2
   and project_id = $3
   and status = 'queued'
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type FinishQueuedAICallSkippedParams struct {
@@ -500,12 +510,13 @@ func (q *Queries) FinishQueuedAICallSkipped(ctx context.Context, arg FinishQueue
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
 
 const getAICallRecord = `-- name: GetAICallRecord :one
-select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id from ai_call_records where id = $1 and project_id = $2
+select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome from ai_call_records where id = $1 and project_id = $2
 `
 
 type GetAICallRecordParams struct {
@@ -542,12 +553,13 @@ func (q *Queries) GetAICallRecord(ctx context.Context, arg GetAICallRecordParams
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
 
 const getLatestAICallForRequest = `-- name: GetLatestAICallForRequest :one
-select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id from ai_call_records
+select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome from ai_call_records
 where project_id = $1
   and stage = $2
   and linked_object_type = $3
@@ -600,12 +612,13 @@ func (q *Queries) GetLatestAICallForRequest(ctx context.Context, arg GetLatestAI
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
 
 const listAICallsForObject = `-- name: ListAICallsForObject :many
-select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id from ai_call_records
+select id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome from ai_call_records
 where project_id = $1
   and linked_object_type = $2
   and linked_object_id = $3
@@ -653,6 +666,7 @@ func (q *Queries) ListAICallsForObject(ctx context.Context, arg ListAICallsForOb
 			&i.ProviderCalled,
 			&i.ProviderStartedAt,
 			&i.CausedByCallID,
+			&i.VerifierOutcome,
 		); err != nil {
 			return nil, err
 		}
@@ -674,7 +688,7 @@ update ai_call_records set
 where id = $2
   and project_id = $3
   and status = 'queued'
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type MarkAICallProviderStartedParams struct {
@@ -712,6 +726,7 @@ func (q *Queries) MarkAICallProviderStarted(ctx context.Context, arg MarkAICallP
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }
@@ -722,7 +737,7 @@ update ai_call_records set
 where id = $2
   and project_id = $3
   and status in ('ok', 'partial')
-returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id
+returning id, project_id, run_id, stage, linked_object_type, linked_object_id, provider, model, prompt_version, request_fingerprint, status, error_code, prompt_tokens, completion_tokens, total_tokens, cost_usd, parent_call_id, started_at, finished_at, created_at, updated_at, attempt_number, provider_called, provider_started_at, caused_by_call_id, verifier_outcome
 `
 
 type ReclassifyAICallRecordOutputFailureParams struct {
@@ -760,6 +775,7 @@ func (q *Queries) ReclassifyAICallRecordOutputFailure(ctx context.Context, arg R
 		&i.ProviderCalled,
 		&i.ProviderStartedAt,
 		&i.CausedByCallID,
+		&i.VerifierOutcome,
 	)
 	return i, err
 }

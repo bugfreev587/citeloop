@@ -13,7 +13,7 @@ func TestAICallReclaimOnlyFinishesRunningAndPreservesUsage(t *testing.T) {
 	}
 	query := namedSQL(t, strings.ToLower(string(raw)), "FinishAICallRecordIfRunning")
 	requireQuerySQL(t, query, "status = 'failed'", "and status = 'running'")
-	for _, forbidden := range []string{"prompt_tokens =", "completion_tokens =", "total_tokens =", "cost_usd =", "provider =", "model ="} {
+	for _, forbidden := range []string{"prompt_tokens =", "completion_tokens =", "total_tokens =", "cost_usd =", "provider =", "model =", "verifier_outcome ="} {
 		if strings.Contains(query, forbidden) {
 			t.Errorf("running-only reclaim must preserve ledger field %q", forbidden)
 		}
@@ -35,6 +35,9 @@ func TestFinishCanonicalAICallFencedPreservesCleanupTerminalStateAndLateUsage(t 
 		"else sqlc.arg(completion_tokens) end",
 		"else sqlc.arg(total_tokens) end",
 		"else sqlc.arg(cost_usd)::numeric end",
+		"verifier_outcome = case when stage = 'fix_grounding_verification'",
+		"then coalesce(verifier_outcome, sqlc.narg(verifier_outcome))",
+		"else verifier_outcome end",
 	} {
 		if !strings.Contains(query, required) {
 			t.Errorf("fenced canonical finish missing %q", required)
