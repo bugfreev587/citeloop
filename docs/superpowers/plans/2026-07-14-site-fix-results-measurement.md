@@ -83,12 +83,12 @@
 - Modify: internal/api/results_routes_test.go
 - Modify: internal/api/site_fixes_api_test.go
 
-- [ ] Write failing API contract tests for source_type=site_fix, actual-row-only visibility, deep links, measurement status, and project scoping.
-- [ ] Verify RED.
-- [ ] Add normalized Site Fix Results rows and detail reads without changing content-action writes.
-- [ ] Merge/paginate content action and Site Fix Results rows deterministically.
-- [ ] Return handoff status and measurement summary on Site Fix detail.
-- [ ] Run API tests and commit.
+- [x] Write failing API contract tests for source_type=site_fix, actual-row-only visibility, deep links, measurement status, and project scoping.
+- [x] Verify RED.
+- [x] Add normalized Site Fix Results rows and detail reads without changing content-action writes.
+- [x] Merge/paginate content action and Site Fix Results rows deterministically.
+- [x] Return handoff status and measurement summary on Site Fix detail.
+- [x] Run API tests and commit.
 
 ### Task 6: Web UI
 
