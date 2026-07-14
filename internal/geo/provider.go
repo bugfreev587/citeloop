@@ -80,9 +80,36 @@ type ObserveAnswerProviderResult struct {
 	Observations    []db.GeoObservation   `json:"observations"`
 	Score           db.GeoVisibilityScore `json:"score,omitempty"`
 	CostUSD         float64               `json:"cost_usd"`
+	Funnel          AnswerProviderFunnel  `json:"funnel"`
 	SkippedPrompts  []SkippedPrompt       `json:"skipped_prompts"`
 	SkippedEngines  []string              `json:"skipped_engines"`
 	DataSourceNotes []string              `json:"data_source_notes"`
+}
+
+type AnswerProviderFunnel struct {
+	PromptCount                         int `json:"prompt_count"`
+	Observations                        int `json:"observations"`
+	CitedURLCount                       int `json:"cited_url_count"`
+	ObservationsWithCitedURLs           int `json:"observations_with_cited_urls"`
+	CompetitorCitationCount             int `json:"competitor_citation_count"`
+	ObservationsWithCompetitorCitations int `json:"observations_with_competitor_citations"`
+	DerivedCompetitorCitationCount      int `json:"derived_competitor_citation_count"`
+	DerivedClassificationAuditCount     int `json:"derived_classification_audit_count"`
+	ProjectCitationCount                int `json:"project_citation_count"`
+	ObservationsWithProjectCitations    int `json:"observations_with_project_citations"`
+}
+
+func (f *AnswerProviderFunnel) Add(other AnswerProviderFunnel) {
+	f.PromptCount += other.PromptCount
+	f.Observations += other.Observations
+	f.CitedURLCount += other.CitedURLCount
+	f.ObservationsWithCitedURLs += other.ObservationsWithCitedURLs
+	f.CompetitorCitationCount += other.CompetitorCitationCount
+	f.ObservationsWithCompetitorCitations += other.ObservationsWithCompetitorCitations
+	f.DerivedCompetitorCitationCount += other.DerivedCompetitorCitationCount
+	f.DerivedClassificationAuditCount += other.DerivedClassificationAuditCount
+	f.ProjectCitationCount += other.ProjectCitationCount
+	f.ObservationsWithProjectCitations += other.ObservationsWithProjectCitations
 }
 
 type SkippedPrompt struct {
@@ -158,6 +185,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 		prompts = selected
 	}
 	prompts, result.SkippedPrompts = sampleProviderPrompts(prompts, req.MaxPrompts, req.Engine)
+	result.Funnel.PromptCount = len(prompts)
 	if len(prompts) == 0 {
 		return finish("degraded", result, 0, nil)
 	}
@@ -173,6 +201,7 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 				return finish("error", result, 0, err)
 			}
 			result.Observations = append(result.Observations, observation)
+			result.Funnel.Add(AnswerProviderFunnel{Observations: 1})
 		}
 		return finish("degraded", result, 0, nil)
 	}
@@ -191,11 +220,12 @@ func (s Service) ObserveAnswerProvider(ctx context.Context, projectID uuid.UUID,
 		return finish("error", result, costUSD, err)
 	}
 	for _, providerRow := range providerRows {
-		observation, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, competitors, evidenceObservedAt)
+		outcome, err := s.createProviderObservation(ctx, projectID, run.ID, providerRow, req, ownedSurfaces, competitors, evidenceObservedAt)
 		if err != nil {
 			return finish("error", result, costUSD, err)
 		}
-		result.Observations = append(result.Observations, observation)
+		result.Observations = append(result.Observations, outcome.Observation)
+		result.Funnel.Add(outcome.Funnel)
 	}
 	status := "ok"
 	if providerErr != nil || len(result.Observations) == 0 || budgetExceeded(req.BudgetUSD, costUSD) {
@@ -235,11 +265,16 @@ func (s Service) createProviderUnavailableObservation(ctx context.Context, proje
 	})
 }
 
-func (s Service) createProviderObservation(ctx context.Context, projectID, runID uuid.UUID, input ProviderObservation, req ObserveAnswerProviderRequest, ownedSurfaces []db.GeoExternalSurface, competitors []db.GeoCompetitor, observedAt time.Time) (db.GeoObservation, error) {
+type providerObservationOutcome struct {
+	Observation db.GeoObservation
+	Funnel      AnswerProviderFunnel
+}
+
+func (s Service) createProviderObservation(ctx context.Context, projectID, runID uuid.UUID, input ProviderObservation, req ObserveAnswerProviderRequest, ownedSurfaces []db.GeoExternalSurface, competitors []db.GeoCompetitor, observedAt time.Time) (providerObservationOutcome, error) {
 	projectURLs, surfaceIDs := projectCitations(input.CitedURLs, ownedSurfaces)
 	projectCitationCount := int32(len(projectURLs))
 	if err := s.touchCitedSurfaces(ctx, projectID, ownedSurfaces, surfaceIDs, observedAt); err != nil {
-		return db.GeoObservation{}, err
+		return providerObservationOutcome{}, err
 	}
 	classification := classifyCompetitorCitations(input, competitors)
 	observation, err := s.Q.CreateGEOObservation(ctx, db.CreateGEOObservationParams{
@@ -264,8 +299,9 @@ func (s Service) createProviderObservation(ctx context.Context, projectID, runID
 		ObservedAt:              pgutil.TS(observedAt),
 	})
 	if err != nil {
-		return db.GeoObservation{}, err
+		return providerObservationOutcome{}, err
 	}
+	auditCreated := false
 	if len(classification.Matches) > 0 {
 		if _, err := s.Q.CreateGEOClassificationAuditRecord(ctx, db.CreateGEOClassificationAuditRecordParams{
 			ProjectID:      projectID,
@@ -276,10 +312,37 @@ func (s Service) createProviderObservation(ctx context.Context, projectID, runID
 			Output:         jsonBytes(map[string]any{"competitor_citations": classification.Citations, "matches": classification.Matches}),
 			ReasonCodes:    jsonBytes([]string{"known_competitor_domain"}),
 		}); err != nil {
-			return db.GeoObservation{}, err
+			return providerObservationOutcome{}, err
 		}
+		auditCreated = true
 	}
-	return observation, nil
+	return providerObservationOutcome{
+		Observation: observation,
+		Funnel:      answerProviderObservationFunnel(input, observation, classification, auditCreated),
+	}, nil
+}
+
+func answerProviderObservationFunnel(input ProviderObservation, observation db.GeoObservation, classification competitorCitationClassification, auditCreated bool) AnswerProviderFunnel {
+	funnel := AnswerProviderFunnel{
+		Observations:                   1,
+		CitedURLCount:                  len(input.CitedURLs),
+		CompetitorCitationCount:        len(classification.Citations),
+		DerivedCompetitorCitationCount: len(classification.Matches),
+		ProjectCitationCount:           int(observation.ProjectCitationCount),
+	}
+	if len(input.CitedURLs) > 0 {
+		funnel.ObservationsWithCitedURLs = 1
+	}
+	if len(classification.Citations) > 0 {
+		funnel.ObservationsWithCompetitorCitations = 1
+	}
+	if auditCreated {
+		funnel.DerivedClassificationAuditCount = 1
+	}
+	if observation.ProjectCitationCount > 0 {
+		funnel.ObservationsWithProjectCitations = 1
+	}
+	return funnel
 }
 
 type competitorCitationClassification struct {
