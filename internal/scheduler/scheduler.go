@@ -36,6 +36,7 @@ import (
 	"github.com/citeloop/citeloop/internal/notification"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/citeloop/citeloop/internal/publisher"
 	"github.com/citeloop/citeloop/internal/search"
 	"github.com/citeloop/citeloop/internal/secretbox"
@@ -841,7 +842,26 @@ func (s *Scheduler) planOpportunityContentAction(ctx context.Context, q *db.Quer
 	if err != nil {
 		return db.Topic{}, err
 	}
-	topic, err := q.CreateTopic(ctx, topicFromContentAction(projectID, action, opp))
+	topicParams := topicFromContentAction(projectID, action, opp)
+	contracts, err := q.ListActivePlatformContentContracts(ctx)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	planInput, err := platformcontract.LegacyPlanInput(platformcontract.PlanInput{
+		ProjectID: projectID, OpportunityID: opp.ID, ContentActionID: action.ID,
+		AssetType: firstNonEmpty(contentActionAssetType(action), "blog_post"),
+	}, topicParams.Channel, contracts)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	targetPlan, err := platformcontract.CreatePlan(ctx, q, planInput)
+	if err != nil {
+		return db.Topic{}, err
+	}
+	topicParams.Channel = platformcontract.DeriveChannel(targetPlan)
+	topicParams.AssetType = ptr(targetPlan.AssetType)
+	topicParams.TargetPlanID = pgtype.UUID{Bytes: targetPlan.ID, Valid: true}
+	topic, err := q.CreateTopic(ctx, topicParams)
 	if err != nil {
 		return db.Topic{}, err
 	}

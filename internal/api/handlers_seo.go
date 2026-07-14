@@ -23,6 +23,7 @@ import (
 	"github.com/citeloop/citeloop/internal/llm"
 	"github.com/citeloop/citeloop/internal/opportunityfinding"
 	"github.com/citeloop/citeloop/internal/pgutil"
+	"github.com/citeloop/citeloop/internal/platformcontract"
 	"github.com/citeloop/citeloop/internal/publisher"
 	seopkg "github.com/citeloop/citeloop/internal/seo"
 	"github.com/citeloop/citeloop/internal/topicstate"
@@ -1097,8 +1098,11 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		PublishStrategy string `json:"publish_strategy"`
-		PublishTo       string `json:"publish_to"`
+		PublishStrategy string                    `json:"publish_strategy"`
+		PublishTo       string                    `json:"publish_to"`
+		AssetType       string                    `json:"asset_type"`
+		CanonicalTarget platformcontract.Target   `json:"canonical_target"`
+		TargetPlatforms []platformcontract.Target `json:"target_platforms"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	requestedPublishStrategy := firstNonEmpty(in.PublishStrategy, in.PublishTo)
@@ -1144,7 +1148,28 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "opportunity not found")
 		return
 	}
-	topic, err := s.Q.CreateTopic(r.Context(), topicFromContentAction(projectID, action, opp, requestedPublishStrategy))
+	assetType := firstNonEmpty(in.AssetType, contentActionAssetType(action), "blog_post")
+	planInput := platformcontract.PlanInput{
+		ProjectID: projectID, OpportunityID: opp.ID, ContentActionID: action.ID, AssetType: assetType,
+		CanonicalTarget: in.CanonicalTarget, Targets: in.TargetPlatforms, SelectionMode: "contract_matrix",
+	}
+	if len(in.TargetPlatforms) == 0 {
+		planInput, err = s.legacyTargetPlan(r.Context(), projectID, opp.ID, action.ID, assetType, requestedPublishStrategy)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	targetPlan, err := platformcontract.CreatePlan(r.Context(), s.Q, planInput)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	topicParams := topicFromContentAction(projectID, action, opp, requestedPublishStrategy)
+	topicParams.Channel = platformcontract.DeriveChannel(targetPlan)
+	topicParams.AssetType = strPtr(targetPlan.AssetType)
+	topicParams.TargetPlanID = pgtype.UUID{Bytes: targetPlan.ID, Valid: true}
+	topic, err := s.Q.CreateTopic(r.Context(), topicParams)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1169,6 +1194,20 @@ func (s *Server) planSEOContentAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, topic)
+}
+
+func (s *Server) legacyTargetPlan(ctx context.Context, projectID, opportunityID, actionID uuid.UUID, assetType, requestedStrategy string) (platformcontract.PlanInput, error) {
+	contracts, err := s.Q.ListActivePlatformContentContracts(ctx)
+	if err != nil {
+		return platformcontract.PlanInput{}, err
+	}
+	strategy := normalizePublishStrategy(requestedStrategy)
+	if strategy == "" {
+		strategy = "blog"
+	}
+	return platformcontract.LegacyPlanInput(platformcontract.PlanInput{
+		ProjectID: projectID, OpportunityID: opportunityID, ContentActionID: actionID, AssetType: assetType,
+	}, strategy, contracts)
 }
 
 func (s *Server) createPageUpdateDraftForAction(w http.ResponseWriter, r *http.Request) {

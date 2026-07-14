@@ -63,8 +63,8 @@ func (q *Queries) CountNonRejectedArticlesForTopic(ctx context.Context, topicID 
 
 const createTopic = `-- name: CreateTopic :one
 insert into topics
-  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id, asset_type, target_plan_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 returning id, project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, created_at, source_content_action_id, recovery_attempts, asset_type, target_plan_id
 `
 
@@ -81,6 +81,8 @@ type CreateTopicParams struct {
 	Status                string             `json:"status"`
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
 	SourceContentActionID pgtype.UUID        `json:"source_content_action_id"`
+	AssetType             *string            `json:"asset_type"`
+	TargetPlanID          pgtype.UUID        `json:"target_plan_id"`
 }
 
 func (q *Queries) CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic, error) {
@@ -97,6 +99,8 @@ func (q *Queries) CreateTopic(ctx context.Context, arg CreateTopicParams) (Topic
 		arg.Status,
 		arg.ScheduledAt,
 		arg.SourceContentActionID,
+		arg.AssetType,
+		arg.TargetPlanID,
 	)
 	var i Topic
 	err := row.Scan(

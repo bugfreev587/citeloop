@@ -1,7 +1,7 @@
 -- name: CreateTopic :one
 insert into topics
-  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, sqlc.narg(source_content_action_id))
+  (project_id, channel, title, target_keyword, target_prompt, angle, format, priority, internal_links, status, scheduled_at, source_content_action_id, asset_type, target_plan_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, sqlc.narg(source_content_action_id), sqlc.narg(asset_type), sqlc.narg(target_plan_id))
 returning *;
 
 -- name: GetTopic :one
