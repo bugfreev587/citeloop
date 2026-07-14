@@ -81,6 +81,26 @@ func ProjectSEOOpportunity(opportunity db.SeoOpportunity) Candidate {
 		CandidateSchemaVersion:  CandidateSchemaVersionV1,
 		SignatureVersion:        SignatureVersionV1,
 	}
+	var forwardSpec *growthspec.Spec
+	if opportunity.CanonicalGrowth && opportunity.GrowthSpecOrigin == "forward" {
+		switch opportunity.GrowthSpecState {
+		case growthspec.StateNeedsEvidence:
+			return holdCandidateWithStatus(candidate, StatusNeedsEvidence, growthSpecHoldReason(opportunity))
+		case growthspec.StateNeedsSpecification:
+			return holdCandidateWithStatus(candidate, StatusNeedsSpecification, growthSpecHoldReason(opportunity))
+		case growthspec.StateDecisionReady:
+			var typed growthspec.Spec
+			if err := json.Unmarshal(opportunity.GrowthSpec, &typed); err != nil {
+				return holdCandidate(candidate, "forward Growth specification is malformed")
+			}
+			if typed.SchemaVersion == growthspec.VersionV2 {
+				return projectV2GrowthCandidate(candidate, typed)
+			}
+			forwardSpec = &typed
+		default:
+			return holdCandidate(candidate, "forward Growth work has no specification state")
+		}
+	}
 	if ok && spec.usesQueryIdentity && opportunity.Query != nil {
 		candidate.TopicEntityIdentity = []string{*opportunity.Query}
 	}
@@ -94,23 +114,40 @@ func ProjectSEOOpportunity(opportunity db.SeoOpportunity) Candidate {
 	if spec.artifactIntent == ArtifactCreateNewAsset {
 		candidate.IntendedSlugOrCanonical = evidenceString(opportunity.Evidence, "intended_slug_or_canonical")
 	}
-	if opportunity.CanonicalGrowth && opportunity.GrowthSpecOrigin == "forward" {
-		switch opportunity.GrowthSpecState {
-		case growthspec.StateNeedsEvidence:
-			return holdCandidateWithStatus(candidate, StatusNeedsEvidence, growthSpecHoldReason(opportunity))
-		case growthspec.StateNeedsSpecification:
-			return holdCandidateWithStatus(candidate, StatusNeedsSpecification, growthSpecHoldReason(opportunity))
-		case growthspec.StateDecisionReady:
-			var typed growthspec.Spec
-			if err := json.Unmarshal(opportunity.GrowthSpec, &typed); err != nil || typed.SchemaVersion != growthspec.VersionV1 || strings.TrimSpace(typed.PrimaryMetric) == "" || len(typed.Audience) == 0 {
-				return holdCandidate(candidate, "forward Growth specification is malformed")
-			}
-			candidate.PrimarySuccessMetric = typed.PrimaryMetric
-			candidate.AudienceIdentity = append([]string(nil), typed.Audience...)
-			candidate.EvidenceIDs = append(candidate.EvidenceIDs, typed.Baseline.EvidenceIDs...)
-		default:
-			return holdCandidate(candidate, "forward Growth work has no specification state")
+	if forwardSpec != nil {
+		if forwardSpec.SchemaVersion != growthspec.VersionV1 || strings.TrimSpace(forwardSpec.PrimaryMetric) == "" || len(forwardSpec.Audience) == 0 {
+			return holdCandidate(candidate, "forward Growth specification is malformed")
 		}
+		candidate.PrimarySuccessMetric = forwardSpec.PrimaryMetric
+		candidate.AudienceIdentity = append([]string(nil), forwardSpec.Audience...)
+		candidate.EvidenceIDs = append(candidate.EvidenceIDs, forwardSpec.Baseline.EvidenceIDs...)
+	}
+	return finalizeProjectedCandidate(candidate)
+}
+
+func projectV2GrowthCandidate(candidate Candidate, spec growthspec.Spec) Candidate {
+	platform := normalizeToken(spec.Targets.CanonicalTarget.Platform)
+	metric := firstNonEmpty(spec.SuccessMetric.Name, spec.PrimaryMetric)
+	if platform == "" || strings.TrimSpace(spec.DedupeIdentity) == "" || strings.TrimSpace(spec.NormalizedTopic) == "" || len(spec.Audience) == 0 || strings.TrimSpace(metric) == "" {
+		return holdCandidate(candidate, "forward Growth v2 specification is malformed")
+	}
+	candidate.TargetKind = "platform"
+	candidate.NormalizedTargetSet = []string{platform}
+	candidate.TopicEntityIdentity = []string{spec.NormalizedTopic}
+	candidate.AudienceIdentity = append([]string(nil), spec.Audience...)
+	candidate.PrimarySuccessMetric = metric
+	candidate.EvidenceIDs = nonZeroUUIDs(evidenceString(spec.Evidence, "observation_id"))
+	candidate.ChangeFamily = "content.new_asset"
+	candidate.ProposedMutations = []Mutation{{Operation: "create", Field: "page"}}
+	candidate.ArtifactIntent = ArtifactCreateNewAsset
+	candidate.IntendedSlugOrCanonical = platform + ":" + strings.TrimSpace(spec.DedupeIdentity)
+
+	action := normalizeToken(spec.RecommendedAction)
+	if strings.Contains(action, "refresh") || strings.Contains(action, "update existing") || strings.Contains(action, "expand existing") {
+		candidate.ChangeFamily = "content.refresh"
+		candidate.ProposedMutations = []Mutation{{Operation: "update", Field: "page_content"}}
+		candidate.ArtifactIntent = ArtifactUpdateExistingContent
+		candidate.IntendedSlugOrCanonical = ""
 	}
 	return finalizeProjectedCandidate(candidate)
 }
